@@ -95,9 +95,18 @@ CAVE_EMOJI = {
     "stone_floor": "\U0001F7EB",            # 🟫
     "stone_wall": "\u2B1B",                  # ⬛
     "cave_entrance": "\U0001F573\uFE0F",    # 🕳️
+    "cave_chest": "\U0001F4E6",             # 📦
 }
 
-CAVE_WALKABLE = {"stone_floor", "cave_entrance"}
+CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest"}
+
+# Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
+CHEST_LOOT = [
+    (50, 10,  40,  5,  20, None),
+    (30, 30,  80,  15, 40, "potion"),
+    (15, 60,  130, 30, 60, "gem"),
+    (5,  100, 250, 50, 100, "sword"),
+]
 
 CAVE_MIN_SIZE = 40
 CAVE_MAX_SIZE = 80

@@ -6,7 +6,7 @@ import random
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
     CAVE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
-    WALKABLE_TILES,
+    WALKABLE_TILES, CHEST_LOOT,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
@@ -164,13 +164,33 @@ def _generate_cave_interior(
                     py -= 1
                 carved.add((px, py))
 
+    # --- Place chests on floor tiles far from all entrances ---
+    entrance_set = set(entrances)
+    floor_tiles = [
+        pos for pos in carved
+        if pos not in entrance_set
+        and min(abs(pos[0] - ex) + abs(pos[1] - ey) for ex, ey in entrances) > 8
+    ]
+    num_chests = rng.randint(2, min(5, max(2, len(floor_tiles) // 20)))
+    chest_positions: set[tuple[int, int]] = set()
+    if floor_tiles:
+        # Spread chests around: pick from different quadrants when possible
+        rng.shuffle(floor_tiles)
+        for pos in floor_tiles:
+            if len(chest_positions) >= num_chests:
+                break
+            # Keep chests separated from each other
+            if all(abs(pos[0] - cx) + abs(pos[1] - cy) > 6 for cx, cy in chest_positions):
+                chest_positions.add(pos)
+
     # --- Build tile list ---
     tiles: list[tuple[int, int, str]] = []
-    entrance_set = set(entrances)
     for y in range(height):
         for x in range(width):
             if (x, y) in entrance_set:
                 tiles.append((x, y, "cave_entrance"))
+            elif (x, y) in chest_positions:
+                tiles.append((x, y, "cave_chest"))
             elif (x, y) in carved:
                 tiles.append((x, y, "stone_floor"))
             else:
@@ -291,6 +311,27 @@ async def _find_surface_exit(
                 if biome in WALKABLE_TILES:
                     return nx, ny
     return None, None
+
+
+async def open_chest(
+    cave_id: int, local_x: int, local_y: int, db
+) -> dict:
+    """Open a chest tile: roll loot, convert tile to stone_floor, return loot dict."""
+    rng = random.Random(cave_id * 9999 + local_x * 100 + local_y)
+
+    weights = [t[0] for t in CHEST_LOOT]
+    tier = rng.choices(CHEST_LOOT, weights=weights, k=1)[0]
+    _, gold_min, gold_max, xp_min, xp_max, item = tier
+    gold = rng.randint(gold_min, gold_max)
+    xp = rng.randint(xp_min, xp_max)
+
+    await db.execute(
+        "UPDATE cave_tiles SET tile_type = 'stone_floor' "
+        "WHERE cave_id = ? AND local_x = ? AND local_y = ?",
+        (cave_id, local_x, local_y),
+    )
+
+    return {"gold": gold, "xp": xp, "item": item}
 
 
 async def load_cave_viewport(

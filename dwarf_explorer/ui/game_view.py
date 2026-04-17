@@ -11,7 +11,7 @@ from dwarf_explorer.database.repositories import (
     get_cave_entrance_exit,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
-from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile
+from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, open_chest
 from dwarf_explorer.game.player import can_move
 from dwarf_explorer.game.renderer import render_grid
 
@@ -153,9 +153,10 @@ async def handle_interact(interaction: discord.Interaction, guild_id: int, user_
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if player.in_cave:
-        # Check if standing on a cave entrance → exit to wilderness
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
+
         if cave_tile.terrain == "cave_entrance":
+            # Exit the cave back to wilderness
             result = await get_cave_entrance_exit(db, player.cave_id, player.cave_x, player.cave_y)
             if result:
                 wx, wy = result
@@ -170,6 +171,23 @@ async def handle_interact(interaction: discord.Interaction, guild_id: int, user_
             else:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 content = render_grid(grid, player, status_msg="Nothing to interact with here.")
+
+        elif cave_tile.terrain == "cave_chest":
+            # Open the chest and award loot
+            from dwarf_explorer.database.repositories import update_player_stats
+            loot = await open_chest(player.cave_id, player.cave_x, player.cave_y, db)
+            new_gold = player.gold + loot["gold"]
+            new_xp = player.xp + loot["xp"]
+            await update_player_stats(db, user_id, gold=new_gold, xp=new_xp)
+            player.gold = new_gold
+            player.xp = new_xp
+            if loot["item"]:
+                msg = f"You open the chest! Found {loot['gold']} gold, {loot['xp']} XP, and a {loot['item']}!"
+            else:
+                msg = f"You open the chest! Found {loot['gold']} gold and {loot['xp']} XP."
+            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            content = render_grid(grid, player, status_msg=msg)
+
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             content = render_grid(grid, player, status_msg="Nothing to interact with here.")
