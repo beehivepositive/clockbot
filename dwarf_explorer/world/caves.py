@@ -6,17 +6,57 @@ import random
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
     CAVE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
+    WALKABLE_TILES,
 )
 from dwarf_explorer.world.generator import TileData
+from dwarf_explorer.world.terrain import get_biome
 
 _CAVE_SEED_OFFSET = 9000
 
 
+def _drunkard_walk(
+    rng: random.Random,
+    carved: set[tuple[int, int]],
+    start_x: int, start_y: int,
+    steps: int, width: int, height: int,
+    room_freq: int = 8,
+) -> None:
+    """Carve a drunkard's walk starting at (start_x, start_y) for `steps` steps."""
+    cx, cy = start_x, start_y
+    for i in range(steps):
+        dx, dy = rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
+        nx, ny = cx + dx, cy + dy
+        if 1 <= nx < width - 1 and 1 <= ny < height - 1:
+            cx, cy = nx, ny
+            carved.add((cx, cy))
+
+            if i % room_freq == 0:
+                room_w = rng.randint(2, 4)
+                room_h = rng.randint(2, 4)
+                for ry in range(room_h):
+                    for rx in range(room_w):
+                        rrx, rry = cx + rx, cy + ry
+                        if 1 <= rrx < width - 1 and 1 <= rry < height - 1:
+                            carved.add((rrx, rry))
+
+
+def _carve_chamber(
+    carved: set[tuple[int, int]],
+    cx: int, cy: int, size: int, width: int, height: int,
+) -> None:
+    """Carve a square chamber of given size centered roughly at (cx, cy)."""
+    half = size // 2
+    for dy in range(-half, half + 1):
+        for dx in range(-half, half + 1):
+            nx, ny = cx + dx, cy + dy
+            if 1 <= nx < width - 1 and 1 <= ny < height - 1:
+                carved.add((nx, ny))
+
+
 def _generate_cave_interior(
     cave_id: int, seed: int, world_x: int, world_y: int,
-    extra_entrances: list[tuple[int, int]] | None = None,
 ) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]]]:
-    """Generate a cave interior layout using drunkard's walk + rooms.
+    """Generate a large cave interior using drunkard's walk + branching corridors.
 
     Returns (width, height, tiles, entrance_positions).
     tiles is list of (local_x, local_y, tile_type).
@@ -27,10 +67,9 @@ def _generate_cave_interior(
     width = rng.randint(CAVE_MIN_SIZE, CAVE_MAX_SIZE)
     height = rng.randint(CAVE_MIN_SIZE, CAVE_MAX_SIZE)
 
-    # Start with all walls
     carved: set[tuple[int, int]] = set()
 
-    # Place primary entrance on a random edge
+    # --- Primary entrance on a random edge ---
     edge = rng.choice(["top", "bottom", "left", "right"])
     if edge == "top":
         ex, ey = rng.randint(2, width - 3), 0
@@ -44,40 +83,40 @@ def _generate_cave_interior(
     entrances: list[tuple[int, int]] = [(ex, ey)]
     carved.add((ex, ey))
 
-    # Drunkard's walk from entrance
-    cx, cy = ex, ey
-    # Move one step inward first
+    # Step one tile inward and carve an opening chamber
     if edge == "top":
-        cy = 1
+        ix, iy = ex, 1
     elif edge == "bottom":
-        cy = height - 2
+        ix, iy = ex, height - 2
     elif edge == "left":
-        cx = 1
+        ix, iy = 1, ey
     else:
-        cx = width - 2
-    carved.add((cx, cy))
+        ix, iy = width - 2, ey
+    carved.add((ix, iy))
+    _carve_chamber(carved, ix, iy, 3, width, height)
 
-    steps = rng.randint(CAVE_WALK_STEPS - 10, CAVE_WALK_STEPS + 10)
-    for i in range(steps):
-        dx, dy = rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
-        nx, ny = cx + dx, cy + dy
-        # Stay within interior bounds (1 to size-2)
-        if 1 <= nx < width - 1 and 1 <= ny < height - 1:
-            cx, cy = nx, ny
-            carved.add((cx, cy))
+    # --- Primary drunkard's walk ---
+    _drunkard_walk(rng, carved, ix, iy, CAVE_WALK_STEPS, width, height, room_freq=8)
 
-            # Every 12 steps, carve a small room
-            if i % 12 == 0:
-                room_size = rng.choice([2, 3])
-                for ry in range(room_size):
-                    for rx in range(room_size):
-                        rrx, rry = cx + rx, cy + ry
-                        if 1 <= rrx < width - 1 and 1 <= rry < height - 1:
-                            carved.add((rrx, rry))
+    # --- 2-3 branching corridors from carved room positions ---
+    carved_list = list(carved)
+    num_branches = rng.randint(2, 3)
+    for _ in range(num_branches):
+        if len(carved_list) < 10:
+            break
+        branch_start = rng.choice(carved_list)
+        branch_steps = rng.randint(CAVE_WALK_STEPS // 4, CAVE_WALK_STEPS // 2)
+        _drunkard_walk(rng, carved, branch_start[0], branch_start[1],
+                       branch_steps, width, height, room_freq=10)
+        carved_list = list(carved)
 
-    # 50% chance: add a second entrance/exit at a distant position
-    if rng.random() < 0.5 and len(carved) > 10:
-        # Pick the carved tile furthest from the primary entrance
+    # Carve a large chamber at the midpoint of the cave
+    if carved_list:
+        mid = carved_list[len(carved_list) // 2]
+        _carve_chamber(carved, mid[0], mid[1], 5, width, height)
+
+    # --- Secondary entrance (70% chance) ---
+    if rng.random() < 0.7 and len(carved) > 20:
         best_dist = 0
         best_pos = None
         for pos in carved:
@@ -86,8 +125,7 @@ def _generate_cave_interior(
                 best_dist = d
                 best_pos = pos
 
-        if best_pos and best_dist > 6:
-            # Place exit on nearest edge from that position
+        if best_pos and best_dist > 10:
             bx, by = best_pos
             candidates = []
             if by <= 2:
@@ -100,7 +138,6 @@ def _generate_cave_interior(
                 candidates.append((width - 1, by))
 
             if not candidates:
-                # Pick closest edge
                 dists = [
                     (by, (bx, 0)),
                     (height - 1 - by, (bx, height - 1)),
@@ -127,7 +164,7 @@ def _generate_cave_interior(
                     py -= 1
                 carved.add((px, py))
 
-    # Build tile list
+    # --- Build tile list ---
     tiles: list[tuple[int, int, str]] = []
     entrance_set = set(entrances)
     for y in range(height):
@@ -149,7 +186,6 @@ async def get_or_create_cave(
 
     Returns (cave_id, entrance_local_x, entrance_local_y).
     """
-    # Check if cave already exists for this position
     row = await db.fetch_one(
         "SELECT cave_id, local_x, local_y FROM cave_entrances WHERE world_x = ? AND world_y = ?",
         (world_x, world_y),
@@ -157,15 +193,12 @@ async def get_or_create_cave(
     if row:
         return row["cave_id"], row["local_x"], row["local_y"]
 
-    # Generate new cave — use a temporary cave_id from insert
-    # We need the cave_id for seeding, so insert first then generate
     cursor = await db.execute(
         "INSERT INTO caves (width, height) VALUES (1, 1)"
     )
     cave_id = cursor.lastrowid
 
-    # Find other cave tile_overrides adjacent to this position that don't have caves yet
-    # (for multi-entrance caves connecting to nearby wilderness cave tiles)
+    # Look for adjacent cave tiles that have no entrance yet (for natural multi-entrance linking)
     extra_entrances_world: list[tuple[int, int]] = []
     for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
         nx, ny = world_x + ddx, world_y + ddy
@@ -175,7 +208,6 @@ async def get_or_create_cave(
                 (nx, ny),
             )
             if tile_row and tile_row["tile_type"] == "cave":
-                # Check if this tile already belongs to a cave
                 existing = await db.fetch_one(
                     "SELECT cave_id FROM cave_entrances WHERE world_x = ? AND world_y = ?",
                     (nx, ny),
@@ -187,19 +219,17 @@ async def get_or_create_cave(
         _generate_cave_interior, cave_id, seed, world_x, world_y
     )
 
-    # Update cave dimensions
     await db.execute(
         "UPDATE caves SET width = ?, height = ? WHERE cave_id = ?",
         (width, height, cave_id),
     )
 
-    # Store tiles
     await db.executemany(
         "INSERT OR IGNORE INTO cave_tiles (cave_id, local_x, local_y, tile_type) VALUES (?, ?, ?, ?)",
         [(cave_id, lx, ly, tt) for lx, ly, tt in tiles],
     )
 
-    # Link primary entrance to wilderness position
+    # Link primary entrance
     primary_ex, primary_ey = entrance_positions[0]
     await db.execute(
         "INSERT OR IGNORE INTO cave_entrances (cave_id, local_x, local_y, world_x, world_y) "
@@ -207,17 +237,60 @@ async def get_or_create_cave(
         (cave_id, primary_ex, primary_ey, world_x, world_y),
     )
 
-    # Link secondary entrance if it exists and there's a nearby cave tile
-    if len(entrance_positions) > 1 and extra_entrances_world:
+    # Link secondary entrance if one was generated
+    if len(entrance_positions) > 1:
         sec_ex, sec_ey = entrance_positions[1]
-        sec_wx, sec_wy = extra_entrances_world[0]
-        await db.execute(
-            "INSERT OR IGNORE INTO cave_entrances (cave_id, local_x, local_y, world_x, world_y) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (cave_id, sec_ex, sec_ey, sec_wx, sec_wy),
-        )
+
+        # Prefer an existing adjacent cave tile
+        if extra_entrances_world:
+            sec_wx, sec_wy = extra_entrances_world[0]
+        else:
+            # Synthesize a new surface exit: find a walkable tile near the primary entrance
+            sec_wx, sec_wy = await _find_surface_exit(seed, world_x, world_y, db)
+
+        if sec_wx is not None:
+            # Ensure the surface tile exists as a cave override so the player can see it
+            await db.execute(
+                "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'cave')",
+                (sec_wx, sec_wy),
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO cave_entrances (cave_id, local_x, local_y, world_x, world_y) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (cave_id, sec_ex, sec_ey, sec_wx, sec_wy),
+            )
 
     return cave_id, primary_ex, primary_ey
+
+
+async def _find_surface_exit(
+    seed: int, world_x: int, world_y: int, db
+) -> tuple[int | None, int | None]:
+    """Find a nearby walkable wilderness tile to use as a synthesized cave exit.
+
+    Searches in a spiral outward from the primary entrance (2-8 tiles away),
+    avoiding existing tile_overrides.
+    """
+    for radius in range(2, 9):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                if abs(dx) != radius and abs(dy) != radius:
+                    continue  # Only check the ring at this radius
+                nx, ny = world_x + dx, world_y + dy
+                if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+                    continue
+                # Not already an override
+                existing = await db.fetch_one(
+                    "SELECT tile_type FROM tile_overrides WHERE world_x = ? AND world_y = ?",
+                    (nx, ny),
+                )
+                if existing:
+                    continue
+                # Walkable base biome
+                biome = get_biome(nx, ny, seed)
+                if biome in WALKABLE_TILES:
+                    return nx, ny
+    return None, None
 
 
 async def load_cave_viewport(
@@ -231,7 +304,6 @@ async def load_cave_viewport(
     x_min = center_x - half
     y_min = center_y - half
 
-    # Fetch all cave tiles in the viewport range
     rows = await db.fetch_all(
         "SELECT local_x, local_y, tile_type FROM cave_tiles "
         "WHERE cave_id = ? AND local_x >= ? AND local_x <= ? AND local_y >= ? AND local_y <= ?",

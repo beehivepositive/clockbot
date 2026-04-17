@@ -19,6 +19,7 @@ NOISE_BASE_SCALE = 16.0
 TERRAIN_EMOJI = {
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
+    "river": "\U0001F30A",           # 🌊
     "sand": "\U0001F3D6\uFE0F",     # 🏖️
     "plains": "\U0001F33E",          # 🌾
     "grass": "\U0001F33F",           # 🌿
@@ -37,6 +38,7 @@ STRUCTURE_EMOJI = {
     "shrine": "\u26E9\uFE0F",       # ⛩️
     "campfire": "\U0001F525",        # 🔥
     "cave": "\U0001F573\uFE0F",     # 🕳️
+    "bridge": "\U0001F309",          # 🌉
 }
 
 ENTITY_EMOJI = {
@@ -61,11 +63,11 @@ ITEM_EMOJI = {
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "snow", "path",
-    "village", "ruins", "shrine", "campfire", "cave",
+    "village", "ruins", "shrine", "campfire", "cave", "bridge",
 }
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "shrine", "campfire", "cave"}
+STRUCTURE_TILES = {"village", "ruins", "shrine", "campfire", "cave", "bridge"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -97,9 +99,9 @@ CAVE_EMOJI = {
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance"}
 
-CAVE_MIN_SIZE = 12
-CAVE_MAX_SIZE = 20
-CAVE_WALK_STEPS = 70
+CAVE_MIN_SIZE = 40
+CAVE_MAX_SIZE = 80
+CAVE_WALK_STEPS = 350
 
 # --- World Map Image ---
 
@@ -122,4 +124,6 @@ TILE_COLORS = {
     "shrine": (200, 50, 50),
     "campfire": (255, 100, 0),
     "cave": (60, 40, 30),
+    "river": (30, 80, 180),
+    "bridge": (160, 120, 60),
 }
