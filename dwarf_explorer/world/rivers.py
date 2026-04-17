@@ -8,36 +8,182 @@ from dwarf_explorer.world.noise import fbm
 from dwarf_explorer.world.terrain import get_biome
 
 _WATER_BIOMES = {"deep_water", "shallow_water"}
+_MIN_TRIB_SPACING = 45   # minimum x-distance between main tributary join points
 
 
 def _is_water(x: int, y: int, seed: int) -> bool:
     return get_biome(x, y, seed) in _WATER_BIOMES
 
 
-def _place_lake(lake_tiles: set[tuple[int, int]], cx: int, cy: int, radius: int) -> None:
-    """Carve a roughly circular lake of shallow_water tiles."""
+def _place_lake(lake_tiles: set, cx: int, cy: int, radius: int) -> None:
     r2 = radius * radius
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
             if dx * dx + dy * dy <= r2:
-                x, y = cx + dx, cy + dy
-                if 0 <= x < WORLD_SIZE and 0 <= y < WORLD_SIZE:
-                    lake_tiles.add((x, y))
+                tx, ty = cx + dx, cy + dy
+                if 0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE:
+                    lake_tiles.add((tx, ty))
+
+
+def _gen_upstream_path(
+    start_x: int,
+    start_y: int,
+    primary_dir: int,       # -1 = north (y decreasing), +1 = south (y increasing)
+    length: int,
+    rng: random.Random,
+    seed: int,
+    idx: int,
+    west_strength: float = 1.0,   # how strongly to drift westward
+    meander_strength: float = 2.5, # amplitude of meander noise
+) -> list[tuple[int, int]]:
+    """Walk upstream from a join point.
+
+    Flows away from the river in primary_dir, gradually curving westward.
+    The first ~20% is mostly perpendicular (N/S) with little westward drift;
+    after that westward drift grows, producing a curved drainage shape:
+
+        |        ← mostly perpendicular at start
+        |
+         \\       ← starts curving west
+          ←←←←   ← mostly westward near source
+
+    Meanders are achieved by carrying momentum (smooth S-curves, not random jitter).
+    """
+    path: list[tuple[int, int]] = []
+    x, y = float(start_x), float(start_y)
+    momentum = 0.0   # x-momentum for smooth meanders
+
+    for step in range(int(length * 2)):
+        ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
+        iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
+
+        if not (0 <= ix < WORLD_SIZE and 0 <= iy < WORLD_SIZE):
+            break
+        if len(path) >= length:
+            break
+
+        # Deduplicate adjacent steps
+        if not path or (ix, iy) != path[-1]:
+            path.append((ix, iy))
+
+        # Progress 0→1 over the walk
+        progress = step / max(length, 1)
+
+        # Westward drift: starts near 0, grows quadratically after 20% progress
+        west_progress = max(0.0, (progress - 0.20) / 0.80)
+        west_drift = west_progress ** 2 * west_strength * 0.9
+
+        # Smooth meander via momentum (avoids jittery back-and-forth)
+        noise_val = fbm(step * 0.06, idx * 23.7 + 5.1, seed ^ 0xBEEF, octaves=3)
+        momentum = momentum * 0.65 + (noise_val - 0.5) * meander_strength
+        # Cap momentum to prevent runaway drift
+        momentum = max(-3.0, min(3.0, momentum))
+
+        x += -west_drift + momentum   # westward drift + smooth meander
+        y += primary_dir              # step in primary direction
+        x = max(1.0, min(WORLD_SIZE - 2.0, x))
+
+    return path
+
+
+def _gen_branch_path(
+    start_x: int,
+    start_y: int,
+    dir_x: int,   # primary horizontal direction (-1=west, 1=east)
+    dir_y: int,   # primary vertical component (usually small)
+    length: int,
+    rng: random.Random,
+    seed: int,
+    idx: int,
+) -> list[tuple[int, int]]:
+    """Generate a sub-branch path, flowing mostly in dir_x direction."""
+    path: list[tuple[int, int]] = []
+    x, y = float(start_x), float(start_y)
+    momentum = 0.0
+
+    for step in range(length):
+        ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
+        iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
+        if not (0 <= ix < WORLD_SIZE and 0 <= iy < WORLD_SIZE):
+            break
+        if not path or (ix, iy) != path[-1]:
+            path.append((ix, iy))
+
+        noise_val = fbm(step * 0.09, idx * 31.4 + 2.7, seed ^ 0xDEAD, octaves=2)
+        momentum = momentum * 0.6 + (noise_val - 0.5) * 2.0
+        momentum = max(-2.0, min(2.0, momentum))
+
+        x += float(dir_x)
+        y += float(dir_y) + momentum * (1.0 if dir_x != 0 else 0.0)
+        if dir_x == 0:
+            x += momentum
+        x = max(0.0, min(WORLD_SIZE - 1.0, x))
+        y = max(0.0, min(WORLD_SIZE - 1.0, y))
+
+    return path
+
+
+def _gen_offshoot_path(
+    start_x: int,
+    start_y: int,
+    dir_x: int,   # primary direction away from parent
+    dir_y: int,
+    length: int,
+    rng: random.Random,
+    seed: int,
+    idx: int,
+) -> list[tuple[int, int]]:
+    """Generate a short, strongly meandering offshoot that ends in a pond."""
+    path: list[tuple[int, int]] = []
+    x, y = float(start_x), float(start_y)
+
+    for step in range(length):
+        ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
+        iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
+        if not (0 <= ix < WORLD_SIZE and 0 <= iy < WORLD_SIZE):
+            break
+        if not path or (ix, iy) != path[-1]:
+            path.append((ix, iy))
+
+        # High-amplitude random wander so offshoot is visually distinct
+        wx = float(dir_x) + (rng.random() - 0.5) * 3.0
+        wy = float(dir_y) + (rng.random() - 0.5) * 3.0
+        x += wx
+        y += wy
+        x = max(0.0, min(WORLD_SIZE - 1.0, x))
+        y = max(0.0, min(WORLD_SIZE - 1.0, y))
+
+    return path
+
+
+def _widen(river_tiles: set, path: list[tuple[int, int]], half_w: int, seed: int) -> None:
+    """Add tiles ±half_w in the x direction to widen a primarily N-S path."""
+    for px, py in path:
+        for dx in range(-half_w, half_w + 1):
+            nx = px + dx
+            if 0 <= nx < WORLD_SIZE and not _is_water(nx, py, seed):
+                river_tiles.add((nx, py))
 
 
 def _generate_rivers_sync(
     seed: int,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
-    """Generate river, bridge, and lake tile positions.
+    """
+    River generation algorithm (from river outward):
 
-    Main river flows west→east.
-    Tributaries flow from north/south and curve eastward (in the direction of
-    flow) as they approach the main river, creating natural confluences.
-    Source lakes are placed at each tributary's origin.
-    Side-pool lakes branch off tributaries as offshoots.
+    1. Main river: W→E, gentle meanders, 3-5 tiles wide.
+    2. Main tributaries: branch FROM the river, walk upstream (N or S) with
+       westward drift and smooth meanders. 3 tiles wide. Minimum spacing enforced;
+       if a candidate join point is too close to an existing tributary, the new
+       tributary branches from the existing one instead (flows into the other).
+    3. Sub-branches: 1-2 tiles wide, branch from tributary mid-sections.
+    4. Offshoots: 1 tile wide, strongly meandering channels that end in ponds.
+       Go in a direction perpendicular to their parent so they look distinct.
+    5. Source lakes at path endpoints if within map bounds.
+    6. Main river bridges (N-S crossing), tributary bridges (E-W crossing).
+    7. Existing water biome tiles are skipped (rivers connect naturally to lakes).
 
     Returns (river_tiles, bridge_tiles, lake_tiles).
-    River/bridge tiles skip positions where the base biome is already water.
     """
     rng = random.Random(seed ^ 0xDEAD_BEEF)
 
@@ -45,167 +191,226 @@ def _generate_rivers_sync(
     bridge_tiles: set[tuple[int, int]] = set()
     lake_tiles: set[tuple[int, int]] = set()
 
-    # ------------------------------------------------------------------
-    # Main river: west → east across the full map
-    # Width: 3 tiles baseline (±1), widened to 5 (±2) every 20 columns
-    # ------------------------------------------------------------------
-    main_river_by_col: dict[int, set[int]] = {}
+    # -----------------------------------------------------------------------
+    # MAIN RIVER — west → east, gentle meanders
+    # -----------------------------------------------------------------------
+    main_center: list[int] = []   # center y for each x column
+    main_river_ys: dict[int, set[int]] = {}  # all river y values per column
 
-    start_y = rng.randint(40, WORLD_SIZE - 40)
-    fy = float(start_y)
+    fy = float(rng.randint(40, WORLD_SIZE - 40))
+    m_momentum = 0.0
 
     for x in range(WORLD_SIZE):
         cy = max(8, min(WORLD_SIZE - 8, int(round(fy))))
+        main_center.append(cy)
 
+        # Width: 3 baseline, 5 every 20 columns
         half_w = 2 if (x % 20 == 0) else 1
         for dy in range(-half_w, half_w + 1):
             ry = cy + dy
             if 4 <= ry < WORLD_SIZE - 4:
                 if not _is_water(x, ry, seed):
                     river_tiles.add((x, ry))
-                main_river_by_col.setdefault(x, set()).add(ry)
+                main_river_ys.setdefault(x, set()).add(ry)
 
-        # Smooth noise-driven meander
-        noise_val = fbm(x * 0.02, cy * 0.02, seed, octaves=3)
-        fy += (noise_val - 0.5) * 2.0
+        # Gentle meander via momentum (main river meanders less than tributaries)
+        noise_val = fbm(x * 0.015, fy * 0.015, seed, octaves=2)
+        m_momentum = m_momentum * 0.80 + (noise_val - 0.5) * 0.8
+        m_momentum = max(-1.5, min(1.5, m_momentum))
+        fy += m_momentum
         fy = max(8.0, min(WORLD_SIZE - 8.0, fy))
 
-    # ------------------------------------------------------------------
-    # Tributaries (2-4): flow from top/bottom edge toward the main river.
-    #
-    # Flow shape: mostly vertical at first, then curving eastward (+x) in
-    # the final stretch so they join the main river like a natural confluence.
-    #
-    #   |           ← flows south at first
-    #   |
-    #    \          ← starts bending east
-    #     \
-    #      ------→  ← merges into main river heading east
-    #
-    # Source lake placed at each tributary's starting point.
-    # Side-pool lakes branched off as offshoots (not inline).
-    # ------------------------------------------------------------------
-    num_tributaries = rng.randint(2, 4)
-    # Spread tributaries across the western 3/4 of the map so the curves
-    # have room to develop before the east edge
-    trib_start_cols = sorted(rng.sample(range(20, int(WORLD_SIZE * 0.75)), num_tributaries))
+    # -----------------------------------------------------------------------
+    # MAIN TRIBUTARIES — start at river, walk upstream with westward drift
+    # -----------------------------------------------------------------------
+    # Pick candidate join points; enforce _MIN_TRIB_SPACING between them.
+    # If a candidate is too close to an existing trib, branch from that trib.
+    num_tribs = rng.randint(3, 5)
+    candidate_xs = sorted(rng.sample(range(20, WORLD_SIZE - 20), min(20, WORLD_SIZE - 40)))
 
-    trib_tile_sets: list[set[tuple[int, int]]] = []
+    placed_tribs: list[tuple[int, list[tuple[int, int]]]] = []  # (join_x, path)
+    trib_paths_for_bridges: list[list[tuple[int, int]]] = []
 
-    for trib_idx, trib_col in enumerate(trib_start_cols):
-        if trib_col not in main_river_by_col:
-            continue
+    for t_idx, join_x in enumerate(candidate_xs):
+        if len(placed_tribs) >= num_tribs:
+            break
 
-        main_ys = sorted(main_river_by_col[trib_col])
+        join_y = main_center[join_x]
 
-        # Choose from-top or from-bottom
-        from_top = rng.random() < 0.5
-        if from_top:
-            lake_cy = rng.randint(5, 18)
-            target_y = min(main_ys) - 1
-            direction = 1          # flows southward (increasing y)
-        else:
-            lake_cy = rng.randint(WORLD_SIZE - 18, WORLD_SIZE - 5)
-            target_y = max(main_ys) + 1
-            direction = -1         # flows northward (decreasing y)
-
-        # --- Source lake at tributary origin ---
-        lake_radius = rng.randint(3, 5)
-        _place_lake(lake_tiles, trib_col, lake_cy, lake_radius)
-
-        # Tributary starts at the lake edge facing the main river
-        fx = float(trib_col)
-        fy_t = float(lake_cy + direction * (lake_radius + 1))
-
-        trib_tiles: set[tuple[int, int]] = set()
-        total_dist = max(abs(fy_t - target_y), 1)
-        step = 0
-
-        while step < WORLD_SIZE * 2:
-            iy = max(0, min(WORLD_SIZE - 1, int(round(fy_t))))
-            ix = max(0, min(WORLD_SIZE - 1, int(round(fx))))
-
-            # Stop when we reach the main river band
-            if iy in main_river_by_col.get(ix, set()) or abs(iy - target_y) <= 2:
+        # Check proximity to existing tribs on the main river
+        too_close = False
+        close_trib_path: list[tuple[int, int]] | None = None
+        for ex_join_x, ex_path in placed_tribs:
+            if abs(join_x - ex_join_x) < _MIN_TRIB_SPACING:
+                too_close = True
+                close_trib_path = ex_path
                 break
 
-            # Skip tiles that are already water (natural connection)
-            if not _is_water(ix, iy, seed) and (ix, iy) not in lake_tiles:
-                trib_tiles.add((ix, iy))
-
-            progress = step / total_dist  # 0.0 → 1.0+
-
-            # Noise gives gentle natural variation
-            noise_val = fbm(progress * 5.0, trib_idx * 20.0 + 7.3, seed ^ 0xCAFE, octaves=2)
-            base_curve = (noise_val - 0.5) * 1.2
-
-            # Eastward pull: begins at progress=0.35, grows quadratically,
-            # peaks at ~2.5 tiles/step to create a pronounced eastward curve
-            east_factor = max(0.0, (progress - 0.35) / 0.65)
-            eastward_pull = east_factor * east_factor * 2.5
-
-            fx += base_curve + eastward_pull
-            fx = max(1.0, min(WORLD_SIZE - 2.0, fx))
-            fy_t += direction
-            step += 1
-
-        # --- Side-pool offshoots (2-4 per tributary, off to the side) ---
-        trib_list = sorted(trib_tiles, key=lambda t: t[1])
-        if trib_list:
-            num_pools = rng.randint(2, 4)
-            quarter = max(1, len(trib_list) // 4)
-            mid_section = trib_list[quarter: 3 * quarter]
-            for _ in range(num_pools):
-                if not mid_section:
-                    break
-                anchor = rng.choice(mid_section)
-                side = rng.choice([-1, 1])
-                pool_cx = anchor[0] + side * rng.randint(2, 4)
-                pool_cy = anchor[1]
-                if 0 <= pool_cx < WORLD_SIZE:
-                    _place_lake(lake_tiles, pool_cx, pool_cy, rng.randint(2, 3))
-
-        river_tiles |= trib_tiles
-        trib_tile_sets.append(trib_tiles)
-
-    # ------------------------------------------------------------------
-    # Main river bridges: N-S crossing of the E-W flowing river
-    # Bridge spans the full river width; approach tiles north & south
-    # ------------------------------------------------------------------
-    bridge_interval = rng.randint(30, 40)
-    x = bridge_interval
-    while x < WORLD_SIZE - bridge_interval:
-        if x in main_river_by_col:
-            ys = sorted(main_river_by_col[x])
-            for ry in ys:
-                bridge_tiles.add((x, ry))
-            min_y, max_y = min(ys), max(ys)
-            # Approach tiles above and below (N-S crossing)
-            if min_y - 1 >= 0 and (x, min_y - 1) not in river_tiles:
-                bridge_tiles.add((x, min_y - 1))
-            if max_y + 1 < WORLD_SIZE and (x, max_y + 1) not in river_tiles:
-                bridge_tiles.add((x, max_y + 1))
-        x += rng.randint(30, 40)
-
-    # ------------------------------------------------------------------
-    # Tributary bridges: E-W crossing of the N-S flowing tributary
-    # Single bridge tile at midpoint; approach tiles east & west
-    # ------------------------------------------------------------------
-    for trib_tiles in trib_tile_sets:
-        if not trib_tiles:
+        if too_close and close_trib_path:
+            # Branch from the close tributary instead (flows into the other)
+            if len(close_trib_path) >= 6:
+                start_idx = rng.randint(len(close_trib_path) // 4,
+                                        3 * len(close_trib_path) // 4)
+                bsx, bsy = close_trib_path[start_idx]
+                # Branch direction: perpendicular to the trib (E or W)
+                dir_x = rng.choice([-1, 1])
+                br_len = rng.randint(15, 35)
+                br_path = _gen_branch_path(bsx, bsy, dir_x, 0, br_len, rng, seed, t_idx + 100)
+                _widen(river_tiles, br_path, 0, seed)   # sub-branches: width 1
+                if br_path:
+                    end = br_path[-1]
+                    if 5 < end[0] < WORLD_SIZE - 5 and 5 < end[1] < WORLD_SIZE - 5:
+                        _place_lake(lake_tiles, end[0], end[1], rng.randint(2, 3))
             continue
-        trib_list = sorted(trib_tiles, key=lambda t: t[1])
-        mid = trib_list[len(trib_list) // 2]
+
+        # New main tributary
+        # Direction: go toward the nearer map edge
+        go_north = join_y > WORLD_SIZE // 2
+        direction = -1 if go_north else 1   # -1 = north, +1 = south
+
+        if go_north:
+            max_dist = join_y - 5
+        else:
+            max_dist = WORLD_SIZE - join_y - 5
+
+        length = rng.randint(max(25, int(max_dist * 0.45)), int(max_dist * 0.90))
+
+        trib_path = _gen_upstream_path(
+            join_x, join_y, direction, length, rng, seed, t_idx,
+            west_strength=1.2, meander_strength=2.8,
+        )
+
+        if not trib_path:
+            continue
+
+        # Widen tributary: 3 tiles (±1 in x since it flows mostly N/S)
+        _widen(river_tiles, trib_path, 1, seed)
+
+        placed_tribs.append((join_x, trib_path))
+        trib_paths_for_bridges.append(trib_path)
+
+        # Source lake or map edge (no lake if end is at/near map boundary)
+        end_x, end_y = trib_path[-1]
+        at_edge = end_x <= 4 or end_x >= WORLD_SIZE - 4 or \
+                  end_y <= 4 or end_y >= WORLD_SIZE - 4
+        if not at_edge:
+            _place_lake(lake_tiles, end_x, end_y, rng.randint(3, 5))
+
+        # -------------------------------------------------------------------
+        # SUB-BRANCHES from this tributary
+        # -------------------------------------------------------------------
+        num_branches = rng.randint(1, 3)
+        branch_anchors: list[tuple[int, int]] = []
+        mid_path = trib_path[len(trib_path) // 4: 3 * len(trib_path) // 4]
+
+        for _ in range(num_branches * 4):
+            if len(branch_anchors) >= num_branches or not mid_path:
+                break
+            candidate = rng.choice(mid_path)
+            if not branch_anchors or all(
+                abs(candidate[0] - bx) + abs(candidate[1] - by) > 12
+                for bx, by in branch_anchors
+            ):
+                branch_anchors.append(candidate)
+
+        for b_idx, (bx, by) in enumerate(branch_anchors):
+            # Branches go E or W (perpendicular to N-S trib), with slight N/S drift
+            dir_x = rng.choice([-1, -1, 1])  # slight west preference
+            dir_y = rng.choice([-1, 0, 0, 0, 1])
+            br_len = rng.randint(12, 30)
+            br_path = _gen_branch_path(bx, by, dir_x, dir_y, br_len, rng, seed, t_idx * 10 + b_idx)
+
+            if not br_path:
+                continue
+
+            _widen(river_tiles, br_path, 0, seed)  # width 1
+
+            # Source lake at branch end (if in bounds)
+            br_end = br_path[-1]
+            at_edge = br_end[0] <= 4 or br_end[0] >= WORLD_SIZE - 4 or \
+                      br_end[1] <= 4 or br_end[1] >= WORLD_SIZE - 4
+            if not at_edge and rng.random() < 0.55:
+                _place_lake(lake_tiles, br_end[0], br_end[1], rng.randint(2, 3))
+
+            # OFFSHOOTS from this branch: go N or S (perpendicular to E/W branch)
+            if br_path and rng.random() < 0.45:
+                off_anchor = rng.choice(br_path)
+                off_dir_y = rng.choice([-1, 1])
+                off_len = rng.randint(6, 14)
+                off_path = _gen_offshoot_path(
+                    off_anchor[0], off_anchor[1], 0, off_dir_y,
+                    off_len, rng, seed, t_idx * 100 + b_idx,
+                )
+                for pt in off_path:
+                    if not _is_water(pt[0], pt[1], seed):
+                        river_tiles.add(pt)
+                if off_path:
+                    off_end = off_path[-1]
+                    at_edge = off_end[0] <= 4 or off_end[0] >= WORLD_SIZE - 4 or \
+                              off_end[1] <= 4 or off_end[1] >= WORLD_SIZE - 4
+                    if not at_edge:
+                        _place_lake(lake_tiles, off_end[0], off_end[1], rng.randint(2, 3))
+
+        # -------------------------------------------------------------------
+        # OFFSHOOTS from main tributary: go E or W (perpendicular to N-S trib)
+        # -------------------------------------------------------------------
+        num_offshoots = rng.randint(1, 3)
+        for o_idx in range(num_offshoots):
+            if not trib_path:
+                break
+            anchor_idx = rng.randint(len(trib_path) // 5, 4 * len(trib_path) // 5)
+            ox, oy = trib_path[anchor_idx]
+            off_dir_x = rng.choice([-1, 1])
+            off_len = rng.randint(8, 18)
+            off_path = _gen_offshoot_path(
+                ox, oy, off_dir_x, 0, off_len, rng, seed, t_idx * 1000 + o_idx,
+            )
+            for pt in off_path:
+                if not _is_water(pt[0], pt[1], seed):
+                    river_tiles.add(pt)
+            if off_path:
+                off_end = off_path[-1]
+                at_edge = off_end[0] <= 4 or off_end[0] >= WORLD_SIZE - 4 or \
+                          off_end[1] <= 4 or off_end[1] >= WORLD_SIZE - 4
+                if not at_edge:
+                    _place_lake(lake_tiles, off_end[0], off_end[1], rng.randint(2, 3))
+
+    # -----------------------------------------------------------------------
+    # MAIN RIVER BRIDGES — N-S crossing of E-W river
+    # -----------------------------------------------------------------------
+    bridge_interval = rng.randint(28, 40)
+    bx = bridge_interval
+    while bx < WORLD_SIZE - bridge_interval:
+        if bx in main_river_ys:
+            ys = sorted(main_river_ys[bx])
+            for ry in ys:
+                bridge_tiles.add((bx, ry))
+            min_y, max_y = min(ys), max(ys)
+            if min_y - 1 >= 0 and (bx, min_y - 1) not in river_tiles:
+                bridge_tiles.add((bx, min_y - 1))
+            if max_y + 1 < WORLD_SIZE and (bx, max_y + 1) not in river_tiles:
+                bridge_tiles.add((bx, max_y + 1))
+        bx += rng.randint(28, 40)
+
+    # -----------------------------------------------------------------------
+    # TRIBUTARY BRIDGES — E-W crossing of N-S tributary (3 tiles wide in x)
+    # -----------------------------------------------------------------------
+    for t_path in trib_paths_for_bridges:
+        if not t_path:
+            continue
+        mid = t_path[len(t_path) // 2]
         mx, my = mid
 
-        bridge_tiles.add((mx, my))
-        # E-W approach tiles (perpendicular to the N-S tributary flow)
-        if mx - 1 >= 0 and (mx - 1, my) not in river_tiles:
-            bridge_tiles.add((mx - 1, my))
-        if mx + 1 < WORLD_SIZE and (mx + 1, my) not in river_tiles:
-            bridge_tiles.add((mx + 1, my))
+        # Bridge spans the full width (±1 in x) at this row
+        for dx in range(-1, 2):
+            bridge_tiles.add((mx + dx, my))
+        # E-W approach tiles just outside the tributary width
+        if mx - 2 >= 0 and (mx - 2, my) not in river_tiles:
+            bridge_tiles.add((mx - 2, my))
+        if mx + 2 < WORLD_SIZE and (mx + 2, my) not in river_tiles:
+            bridge_tiles.add((mx + 2, my))
 
-    # Bridges replace river tiles at crossings; lakes are independent
+    # Bridges replace river tiles; lakes are independent
     river_tiles -= bridge_tiles
     lake_tiles -= river_tiles
     lake_tiles -= bridge_tiles
@@ -214,7 +419,7 @@ def _generate_rivers_sync(
 
 
 async def generate_rivers(seed: int, db) -> None:
-    """Generate rivers, bridges, and source/side lakes; store in tile_overrides."""
+    """Generate rivers, bridges, and lakes; store in tile_overrides."""
     river_tiles, bridge_tiles, lake_tiles = await asyncio.to_thread(
         _generate_rivers_sync, seed
     )
