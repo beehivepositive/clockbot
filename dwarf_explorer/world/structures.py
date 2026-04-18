@@ -123,7 +123,43 @@ def _path_worm(
     return path
 
 
-def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
+def _group_caves(
+    cave_positions: list[tuple[int, int]],
+    rng: random.Random,
+    max_group_size: int = 3,
+    max_link_dist: float = 45.0,
+) -> list[list[tuple[int, int]]]:
+    """Group nearby cave tiles into shared cave systems.
+
+    Tiles within max_link_dist of each other (and not yet grouped) are joined
+    into one system of up to max_group_size entrances.
+    """
+    remaining = list(range(len(cave_positions)))
+    rng.shuffle(remaining)
+    used: set[int] = set()
+    groups: list[list[tuple[int, int]]] = []
+
+    for i in remaining:
+        if i in used:
+            continue
+        pos = cave_positions[i]
+        group = [pos]
+        used.add(i)
+
+        for j in remaining:
+            if j in used or len(group) >= max_group_size:
+                continue
+            other = cave_positions[j]
+            if math.hypot(other[0] - pos[0], other[1] - pos[1]) <= max_link_dist:
+                group.append(other)
+                used.add(j)
+
+        groups.append(group)
+
+    return groups
+
+
+def _generate_structures_sync(seed: int) -> tuple[list[tuple[int, int, str]], list[list[tuple[int, int]]]]:
     """Synchronously compute all structure placements (excludes village paths).
 
     Returns list of (x, y, tile_type).
@@ -170,10 +206,12 @@ def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
             overrides.append((x, y, 'shrine'))
             found += 1
 
-    # --- Caves (4-8): walkable tile adjacent to mountain ---
-    cave_count = rng.randint(4, 8)
+    # --- Caves (10-16 tiles): walkable tile adjacent to mountain ---
+    # Higher count because nearby tiles will be grouped into shared cave systems
+    cave_count = rng.randint(10, 16)
     found = 0
-    for _ in range(1200):
+    cave_positions: list[tuple[int, int]] = []
+    for _ in range(2000):
         if found >= cave_count:
             break
         x = rng.randint(1, WORLD_SIZE - 2)
@@ -183,6 +221,7 @@ def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
         biome = get_biome(x, y, seed)
         if biome in WALKABLE_TILES and _is_adjacent_to(x, y, seed, 'mountain'):
             overrides.append((x, y, 'cave'))
+            cave_positions.append((x, y))
             found += 1
 
     # --- Ruins (3-5): single tile on walkable terrain ---
@@ -199,7 +238,8 @@ def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
             overrides.append((x, y, 'ruins'))
             found += 1
 
-    return overrides
+    cave_groups = _group_caves(cave_positions, rng)
+    return overrides, cave_groups
 
 
 def _generate_village_paths_sync(
@@ -287,35 +327,42 @@ async def place_structures(seed: int, db) -> None:
 
     Order: base structures → bridges (already done) → inter-village paths.
     """
+    from dwarf_explorer.world.caves import create_cave_system
+
     # 1. Base structures
-    overrides = await asyncio.to_thread(_generate_structures_sync, seed)
+    overrides, cave_groups = await asyncio.to_thread(_generate_structures_sync, seed)
     if overrides:
         await db.executemany(
             "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
             overrides,
         )
 
-    # 2. Collect village positions from what we just placed
+    # 2. Pre-generate cave systems (grouped overworld tiles → shared interior)
+    for group in cave_groups:
+        await create_cave_system(seed, group, db)
+
+    # 3. Collect village positions from what we just placed
     village_positions = [(x, y) for x, y, t in overrides if t == 'village']
 
-    # 3. Fetch bridge positions from DB (placed before structures)
+    # 4. Fetch bridge positions from DB (placed before structures)
     bridge_rows = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'bridge'"
     )
     bridge_positions = [(r["world_x"], r["world_y"]) for r in bridge_rows]
 
-    # 4. Existing path tiles (so worms stop at them)
+    # 5. Existing path tiles (so worms stop at them)
     path_rows = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'path'"
     )
     existing_paths = {(r["world_x"], r["world_y"]) for r in path_rows}
 
-    # 5. River tiles (to avoid during path generation)
+    # 6. River tiles (to avoid during path generation)
     river_rows = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
     )
     river_tiles = {(r["world_x"], r["world_y"]) for r in river_rows}
 
+    # 7. Generate inter-village/bridge paths
     if village_positions or bridge_positions:
         path_overrides = await asyncio.to_thread(
             _generate_village_paths_sync,
