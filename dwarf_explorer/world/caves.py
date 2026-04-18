@@ -6,7 +6,7 @@ import random
 
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
-    CAVE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
+    CAVE_WALKABLE, INTERIOR_VIEWPORT_SIZE, INTERIOR_VIEWPORT_CENTER, WORLD_SIZE,
     WALKABLE_TILES, CHEST_LOOT,
 )
 from dwarf_explorer.world.generator import TileData
@@ -326,7 +326,7 @@ async def open_chest(cave_id: int, local_x: int, local_y: int, db) -> dict:
 async def load_cave_viewport(
     cave_id: int, center_x: int, center_y: int, db
 ) -> list[list[TileData]]:
-    half  = VIEWPORT_CENTER
+    half  = INTERIOR_VIEWPORT_CENTER
     x_min = center_x - half
     y_min = center_y - half
     rows  = await db.fetch_all(
@@ -337,9 +337,9 @@ async def load_cave_viewport(
     )
     tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
     grid: list[list[TileData]] = []
-    for local_y in range(VIEWPORT_SIZE):
+    for local_y in range(INTERIOR_VIEWPORT_SIZE):
         row: list[TileData] = []
-        for local_x in range(VIEWPORT_SIZE):
+        for local_x in range(INTERIOR_VIEWPORT_SIZE):
             cx = x_min + local_x
             cy = y_min + local_y
             row.append(TileData(terrain=tile_map.get((cx, cy), "stone_wall"),

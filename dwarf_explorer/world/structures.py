@@ -71,17 +71,22 @@ def _path_worm(
     for _ in range(max_steps):
         ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
         iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
-        if not path or (ix, iy) != path[-1]:
-            # Widen diagonals: fill corner tile to prevent gaps
-            if path:
-                lx, ly = path[-1]
-                step_dx, step_dy = ix - lx, iy - ly
-                if abs(step_dx) == 1 and abs(step_dy) == 1:
-                    path.append((lx + step_dx, ly))
-            path.append((ix, iy))
 
-        # Check adjacency to stop tiles
-        if len(path) > 3:
+        # Only add tile to path if it's not on water/river
+        if not _is_blocked(x, y, seed, avoid_tiles):
+            if not path or (ix, iy) != path[-1]:
+                # Widen diagonals: fill corner tile to prevent gaps
+                if path:
+                    lx, ly = path[-1]
+                    step_dx, step_dy = ix - lx, iy - ly
+                    if abs(step_dx) == 1 and abs(step_dy) == 1:
+                        path.append((lx + step_dx, ly))
+                path.append((ix, iy))
+
+        # Only check stop tiles after travelling far enough from the start
+        # (avoids immediately connecting back to the village's own path ring)
+        dist_from_start = math.hypot(ix - start[0], iy - start[1])
+        if len(path) > 3 and dist_from_start > 15:
             for nx, ny in [(ix+1,iy),(ix-1,iy),(ix,iy+1),(ix,iy-1)]:
                 if (nx, ny) in stop_tiles:
                     path.append((nx, ny))

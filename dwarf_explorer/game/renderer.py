@@ -1,6 +1,6 @@
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
-    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, VIEWPORT_SIZE, VIEWPORT_CENTER,
+    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -24,7 +24,11 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
 
 
 def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "") -> str:
-    """Render a 9×9 viewport with player at centre, plus status bar."""
+    """Render viewport with player at centre, plus status bar.
+
+    Viewport size is inferred from the grid dimensions so caves/buildings
+    (7×7) and wilderness (9×9) both render correctly.
+    """
     if player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
     elif player.in_village:
@@ -34,11 +38,14 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     else:
         location = "wilderness"
 
+    vp_size   = len(grid)
+    vp_center = vp_size // 2
+
     lines: list[str] = []
-    for row_y in range(VIEWPORT_SIZE):
+    for row_y in range(vp_size):
         row_emojis: list[str] = []
-        for col_x in range(VIEWPORT_SIZE):
-            if col_x == VIEWPORT_CENTER and row_y == VIEWPORT_CENTER:
+        for col_x in range(vp_size):
+            if col_x == vp_center and row_y == vp_center:
                 row_emojis.append(ENTITY_EMOJI["player"])
             else:
                 row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))

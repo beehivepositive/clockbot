@@ -5,6 +5,11 @@ WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 224
 VIEWPORT_SIZE = 9
 VIEWPORT_CENTER = 4  # 0-indexed center of 9x9 grid
 
+# Smaller viewport for cave/building interiors (custom emojis are ~26 chars each;
+# 9×9 would exceed Discord's 2000-char content limit)
+INTERIOR_VIEWPORT_SIZE = 7
+INTERIOR_VIEWPORT_CENTER = 3
+
 SPAWN_X = WORLD_SIZE // 2  # 112
 SPAWN_Y = WORLD_SIZE // 2
 
