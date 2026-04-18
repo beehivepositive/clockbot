@@ -3,284 +3,126 @@ from __future__ import annotations
 import asyncio
 import math
 import random
-from dataclasses import dataclass, field
 
 from dwarf_explorer.config import WORLD_SIZE
 from dwarf_explorer.world.noise import fbm
-from dwarf_explorer.world.terrain import get_biome
-
-_WATER_BIOMES = {"deep_water", "shallow_water"}
 
 
-@dataclass
-class StreamSegment:
-    """One segment of the river tree."""
-    start: tuple[float, float]
-    end: tuple[float, float]
-    path: list[tuple[int, int]]
-    order: int = 1
-    angle: float = 0.0
-    children: list[StreamSegment] = field(default_factory=list)
+# ── Perlin Worm core ──────────────────────────────────────────────────────────
+
+def _worm_noise_angle(wx: float, wy: float, seed: int) -> float:
+    """Sample fBm at world position → rotation angle in radians (-π/2..+π/2).
+
+    Sampling at world position (not step index) gives geographic coherence:
+    worms crossing the same region curve the same way.
+    freq=0.5 → ~8 direction reversals over the 224-tile map.
+    """
+    n = fbm(wx * 0.5, wy * 0.5, seed, octaves=3)  # 0..1
+    return math.radians((n - 0.5) * 180.0)         # -90°..+90°
 
 
-def _is_water(x: int, y: int, seed: int) -> bool:
-    return get_biome(x, y, seed) in _WATER_BIOMES
+def _rotate2(dx: float, dy: float, angle: float) -> tuple[float, float]:
+    c, s = math.cos(angle), math.sin(angle)
+    return (c * dx - s * dy, s * dx + c * dy)
 
 
-def _place_lake(lake_tiles: set, cx: int, cy: int, radius: int) -> None:
-    r2 = radius * radius
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            if dx * dx + dy * dy <= r2:
-                tx, ty = cx + dx, cy + dy
-                if 0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE:
-                    lake_tiles.add((tx, ty))
+def _norm2(dx: float, dy: float) -> tuple[float, float]:
+    m = math.hypot(dx, dy)
+    return (dx / m, dy / m) if m > 1e-9 else (1.0, 0.0)
 
 
-def _local_flow_direction(path: list[tuple[int, int]], idx: int) -> float:
-    """Compute local flow angle from neighboring path tiles."""
-    i0 = max(0, idx - 2)
-    i1 = min(len(path) - 1, idx + 2)
-    if i0 == i1:
-        return 0.0
-    dx = path[i1][0] - path[i0][0]
-    dy = path[i1][1] - path[i0][1]
-    return math.atan2(dy, dx)
-
-
-def _generate_main_trunk(rng: random.Random, seed: int) -> StreamSegment:
-    """Generate the main river trunk flowing W->E across the map."""
-    start_y = rng.randint(40, WORLD_SIZE - 40)
-    path: list[tuple[int, int]] = []
-
-    fy = float(start_y)
-    momentum = 0.0
-
-    for x in range(WORLD_SIZE):
-        cy = max(8, min(WORLD_SIZE - 8, int(round(fy))))
-        if not path or (x, cy) != path[-1]:
-            path.append((x, cy))
-
-        noise_val = fbm(x * 0.015, fy * 0.015, seed, octaves=2)
-        momentum = momentum * 0.80 + (noise_val - 0.5) * 0.8
-        momentum = max(-1.5, min(1.5, momentum))
-        fy += momentum
-        fy = max(8.0, min(WORLD_SIZE - 8.0, fy))
-
-    end = path[-1] if path else (WORLD_SIZE - 1, start_y)
-    return StreamSegment(
-        start=(0, start_y),
-        end=end,
-        path=path,
-        angle=0.0,
-    )
-
-
-def _walk_upstream(
-    start_x: float, start_y: float,
-    angle: float,
+def _worm_path(
+    start: tuple[float, float],
+    start_angle: float,
     length: int,
-    rng: random.Random,
     seed: int,
-    noise_idx: int,
-    occupied: set[tuple[int, int]],
-    meander_amp: float = 2.0,
+    convergence: tuple[float, float] | None = None,
+    conv_weight: float = 0.5,
 ) -> list[tuple[int, int]]:
-    """Walk upstream from a junction point in the given angle direction."""
+    """
+    Perlin Worm: each step, sample fBm at world position → rotate direction
+    by that angle → (optionally) blend toward convergence target → step forward.
+
+    conv_weight 0.5 means half noise-driven, half aimed at target.
+    """
+    x, y = float(start[0]), float(start[1])
+    dx, dy = _norm2(math.cos(start_angle), math.sin(start_angle))
     path: list[tuple[int, int]] = []
-    x, y = start_x, start_y
-    dx = math.cos(angle)
-    dy = math.sin(angle)
-    perp_dx = -dy
-    perp_dy = dx
 
-    momentum = 0.0
-
-    for step in range(length * 2):
-        ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
-        iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
-
-        if not (0 <= ix < WORLD_SIZE and 0 <= iy < WORLD_SIZE):
-            break
+    for _ in range(length * 4):
         if len(path) >= length:
             break
 
+        ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
+        iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
         if not path or (ix, iy) != path[-1]:
-            if len(path) > 8 and (ix, iy) in occupied:
-                break
             path.append((ix, iy))
 
-        noise_val = fbm(step * 0.07, noise_idx * 17.3 + 3.1, seed ^ 0xBEEF, octaves=2)
-        momentum = momentum * 0.6 + (noise_val - 0.5) * meander_amp
-        momentum = max(-3.0, min(3.0, momentum))
+        # Rotate direction by noise-derived angle at this world position
+        rot = _worm_noise_angle(x, y, seed)
+        dx, dy = _norm2(*_rotate2(dx, dy, rot))
 
-        x += dx + perp_dx * momentum * 0.3
-        y += dy + perp_dy * momentum * 0.3
-        x = max(1.0, min(WORLD_SIZE - 2.0, x))
-        y = max(1.0, min(WORLD_SIZE - 2.0, y))
+        if convergence is not None:
+            tx, ty = convergence[0] - x, convergence[1] - y
+            dist = math.hypot(tx, ty)
+            if dist < 1.5:
+                break
+            tdx, tdy = _norm2(tx, ty)
+            w = conv_weight
+            dx, dy = _norm2(dx * (1 - w) + tdx * w, dy * (1 - w) + tdy * w)
+
+        x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
+        y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
 
     return path
 
 
-def _compute_tributary_angle(parent_angle: float, side: int, rng: random.Random) -> float:
-    """Compute upstream walking angle for a tributary.
+# ── Main trunk (noise-sampled Y, guaranteed W→E crossing) ────────────────────
 
-    side: +1 = clockwise, -1 = counterclockwise from parent direction.
-    Offset is 60-100 degrees, producing natural acute junction angles.
+def _trunk_path(start_y: float, seed: int) -> list[tuple[int, int]]:
+    """Main river trunk: visits every x-column W→E with noise-driven Y meanders.
+
+    Samples fBm at each column to offset Y smoothly around the starting position.
+    Guaranteed to cross the full map width with no gaps.
     """
-    offset = rng.uniform(math.radians(60), math.radians(100))
-    return parent_angle + side * offset
+    path: list[tuple[int, int]] = []
+    for x in range(WORLD_SIZE):
+        # Coarse noise: big sweeping bends (~40-tile amplitude)
+        coarse = fbm(x * 0.5, 0.0, seed, octaves=2)
+        # Fine noise: small wiggles
+        fine   = fbm(x * 1.8, 0.0, seed ^ 0xABCD, octaves=2)
+        offset = (coarse - 0.5) * 80.0 + (fine - 0.5) * 15.0
+        y = int(round(max(15.0, min(WORLD_SIZE - 15.0, start_y + offset))))
+        if not path or (x, y) != path[-1]:
+            path.append((x, y))
+    return path
 
 
-def _populate_tributaries(
-    segment: StreamSegment,
-    depth: int,
-    max_depth: int,
-    rng: random.Random,
-    seed: int,
-    occupied: set[tuple[int, int]],
-) -> None:
-    """Recursively spawn tributaries along a stream segment."""
-    if depth >= max_depth or len(segment.path) < 10:
-        return
+# ── Rendering ─────────────────────────────────────────────────────────────────
 
-    if depth == 0:
-        num_tribs = rng.randint(5, 8)
-        min_spacing = 20
-    elif depth == 1:
-        num_tribs = rng.randint(2, 4)
-        min_spacing = 12
-    else:
-        num_tribs = rng.randint(1, 2)
-        min_spacing = 8
-
-    if num_tribs == 0:
-        return
-
-    # Avoid first/last ~15% of the path
-    margin = max(1, len(segment.path) // 7)
-    start_idx = margin
-    end_idx = len(segment.path) - margin
-    available = end_idx - start_idx
-    if available < min_spacing:
-        return
-
-    # Evenly spaced junctions with jitter
-    spacing = available / (num_tribs + 1)
-    junction_indices: list[int] = []
-    for i in range(num_tribs):
-        ideal = start_idx + int(spacing * (i + 1))
-        jitter = rng.randint(-int(spacing * 0.3), int(spacing * 0.3))
-        idx = max(start_idx, min(end_idx - 1, ideal + jitter))
-        if junction_indices and abs(idx - junction_indices[-1]) < min_spacing:
-            continue
-        junction_indices.append(idx)
-
-    side = rng.choice([-1, 1])
-
-    for t_idx, j_idx in enumerate(junction_indices):
-        jx, jy = segment.path[j_idx]
-        parent_local_angle = _local_flow_direction(segment.path, j_idx)
-        trib_angle = _compute_tributary_angle(parent_local_angle, side, rng)
-        side *= -1
-
-        if depth == 0:
-            trib_length = rng.randint(40, 80)
-        elif depth == 1:
-            trib_length = rng.randint(20, 45)
-        else:
-            trib_length = rng.randint(12, 30)
-
-        trib_path = _walk_upstream(
-            float(jx), float(jy),
-            trib_angle, trib_length,
-            rng, seed,
-            noise_idx=depth * 100 + t_idx,
-            occupied=occupied,
-            meander_amp=1.5 + depth * 0.5,
-        )
-
-        if len(trib_path) < 5:
-            continue
-
-        child = StreamSegment(
-            start=(jx, jy),
-            end=trib_path[-1] if trib_path else (jx, jy),
-            path=trib_path,
-            angle=trib_angle,
-        )
-        segment.children.append(child)
-
-        for px, py in trib_path:
-            occupied.add((px, py))
-
-        _populate_tributaries(child, depth + 1, max_depth, rng, seed, occupied)
+def _paint(path: list[tuple[int, int]], hw: int, tiles: set[tuple[int, int]]) -> None:
+    """Chebyshev-distance brush along path — no gaps regardless of angle."""
+    for px, py in path:
+        for dy in range(-hw, hw + 1):
+            for dx in range(-hw, hw + 1):
+                nx, ny = px + dx, py + dy
+                if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+                    tiles.add((nx, ny))
 
 
-def _compute_strahler_order(segment: StreamSegment) -> int:
-    """Compute Strahler stream order bottom-up."""
-    if not segment.children:
-        segment.order = 1
-        return 1
+# ── Lakes ─────────────────────────────────────────────────────────────────────
 
-    child_orders = [_compute_strahler_order(c) for c in segment.children]
-    max_order = max(child_orders)
-    count_max = child_orders.count(max_order)
-
-    segment.order = max_order + 1 if count_max >= 2 else max_order
-    return segment.order
+def _place_lake(tiles: set[tuple[int, int]], cx: int, cy: int, r: int) -> None:
+    r2 = r * r
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            if dx * dx + dy * dy <= r2:
+                tx, ty = cx + dx, cy + dy
+                if 0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE:
+                    tiles.add((tx, ty))
 
 
-def _widen_perpendicular(
-    px: int, py: int,
-    flow_angle: float,
-    half_width: int,
-    river_tiles: set[tuple[int, int]],
-    seed: int,
-) -> None:
-    """Add tiles perpendicular to flow direction at (px, py)."""
-    perp_dx = -math.sin(flow_angle)
-    perp_dy = math.cos(flow_angle)
-
-    for w in range(-half_width, half_width + 1):
-        nx = int(round(px + perp_dx * w))
-        ny = int(round(py + perp_dy * w))
-        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
-            if not _is_water(nx, ny, seed):
-                river_tiles.add((nx, ny))
-
-
-def _render_stream_tree(
-    segment: StreamSegment,
-    river_tiles: set[tuple[int, int]],
-    seed: int,
-) -> None:
-    """Recursively render all stream segments with width based on order."""
-    order = segment.order
-
-    for i, (px, py) in enumerate(segment.path):
-        flow_angle = _local_flow_direction(segment.path, i)
-
-        if order >= 4:
-            hw = 2 if (i % 15 < 5) else 1
-            _widen_perpendicular(px, py, flow_angle, hw, river_tiles, seed)
-        elif order == 3:
-            _widen_perpendicular(px, py, flow_angle, 1, river_tiles, seed)
-        elif order == 2:
-            _widen_perpendicular(px, py, flow_angle, 1, river_tiles, seed)
-        else:
-            if not _is_water(px, py, seed):
-                river_tiles.add((px, py))
-
-    for child in segment.children:
-        _render_stream_tree(child, river_tiles, seed)
-
-
-def _collect_segments(segment: StreamSegment, result: list[StreamSegment]) -> None:
-    result.append(segment)
-    for child in segment.children:
-        _collect_segments(child, result)
-
+# ── Bridges ───────────────────────────────────────────────────────────────────
 
 def _place_bridge_at(
     path: list[tuple[int, int]],
@@ -288,103 +130,172 @@ def _place_bridge_at(
     river_tiles: set[tuple[int, int]],
     bridge_tiles: set[tuple[int, int]],
 ) -> None:
-    """Place a bridge crossing at a specific path index."""
+    """Replace river tiles in a 5×5 area with a bridge and add cardinal approach tiles."""
     if idx < 0 or idx >= len(path):
         return
-
     px, py = path[idx]
-    flow_angle = _local_flow_direction(path, idx)
-    perp_dx = -math.sin(flow_angle)
-    perp_dy = math.cos(flow_angle)
 
-    # Replace river tiles across the full width with bridge tiles
-    for w in range(-4, 5):
-        nx = int(round(px + perp_dx * w))
-        ny = int(round(py + perp_dy * w))
-        if (nx, ny) in river_tiles:
-            bridge_tiles.add((nx, ny))
-            river_tiles.discard((nx, ny))
+    for dy in range(-2, 3):
+        for dx in range(-2, 3):
+            nx, ny = px + dx, py + dy
+            if (nx, ny) in river_tiles:
+                bridge_tiles.add((nx, ny))
+                river_tiles.discard((nx, ny))
 
-    # Approach tiles on each side of the bridge
-    for sign in [-1, 1]:
-        for dist in range(1, 6):
-            ax = int(round(px + perp_dx * sign * dist))
-            ay = int(round(py + perp_dy * sign * dist))
+    for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+        for dist in range(1, 5):
+            ax, ay = px + ddx * dist, py + ddy * dist
             if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
                 if (ax, ay) not in river_tiles and (ax, ay) not in bridge_tiles:
                     bridge_tiles.add((ax, ay))
                     break
 
 
-def _place_bridges(
-    root: StreamSegment,
+def _add_bridges(
+    paths_orders: list[tuple[list[tuple[int, int]], int]],
     river_tiles: set[tuple[int, int]],
     bridge_tiles: set[tuple[int, int]],
     rng: random.Random,
 ) -> None:
-    """Place bridges along the stream tree."""
-    all_segments: list[StreamSegment] = []
-    _collect_segments(root, all_segments)
-
-    for seg in all_segments:
-        if seg.order >= 3:
-            interval = rng.randint(30, 45)
+    """Bridges only on order≥3 streams (trunk + major tribs).
+    Trunk: every 35-50 tiles. Major tribs: one bridge at midpoint.
+    """
+    for path, order in paths_orders:
+        if order < 3:
+            continue
+        if order >= 4:
+            # Trunk: evenly spaced bridges
+            interval = rng.randint(35, 50)
             idx = interval
-            while idx < len(seg.path) - 5:
-                _place_bridge_at(seg.path, idx, river_tiles, bridge_tiles)
-                idx += rng.randint(30, 45)
-        elif seg.order == 2 and len(seg.path) >= 10:
-            mid = len(seg.path) // 2
-            _place_bridge_at(seg.path, mid, river_tiles, bridge_tiles)
+            while idx < len(path) - 5:
+                _place_bridge_at(path, idx, river_tiles, bridge_tiles)
+                idx += rng.randint(35, 50)
+        else:
+            # Major tributaries: one bridge at midpoint
+            if len(path) >= 10:
+                _place_bridge_at(path, len(path) // 2, river_tiles, bridge_tiles)
 
 
-def _place_source_lakes(
-    segment: StreamSegment,
-    lake_tiles: set[tuple[int, int]],
-    rng: random.Random,
-) -> None:
-    """Place source lakes at headwater endpoints recursively."""
-    if not segment.children:
-        if segment.path:
-            ex, ey = segment.path[-1]
-            at_edge = ex <= 5 or ex >= WORLD_SIZE - 5 or ey <= 5 or ey >= WORLD_SIZE - 5
-            if not at_edge and rng.random() < 0.6:
-                _place_lake(lake_tiles, ex, ey, rng.randint(2, 4))
-    else:
-        for child in segment.children:
-            _place_source_lakes(child, lake_tiles, rng)
-
+# ── World generation ──────────────────────────────────────────────────────────
 
 def _generate_rivers_sync(
     seed: int,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
-    """Generate a Mississippi-style recursive drainage network."""
+    """
+    Hybrid Perlin Worm drainage network.
+
+    Trunk:           noise-sampled Y per column → guaranteed W→E, visible bends.
+    Major tribs:     Perlin Worms from N/S edges converging onto trunk junctions.
+    Sub-tribs:       Perlin Worms from off-path positions converging onto trib junctions.
+    Bridges:         on trunk + major tribs only (3-tile-wide streams), ~30-45 tiles apart.
+    Source lakes:    at worm start points (60% chance, if within map bounds).
+    """
     rng = random.Random(seed ^ 0xDEAD_BEEF)
+    dir_seed = (seed ^ 0xF00D_CAFE) & 0xFFFFFFFF
 
     river_tiles: set[tuple[int, int]] = set()
     bridge_tiles: set[tuple[int, int]] = set()
     lake_tiles: set[tuple[int, int]] = set()
+    paths_orders: list[tuple[list[tuple[int, int]], int]] = []
 
-    # 1. Main trunk W->E
-    root = _generate_main_trunk(rng, seed)
-    occupied: set[tuple[int, int]] = set(root.path)
+    # ── 1. Main trunk ─────────────────────────────────────────────────────────
+    start_y = float(rng.randint(55, WORLD_SIZE - 55))
+    trunk = _trunk_path(start_y, seed)
 
-    # 2. Recursive tributaries (max depth 3)
-    _populate_tributaries(root, 0, 3, rng, seed, occupied)
+    _paint(trunk, hw=1, tiles=river_tiles)  # 3-tile base width
+    # Extra width in the middle half: 5 tiles
+    mid_s = len(trunk) // 4
+    mid_e = 3 * len(trunk) // 4
+    _paint(trunk[mid_s:mid_e], hw=2, tiles=river_tiles)
+    paths_orders.append((trunk, 4))
 
-    # 3. Strahler order
-    _compute_strahler_order(root)
+    # ── 2. Major tributaries (Perlin Worms from N/S edges → trunk) ───────────
+    num_major = rng.randint(5, 7)
+    spacing = max(1, len(trunk) // (num_major + 1))
+    major_tribs: list[list[tuple[int, int]]] = []
+    side = rng.choice([-1, 1])  # -1=north, +1=south; alternates
 
-    # 4. Render tiles with widths
-    _render_stream_tree(root, river_tiles, seed)
+    for i in range(num_major):
+        j_idx = spacing * (i + 1) + rng.randint(-spacing // 3, spacing // 3)
+        j_idx = max(5, min(len(trunk) - 5, j_idx))
+        jx, jy = trunk[j_idx]
 
-    # 5. Bridges
-    _place_bridges(root, river_tiles, bridge_tiles, rng)
+        sx = float(max(2, min(WORLD_SIZE - 2, jx + rng.randint(-30, 30))))
+        if side < 0:
+            sy = float(rng.randint(2, 15))
+            start_ang = math.pi * 0.5    # heading south toward trunk
+        else:
+            sy = float(rng.randint(WORLD_SIZE - 15, WORLD_SIZE - 2))
+            start_ang = -math.pi * 0.5   # heading north toward trunk
 
-    # 6. Source lakes at headwaters
-    _place_source_lakes(root, lake_tiles, rng)
+        trib_seed = (dir_seed + 0x1000 + i) & 0xFFFFFFFF
+        trib = _worm_path(
+            start=(sx, sy),
+            start_angle=start_ang,
+            length=100,
+            seed=trib_seed,
+            convergence=(float(jx), float(jy)),
+            conv_weight=0.50,
+        )
+        if len(trib) >= 8:
+            _paint(trib, hw=1, tiles=river_tiles)
+            paths_orders.append((trib, 3))
+            major_tribs.append(trib)
 
-    # Clean up overlaps
+            ox, oy = trib[0]
+            at_edge = ox <= 4 or ox >= WORLD_SIZE - 4 or oy <= 4 or oy >= WORLD_SIZE - 4
+            if not at_edge and rng.random() < 0.55:
+                _place_lake(lake_tiles, ox, oy, rng.randint(2, 4))
+
+        side *= -1
+
+    # ── 3. Sub-tributaries (Perlin Worms from sides → trib junctions) ─────────
+    for t_i, trib in enumerate(major_tribs):
+        num_sub = rng.randint(2, 4)
+        sub_spacing = max(1, len(trib) // (num_sub + 1))
+        sub_side = rng.choice([-1, 1])
+
+        for s_i in range(num_sub):
+            j_idx = sub_spacing * (s_i + 1) + rng.randint(-sub_spacing // 3, sub_spacing // 3)
+            j_idx = max(2, min(len(trib) - 2, j_idx))
+            jx, jy = trib[j_idx]
+
+            # Perpendicular to parent trib at junction
+            i0 = max(0, j_idx - 2)
+            i1 = min(len(trib) - 1, j_idx + 2)
+            parent_ang = math.atan2(trib[i1][1] - trib[i0][1],
+                                    trib[i1][0] - trib[i0][0])
+            perp_ang = parent_ang + sub_side * rng.uniform(
+                math.radians(70), math.radians(110))
+
+            dist_out = rng.randint(20, 45)
+            sx = max(2.0, min(WORLD_SIZE - 2.0, jx + math.cos(perp_ang) * dist_out))
+            sy = max(2.0, min(WORLD_SIZE - 2.0, jy + math.sin(perp_ang) * dist_out))
+            back_ang = math.atan2(jy - sy, jx - sx)
+
+            sub_seed = (dir_seed + 0x2000 + t_i * 20 + s_i) & 0xFFFFFFFF
+            sub = _worm_path(
+                start=(sx, sy),
+                start_angle=back_ang,
+                length=55,
+                seed=sub_seed,
+                convergence=(float(jx), float(jy)),
+                conv_weight=0.55,
+            )
+            if len(sub) >= 5:
+                _paint(sub, hw=0, tiles=river_tiles)
+                paths_orders.append((sub, 2))
+
+                ox, oy = sub[0]
+                at_edge = ox <= 4 or ox >= WORLD_SIZE - 4 or oy <= 4 or oy >= WORLD_SIZE - 4
+                if not at_edge and rng.random() < 0.60:
+                    _place_lake(lake_tiles, int(ox), int(oy), rng.randint(2, 3))
+
+            sub_side *= -1
+
+    # ── 4. Bridges (trunk + major tribs only) ────────────────────────────────
+    _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
+
     lake_tiles -= river_tiles
     lake_tiles -= bridge_tiles
 
@@ -392,23 +303,25 @@ def _generate_rivers_sync(
 
 
 async def generate_rivers(seed: int, db) -> None:
-    """Generate rivers, bridges, and lakes; store in tile_overrides."""
+    """Generate rivers, bridges, and lakes; write to tile_overrides."""
     river_tiles, bridge_tiles, lake_tiles = await asyncio.to_thread(
         _generate_rivers_sync, seed
     )
-
     if river_tiles:
         await db.executemany(
-            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'river')",
+            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
+            " VALUES (?, ?, 'river')",
             [(x, y) for x, y in river_tiles],
         )
     if bridge_tiles:
         await db.executemany(
-            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'bridge')",
+            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
+            " VALUES (?, ?, 'bridge')",
             [(x, y) for x, y in bridge_tiles],
         )
     if lake_tiles:
         await db.executemany(
-            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'shallow_water')",
+            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
+            " VALUES (?, ?, 'shallow_water')",
             [(x, y) for x, y in lake_tiles],
         )
