@@ -36,7 +36,6 @@ STRUCTURE_EMOJI = {
     "village": "\U0001F3D8\uFE0F",  # 🏘️
     "ruins": "\U0001F3DA\uFE0F",    # 🏚️
     "shrine": "\u26E9\uFE0F",       # ⛩️
-    "campfire": "\U0001F525",        # 🔥
     "cave": "\U0001F573\uFE0F",     # 🕳️
     "bridge": "\U0001F309",          # 🌉
 }
@@ -65,11 +64,11 @@ ITEM_EMOJI = {
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "snow", "path",
-    "village", "ruins", "shrine", "campfire", "cave", "bridge",
+    "village", "ruins", "shrine", "cave", "bridge",
 }
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "shrine", "campfire", "cave", "bridge"}
+STRUCTURE_TILES = {"village", "ruins", "shrine", "cave", "bridge"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -110,9 +109,9 @@ CHEST_LOOT = [
     (5,  100, 250, 50, 100, "sword"),
 ]
 
-CAVE_MIN_SIZE = 40
-CAVE_MAX_SIZE = 80
-CAVE_WALK_STEPS = 350
+CAVE_MIN_SIZE = 60
+CAVE_MAX_SIZE = 120
+CAVE_WALK_STEPS = 500
 
 # --- Village System ---
 
@@ -217,7 +216,6 @@ TILE_COLORS = {
     "village": (200, 160, 60),
     "ruins": (120, 100, 80),
     "shrine": (200, 50, 50),
-    "campfire": (255, 100, 0),
     "cave": (60, 40, 30),
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),

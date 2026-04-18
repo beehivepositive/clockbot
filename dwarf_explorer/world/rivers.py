@@ -241,13 +241,29 @@ def _place_bridge_at(
     if (bx_hi, by_hi) in river_tiles or (bx_lo, by_lo) in river_tiles:
         return
 
-    # Place bridge tiles from bank to bank (inclusive)
+    # Collect bridge tile positions bank-to-bank (inclusive)
+    bridge_line: list[tuple[int, int]] = []
     for t in range(-(t_lo + 1), t_hi + 2):
         nx = int(round(px + pdx * t))
         ny = int(round(py + pdy * t))
         if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
-            river_tiles.discard((nx, ny))
-            bridge_tiles.add((nx, ny))
+            bridge_line.append((nx, ny))
+
+    # Add staircase connectors for diagonal steps so 4-dir movement can cross
+    connectors: list[tuple[int, int]] = []
+    for i in range(1, len(bridge_line)):
+        ax, ay = bridge_line[i - 1]
+        bx, by = bridge_line[i]
+        if abs(bx - ax) == 1 and abs(by - ay) == 1:
+            # Diagonal step — fill both corner tiles to guarantee walkability
+            if 0 <= ax < WORLD_SIZE and 0 <= by < WORLD_SIZE:
+                connectors.append((ax, by))
+            if 0 <= bx < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+                connectors.append((bx, ay))
+
+    for nx, ny in bridge_line + connectors:
+        river_tiles.discard((nx, ny))
+        bridge_tiles.add((nx, ny))
 
 
 def _add_bridges(

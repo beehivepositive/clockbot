@@ -26,7 +26,6 @@ _LEGEND_ICON_ENTRIES = [
     ("cave",      "Cave",      (60,  40,  30),  "filled_circle"),
     ("shrine",    "Shrine",    (200, 50,  50),  "cross"),
     ("ruins",     "Ruins",     (120, 100, 80),  "outline_square"),
-    ("campfire",  "Campfire",  (255, 100, 0),   "dot"),
 ]
 
 _LEGEND_SWATCH = 12

@@ -12,6 +12,8 @@ _STRUCTURE_SEED_OFFSET = 2000
 _PATH_SEED_OFFSET      = 3000
 _SPAWN_BUFFER = 12
 
+_WATER_BIOMES = {"deep_water", "shallow_water"}
+
 
 def _near_spawn(x: int, y: int) -> bool:
     cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
@@ -37,39 +39,45 @@ def _rotate2(dx: float, dy: float, angle: float) -> tuple[float, float]:
     return (c * dx - s * dy, s * dx + c * dy)
 
 
+def _is_blocked(x: float, y: float, seed: int, avoid_tiles: set[tuple[int, int]]) -> bool:
+    """Return True if this position is water or a river tile."""
+    ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
+    iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
+    if (ix, iy) in avoid_tiles:
+        return True
+    return get_biome(ix, iy, seed) in _WATER_BIOMES
+
+
 def _path_worm(
     start: tuple[int, int],
     end: tuple[int, int],
     seed: int,
     stop_tiles: set[tuple[int, int]],
-    max_steps: int = 500,
+    avoid_tiles: set[tuple[int, int]],
+    max_steps: int = 700,
 ) -> list[tuple[int, int]]:
-    """Perlin-worm path from start toward end with strong meanders.
+    """Perlin-worm path from start toward end that navigates around water.
 
-    Uses a persistent worm direction that rotates via fBm noise (±80°), with
-    only moderate pull toward the destination (40%).  This produces natural
-    S-curve roads that still reliably reach their target.
-
-    Diagonal steps are widened: when the worm moves diagonally, one corner tile
-    is also added so the path looks consistently 1 tile wide around bends.
+    Uses persistent worm direction with ±80° fBm rotation and 40% convergence.
+    Diagonal steps are widened to prevent gaps.
+    Avoids water biomes and river tiles.
     """
     x, y = float(start[0]), float(start[1])
     ex, ey = float(end[0]), float(end[1])
-    freq = 0.15   # lower frequency = broader meander waves
+    freq = 0.15
     path: list[tuple[int, int]] = []
-    # Start direction: toward target
     dx, dy = _norm2(ex - x, ey - y)
 
     for _ in range(max_steps):
         ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
         iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
         if not path or (ix, iy) != path[-1]:
-            # Widen diagonals: if we moved diagonally, also paint one corner tile
+            # Widen diagonals: fill corner tile to prevent gaps
             if path:
                 lx, ly = path[-1]
                 step_dx, step_dy = ix - lx, iy - ly
                 if abs(step_dx) == 1 and abs(step_dy) == 1:
-                    path.append((lx + step_dx, ly))   # fill corner so no gaps
+                    path.append((lx + step_dx, ly))
             path.append((ix, iy))
 
         # Check adjacency to stop tiles
@@ -83,14 +91,34 @@ def _path_worm(
 
         # Worm direction: persistent momentum + Perlin rotation + convergence pull
         n = fbm(x * freq, y * freq, seed, octaves=3)
-        rot = math.radians((n - 0.5) * 160.0)   # ±80° strong meander
+        rot = math.radians((n - 0.5) * 160.0)   # ±80°
         ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
         tdx, tdy = _norm2(ex - x, ey - y)
-        # 40% toward target, 60% worm noise — meanders but still converges
         dx, dy = _norm2(0.40 * tdx + 0.60 * ndx, 0.40 * tdy + 0.60 * ndy)
 
-        x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
-        y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
+        # Compute candidate next position; steer around water
+        new_x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
+        new_y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
+
+        if _is_blocked(new_x, new_y, seed, avoid_tiles):
+            # Try rotating by increasing angles to find a non-water step
+            deflected = False
+            for try_deg in [45, -45, 90, -90, 135, -135, 180]:
+                rdx, rdy = _norm2(*_rotate2(dx, dy, math.radians(try_deg)))
+                tx = max(0.0, min(WORLD_SIZE - 1.0, x + rdx))
+                ty = max(0.0, min(WORLD_SIZE - 1.0, y + rdy))
+                if not _is_blocked(tx, ty, seed, avoid_tiles):
+                    dx, dy = rdx, rdy
+                    new_x, new_y = tx, ty
+                    deflected = True
+                    break
+            if not deflected:
+                # Surrounded by water — keep convergence direction and push through
+                new_x = max(0.0, min(WORLD_SIZE - 1.0, x + tdx))
+                new_y = max(0.0, min(WORLD_SIZE - 1.0, y + tdy))
+                dx, dy = tdx, tdy
+
+        x, y = new_x, new_y
 
     return path
 
@@ -157,42 +185,18 @@ def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
             overrides.append((x, y, 'cave'))
             found += 1
 
-    # --- Campfires (8-12): open terrain, minimum 20 tiles apart ---
-    campfire_count = rng.randint(8, 12)
-    campfire_positions: list[tuple[int, int]] = []
-    found = 0
-    for _ in range(600):
-        if found >= campfire_count:
-            break
-        x = rng.randint(1, WORLD_SIZE - 2)
-        y = rng.randint(1, WORLD_SIZE - 2)
-        if _near_spawn(x, y):
-            continue
-        biome = get_biome(x, y, seed)
-        if biome not in ('plains', 'grass', 'forest'):
-            continue
-        if any(abs(x - cx) + abs(y - cy) < 20 for cx, cy in campfire_positions):
-            continue
-        overrides.append((x, y, 'campfire'))
-        campfire_positions.append((x, y))
-        found += 1
-
-    # --- Ruins (3-5): 2x2 clusters on walkable terrain ---
+    # --- Ruins (3-5): single tile on walkable terrain ---
     ruins_count = rng.randint(3, 5)
     found = 0
     for _ in range(500):
         if found >= ruins_count:
             break
-        x = rng.randint(1, WORLD_SIZE - 3)
-        y = rng.randint(1, WORLD_SIZE - 3)
+        x = rng.randint(1, WORLD_SIZE - 2)
+        y = rng.randint(1, WORLD_SIZE - 2)
         if _near_spawn(x, y):
             continue
         if get_biome(x, y, seed) in WALKABLE_TILES:
-            for dy in range(2):
-                for dx in range(2):
-                    rx, ry = x + dx, y + dy
-                    if 0 <= rx < WORLD_SIZE and 0 <= ry < WORLD_SIZE:
-                        overrides.append((rx, ry, 'ruins'))
+            overrides.append((x, y, 'ruins'))
             found += 1
 
     return overrides
@@ -203,10 +207,13 @@ def _generate_village_paths_sync(
     village_positions: list[tuple[int, int]],
     bridge_positions: list[tuple[int, int]],
     existing_path_tiles: set[tuple[int, int]],
+    river_tiles: set[tuple[int, int]],
 ) -> list[tuple[int, int, str]]:
-    """Generate Perlin-worm paths connecting each village to its nearest
-    neighbour (village or bridge).
+    """Generate Perlin-worm paths connecting villages and bridges into a network.
 
+    Each village connects to its 2 nearest targets (other villages or bridges).
+    Each bridge connects to its nearest target to ensure bridge-to-bridge links.
+    Paths navigate around water/river tiles.
     Returns list of (x, y, 'path') overrides.
     """
     rng = random.Random(seed + _PATH_SEED_OFFSET)
@@ -214,9 +221,25 @@ def _generate_village_paths_sync(
     overrides: list[tuple[int, int, str]] = []
 
     all_targets = list(village_positions) + list(bridge_positions)
+    # Water/river tiles to avoid
+    avoid_tiles: set[tuple[int, int]] = set(river_tiles)
 
+    def _connect(start: tuple[int, int], end: tuple[int, int], pseed: int) -> None:
+        worm = _path_worm(
+            start=start,
+            end=end,
+            seed=pseed,
+            stop_tiles=path_tiles,
+            avoid_tiles=avoid_tiles,
+            max_steps=700,
+        )
+        for px, py in worm:
+            if (px, py) not in path_tiles:
+                path_tiles.add((px, py))
+                overrides.append((px, py, 'path'))
+
+    # --- Villages: connect to 2 nearest targets ---
     for i, (vx, vy) in enumerate(village_positions):
-        # Find nearest other target that is not this village itself
         candidates = [(math.hypot(tx - vx, ty - vy), (tx, ty))
                       for (tx, ty) in all_targets
                       if (tx, ty) != (vx, vy)]
@@ -224,25 +247,37 @@ def _generate_village_paths_sync(
             continue
         candidates.sort()
 
-        # Connect to closest AND second-closest (if within 2× the distance)
         targets_to_connect = [candidates[0][1]]
         if len(candidates) > 1 and candidates[1][0] < candidates[0][0] * 2.0:
             targets_to_connect.append(candidates[1][1])
 
         path_seed = (seed + _PATH_SEED_OFFSET + i * 7) & 0xFFFFFFFF
         for target in targets_to_connect:
-            worm = _path_worm(
-                start=(vx, vy),
-                end=target,
-                seed=path_seed,
-                stop_tiles=path_tiles,
-                max_steps=500,
-            )
-            for px, py in worm:
-                if (px, py) not in path_tiles:
-                    path_tiles.add((px, py))
-                    overrides.append((px, py, 'path'))
+            _connect((vx, vy), target, path_seed)
             path_seed = (path_seed + 1337) & 0xFFFFFFFF
+
+    # --- Bridges: connect each bridge to its nearest target ---
+    for j, (bx, by) in enumerate(bridge_positions):
+        candidates = [(math.hypot(tx - bx, ty - by), (tx, ty))
+                      for (tx, ty) in all_targets
+                      if (tx, ty) != (bx, by)]
+        if not candidates:
+            continue
+        candidates.sort()
+        nearest_dist, nearest = candidates[0]
+        if nearest_dist > 120:   # skip very distant bridges
+            continue
+
+        # Only connect if bridge isn't already adjacent to existing path
+        already_connected = any(
+            (bx + ddx, by + ddy) in path_tiles
+            for ddx, ddy in [(0,1),(0,-1),(1,0),(-1,0)]
+        )
+        if already_connected:
+            continue
+
+        bridge_seed = (seed + _PATH_SEED_OFFSET + 5000 + j * 13) & 0xFFFFFFFF
+        _connect((bx, by), nearest, bridge_seed)
 
     return overrides
 
@@ -275,10 +310,16 @@ async def place_structures(seed: int, db) -> None:
     )
     existing_paths = {(r["world_x"], r["world_y"]) for r in path_rows}
 
-    if village_positions:
+    # 5. River tiles (to avoid during path generation)
+    river_rows = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
+    )
+    river_tiles = {(r["world_x"], r["world_y"]) for r in river_rows}
+
+    if village_positions or bridge_positions:
         path_overrides = await asyncio.to_thread(
             _generate_village_paths_sync,
-            seed, village_positions, bridge_positions, existing_paths,
+            seed, village_positions, bridge_positions, existing_paths, river_tiles,
         )
         if path_overrides:
             await db.executemany(
