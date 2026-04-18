@@ -158,12 +158,13 @@ CREATE TABLE IF NOT EXISTS village_entrances (
     UNIQUE(world_x, world_y)
 );
 
--- Houses inside villages
+-- Buildings inside villages (houses, church, bank, shop)
 CREATE TABLE IF NOT EXISTS houses (
-    house_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    village_id   INTEGER NOT NULL REFERENCES villages(village_id),
-    width        INTEGER NOT NULL,
-    height       INTEGER NOT NULL
+    house_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    village_id    INTEGER NOT NULL REFERENCES villages(village_id),
+    building_type TEXT    NOT NULL DEFAULT 'house',
+    width         INTEGER NOT NULL,
+    height        INTEGER NOT NULL
 );
 
 -- House interior tiles
@@ -185,6 +186,22 @@ CREATE TABLE IF NOT EXISTS house_entrances (
     village_x    INTEGER NOT NULL,
     village_y    INTEGER NOT NULL,
     UNIQUE(village_id, village_x, village_y)
+);
+
+-- Player equipment (weapon, boots slots)
+CREATE TABLE IF NOT EXISTS equipment (
+    user_id  INTEGER NOT NULL REFERENCES players(user_id),
+    slot     TEXT    NOT NULL,
+    item_id  TEXT    NOT NULL,
+    PRIMARY KEY (user_id, slot)
+);
+
+-- Bank storage per player
+CREATE TABLE IF NOT EXISTS bank_items (
+    user_id  INTEGER NOT NULL REFERENCES players(user_id),
+    item_id  TEXT    NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (user_id, item_id)
 );
 
 -- Indexes

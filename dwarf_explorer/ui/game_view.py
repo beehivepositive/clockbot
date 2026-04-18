@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import discord
 
-from dwarf_explorer.config import DIRECTIONS
+from dwarf_explorer.config import DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world,
@@ -10,17 +10,32 @@ from dwarf_explorer.database.repositories import (
     update_player_cave_state,
     update_player_village_state,
     update_player_house_state,
+    update_player_sprint,
+    update_player_stats,
     get_cave_entrance_exit,
+    equip_item,
+    get_inventory,
+    add_to_inventory,
+    remove_from_inventory,
+    get_bank_items,
+    bank_deposit,
+    bank_withdraw,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, open_chest
 from dwarf_explorer.world.villages import (
-    get_or_create_village, get_or_create_house,
+    get_or_create_village, get_building_at,
     load_village_viewport, load_village_single_tile,
-    load_house_viewport, load_house_single_tile,
+    load_building_viewport, load_building_single_tile,
 )
-from dwarf_explorer.game.player import can_move, can_move_village, can_move_house
-from dwarf_explorer.game.renderer import render_grid
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building
+from dwarf_explorer.game.renderer import (
+    render_grid, render_inventory, render_bank, render_shop,
+)
+
+# ── In-memory UI state (transient per user) ───────────────────────────────────
+# {user_id: {"type": str, "selected": int, "bank_view": str}}
+_ui_state: dict[int, dict] = {}
 
 
 def _custom_id(guild_id: int, user_id: int, action: str) -> str:
@@ -28,22 +43,34 @@ def _custom_id(guild_id: int, user_id: int, action: str) -> str:
 
 
 class GameView(discord.ui.View):
-    """Main game view with movement and action buttons."""
+    """Main game view.  Shows sprint button when boots are equipped."""
 
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int, boots_equipped: bool = False,
+                 sprinting: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
-        self._build_buttons()
+        self._build_buttons(boots_equipped, sprinting)
 
-    def _build_buttons(self):
-        # Row 0: spacer, up, spacer, interact, map
-        spacer1 = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(self.guild_id, self.user_id, "sp1"),
-            row=0,
-        )
+    def _build_buttons(self, boots_equipped: bool, sprinting: bool):
+        sprint_label = "\U0001F97E"  # 🥾
+        sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
+
+        if boots_equipped:
+            sprint_btn = discord.ui.Button(
+                style=sprint_style,
+                label=sprint_label,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sprint"),
+                row=0,
+            )
+        else:
+            sprint_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sp1"),
+                row=0,
+            )
+
         up_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,
             emoji="\u2B06\uFE0F",
@@ -70,8 +97,6 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "map"),
             row=0,
         )
-
-        # Row 1: left, down, right, inventory, help
         left_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,
             emoji="\u2B05\uFE0F",
@@ -104,328 +129,456 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "help"),
             row=1,
         )
-
-        for btn in [spacer1, up_btn, spacer2, interact_btn, map_btn,
-                     left_btn, down_btn, right_btn, inventory_btn, help_btn]:
+        for btn in [sprint_btn, up_btn, spacer2, interact_btn, map_btn,
+                    left_btn, down_btn, right_btn, inventory_btn, help_btn]:
             self.add_item(btn)
 
 
-async def handle_move(interaction: discord.Interaction, guild_id: int, user_id: int, direction: str) -> None:
-    """Process a movement button press."""
+class InventoryView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        for label, emoji, action in [
+            ("◀", None, "inv_prev"),
+            ("▶", None, "inv_next"),
+            ("⚔️ Equip", None, "inv_equip"),
+            ("❌ Close", None, "inv_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, action),
+                row=0,
+            ))
+
+
+class BankView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, view_mode: str = "player"):
+        super().__init__(timeout=None)
+        action = "bank_withdraw" if view_mode == "bank" else "bank_deposit"
+        action_label = "⬆ Withdraw" if view_mode == "bank" else "⬇ Deposit"
+        for label, act in [
+            ("◀", "bank_prev"),
+            ("▶", "bank_next"),
+            (action_label, action),
+            ("🔄 Switch", "bank_switch"),
+            ("❌ Close", "bank_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, act),
+                row=0,
+            ))
+
+
+class ShopView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        for label, action in [
+            ("◀", "shop_prev"),
+            ("▶", "shop_next"),
+            ("💰 Buy", "shop_buy"),
+            ("❌ Close", "shop_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, action),
+                row=0,
+            ))
+
+
+# ── Movement ──────────────────────────────────────────────────────────────────
+
+def _game_view(guild_id: int, user_id: int, player: Player) -> GameView:
+    return GameView(guild_id, user_id,
+                    boots_equipped=(player.boots is not None),
+                    sprinting=player.sprinting)
+
+
+async def _move_steps(
+    player: Player, direction: str, steps: int, seed: int, db,
+    guild_id: int, user_id: int,
+) -> tuple[str, discord.ui.View]:
+    """Move player 1 or 2 tiles, returning (content, view)."""
+    dx, dy = DIRECTIONS[direction]
+
+    if player.in_house:
+        for _ in range(steps):
+            nx, ny = player.house_x + dx, player.house_y + dy
+            target = await load_building_single_tile(player.house_id, nx, ny, db)
+            if target.terrain == "b_door":
+                # Auto-exit house on walking into door
+                vx, vy = player.house_vx, player.house_vy
+                player.in_house = False
+                player.house_id = None
+                player.village_x = vx
+                player.village_y = vy
+                await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+                await update_player_village_state(
+                    db, user_id, True, player.village_id,
+                    vx, vy, player.village_wx, player.village_wy,
+                )
+                grid = await load_village_viewport(player.village_id, vx, vy, db)
+                return render_grid(grid, player, "You step outside."), _game_view(guild_id, user_id, player)
+            allowed, reason = can_move_building(target)
+            if not allowed:
+                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+            player.house_x, player.house_y = nx, ny
+            await update_player_house_state(
+                db, user_id, True, player.house_id,
+                nx, ny, player.house_vx, player.house_vy, player.house_type,
+            )
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+
+    elif player.in_village:
+        for _ in range(steps):
+            nx, ny = player.village_x + dx, player.village_y + dy
+            target = await load_village_single_tile(player.village_id, nx, ny, db)
+            if target.terrain == "void":
+                wx, wy = player.village_wx, player.village_wy
+                player.in_village = False
+                player.village_id = None
+                player.world_x, player.world_y = wx, wy
+                await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
+                await update_player_position(db, user_id, wx, wy)
+                grid = await load_viewport(wx, wy, seed, db)
+                return render_grid(grid, player, "You leave the village."), _game_view(guild_id, user_id, player)
+            allowed, reason = can_move_village(target)
+            if not allowed:
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+            player.village_x, player.village_y = nx, ny
+            await update_player_village_state(
+                db, user_id, True, player.village_id,
+                nx, ny, player.village_wx, player.village_wy,
+            )
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+
+    elif player.in_cave:
+        for _ in range(steps):
+            nx, ny = player.cave_x + dx, player.cave_y + dy
+            target = await load_cave_single_tile(player.cave_id, nx, ny, db)
+            allowed, reason = can_move(player, direction, target)
+            if not allowed:
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+            player.cave_x, player.cave_y = nx, ny
+            await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+
+    else:
+        for _ in range(steps):
+            nx, ny = player.world_x + dx, player.world_y + dy
+            target = await load_single_tile(nx, ny, seed, db)
+            allowed, reason = can_move(player, direction, target)
+            if not allowed:
+                grid = await load_viewport(player.world_x, player.world_y, seed, db)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+            player.world_x, player.world_y = nx, ny
+            await update_player_position(db, user_id, nx, ny)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+
+
+async def handle_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    dx, dy = DIRECTIONS[direction]
+    steps = 2 if (player.sprinting and player.boots is not None) else 1
+    content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
+    await interaction.response.edit_message(content=content, view=view)
+
+
+# ── Sprint toggle ─────────────────────────────────────────────────────────────
+
+async def handle_sprint(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if player.boots is None:
+        await interaction.response.send_message("You need hiking boots to sprint.", ephemeral=True)
+        return
+
+    player.sprinting = not player.sprinting
+    await update_player_sprint(db, user_id, player.sprinting)
+
+    status = "Sprint ON \U0001F3C3" if player.sprinting else "Sprint OFF"
+    if player.in_house:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    elif player.in_village:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    elif player.in_cave:
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    else:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, status)
+    view = _game_view(guild_id, user_id, player)
+    await interaction.response.edit_message(content=content, view=view)
+
+
+# ── Interact ──────────────────────────────────────────────────────────────────
+
+async def handle_interact(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if player.in_house:
-        # --- House movement ---
-        nx, ny = player.house_x + dx, player.house_y + dy
-        target_tile = await load_house_single_tile(player.house_id, nx, ny, db)
+        htile = await load_building_single_tile(player.house_id, player.house_x, player.house_y, db)
 
-        if target_tile.terrain == "house_door":
-            # Step through door → back to village at the door's village position
+        if htile.terrain == "b_door":
             vx, vy = player.house_vx, player.house_vy
             player.in_house = False
-            player.house_id = None
-            player.village_x = vx
-            player.village_y = vy
             await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+            player.village_x, player.village_y = vx, vy
             await update_player_village_state(
                 db, user_id, True, player.village_id,
                 vx, vy, player.village_wx, player.village_wy,
             )
             grid = await load_village_viewport(player.village_id, vx, vy, db)
-            content = render_grid(grid, player, status_msg="You step outside.")
+            content = render_grid(grid, player, "You step outside.")
+
+        elif htile.terrain == "b_bank_npc" and player.house_type == "bank":
+            # Enter bank UI
+            return await _open_bank(interaction, guild_id, user_id, player, db)
+
+        elif htile.terrain == "b_shop_npc" and player.house_type == "shop":
+            # Enter shop UI
+            return await _open_shop(interaction, guild_id, user_id, player)
+
+        elif htile.terrain in ("b_bed", "b_stove", "b_table", "b_bookshelf"):
+            msgs = {
+                "b_bed": "A cozy bed. You feel rested.",
+                "b_stove": "A warm hearth. Something smells delicious.",
+                "b_table": "A sturdy wooden table.",
+                "b_bookshelf": "Rows of dusty books.",
+            }
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, msgs.get(htile.terrain, "..."))
+
+        elif htile.terrain == "b_altar" and player.house_type == "church":
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "You kneel before the altar. You feel at peace.")
+
+        elif htile.terrain == "b_priest":
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "\"May the light guide your path, traveller.\"")
+
+        elif htile.terrain == "b_safe":
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "A locked vault. Speak with the banker.")
+
         else:
-            allowed, reason = can_move_house(target_tile)
-            if allowed:
-                player.house_x = nx
-                player.house_y = ny
-                await update_player_house_state(
-                    db, user_id, True, player.house_id, nx, ny,
-                    player.house_vx, player.house_vy,
-                )
-                grid = await load_house_viewport(player.house_id, nx, ny, db)
-                content = render_grid(grid, player)
-            else:
-                grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
-                content = render_grid(grid, player, status_msg=reason)
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "Nothing to interact with here.")
+
+        view = _game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(content=content, view=view)
 
     elif player.in_village:
-        # --- Village movement ---
-        nx, ny = player.village_x + dx, player.village_y + dy
-        target_tile = await load_village_single_tile(player.village_id, nx, ny, db)
+        vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
 
-        if target_tile.terrain == "void":
-            # Walked off the edge → exit to wilderness
-            wx, wy = player.village_wx, player.village_wy
-            player.in_village = False
-            player.village_id = None
-            player.world_x = wx
-            player.world_y = wy
-            await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
-            await update_player_position(db, user_id, wx, wy)
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, status_msg="You leave the village.")
-        else:
-            allowed, reason = can_move_village(target_tile)
-            if allowed:
-                player.village_x = nx
-                player.village_y = ny
-                await update_player_village_state(
-                    db, user_id, True, player.village_id,
-                    nx, ny, player.village_wx, player.village_wy,
+        if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop"):
+            result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
+            if result:
+                house_id, btype, hx, hy = result
+                player.in_house = True
+                player.house_id = house_id
+                player.house_x = hx
+                player.house_y = hy
+                player.house_vx = player.village_x
+                player.house_vy = player.village_y
+                player.house_type = btype
+                await update_player_house_state(
+                    db, user_id, True, house_id, hx, hy,
+                    player.village_x, player.village_y, btype,
                 )
-                grid = await load_village_viewport(player.village_id, nx, ny, db)
-                content = render_grid(grid, player)
+                labels = {"house": "house", "church": "church", "bank": "bank", "shop": "shop"}
+                grid = await load_building_viewport(house_id, hx, hy, db)
+                content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
             else:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-                content = render_grid(grid, player, status_msg=reason)
+                content = render_grid(grid, player, "Nothing to interact with here.")
+
+        elif vtile.terrain == "vil_well":
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            content = render_grid(grid, player, "A stone well. The water is cool and clear.")
+
+        else:
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            content = render_grid(grid, player, "Nothing to interact with here.")
+
+        view = _game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(content=content, view=view)
 
     elif player.in_cave:
-        # --- Cave movement ---
-        nx, ny = player.cave_x + dx, player.cave_y + dy
-        target_tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
-        allowed, reason = can_move(player, direction, target_tile)
-
-        if allowed:
-            player.cave_x = nx
-            player.cave_y = ny
-            await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
-            grid = await load_cave_viewport(player.cave_id, nx, ny, db)
-            content = render_grid(grid, player)
-        else:
-            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            content = render_grid(grid, player, status_msg=reason)
-
-    else:
-        # --- Wilderness movement ---
-        nx, ny = player.world_x + dx, player.world_y + dy
-        target_tile = await load_single_tile(nx, ny, seed, db)
-        allowed, reason = can_move(player, direction, target_tile)
-
-        if allowed:
-            player.world_x = nx
-            player.world_y = ny
-            await update_player_position(db, user_id, nx, ny)
-            grid = await load_viewport(nx, ny, seed, db)
-            content = render_grid(grid, player)
-        else:
-            grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            content = render_grid(grid, player, status_msg=reason)
-
-    view = GameView(guild_id, user_id)
-    await interaction.response.edit_message(content=content, view=view)
-
-
-async def handle_interact(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
-    """Process the interact button — cave entry/exit and future interactions."""
-    db = await get_database(guild_id)
-    seed = await get_or_create_world(db, guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
-    if player.in_cave:
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
 
         if cave_tile.terrain == "cave_entrance":
-            # Exit the cave back to wilderness
             result = await get_cave_entrance_exit(db, player.cave_id, player.cave_x, player.cave_y)
             if result:
                 wx, wy = result
-                player.world_x = wx
-                player.world_y = wy
+                player.world_x, player.world_y = wx, wy
                 player.in_cave = False
                 player.cave_id = None
                 await update_player_position(db, user_id, wx, wy)
                 await update_player_cave_state(db, user_id, False, None, 0, 0)
                 grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, status_msg="You exit the cave.")
+                content = render_grid(grid, player, "You exit the cave.")
             else:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                content = render_grid(grid, player, status_msg="Nothing to interact with here.")
+                content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif cave_tile.terrain == "cave_chest":
-            # Open the chest and award loot
-            from dwarf_explorer.database.repositories import update_player_stats
             loot = await open_chest(player.cave_id, player.cave_x, player.cave_y, db)
-            new_gold = player.gold + loot["gold"]
-            new_xp = player.xp + loot["xp"]
-            await update_player_stats(db, user_id, gold=new_gold, xp=new_xp)
-            player.gold = new_gold
-            player.xp = new_xp
-            if loot["item"]:
-                msg = f"You open the chest! Found {loot['gold']} gold, {loot['xp']} XP, and a {loot['item']}!"
-            else:
-                msg = f"You open the chest! Found {loot['gold']} gold and {loot['xp']} XP."
+            player.gold += loot["gold"]
+            player.xp += loot["xp"]
+            await update_player_stats(db, user_id, gold=player.gold, xp=player.xp)
+            msg = (f"You open the chest! Found {loot['gold']} gold, {loot['xp']} XP"
+                   + (f", and a {loot['item']}!" if loot["item"] else "."))
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            content = render_grid(grid, player, status_msg=msg)
+            content = render_grid(grid, player, msg)
 
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            content = render_grid(grid, player, status_msg="Nothing to interact with here.")
-    elif player.in_village:
-        # --- Interacting inside a village ---
-        vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
-        if vtile.terrain == "vil_door":
-            # Enter house
-            result = await get_or_create_house(
-                player.village_id, player.village_x, player.village_y, db
-            )
-            if result:
-                house_id, hentry_x, hentry_y = result
-                player.in_house = True
-                player.house_id = house_id
-                player.house_x = hentry_x
-                player.house_y = hentry_y
-                player.house_vx = player.village_x
-                player.house_vy = player.village_y
-                await update_player_house_state(
-                    db, user_id, True, house_id,
-                    hentry_x, hentry_y,
-                    player.village_x, player.village_y,
-                )
-                grid = await load_house_viewport(house_id, hentry_x, hentry_y, db)
-                content = render_grid(grid, player, status_msg="You enter the house.")
-            else:
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-                content = render_grid(grid, player, status_msg="Nothing to interact with here.")
-        elif vtile.terrain == "vil_well":
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-            content = render_grid(grid, player, status_msg="A stone well. The water is cool and clear.")
-        else:
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-            content = render_grid(grid, player, status_msg="Nothing to interact with here.")
+            content = render_grid(grid, player, "Nothing to interact with here.")
 
-    elif player.in_house:
-        # --- Interacting inside a house ---
-        htile = await load_house_single_tile(player.house_id, player.house_x, player.house_y, db)
-        if htile.terrain == "house_door":
-            # Exit house → village
-            vx, vy = player.house_vx, player.house_vy
-            player.in_house = False
-            player.house_id = None
-            player.village_x = vx
-            player.village_y = vy
-            await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
-            await update_player_village_state(
-                db, user_id, True, player.village_id,
-                vx, vy, player.village_wx, player.village_wy,
-            )
-            grid = await load_village_viewport(player.village_id, vx, vy, db)
-            content = render_grid(grid, player, status_msg="You step outside.")
-        elif htile.terrain == "house_stove":
-            grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, status_msg="A warm stove. Something smells good.")
-        elif htile.terrain == "house_bed":
-            grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, status_msg="A cozy bed. You feel rested.")
-        elif htile.terrain == "house_table":
-            grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, status_msg="A sturdy wooden table.")
-        else:
-            grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, status_msg="Nothing to interact with here.")
+        view = _game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(content=content, view=view)
 
     else:
-        # --- Wilderness interact ---
         tile = await load_single_tile(player.world_x, player.world_y, seed, db)
         if tile.structure == "cave":
-            cave_id, entrance_x, entrance_y = await get_or_create_cave(
-                seed, player.world_x, player.world_y, db
-            )
+            cave_id, ex, ey = await get_or_create_cave(seed, player.world_x, player.world_y, db)
             player.in_cave = True
             player.cave_id = cave_id
-            player.cave_x = entrance_x
-            player.cave_y = entrance_y
-            await update_player_cave_state(db, user_id, True, cave_id, entrance_x, entrance_y)
-            grid = await load_cave_viewport(cave_id, entrance_x, entrance_y, db)
-            content = render_grid(grid, player, status_msg="You enter the cave...")
+            player.cave_x, player.cave_y = ex, ey
+            await update_player_cave_state(db, user_id, True, cave_id, ex, ey)
+            grid = await load_cave_viewport(cave_id, ex, ey, db)
+            content = render_grid(grid, player, "You enter the cave...")
+
         elif tile.structure == "village":
-            village_id, ventry_x, ventry_y = await get_or_create_village(
-                seed, player.world_x, player.world_y, db
-            )
+            vid, vx, vy = await get_or_create_village(seed, player.world_x, player.world_y, db)
             player.in_village = True
-            player.village_id = village_id
-            player.village_x = ventry_x
-            player.village_y = ventry_y
-            player.village_wx = player.world_x
-            player.village_wy = player.world_y
+            player.village_id = vid
+            player.village_x, player.village_y = vx, vy
+            player.village_wx, player.village_wy = player.world_x, player.world_y
             await update_player_village_state(
-                db, user_id, True, village_id,
-                ventry_x, ventry_y,
-                player.world_x, player.world_y,
+                db, user_id, True, vid, vx, vy, player.world_x, player.world_y,
             )
-            grid = await load_village_viewport(village_id, ventry_x, ventry_y, db)
-            content = render_grid(grid, player, status_msg="You enter the village.")
+            grid = await load_village_viewport(vid, vx, vy, db)
+            content = render_grid(grid, player, "You enter the village.")
+
         else:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            content = render_grid(grid, player, status_msg="Nothing to interact with here.")
+            content = render_grid(grid, player, "Nothing to interact with here.")
 
-    view = GameView(guild_id, user_id)
+        view = _game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(content=content, view=view)
+
+
+# ── Inventory handlers ────────────────────────────────────────────────────────
+
+async def handle_inventory(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state[user_id] = {"type": "inventory", "selected": 0}
+    items = await get_inventory(db, user_id)
+    equipped = {}
+    if player.weapon:
+        equipped["weapon"] = player.weapon
+    if player.boots:
+        equipped["boots"] = player.boots
+    content = render_inventory(items, 0, equipped)
+    view = InventoryView(guild_id, user_id)
     await interaction.response.edit_message(content=content, view=view)
 
 
-async def handle_map(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
-    """Generate and send a world map image as an ephemeral message."""
-    await interaction.response.defer(ephemeral=True)
+async def handle_inv_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    new_sel = (state["selected"] + delta) % max(1, len(items))
+    _ui_state[user_id] = {"type": "inventory", "selected": new_sel}
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    content = render_inventory(items, new_sel, equipped)
+    await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
 
+
+async def handle_inv_equip(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    sel = state.get("selected", 0)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+
+    if sel >= len(items):
+        content = render_inventory(items, sel, equipped) + "\n*(No item selected)*"
+        await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+        return
+
+    item_id = items[sel]["item_id"]
+    # Find equip slot from shop catalog or EQUIP_BONUSES
+    from dwarf_explorer.config import SHOP_CATALOG
+    slot = None
+    for entry in SHOP_CATALOG:
+        if entry["id"] == item_id:
+            slot = entry.get("equip_slot")
+            break
+
+    if not slot:
+        content = render_inventory(items, sel, equipped) + f"\n*{item_id} cannot be equipped.*"
+        await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+        return
+
+    await equip_item(db, user_id, slot, item_id)
+    # Apply stat bonuses
+    bonuses = EQUIP_BONUSES.get(item_id, {})
+    if bonuses:
+        await update_player_stats(db, user_id, **bonuses)
+    # Reload player
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    content = render_inventory(items, sel, equipped) + f"\n*Equipped {item_id}!*"
+    await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+
+
+async def handle_inv_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
-    from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(seed, db, player.world_x, player.world_y)
-    file = discord.File(buf, filename="world_map.png")
-    await interaction.followup.send(file=file, ephemeral=True)
-
-
-async def handle_help(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
-    """Show help/legend screen."""
-    from dwarf_explorer.config import TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI
-
-    lines = ["**Dwarf Explorer - Help**", ""]
-    lines.append("**Controls:**")
-    lines.append("Arrow buttons = Move | Interact = Pick up / use / enter caves")
-    lines.append("Inventory = View items | Map = View world map")
-    lines.append("")
-    lines.append("**Terrain:**")
-    for name, emoji in TERRAIN_EMOJI.items():
-        if name == "void":
-            continue
-        walkable = "\u2705" if name in ("sand", "plains", "grass", "forest", "hills", "snow", "path") else "\u274C"
-        lines.append(f"{emoji} {name.replace('_', ' ').title()} {walkable}")
-    lines.append("")
-    lines.append("**Structures:**")
-    for name, emoji in STRUCTURE_EMOJI.items():
-        lines.append(f"{emoji} {name.replace('_', ' ').title()}")
-    lines.append("")
-    lines.append("**Items:**")
-    for name, emoji in ITEM_EMOJI.items():
-        lines.append(f"{emoji} {name.replace('_', ' ').title()}")
-
-    content = "\n".join(lines)
-
-    view = discord.ui.View(timeout=None)
-    back_btn = discord.ui.Button(
-        style=discord.ButtonStyle.primary,
-        label="Back to Map",
-        emoji="\U0001F5FA\uFE0F",
-        custom_id=f"dex:{guild_id}:{user_id}:help_back",
-        row=0,
-    )
-    view.add_item(back_btn)
-    await interaction.response.edit_message(content=content, view=view)
-
-
-async def handle_help_back(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
-    """Return from help to the map view."""
-    db = await get_database(guild_id)
-    seed = await get_or_create_world(db, guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
+    _ui_state.pop(user_id, None)
     if player.in_house:
-        grid = await load_house_viewport(player.house_id, player.house_x, player.house_y, db)
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
     elif player.in_cave:
@@ -433,6 +586,237 @@ async def handle_help_back(interaction: discord.Interaction, guild_id: int, user
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player)
+    await interaction.response.edit_message(content=content, view=view)
 
-    view = GameView(guild_id, user_id)
+
+# ── Shop handlers ─────────────────────────────────────────────────────────────
+
+async def _open_shop(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
+) -> None:
+    _ui_state[user_id] = {"type": "shop", "selected": 0}
+    content = render_shop(SHOP_CATALOG, 0, player.gold)
+    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+
+
+async def handle_shop_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    new_sel = (state["selected"] + delta) % len(SHOP_CATALOG)
+    _ui_state[user_id] = {"type": "shop", "selected": new_sel}
+    content = render_shop(SHOP_CATALOG, new_sel, player.gold)
+    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+
+
+async def handle_shop_buy(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    sel = state.get("selected", 0)
+    item = SHOP_CATALOG[sel]
+    if player.gold < item["price"]:
+        content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Not enough gold! Need {item['price']}.*"
+        await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+        return
+    player.gold -= item["price"]
+    await update_player_stats(db, user_id, gold=player.gold)
+    await add_to_inventory(db, user_id, item["id"])
+    content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Purchased {item['name']}!*"
+    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+
+
+async def handle_shop_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await handle_inv_close(interaction, guild_id, user_id)
+
+
+# ── Bank handlers ─────────────────────────────────────────────────────────────
+
+async def _open_bank(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    player: Player, db,
+) -> None:
+    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": "player"}
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    content = render_bank(player_items, bank_items, 0, "player", equipped)
+    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+
+
+async def handle_bank_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
+    bv = state.get("bank_view", "player")
+    source = await get_inventory(db, user_id) if bv == "player" else await get_bank_items(db, user_id)
+    total = max(1, (10 if bv == "player" else 36))
+    new_sel = (state["selected"] + delta) % total
+    _ui_state[user_id] = {"type": "bank", "selected": new_sel, "bank_view": bv}
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    content = render_bank(player_items, bank_items, new_sel, bv, equipped)
+    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, bv))
+
+
+async def handle_bank_switch(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
+    new_view = "bank" if state.get("bank_view") == "player" else "player"
+    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": new_view}
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    content = render_bank(player_items, bank_items, 0, new_view, equipped)
+    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, new_view))
+
+
+async def handle_bank_deposit(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
+    sel = state.get("selected", 0)
+    items = await get_inventory(db, user_id)
+    if sel >= len(items):
+        player_items = items
+        bank_items = await get_bank_items(db, user_id)
+        equipped = {}
+        if player.weapon: equipped["weapon"] = player.weapon
+        if player.boots:  equipped["boots"] = player.boots
+        content = render_bank(player_items, bank_items, sel, "player", equipped) + "\n*(Empty slot)*"
+        await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+        return
+    item_id = items[sel]["item_id"]
+    ok = await bank_deposit(db, user_id, item_id)
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    new_sel = min(sel, max(0, len(player_items) - 1))
+    _ui_state[user_id]["selected"] = new_sel
+    suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
+    content = render_bank(player_items, bank_items, new_sel, "player", equipped) + suffix
+    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+
+
+async def handle_bank_withdraw(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "bank"})
+    sel = state.get("selected", 0)
+    items = await get_bank_items(db, user_id)
+    if sel >= len(items):
+        player_items = await get_inventory(db, user_id)
+        bank_items = items
+        equipped = {}
+        if player.weapon: equipped["weapon"] = player.weapon
+        if player.boots:  equipped["boots"] = player.boots
+        content = render_bank(player_items, bank_items, sel, "bank", equipped) + "\n*(Empty slot)*"
+        await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "bank"))
+        return
+    item_id = items[sel]["item_id"]
+    ok = await bank_withdraw(db, user_id, item_id)
+    player_items = await get_inventory(db, user_id)
+    bank_items_new = await get_bank_items(db, user_id)
+    equipped = {}
+    if player.weapon: equipped["weapon"] = player.weapon
+    if player.boots:  equipped["boots"] = player.boots
+    new_sel = min(sel, max(0, len(bank_items_new) - 1))
+    _ui_state[user_id]["selected"] = new_sel
+    suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
+    content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped) + suffix
+    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "bank"))
+
+
+async def handle_bank_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await handle_inv_close(interaction, guild_id, user_id)
+
+
+# ── Map / Help ────────────────────────────────────────────────────────────────
+
+async def handle_map(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await interaction.response.defer(ephemeral=True)
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    from dwarf_explorer.world.world_map import generate_world_map
+    buf = await generate_world_map(seed, db, player.world_x, player.world_y)
+    file = discord.File(buf, filename="world_map.png")
+    await interaction.followup.send(file=file, ephemeral=True)
+
+
+async def handle_help(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    from dwarf_explorer.config import TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI
+    lines = ["**Dwarf Explorer — Help**", "",
+             "**Controls:**",
+             "Arrow buttons = Move  |  🤚 Interact = Enter / examine / open",
+             "🥾 = Toggle sprint (needs hiking boots)  |  🎒 Inventory  |  🗺️ Map", ""]
+    lines.append("**Terrain:**")
+    for name, emoji in TERRAIN_EMOJI.items():
+        if name == "void": continue
+        walkable = "\u2705" if name in WALKABLE_WILDERNESS else "\u274C"
+        lines.append(f"{emoji} {name.replace('_',' ').title()} {walkable}")
+    lines.append("")
+    lines.append("**Structures:**")
+    for name, emoji in STRUCTURE_EMOJI.items():
+        lines.append(f"{emoji} {name.replace('_',' ').title()}")
+    content = "\n".join(lines)
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.primary, label="Back",
+        emoji="\U0001F5FA\uFE0F",
+        custom_id=f"dex:{guild_id}:{user_id}:help_back", row=0,
+    ))
+    await interaction.response.edit_message(content=content, view=view)
+
+
+WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "snow", "path"}
+
+
+async def handle_help_back(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if player.in_house:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    elif player.in_village:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    elif player.in_cave:
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    else:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player)
     await interaction.response.edit_message(content=content, view=view)

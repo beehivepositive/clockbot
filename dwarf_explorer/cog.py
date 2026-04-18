@@ -23,6 +23,8 @@ class DwarfExplorer(commands.Cog):
 
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(GameButton)
+        from dwarf_explorer.config import apply_custom_emojis
+        apply_custom_emojis(self.bot.emojis)
 
     @app_commands.command(name="explore", description="Start or resume your Dwarf Explorer adventure!")
     async def explore(self, interaction: discord.Interaction) -> None:

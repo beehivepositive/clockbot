@@ -187,25 +187,27 @@ def _place_bridge_at(
     river_tiles: set[tuple[int, int]],
     bridge_tiles: set[tuple[int, int]],
 ) -> None:
-    """Place a rectangular bridge spanning perpendicularly across the river.
+    """Place a straight rectangular bridge spanning perpendicularly across the river.
 
-    Scans perpendicular to the local flow direction to find all river tiles at
-    that cross-section, then places bridge tiles covering that span plus one
-    land tile on each side (bank-to-bank with no water gap).
+    Snaps to a pure axis (N-S or E-W) based on dominant flow direction, guaranteeing
+    a single-pixel-wide straight bridge.  Verifies both bank ends are reachable
+    (in-bounds and not also river) before placing.
     """
     if idx < 0 or idx >= len(path):
         return
     px, py = path[idx]
 
     fdx, fdy = _local_flow_dir(path, idx)
-    # Perpendicular direction (bridge runs along this axis)
-    pdx, pdy = -fdy, fdx
+    # Snap perpendicular to dominant axis so bridge is always axis-aligned
+    if abs(fdx) >= abs(fdy):
+        pdx, pdy = 0, 1   # flow mostly E-W → bridge runs N-S
+    else:
+        pdx, pdy = 1, 0   # flow mostly N-S → bridge runs E-W
 
-    # Scan ±14 tiles perp to find river extent at this cross-section
+    # Scan ±22 tiles along the perpendicular axis to find all river tiles
     river_offsets: list[int] = []
-    for t in range(-14, 15):
-        nx = int(round(px + pdx * t))
-        ny = int(round(py + pdy * t))
+    for t in range(-22, 23):
+        nx, ny = px + pdx * t, py + pdy * t
         if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
             if (nx, ny) in river_tiles:
                 river_offsets.append(t)
@@ -213,12 +215,26 @@ def _place_bridge_at(
     if not river_offsets:
         return
 
-    t_min = min(river_offsets) - 1   # +1 land tile on each bank
-    t_max = max(river_offsets) + 1
+    t_min = min(river_offsets)
+    t_max = max(river_offsets)
 
-    for t in range(t_min, t_max + 1):
-        nx = int(round(px + pdx * t))
-        ny = int(round(py + pdy * t))
+    # Bank tiles one step outside the river on each side
+    bank_min = t_min - 1
+    bank_max = t_max + 1
+
+    bx_min, by_min = px + pdx * bank_min, py + pdy * bank_min
+    bx_max, by_max = px + pdx * bank_max, py + pdy * bank_max
+
+    # Skip bridge if either bank is out of bounds or is itself river (no land to connect to)
+    if not (0 <= bx_min < WORLD_SIZE and 0 <= by_min < WORLD_SIZE):
+        return
+    if not (0 <= bx_max < WORLD_SIZE and 0 <= by_max < WORLD_SIZE):
+        return
+    if (bx_min, by_min) in river_tiles or (bx_max, by_max) in river_tiles:
+        return
+
+    for t in range(bank_min, bank_max + 1):
+        nx, ny = px + pdx * t, py + pdy * t
         if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
             river_tiles.discard((nx, ny))
             bridge_tiles.add((nx, ny))
@@ -331,11 +347,10 @@ def _generate_rivers_sync(
     # ── 4. Bridges ────────────────────────────────────────────────────────────
     _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
 
-    # ── 5. Don't overwrite natural water biomes ───────────────────────────────
+    # ── 5. Don't overwrite natural water biomes with river tiles ─────────────
+    # Bridge tiles are intentionally exempt — a bridge over a lake is still a bridge.
     river_tiles = {(x, y) for x, y in river_tiles
                    if get_biome(x, y, seed) not in _WATER_BIOMES}
-    bridge_tiles = {(x, y) for x, y in bridge_tiles
-                    if get_biome(x, y, seed) not in _WATER_BIOMES}
 
     return list(river_tiles), list(bridge_tiles), []
 

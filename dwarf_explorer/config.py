@@ -20,16 +20,16 @@ TERRAIN_EMOJI = {
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
     "river": "\U0001F30A",           # 🌊
-    "sand": "\U0001F3D6\uFE0F",     # 🏖️
-    "plains": "\U0001F33E",          # 🌾
-    "grass": "\U0001F33F",           # 🌿
+    "sand": "\U0001F3D6\uFE0F",     # 🏖️  (overridable with :sand:)
+    "plains": "\U0001F33E",          # 🌾  (overridable with :dry_grass:)
+    "grass": "\U0001F33F",           # 🌿  (overridable with :grass:)
     "forest": "\U0001F332",          # 🌲
     "dense_forest": "\U0001F333",    # 🌳
     "hills": "\u26F0\uFE0F",        # ⛰️
     "mountain": "\U0001F3D4\uFE0F", # 🏔️
     "snow": "\u2744\uFE0F",         # ❄️
     "path": "\U0001F7EB",           # 🟫
-    "void": "\u2B1B",               # ⬛ (out-of-bounds border)
+    "void": "\u2B1B",               # ⬛
 }
 
 STRUCTURE_EMOJI = {
@@ -59,6 +59,8 @@ ITEM_EMOJI = {
     "key": "\U0001F511",             # 🔑
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
+    "knife": "\U0001F5E1\uFE0F",    # 🗡️
+    "hiking_boots": "\U0001F97E",    # 🥾
 }
 
 WALKABLE_TILES = {
@@ -92,40 +94,13 @@ PLAYER_START_DEFENSE = 5
 # --- Cave System ---
 
 CAVE_EMOJI = {
-    "stone_floor": "\U0001F7EB",            # 🟫
+    "stone_floor": "\U0001F7EB",            # 🟫  (overridable with :grey_square:)
     "stone_wall": "\u2B1B",                  # ⬛
     "cave_entrance": "\U0001F573\uFE0F",    # 🕳️
-    "cave_chest": "\U0001F4E6",             # 📦
+    "cave_chest": "\U0001F4E6",             # 📦  (overridable with :chest:)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest"}
-
-# --- Village System ---
-
-VILLAGE_EMOJI = {
-    "vil_grass":  "\U0001F33F",            # 🌿
-    "vil_path":   "\U0001F7EB",            # 🟫
-    "vil_wall":   "\U0001F9F1",            # 🧱
-    "vil_door":   "\U0001F6AA",            # 🚪
-    "vil_well":   "\u26F2",               # ⛲
-    "vil_garden": "\U0001F33B",            # 🌻
-}
-
-HOUSE_EMOJI = {
-    "house_floor": "\U0001F7EB",           # 🟫
-    "house_wall":  "\U0001F9F1",           # 🧱
-    "house_door":  "\U0001F6AA",           # 🚪
-    "house_bed":   "\U0001F6CF\uFE0F",    # 🛏️
-    "house_table": "\U0001FAB5",           # 🪵
-    "house_chair": "\U0001FA91",           # 🪑
-    "house_stove": "\U0001F525",           # 🔥
-}
-
-VILLAGE_WALKABLE = {"vil_grass", "vil_path", "vil_door", "vil_garden"}
-HOUSE_WALKABLE = {"house_floor", "house_door"}
-
-VILLAGE_MIN_SIZE = 32
-VILLAGE_MAX_SIZE = 48
 
 # Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
 CHEST_LOOT = [
@@ -138,6 +113,90 @@ CHEST_LOOT = [
 CAVE_MIN_SIZE = 40
 CAVE_MAX_SIZE = 80
 CAVE_WALK_STEPS = 350
+
+# --- Village System ---
+
+VILLAGE_EMOJI = {
+    "vil_grass":   "\U0001F33F",            # 🌿
+    "vil_path":    "\U0001F7EB",            # 🟫
+    "vil_well":    "\u26F2",                # ⛲
+    "vil_garden":  "\U0001F33B",            # 🌻
+    "vil_tree":    "\U0001F332",            # 🌲
+    "vil_house":   "\U0001F3E0",            # 🏠
+    "vil_church":  "\u26EA",               # ⛪
+    "vil_bank":    "\U0001F3E6",            # 🏦
+    "vil_shop":    "\U0001F3EA",            # 🏪
+}
+
+# All building interior tiles use BUILDING_EMOJI
+BUILDING_EMOJI = {
+    # Shared floor/wall/door
+    "b_floor":       "\U0001F7EB",           # 🟫  (overridable with :grey_square:)
+    "b_wall":        "\u2B1B",               # ⬛
+    "b_door":        "\U0001F6AA",           # 🚪
+    # House furniture
+    "b_bed":         "\U0001F6CF\uFE0F",    # 🛏️
+    "b_table":       "\U0001FAB5",           # 🪵  (overridable with :table:)
+    "b_chair":       "\U0001FA91",           # 🪑
+    "b_stove":       "\U0001F525",           # 🔥  (overridable with :hearth:)
+    "b_bookshelf":   "\U0001F4DA",           # 📚
+    # Church unique
+    "b_pew":         "\U0001FA91",           # 🪑
+    "b_altar":       "\u26E9\uFE0F",        # ⛩️
+    "b_candle":      "\U0001F56F\uFE0F",    # 🕯️
+    "b_priest":      "\U0001F9D9",           # 🧙
+    # Bank unique
+    "b_counter":     "\U0001F7E6",           # 🟦
+    "b_bank_npc":    "\U0001F9D1",           # 🧑
+    "b_safe":        "\U0001F512",           # 🔒
+    # Shop unique
+    "b_shelf":       "\U0001F4E6",           # 📦
+    "b_shop_npc":    "\U0001F9D1",           # 🧑
+    "b_shop_counter":"\U0001F7E6",           # 🟦
+}
+
+VILLAGE_WALKABLE = {
+    "vil_grass", "vil_path", "vil_garden",
+    "vil_house", "vil_church", "vil_bank", "vil_shop",
+}
+
+BUILDING_WALKABLE = {
+    "b_floor", "b_door",
+    "b_priest", "b_bank_npc", "b_shop_npc",
+    "b_pew", "b_table", "b_stove", "b_bed",
+}
+
+VILLAGE_MIN_SIZE = 32
+VILLAGE_MAX_SIZE = 48
+
+# --- Items & Equipment ---
+
+SHOP_CATALOG = [
+    {
+        "id": "knife",
+        "name": "Knife",
+        "emoji": "\U0001F5E1\uFE0F",   # 🗡️
+        "price": 25,
+        "equip_slot": "weapon",
+        "description": "A sharp blade. +5 attack.",
+    },
+    {
+        "id": "hiking_boots",
+        "name": "Hiking Boots",
+        "emoji": "\U0001F97E",         # 🥾
+        "price": 50,
+        "equip_slot": "boots",
+        "description": "Sturdy boots. Enables sprinting.",
+    },
+]
+
+EQUIP_SLOTS = {"weapon", "boots"}
+
+# Equipment stat bonuses: {item_id: {stat: bonus}}
+EQUIP_BONUSES = {
+    "knife":        {"attack": 5},
+    "hiking_boots": {},
+}
 
 # --- World Map Image ---
 
@@ -163,3 +222,30 @@ TILE_COLORS = {
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),
 }
+
+
+# --- Custom Emoji Resolution ---
+
+def apply_custom_emojis(guild_emojis: list) -> None:
+    """Mutate emoji dicts to use guild custom emojis where configured.
+
+    Called once at bot startup with bot.emojis or guild.emojis.
+    Custom emoji string format: <:name:id>
+    """
+    cache = {e.name: f"<:{e.name}:{e.id}>" for e in guild_emojis}
+
+    _replace = [
+        # (emoji_dict,  tile_key,       custom_emoji_name)
+        (TERRAIN_EMOJI,  "sand",         "sand"),
+        (TERRAIN_EMOJI,  "grass",        "grass"),
+        (TERRAIN_EMOJI,  "plains",       "dry_grass"),
+        (CAVE_EMOJI,     "cave_chest",   "chest"),
+        (CAVE_EMOJI,     "stone_floor",  "grey_square"),
+        (BUILDING_EMOJI, "b_stove",      "hearth"),
+        (BUILDING_EMOJI, "b_table",      "table"),
+        (BUILDING_EMOJI, "b_floor",      "grey_square"),
+    ]
+
+    for d, tile_key, emoji_name in _replace:
+        if emoji_name in cache:
+            d[tile_key] = cache[emoji_name]

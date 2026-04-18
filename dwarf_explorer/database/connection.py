@@ -82,6 +82,13 @@ class Database:
                 "ALTER TABLE players ADD COLUMN house_y INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN house_vx INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN house_vy INTEGER NOT NULL DEFAULT 0",
+                # Building type + sprint
+                "ALTER TABLE players ADD COLUMN house_type TEXT NOT NULL DEFAULT 'house'",
+                "ALTER TABLE players ADD COLUMN sprinting INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN weapon TEXT",
+                "ALTER TABLE players ADD COLUMN boots TEXT",
+                # buildings table
+                "ALTER TABLE houses ADD COLUMN building_type TEXT NOT NULL DEFAULT 'house'",
             ]
             for sql in migrations:
                 try:
