@@ -83,10 +83,7 @@ def _path_worm(
                         path.append((lx + step_dx, ly))
                 path.append((ix, iy))
 
-        # Only check stop tiles after travelling far enough from the start
-        # (avoids immediately connecting back to the village's own path ring)
-        dist_from_start = math.hypot(ix - start[0], iy - start[1])
-        if len(path) > 3 and dist_from_start > 15:
+        if len(path) > 5:
             for nx, ny in [(ix+1,iy),(ix-1,iy),(ix,iy+1),(ix,iy-1)]:
                 if (nx, ny) in stop_tiles:
                     path.append((nx, ny))
@@ -101,27 +98,48 @@ def _path_worm(
         tdx, tdy = _norm2(ex - x, ey - y)
         dx, dy = _norm2(0.40 * tdx + 0.60 * ndx, 0.40 * tdy + 0.60 * ndy)
 
-        # Compute candidate next position; steer around water
+        # Look ahead 5 steps to start steering before hitting water
+        look_blocked = False
+        for la in range(1, 6):
+            lx = max(0.0, min(WORLD_SIZE - 1.0, x + dx * la))
+            ly = max(0.0, min(WORLD_SIZE - 1.0, y + dy * la))
+            if _is_blocked(lx, ly, seed, avoid_tiles):
+                look_blocked = True
+                break
+
         new_x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
         new_y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
 
-        if _is_blocked(new_x, new_y, seed, avoid_tiles):
-            # Try rotating by increasing angles to find a non-water step
+        if look_blocked or _is_blocked(new_x, new_y, seed, avoid_tiles):
             deflected = False
             for try_deg in [45, -45, 90, -90, 135, -135, 180]:
                 rdx, rdy = _norm2(*_rotate2(dx, dy, math.radians(try_deg)))
                 tx = max(0.0, min(WORLD_SIZE - 1.0, x + rdx))
                 ty = max(0.0, min(WORLD_SIZE - 1.0, y + rdy))
                 if not _is_blocked(tx, ty, seed, avoid_tiles):
-                    dx, dy = rdx, rdy
-                    new_x, new_y = tx, ty
-                    deflected = True
-                    break
+                    # Also check this deflection direction doesn't head into water soon
+                    near_water = any(
+                        _is_blocked(max(0.0,min(WORLD_SIZE-1.0,x+rdx*k)),
+                                    max(0.0,min(WORLD_SIZE-1.0,y+rdy*k)),
+                                    seed, avoid_tiles)
+                        for k in range(2, 4)
+                    )
+                    if not near_water:
+                        dx, dy = rdx, rdy
+                        new_x, new_y = tx, ty
+                        deflected = True
+                        break
             if not deflected:
-                # Surrounded by water — keep convergence direction and push through
-                new_x = max(0.0, min(WORLD_SIZE - 1.0, x + tdx))
-                new_y = max(0.0, min(WORLD_SIZE - 1.0, y + tdy))
-                dx, dy = tdx, tdy
+                # Last resort: try all 8 cardinal/diagonal directions
+                for rdx, rdy in [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
+                    rdx_f, rdy_f = _norm2(float(rdx), float(rdy))
+                    tx = max(0.0, min(WORLD_SIZE-1.0, x + rdx_f))
+                    ty = max(0.0, min(WORLD_SIZE-1.0, y + rdy_f))
+                    if not _is_blocked(tx, ty, seed, avoid_tiles):
+                        dx, dy = rdx_f, rdy_f
+                        new_x, new_y = tx, ty
+                        deflected = True
+                        break
 
         x, y = new_x, new_y
 
@@ -269,12 +287,15 @@ def _generate_village_paths_sync(
     # Water/river tiles to avoid
     avoid_tiles: set[tuple[int, int]] = set(river_tiles)
 
-    def _connect(start: tuple[int, int], end: tuple[int, int], pseed: int) -> None:
+    def _connect(
+        start: tuple[int, int], end: tuple[int, int], pseed: int,
+        stop_override: set[tuple[int, int]] | None = None,
+    ) -> None:
         worm = _path_worm(
             start=start,
             end=end,
             seed=pseed,
-            stop_tiles=path_tiles,
+            stop_tiles=stop_override if stop_override is not None else path_tiles,
             avoid_tiles=avoid_tiles,
             max_steps=700,
         )
@@ -296,9 +317,13 @@ def _generate_village_paths_sync(
         if len(candidates) > 1 and candidates[1][0] < candidates[0][0] * 2.0:
             targets_to_connect.append(candidates[1][1])
 
+        # Exclude this village's own 5×5 zone so the worm can't loop back to its ring
+        own_zone = {(vx + dx, vy + dy) for dx in range(-3, 4) for dy in range(-3, 4)}
+        stop_for_village = path_tiles - own_zone
+
         path_seed = (seed + _PATH_SEED_OFFSET + i * 7) & 0xFFFFFFFF
         for target in targets_to_connect:
-            _connect((vx, vy), target, path_seed)
+            _connect((vx, vy), target, path_seed, stop_override=stop_for_village)
             path_seed = (path_seed + 1337) & 0xFFFFFFFF
 
     # --- Bridges: connect each bridge to its nearest target ---
@@ -321,8 +346,12 @@ def _generate_village_paths_sync(
         if already_connected:
             continue
 
+        # Exclude own position so the worm leaves the bridge before it can stop
+        own_zone = {(bx + dx, by + dy) for dx in range(-3, 4) for dy in range(-3, 4)}
+        stop_for_bridge = path_tiles - own_zone
+
         bridge_seed = (seed + _PATH_SEED_OFFSET + 5000 + j * 13) & 0xFFFFFFFF
-        _connect((bx, by), nearest, bridge_seed)
+        _connect((bx, by), nearest, bridge_seed, stop_override=stop_for_bridge)
 
     return overrides
 

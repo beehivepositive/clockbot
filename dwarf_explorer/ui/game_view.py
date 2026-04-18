@@ -38,6 +38,16 @@ from dwarf_explorer.game.renderer import (
 _ui_state: dict[int, dict] = {}
 
 
+def _embed(content: str) -> discord.Embed:
+    """Wrap game content in an embed to bypass Discord's 2000-char content limit.
+
+    Discord embeds allow up to 4096 chars in description, vs 2000 for content.
+    Custom emojis like <:dry_grass:123456789012345678> are ~31 chars each;
+    a full 9×9 grid of them would be ~2600 chars — safely under 4096.
+    """
+    return discord.Embed(description=content)
+
+
 def _custom_id(guild_id: int, user_id: int, action: str) -> str:
     return f"dex:{guild_id}:{user_id}:{action}"
 
@@ -294,7 +304,7 @@ async def handle_move(
 
     steps = 2 if (player.sprinting and player.boots is not None) else 1
     content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Sprint toggle ─────────────────────────────────────────────────────────────
@@ -324,7 +334,7 @@ async def handle_sprint(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, status)
     view = _game_view(guild_id, user_id, player)
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Interact ──────────────────────────────────────────────────────────────────
@@ -386,7 +396,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(content=content, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_village:
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
@@ -422,7 +432,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(content=content, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_cave:
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
@@ -457,7 +467,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(content=content, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     else:
         tile = await load_single_tile(player.world_x, player.world_y, seed, db)
@@ -487,7 +497,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(content=content, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Inventory handlers ────────────────────────────────────────────────────────
@@ -506,7 +516,7 @@ async def handle_inventory(
         equipped["boots"] = player.boots
     content = render_inventory(items, 0, equipped)
     view = InventoryView(guild_id, user_id)
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_nav(
@@ -522,7 +532,7 @@ async def handle_inv_nav(
     if player.weapon: equipped["weapon"] = player.weapon
     if player.boots:  equipped["boots"] = player.boots
     content = render_inventory(items, new_sel, equipped)
-    await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
 
 
 async def handle_inv_equip(
@@ -539,7 +549,7 @@ async def handle_inv_equip(
 
     if sel >= len(items):
         content = render_inventory(items, sel, equipped) + "\n*(No item selected)*"
-        await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
         return
 
     item_id = items[sel]["item_id"]
@@ -553,7 +563,7 @@ async def handle_inv_equip(
 
     if not slot:
         content = render_inventory(items, sel, equipped) + f"\n*{item_id} cannot be equipped.*"
-        await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
         return
 
     await equip_item(db, user_id, slot, item_id)
@@ -567,7 +577,7 @@ async def handle_inv_equip(
     if player.weapon: equipped["weapon"] = player.weapon
     if player.boots:  equipped["boots"] = player.boots
     content = render_inventory(items, sel, equipped) + f"\n*Equipped {item_id}!*"
-    await interaction.response.edit_message(content=content, view=InventoryView(guild_id, user_id))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
 
 
 async def handle_inv_close(
@@ -587,7 +597,7 @@ async def handle_inv_close(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player)
     view = _game_view(guild_id, user_id, player)
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Shop handlers ─────────────────────────────────────────────────────────────
@@ -597,7 +607,7 @@ async def _open_shop(
 ) -> None:
     _ui_state[user_id] = {"type": "shop", "selected": 0}
     content = render_shop(SHOP_CATALOG, 0, player.gold)
-    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
 
 
 async def handle_shop_nav(
@@ -609,7 +619,7 @@ async def handle_shop_nav(
     new_sel = (state["selected"] + delta) % len(SHOP_CATALOG)
     _ui_state[user_id] = {"type": "shop", "selected": new_sel}
     content = render_shop(SHOP_CATALOG, new_sel, player.gold)
-    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
 
 
 async def handle_shop_buy(
@@ -622,13 +632,13 @@ async def handle_shop_buy(
     item = SHOP_CATALOG[sel]
     if player.gold < item["price"]:
         content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Not enough gold! Need {item['price']}.*"
-        await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
         return
     player.gold -= item["price"]
     await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"])
     content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Purchased {item['name']}!*"
-    await interaction.response.edit_message(content=content, view=ShopView(guild_id, user_id))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
 
 
 async def handle_shop_close(
@@ -650,7 +660,7 @@ async def _open_bank(
     if player.weapon: equipped["weapon"] = player.weapon
     if player.boots:  equipped["boots"] = player.boots
     content = render_bank(player_items, bank_items, 0, "player", equipped)
-    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
 
 
 async def handle_bank_nav(
@@ -670,7 +680,7 @@ async def handle_bank_nav(
     if player.weapon: equipped["weapon"] = player.weapon
     if player.boots:  equipped["boots"] = player.boots
     content = render_bank(player_items, bank_items, new_sel, bv, equipped)
-    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, bv))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, bv))
 
 
 async def handle_bank_switch(
@@ -687,7 +697,7 @@ async def handle_bank_switch(
     if player.weapon: equipped["weapon"] = player.weapon
     if player.boots:  equipped["boots"] = player.boots
     content = render_bank(player_items, bank_items, 0, new_view, equipped)
-    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, new_view))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, new_view))
 
 
 async def handle_bank_deposit(
@@ -705,7 +715,7 @@ async def handle_bank_deposit(
         if player.weapon: equipped["weapon"] = player.weapon
         if player.boots:  equipped["boots"] = player.boots
         content = render_bank(player_items, bank_items, sel, "player", equipped) + "\n*(Empty slot)*"
-        await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
         return
     item_id = items[sel]["item_id"]
     ok = await bank_deposit(db, user_id, item_id)
@@ -718,7 +728,7 @@ async def handle_bank_deposit(
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
     content = render_bank(player_items, bank_items, new_sel, "player", equipped) + suffix
-    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "player"))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
 
 
 async def handle_bank_withdraw(
@@ -736,7 +746,7 @@ async def handle_bank_withdraw(
         if player.weapon: equipped["weapon"] = player.weapon
         if player.boots:  equipped["boots"] = player.boots
         content = render_bank(player_items, bank_items, sel, "bank", equipped) + "\n*(Empty slot)*"
-        await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "bank"))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "bank"))
         return
     item_id = items[sel]["item_id"]
     ok = await bank_withdraw(db, user_id, item_id)
@@ -749,7 +759,7 @@ async def handle_bank_withdraw(
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
     content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped) + suffix
-    await interaction.response.edit_message(content=content, view=BankView(guild_id, user_id, "bank"))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "bank"))
 
 
 async def handle_bank_close(
@@ -797,7 +807,7 @@ async def handle_help(
         emoji="\U0001F5FA\uFE0F",
         custom_id=f"dex:{guild_id}:{user_id}:help_back", row=0,
     ))
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "snow", "path"}
@@ -819,4 +829,4 @@ async def handle_help_back(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player)
     view = _game_view(guild_id, user_id, player)
-    await interaction.response.edit_message(content=content, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)

@@ -52,13 +52,13 @@ class DwarfExplorer(commands.Cog):
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
-            await interaction.followup.send(content=content, view=view)
+            await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
-            await interaction.response.send_message(content=content, view=view)
+            await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
 
         # Store the message reference for future use
         msg = await interaction.original_response()

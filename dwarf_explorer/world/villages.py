@@ -6,7 +6,6 @@ import random
 from dwarf_explorer.config import (
     VILLAGE_MIN_SIZE, VILLAGE_MAX_SIZE,
     VIEWPORT_SIZE, VIEWPORT_CENTER,
-    INTERIOR_VIEWPORT_SIZE, INTERIOR_VIEWPORT_CENTER,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -366,7 +365,7 @@ async def load_village_single_tile(
 async def load_building_viewport(
     house_id: int, center_x: int, center_y: int, db,
 ) -> list[list[TileData]]:
-    half = INTERIOR_VIEWPORT_CENTER
+    half = VIEWPORT_CENTER
     x_min, y_min = center_x - half, center_y - half
     rows = await db.fetch_all(
         "SELECT local_x, local_y, tile_type FROM house_tiles "
@@ -375,9 +374,9 @@ async def load_building_viewport(
     )
     tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
     grid = []
-    for local_y in range(INTERIOR_VIEWPORT_SIZE):
+    for local_y in range(VIEWPORT_SIZE):
         row_tiles = []
-        for local_x in range(INTERIOR_VIEWPORT_SIZE):
+        for local_x in range(VIEWPORT_SIZE):
             cx, cy = x_min + local_x, y_min + local_y
             row_tiles.append(TileData(terrain=tile_map.get((cx, cy), "void"), world_x=cx, world_y=cy))
         grid.append(row_tiles)
