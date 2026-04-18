@@ -23,6 +23,9 @@ class DwarfExplorer(commands.Cog):
 
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(GameButton)
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
         from dwarf_explorer.config import apply_custom_emojis
         apply_custom_emojis(self.bot.emojis)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 
-from dwarf_explorer.config import WORLD_SIZE, MAP_PIXEL_SCALE, TILE_COLORS, STRUCTURE_TILES
+from dwarf_explorer.config import WORLD_SIZE, MAP_PIXEL_SCALE, TILE_COLORS
 from dwarf_explorer.world.terrain import get_biome
 
 _LEGEND_ENTRIES = [
@@ -20,30 +20,55 @@ _LEGEND_ENTRIES = [
     ("mountain",      "Mountain"),
     ("snow",          "Snow"),
     ("path",          "Path"),
-    ("village",       "Village"),
-    ("cave",          "Cave"),
-    ("ruins",         "Ruins"),
-    ("shrine",        "Shrine"),
-    ("campfire",      "Campfire"),
+]
+_LEGEND_ICON_ENTRIES = [
+    ("village",   "Village",   (200, 160, 60),  "filled_diamond"),
+    ("cave",      "Cave",      (60,  40,  30),  "filled_circle"),
+    ("shrine",    "Shrine",    (200, 50,  50),  "cross"),
+    ("ruins",     "Ruins",     (120, 100, 80),  "outline_square"),
+    ("campfire",  "Campfire",  (255, 100, 0),   "dot"),
 ]
 
-_LEGEND_SWATCH  = 12   # px square per colour swatch
-_LEGEND_ROW_H   = 14   # px height per legend row
-_LEGEND_MARGIN  = 6    # px left/right padding inside legend panel
-_LEGEND_COL_W   = 110  # px width of one legend column (swatch + label)
-_LEGEND_COLS    = 2    # number of columns in legend
+_LEGEND_SWATCH = 12
+_LEGEND_ROW_H  = 14
+_LEGEND_MARGIN = 6
+_LEGEND_COL_W  = 110
+_LEGEND_COLS   = 2
+
+# Special tiles painted as large icons instead of plain colored squares
+_ICON_TILES = {entry[0] for entry in _LEGEND_ICON_ENTRIES}
+_ICON_SIZE  = 7   # pixel radius (drawn as 7×7 centred on tile centre)
+
+
+def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
+    """Draw a distinctive 7-pixel icon centred at (cx, cy)."""
+    r = 3   # half-size
+    white = (255, 255, 255)
+    if style == "filled_diamond":
+        # Diamond outline + fill
+        pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
+        draw.polygon(pts, fill=color, outline=white)
+    elif style == "filled_circle":
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color, outline=white)
+    elif style == "cross":
+        draw.rectangle([cx - r, cy - 1, cx + r, cy + 1], fill=color)
+        draw.rectangle([cx - 1, cy - r, cx + 1, cy + r], fill=color)
+        draw.rectangle([cx - r, cy - 1, cx + r, cy + 1], outline=white)
+    elif style == "outline_square":
+        draw.rectangle([cx - r, cy - r, cx + r, cy + r], fill=color, outline=white)
+        draw.rectangle([cx - r + 2, cy - r + 2, cx + r - 2, cy + r - 2], fill=(30, 30, 30))
+    else:  # dot
+        draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color, outline=white)
 
 
 def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int) -> io.BytesIO:
-    """Generate a world map image synchronously. Returns a BytesIO PNG buffer."""
     from PIL import Image, ImageDraw, ImageFont
 
     scale = MAP_PIXEL_SCALE
     map_w = WORLD_SIZE * scale
     map_h = WORLD_SIZE * scale
 
-    # ── Legend dimensions ─────────────────────────────────────────────────────
-    rows_per_col = (len(_LEGEND_ENTRIES) + _LEGEND_COLS - 1) // _LEGEND_COLS
+    rows_per_col = (len(_LEGEND_ENTRIES) + len(_LEGEND_ICON_ENTRIES) + 1 + _LEGEND_COLS - 1) // _LEGEND_COLS
     legend_h = rows_per_col * _LEGEND_ROW_H + _LEGEND_MARGIN * 2
     legend_w = _LEGEND_COLS * _LEGEND_COL_W + _LEGEND_MARGIN * 2
     panel_h  = max(map_h, legend_h)
@@ -59,25 +84,33 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
             x0, y0 = wx * scale, wy * scale
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
-    # ── Tile overrides ────────────────────────────────────────────────────────
-    for row in overrides:
-        wx, wy, tile_type = row
+    # ── Tile overrides: normal tiles first, then icons on top ─────────────────
+    icon_rows = [(wx, wy, tile_type) for wx, wy, tile_type in overrides
+                 if tile_type in _ICON_TILES]
+    normal_rows = [(wx, wy, tile_type) for wx, wy, tile_type in overrides
+                   if tile_type not in _ICON_TILES]
+
+    for wx, wy, tile_type in normal_rows:
         color = TILE_COLORS.get(tile_type)
         if color:
             x0, y0 = wx * scale, wy * scale
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
-    # ── Player marker ─────────────────────────────────────────────────────────
-    marker_color = (255, 0, 0)
-    for dy in range(-2, 3):
-        for dx in range(-2, 3):
-            px = player_x * scale + scale // 2 + dx
-            py = player_y * scale + scale // 2 + dy
-            if 0 <= px < map_w and 0 <= py < map_h:
-                img.putpixel((px, py), marker_color)
+    # Icon tiles: draw as large symbols
+    _icon_style = {e[0]: (e[2], e[3]) for e in _LEGEND_ICON_ENTRIES}
+    for wx, wy, tile_type in icon_rows:
+        if tile_type in _icon_style:
+            color, style = _icon_style[tile_type]
+            cx = wx * scale + scale // 2
+            cy = wy * scale + scale // 2
+            _draw_icon(draw, cx, cy, style, color)
 
-    # ── Legend panel ──────────────────────────────────────────────────────────
-    # Try to load a small bitmap font; fall back to default
+    # ── Player marker ─────────────────────────────────────────────────────────
+    cx_p = player_x * scale + scale // 2
+    cy_p = player_y * scale + scale // 2
+    draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3], fill=(255, 0, 0), outline=(255, 255, 255))
+
+    # ── Legend ────────────────────────────────────────────────────────────────
     try:
         font = ImageFont.truetype("arial.ttf", 10)
     except Exception:
@@ -86,24 +119,32 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
         except Exception:
             font = ImageFont.load_default()
 
-    for i, (tile_key, label) in enumerate(_LEGEND_ENTRIES):
+    all_legend = [(k, label, TILE_COLORS.get(k, (80, 80, 80)), "square")
+                  for k, label in _LEGEND_ENTRIES]
+    for tile_key, label, color, style in [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]:
+        all_legend.append((tile_key, label, color, style))
+    all_legend.append(("__player__", "You", (255, 0, 0), "dot_red"))
+
+    for i, (tile_key, label, color, style) in enumerate(all_legend):
         col = i % _LEGEND_COLS
         row = i // _LEGEND_COLS
         x0 = map_w + _LEGEND_MARGIN + col * _LEGEND_COL_W
         y0 = _LEGEND_MARGIN + row * _LEGEND_ROW_H
+        cx_l = x0 + _LEGEND_SWATCH // 2
+        cy_l = y0 + _LEGEND_SWATCH // 2
 
-        color = TILE_COLORS.get(tile_key, (80, 80, 80))
-        draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1], fill=color,
-                       outline=(180, 180, 180))
+        if style == "square":
+            draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1],
+                           fill=color, outline=(180, 180, 180))
+        elif style == "dot_red":
+            draw.ellipse([x0 + 1, y0 + 1, x0 + _LEGEND_SWATCH - 2, y0 + _LEGEND_SWATCH - 2],
+                         fill=color, outline=(255, 255, 255))
+        else:
+            draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1],
+                           fill=(30, 30, 30))
+            _draw_icon(draw, cx_l, cy_l, style, color)
+
         draw.text((x0 + _LEGEND_SWATCH + 3, y0), label, fill=(220, 220, 220), font=font)
-
-    # Player dot legend entry
-    last_row = len(_LEGEND_ENTRIES) // _LEGEND_COLS
-    x0 = map_w + _LEGEND_MARGIN
-    y0 = _LEGEND_MARGIN + last_row * _LEGEND_ROW_H
-    draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1],
-                   fill=(255, 0, 0), outline=(180, 180, 180))
-    draw.text((x0 + _LEGEND_SWATCH + 3, y0), "You", fill=(220, 220, 220), font=font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -112,9 +153,6 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
 
 
 async def generate_world_map(seed: int, db, player_x: int, player_y: int) -> io.BytesIO:
-    """Generate a full world map image with player marker and legend."""
-    rows = await db.fetch_all(
-        "SELECT world_x, world_y, tile_type FROM tile_overrides"
-    )
+    rows = await db.fetch_all("SELECT world_x, world_y, tile_type FROM tile_overrides")
     overrides = [(r["world_x"], r["world_y"], r["tile_type"]) for r in rows]
     return await asyncio.to_thread(_generate_map_sync, seed, overrides, player_x, player_y)

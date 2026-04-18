@@ -198,12 +198,12 @@ def _bank_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], s
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    # Counter across upper section
+    # Counter along back wall (row 2) — full width minus corners
     for x in range(2, W-2):
         tiles[(x, 2)] = "b_counter"
-    # NPC behind counter
-    tiles[(W//2, 1)] = "b_bank_npc"
-    # Safe
+    # NPC stands in front of the counter (row 3) — accessible to the player
+    tiles[(W//2, 3)] = "b_bank_npc"
+    # Safes behind the counter against the back wall
     tiles[(1, 1)] = "b_safe"
     tiles[(W-2, 1)] = "b_safe"
     return tiles

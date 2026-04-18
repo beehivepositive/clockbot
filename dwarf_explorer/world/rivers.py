@@ -187,54 +187,64 @@ def _place_bridge_at(
     river_tiles: set[tuple[int, int]],
     bridge_tiles: set[tuple[int, int]],
 ) -> None:
-    """Place a straight rectangular bridge spanning perpendicularly across the river.
+    """Place a bridge spanning perpendicularly across a single contiguous river section.
 
-    Snaps to a pure axis (N-S or E-W) based on dominant flow direction, guaranteeing
-    a single-pixel-wide straight bridge.  Verifies both bank ends are reachable
-    (in-bounds and not also river) before placing.
+    Uses the true perpendicular direction (can be diagonal), but walks outward from
+    the spine tile and stops at the FIRST gap — so two parallel river sections are
+    never joined by a single bridge.  Bridge is longer than it is wide because it
+    spans the full river width (typically 3-5 tiles) as a single-tile-wide line.
+    Both bank ends must be non-river and in-bounds or the bridge is skipped.
     """
     if idx < 0 or idx >= len(path):
         return
     px, py = path[idx]
 
     fdx, fdy = _local_flow_dir(path, idx)
-    # Snap perpendicular to dominant axis so bridge is always axis-aligned
-    if abs(fdx) >= abs(fdy):
-        pdx, pdy = 0, 1   # flow mostly E-W → bridge runs N-S
-    else:
-        pdx, pdy = 1, 0   # flow mostly N-S → bridge runs E-W
+    # Perpendicular direction (true float, not axis-snapped)
+    pdx, pdy = -fdy, fdx
 
-    # Scan ±22 tiles along the perpendicular axis to find all river tiles
-    river_offsets: list[int] = []
-    for t in range(-22, 23):
-        nx, ny = px + pdx * t, py + pdy * t
-        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
-            if (nx, ny) in river_tiles:
-                river_offsets.append(t)
+    # Walk outward in + direction until we leave the contiguous river block
+    t_hi = 0
+    for t in range(1, 20):
+        nx = int(round(px + pdx * t))
+        ny = int(round(py + pdy * t))
+        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+            break
+        if (nx, ny) in river_tiles:
+            t_hi = t
+        else:
+            break   # first gap — stop here, do not scan further
 
-    if not river_offsets:
+    # Walk outward in – direction until we leave the contiguous river block
+    t_lo = 0
+    for t in range(1, 20):
+        nx = int(round(px - pdx * t))
+        ny = int(round(py - pdy * t))
+        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+            break
+        if (nx, ny) in river_tiles:
+            t_lo = t
+        else:
+            break
+
+    # Bank tiles are one step beyond the river edge on each side
+    bx_hi = int(round(px + pdx * (t_hi + 1)))
+    by_hi = int(round(py + pdy * (t_hi + 1)))
+    bx_lo = int(round(px - pdx * (t_lo + 1)))
+    by_lo = int(round(py - pdy * (t_lo + 1)))
+
+    # Skip if either bank is out of bounds or still river (no dry land to connect)
+    if not (0 <= bx_hi < WORLD_SIZE and 0 <= by_hi < WORLD_SIZE):
+        return
+    if not (0 <= bx_lo < WORLD_SIZE and 0 <= by_lo < WORLD_SIZE):
+        return
+    if (bx_hi, by_hi) in river_tiles or (bx_lo, by_lo) in river_tiles:
         return
 
-    t_min = min(river_offsets)
-    t_max = max(river_offsets)
-
-    # Bank tiles one step outside the river on each side
-    bank_min = t_min - 1
-    bank_max = t_max + 1
-
-    bx_min, by_min = px + pdx * bank_min, py + pdy * bank_min
-    bx_max, by_max = px + pdx * bank_max, py + pdy * bank_max
-
-    # Skip bridge if either bank is out of bounds or is itself river (no land to connect to)
-    if not (0 <= bx_min < WORLD_SIZE and 0 <= by_min < WORLD_SIZE):
-        return
-    if not (0 <= bx_max < WORLD_SIZE and 0 <= by_max < WORLD_SIZE):
-        return
-    if (bx_min, by_min) in river_tiles or (bx_max, by_max) in river_tiles:
-        return
-
-    for t in range(bank_min, bank_max + 1):
-        nx, ny = px + pdx * t, py + pdy * t
+    # Place bridge tiles from bank to bank (inclusive)
+    for t in range(-(t_lo + 1), t_hi + 2):
+        nx = int(round(px + pdx * t))
+        ny = int(round(py + pdy * t))
         if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
             river_tiles.discard((nx, ny))
             bridge_tiles.add((nx, ny))

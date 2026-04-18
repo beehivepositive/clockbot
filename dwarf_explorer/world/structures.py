@@ -42,22 +42,34 @@ def _path_worm(
     end: tuple[int, int],
     seed: int,
     stop_tiles: set[tuple[int, int]],
-    max_steps: int = 400,
+    max_steps: int = 500,
 ) -> list[tuple[int, int]]:
-    """Perlin-worm path from start toward end.
+    """Perlin-worm path from start toward end with strong meanders.
 
-    Pure convergence + noise (no terrain gradient).
-    Stops when the path reaches a tile adjacent to a stop_tile.
+    Uses a persistent worm direction that rotates via fBm noise (±80°), with
+    only moderate pull toward the destination (40%).  This produces natural
+    S-curve roads that still reliably reach their target.
+
+    Diagonal steps are widened: when the worm moves diagonally, one corner tile
+    is also added so the path looks consistently 1 tile wide around bends.
     """
     x, y = float(start[0]), float(start[1])
     ex, ey = float(end[0]), float(end[1])
-    freq = 0.25
+    freq = 0.15   # lower frequency = broader meander waves
     path: list[tuple[int, int]] = []
+    # Start direction: toward target
+    dx, dy = _norm2(ex - x, ey - y)
 
     for _ in range(max_steps):
         ix = max(0, min(WORLD_SIZE - 1, int(round(x))))
         iy = max(0, min(WORLD_SIZE - 1, int(round(y))))
         if not path or (ix, iy) != path[-1]:
+            # Widen diagonals: if we moved diagonally, also paint one corner tile
+            if path:
+                lx, ly = path[-1]
+                step_dx, step_dy = ix - lx, iy - ly
+                if abs(step_dx) == 1 and abs(step_dy) == 1:
+                    path.append((lx + step_dx, ly))   # fill corner so no gaps
             path.append((ix, iy))
 
         # Check adjacency to stop tiles
@@ -69,12 +81,13 @@ def _path_worm(
             if (ix, iy) in stop_tiles:
                 return path
 
-        # Direction = toward end (0.75) + Perlin noise rotation (0.25)
+        # Worm direction: persistent momentum + Perlin rotation + convergence pull
+        n = fbm(x * freq, y * freq, seed, octaves=3)
+        rot = math.radians((n - 0.5) * 160.0)   # ±80° strong meander
+        ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
         tdx, tdy = _norm2(ex - x, ey - y)
-        n = fbm(x * freq, y * freq, seed, octaves=2)
-        rot = math.radians((n - 0.5) * 60.0)   # ±30° gentle curves
-        ndx, ndy = _norm2(*_rotate2(tdx, tdy, rot))
-        dx, dy = _norm2(0.75 * tdx + 0.25 * ndx, 0.75 * tdy + 0.25 * ndy)
+        # 40% toward target, 60% worm noise — meanders but still converges
+        dx, dy = _norm2(0.40 * tdx + 0.60 * ndx, 0.40 * tdy + 0.60 * ndy)
 
         x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
         y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
@@ -108,6 +121,11 @@ def _generate_structures_sync(seed: int) -> list[tuple[int, int, str]]:
             continue
         village_centers.append((x, y))
         overrides.append((x, y, 'village'))
+        # Surround the village tile with a 1-tile ring of path
+        for ry in range(y - 1, y + 2):
+            for rx in range(x - 1, x + 2):
+                if (rx, ry) != (x, y) and 0 <= rx < WORLD_SIZE and 0 <= ry < WORLD_SIZE:
+                    overrides.append((rx, ry, 'path'))
         found += 1
 
     # --- Shrines (6-10): on hills tiles ---
