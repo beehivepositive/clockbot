@@ -165,22 +165,63 @@ def _paint(path: list[tuple[int, int]], hw: int, tiles: set[tuple[int, int]]) ->
 
 # ── Bridges ───────────────────────────────────────────────────────────────────
 
+def _local_flow_dir(
+    path: list[tuple[int, int]], idx: int,
+) -> tuple[float, float]:
+    """Unit vector of river flow direction at path[idx]."""
+    n = len(path)
+    if n < 2:
+        return (1.0, 0.0)
+    if idx == 0:
+        dx, dy = path[1][0] - path[0][0], path[1][1] - path[0][1]
+    elif idx >= n - 1:
+        dx, dy = path[-1][0] - path[-2][0], path[-1][1] - path[-2][1]
+    else:
+        dx, dy = path[idx + 1][0] - path[idx - 1][0], path[idx + 1][1] - path[idx - 1][1]
+    return _norm2(float(dx), float(dy))
+
+
 def _place_bridge_at(
     path: list[tuple[int, int]],
     idx: int,
     river_tiles: set[tuple[int, int]],
     bridge_tiles: set[tuple[int, int]],
 ) -> None:
-    """Replace river tiles in a 3×3 area with a bridge (1-3 tiles wide max)."""
+    """Place a rectangular bridge spanning perpendicularly across the river.
+
+    Scans perpendicular to the local flow direction to find all river tiles at
+    that cross-section, then places bridge tiles covering that span plus one
+    land tile on each side (bank-to-bank with no water gap).
+    """
     if idx < 0 or idx >= len(path):
         return
     px, py = path[idx]
-    for dy in range(-1, 2):
-        for dx in range(-1, 2):
-            nx, ny = px + dx, py + dy
+
+    fdx, fdy = _local_flow_dir(path, idx)
+    # Perpendicular direction (bridge runs along this axis)
+    pdx, pdy = -fdy, fdx
+
+    # Scan ±14 tiles perp to find river extent at this cross-section
+    river_offsets: list[int] = []
+    for t in range(-14, 15):
+        nx = int(round(px + pdx * t))
+        ny = int(round(py + pdy * t))
+        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
             if (nx, ny) in river_tiles:
-                bridge_tiles.add((nx, ny))
-                river_tiles.discard((nx, ny))
+                river_offsets.append(t)
+
+    if not river_offsets:
+        return
+
+    t_min = min(river_offsets) - 1   # +1 land tile on each bank
+    t_max = max(river_offsets) + 1
+
+    for t in range(t_min, t_max + 1):
+        nx = int(round(px + pdx * t))
+        ny = int(round(py + pdy * t))
+        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+            river_tiles.discard((nx, ny))
+            bridge_tiles.add((nx, ny))
 
 
 def _add_bridges(

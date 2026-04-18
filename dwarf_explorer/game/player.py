@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE, CAVE_WALKABLE,
+    VILLAGE_WALKABLE, HOUSE_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -27,6 +28,36 @@ class Player:
     cave_id: int | None = None
     cave_x: int = 0
     cave_y: int = 0
+    in_village: bool = False
+    village_id: int | None = None
+    village_x: int = 0
+    village_y: int = 0
+    village_wx: int = 0   # wilderness tile to return to on exit
+    village_wy: int = 0
+    in_house: bool = False
+    house_id: int | None = None
+    house_x: int = 0
+    house_y: int = 0
+    house_vx: int = 0    # village tile to return to on house exit
+    house_vy: int = 0
+
+
+def can_move_village(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability check inside a village. void = boundary (triggers exit in game_view)."""
+    if target_tile.terrain == "void":
+        return True, ""   # game_view handles the exit
+    if target_tile.terrain not in VILLAGE_WALKABLE:
+        return False, "That blocks your path."
+    return True, ""
+
+
+def can_move_house(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability check inside a house. house_door triggers exit in game_view."""
+    if target_tile.terrain == "void":
+        return False, "You can't go that way."
+    if target_tile.terrain not in HOUSE_WALKABLE:
+        return False, "That's in the way."
+    return True, ""
 
 
 def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[bool, str]:

@@ -69,6 +69,19 @@ class Database:
                 "ALTER TABLE players ADD COLUMN cave_id INTEGER",
                 "ALTER TABLE players ADD COLUMN cave_x INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN cave_y INTEGER NOT NULL DEFAULT 0",
+                # Village / house state
+                "ALTER TABLE players ADD COLUMN in_village INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN village_id INTEGER",
+                "ALTER TABLE players ADD COLUMN village_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN village_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN village_wx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN village_wy INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN in_house INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN house_id INTEGER",
+                "ALTER TABLE players ADD COLUMN house_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN house_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN house_vx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN house_vy INTEGER NOT NULL DEFAULT 0",
             ]
             for sql in migrations:
                 try:

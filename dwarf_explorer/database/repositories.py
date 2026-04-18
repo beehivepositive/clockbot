@@ -53,8 +53,20 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             channel_id=row["channel_id"],
             in_cave=bool(row["in_cave"]),
             cave_id=row["cave_id"],
-            cave_x=row["cave_x"],
-            cave_y=row["cave_y"],
+            cave_x=row["cave_x"] or 0,
+            cave_y=row["cave_y"] or 0,
+            in_village=bool(row["in_village"]),
+            village_id=row["village_id"],
+            village_x=row["village_x"] or 0,
+            village_y=row["village_y"] or 0,
+            village_wx=row["village_wx"] or 0,
+            village_wy=row["village_wy"] or 0,
+            in_house=bool(row["in_house"]),
+            house_id=row["house_id"],
+            house_x=row["house_x"] or 0,
+            house_y=row["house_y"] or 0,
+            house_vx=row["house_vx"] or 0,
+            house_vy=row["house_vy"] or 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -102,6 +114,36 @@ async def update_player_cave_state(
         (int(in_cave), cave_id, cave_x, cave_y, user_id),
     )
 
+
+# --- Villages ---
+
+async def update_player_village_state(
+    db: Database, user_id: int,
+    in_village: bool, village_id: int | None,
+    village_x: int, village_y: int,
+    village_wx: int, village_wy: int,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_village = ?, village_id = ?, village_x = ?, village_y = ?, "
+        "village_wx = ?, village_wy = ?, last_active = datetime('now') WHERE user_id = ?",
+        (int(in_village), village_id, village_x, village_y, village_wx, village_wy, user_id),
+    )
+
+
+async def update_player_house_state(
+    db: Database, user_id: int,
+    in_house: bool, house_id: int | None,
+    house_x: int, house_y: int,
+    house_vx: int, house_vy: int,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_house = ?, house_id = ?, house_x = ?, house_y = ?, "
+        "house_vx = ?, house_vy = ?, last_active = datetime('now') WHERE user_id = ?",
+        (int(in_house), house_id, house_x, house_y, house_vx, house_vy, user_id),
+    )
+
+
+# --- Caves ---
 
 async def get_cave_at_position(db: Database, world_x: int, world_y: int) -> int | None:
     """Look up a cave_id from its wilderness entrance position."""

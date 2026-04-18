@@ -131,6 +131,62 @@ CREATE TABLE IF NOT EXISTS cave_entrances (
     UNIQUE(world_x, world_y)
 );
 
+-- Villages
+CREATE TABLE IF NOT EXISTS villages (
+    village_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    width        INTEGER NOT NULL,
+    height       INTEGER NOT NULL
+);
+
+-- Village interior tiles
+CREATE TABLE IF NOT EXISTS village_tiles (
+    village_id   INTEGER NOT NULL REFERENCES villages(village_id),
+    local_x      INTEGER NOT NULL,
+    local_y      INTEGER NOT NULL,
+    tile_type    TEXT    NOT NULL,
+    PRIMARY KEY (village_id, local_x, local_y)
+);
+
+-- Village entrances linking wilderness tile to village interior
+CREATE TABLE IF NOT EXISTS village_entrances (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    village_id   INTEGER NOT NULL REFERENCES villages(village_id),
+    entry_x      INTEGER NOT NULL,
+    entry_y      INTEGER NOT NULL,
+    world_x      INTEGER NOT NULL,
+    world_y      INTEGER NOT NULL,
+    UNIQUE(world_x, world_y)
+);
+
+-- Houses inside villages
+CREATE TABLE IF NOT EXISTS houses (
+    house_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    village_id   INTEGER NOT NULL REFERENCES villages(village_id),
+    width        INTEGER NOT NULL,
+    height       INTEGER NOT NULL
+);
+
+-- House interior tiles
+CREATE TABLE IF NOT EXISTS house_tiles (
+    house_id     INTEGER NOT NULL REFERENCES houses(house_id),
+    local_x      INTEGER NOT NULL,
+    local_y      INTEGER NOT NULL,
+    tile_type    TEXT    NOT NULL,
+    PRIMARY KEY (house_id, local_x, local_y)
+);
+
+-- House entrances: which village tile leads into each house
+CREATE TABLE IF NOT EXISTS house_entrances (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    house_id     INTEGER NOT NULL REFERENCES houses(house_id),
+    entry_x      INTEGER NOT NULL,
+    entry_y      INTEGER NOT NULL,
+    village_id   INTEGER NOT NULL,
+    village_x    INTEGER NOT NULL,
+    village_y    INTEGER NOT NULL,
+    UNIQUE(village_id, village_x, village_y)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_ground_items_pos ON ground_items(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_enemies_pos ON enemies(world_x, world_y);

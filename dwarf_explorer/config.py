@@ -100,6 +100,33 @@ CAVE_EMOJI = {
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest"}
 
+# --- Village System ---
+
+VILLAGE_EMOJI = {
+    "vil_grass":  "\U0001F33F",            # 🌿
+    "vil_path":   "\U0001F7EB",            # 🟫
+    "vil_wall":   "\U0001F9F1",            # 🧱
+    "vil_door":   "\U0001F6AA",            # 🚪
+    "vil_well":   "\u26F2",               # ⛲
+    "vil_garden": "\U0001F33B",            # 🌻
+}
+
+HOUSE_EMOJI = {
+    "house_floor": "\U0001F7EB",           # 🟫
+    "house_wall":  "\U0001F9F1",           # 🧱
+    "house_door":  "\U0001F6AA",           # 🚪
+    "house_bed":   "\U0001F6CF\uFE0F",    # 🛏️
+    "house_table": "\U0001FAB5",           # 🪵
+    "house_chair": "\U0001FA91",           # 🪑
+    "house_stove": "\U0001F525",           # 🔥
+}
+
+VILLAGE_WALKABLE = {"vil_grass", "vil_path", "vil_door", "vil_garden"}
+HOUSE_WALKABLE = {"house_floor", "house_door"}
+
+VILLAGE_MIN_SIZE = 32
+VILLAGE_MAX_SIZE = 48
+
 # Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
 CHEST_LOOT = [
     (50, 10,  40,  5,  20, None),
