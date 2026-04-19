@@ -326,6 +326,166 @@ def _crossing_center(
             sum(y for x, y in crossings) / len(crossings))
 
 
+def _find_first_water_crossing(
+    waypoints: list[tuple[int, int]],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+) -> tuple[int, list[tuple[int, int]]] | None:
+    """Find the first sub-segment that crosses water.
+
+    Returns (segment_index, water_tiles) or None if all segments are dry.
+    """
+    for seg_idx in range(len(waypoints) - 1):
+        samples = _line_samples(waypoints[seg_idx], waypoints[seg_idx + 1])
+        water_pts = [
+            (x, y) for x, y in samples
+            if (x, y) not in bridge_all and _is_water(x, y, seed, river_tiles)
+        ]
+        if water_pts:
+            return (seg_idx, water_pts)
+    return None
+
+
+def _nearest_dry_or_bridge(
+    cx: int, cy: int,
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_endpoints: list[tuple[int, int]],
+    max_radius: int = 60,
+) -> tuple[int, int] | None:
+    """Find the nearest dry land tile or bridge endpoint to (cx, cy).
+
+    Prefers bridge endpoints within reasonable distance, otherwise searches
+    in expanding rings for any dry land tile.
+    """
+    # Check bridge endpoints first — they're ideal routing targets
+    best_ep = None
+    best_dist = float("inf")
+    for bx, by in bridge_endpoints:
+        d = math.hypot(bx - cx, by - cy)
+        if d < best_dist:
+            best_dist = d
+            best_ep = (bx, by)
+
+    # Search for nearest dry land in expanding rings
+    for r in range(1, max_radius + 1):
+        for dx in range(-r, r + 1):
+            for dy in (-r, r) if abs(dx) < r else range(-r, r + 1):
+                nx, ny = cx + dx, cy + dy
+                if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+                    continue
+                if not _is_water(nx, ny, seed, river_tiles):
+                    land_dist = math.hypot(dx, dy)
+                    # Use bridge if it's closer or within 1.5x the land distance
+                    if best_ep and best_dist < land_dist * 1.5:
+                        return best_ep
+                    return (nx, ny)
+
+    return best_ep
+
+
+def _resolve_waypoints(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+    bridge_endpoints: list[tuple[int, int]],
+    max_iterations: int = 20,
+) -> list[tuple[int, int]]:
+    """Build a water-free waypoint chain from start to end.
+
+    Algorithm:
+    1. Start with [start, end].
+    2. Find first sub-segment that crosses water.
+    3. Compute the center of the water crossing.
+    4. Insert a new waypoint there, moved to the nearest dry land or bridge.
+    5. Repeat until no crossings remain (or max iterations).
+    """
+    waypoints = [start, end]
+
+    for _ in range(max_iterations):
+        crossing = _find_first_water_crossing(waypoints, seed, river_tiles, bridge_all)
+        if crossing is None:
+            break  # all segments are dry
+
+        seg_idx, water_pts = crossing
+        # Center of the water crossing
+        cx = sum(x for x, y in water_pts) // len(water_pts)
+        cy = sum(y for x, y in water_pts) // len(water_pts)
+
+        # Find nearest dry land or bridge endpoint
+        dry = _nearest_dry_or_bridge(cx, cy, seed, river_tiles, bridge_endpoints)
+        if dry is None:
+            break  # can't resolve — give up
+
+        # Don't insert duplicate waypoints
+        if dry not in waypoints:
+            waypoints.insert(seg_idx + 1, dry)
+        else:
+            # Already have this waypoint; this segment might be unsolvable
+            break
+
+    return waypoints
+
+
+def _meander_segment(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    amplitude: float = 3.0,
+    freq: float = 0.08,
+) -> list[tuple[int, int]]:
+    """Walk a straight line from start to end with Perlin perpendicular meander.
+
+    Each tile along the line is displaced perpendicular to the segment direction
+    using fbm noise. Tiles that land on water are clamped back to the line.
+    """
+    sx, sy = start
+    ex, ey = end
+    dist = math.hypot(ex - sx, ey - sy)
+    if dist < 2:
+        return [start, end]
+
+    # Segment direction and perpendicular
+    dx, dy = (ex - sx) / dist, (ey - sy) / dist
+    px, py = -dy, dx  # perpendicular
+
+    seg_seed = (seed ^ (sx * 31 + sy * 97 + ex * 7 + ey * 13)) & 0xFFFFFFFF
+    steps = int(dist) + 1
+
+    seen: set[tuple[int, int]] = set()
+    path: list[tuple[int, int]] = []
+
+    for i in range(steps + 1):
+        t = i / steps
+        # Base position on the straight line
+        bx = sx + t * (ex - sx)
+        by = sy + t * (ey - sy)
+
+        # Perlin perpendicular displacement (taper at endpoints)
+        taper = 1.0 - abs(2.0 * t - 1.0)  # 0 at ends, 1 at midpoint
+        noise_val = fbm(bx * freq, by * freq, seg_seed, octaves=2)
+        offset = (noise_val - 0.5) * 2.0 * amplitude * taper
+
+        mx = int(round(bx + offset * px))
+        my = int(round(by + offset * py))
+
+        # If displaced tile is water, fall back to the straight-line position
+        if not (0 <= mx < WORLD_SIZE and 0 <= my < WORLD_SIZE) or \
+                _is_water(mx, my, seed, river_tiles):
+            mx = int(round(bx))
+            my = int(round(by))
+
+        if (mx, my) not in seen:
+            seen.add((mx, my))
+            path.append((mx, my))
+
+    return path
+
+
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -338,75 +498,43 @@ def _generate_village_paths_sync(
 
     Algorithm:
     1. Build MST connecting villages via nearest-neighbour Prim's.
-    2. For each MST edge: if the straight line crosses a river, find the nearest
-       bridge endpoint to the crossing and route through it as a waypoint.
-    3. Generate each sub-segment as a straight line with Perlin perpendicular meander.
-    4. After villages are connected, connect each isolated bridge endpoint to the
-       nearest existing path node.
+    2. For each edge, iteratively insert waypoints to avoid water crossings.
+    3. Render each dry sub-segment as a straight line with Perlin meander.
+    4. Connect isolated bridge endpoints to nearest path node.
     """
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
     connected_pairs: set[frozenset] = set()
 
-    def _add_segment(start: tuple[int, int], end: tuple[int, int]) -> None:
+    def _add_path(start: tuple[int, int], end: tuple[int, int]) -> None:
+        """Resolve water crossings via waypoints, then meander each dry segment."""
         pair = frozenset([start, end])
         if pair in connected_pairs:
             return
         connected_pairs.add(pair)
-        worm_seed = (seed ^ (start[0] * 31 + start[1] * 97 +
-                             end[0] * 7 + end[1] * 13)) & 0xFFFFFFFF
 
-        # Exclude our own start zone so the worm doesn't Y-junction on itself
-        own_zone = {(start[0] + ddx, start[1] + ddy)
-                    for ddx in range(-4, 5) for ddy in range(-4, 5)}
-        stop = path_tiles - own_zone
+        waypoints = _resolve_waypoints(
+            start, end, seed, river_tiles, bridge_all, bridge_endpoints
+        )
 
-        dist = math.hypot(end[0] - start[0], end[1] - start[1])
-        seg = _path_worm(start, end, seed, worm_seed,
-                         river_tiles, stop, bridge_all,
-                         max_steps=int(dist * 3) + 50)
-        for px, py in seg:
-            if (px, py) not in path_tiles:
-                path_tiles.add((px, py))
-                overrides.append((px, py, "path"))
-
-    def _route(a: tuple[int, int], b: tuple[int, int]) -> None:
-        """Route from a to b, detouring through a bridge pair if crossing water."""
-        samples = _line_samples(a, b)
-        center = _crossing_center(samples, seed, river_tiles, bridge_all)
-        if center is not None and len(bridge_endpoints) >= 2:
-            cx, cy = center
-            # Sort all endpoints by distance to the crossing centre
-            sorted_eps = sorted(bridge_endpoints,
-                                key=lambda ep: math.hypot(ep[0] - cx, ep[1] - cy))
-            # Take the closest endpoint on each side of the crossing:
-            # ep_a is closest to A, ep_b is closest to B among the two nearest
-            ep1, ep2 = sorted_eps[0], sorted_eps[1]
-            # Assign: ep_a faces A, ep_b faces B
-            if (math.hypot(ep1[0]-a[0], ep1[1]-a[1]) <=
-                    math.hypot(ep2[0]-a[0], ep2[1]-a[1])):
-                ep_a, ep_b = ep1, ep2
-            else:
-                ep_a, ep_b = ep2, ep1
-
-            direct_dist = math.hypot(b[0] - a[0], b[1] - a[1])
-            detour_dist = (math.hypot(ep_a[0]-a[0], ep_a[1]-a[1]) +
-                           math.hypot(ep_b[0]-ep_a[0], ep_b[1]-ep_a[1]) +
-                           math.hypot(b[0]-ep_b[0], b[1]-ep_b[1]))
-            if detour_dist < direct_dist * 3.0:
-                _add_segment(a, ep_a)
-                _add_segment(ep_a, ep_b)
-                _add_segment(ep_b, b)
-                return
-        _add_segment(a, b)
+        # Render each sub-segment with Perlin meander
+        for i in range(len(waypoints) - 1):
+            seg = _meander_segment(
+                waypoints[i], waypoints[i + 1], seed, river_tiles,
+                amplitude=3.0, freq=0.08,
+            )
+            for px, py in seg:
+                if (px, py) not in path_tiles and \
+                        not _is_water(px, py, seed, river_tiles):
+                    path_tiles.add((px, py))
+                    overrides.append((px, py, "path"))
 
     # Step 1: MST of villages
     mst_edges = _build_mst(village_positions)
     for a, b in mst_edges:
-        _route(a, b)
+        _add_path(a, b)
 
     # Step 2: Connect paired bridge endpoints across the same crossing
-    # Group endpoints by proximity (within 12 tiles = same bridge span)
     paired: set[int] = set()
     for i, ep_i in enumerate(bridge_endpoints):
         if i in paired:
@@ -415,7 +543,7 @@ def _generate_village_paths_sync(
             if j <= i or j in paired:
                 continue
             if math.hypot(ep_j[0]-ep_i[0], ep_j[1]-ep_i[1]) <= 12:
-                _add_segment(ep_i, ep_j)
+                _add_path(ep_i, ep_j)
                 paired.add(i)
                 paired.add(j)
                 break
@@ -434,7 +562,7 @@ def _generate_village_paths_sync(
         )
         for target in candidates[:2]:
             if target != (bx, by):
-                _add_segment((bx, by), target)
+                _add_path((bx, by), target)
 
     return overrides
 
