@@ -40,6 +40,13 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             "SELECT slot, item_id FROM equipment WHERE user_id = ?", (user_id,)
         )
         equipped = {r["slot"]: r["item_id"] for r in eq_rows}
+        # Give torch for testing if player doesn't already have one
+        torch_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = 'torch'",
+            (user_id,),
+        )
+        if not torch_row and not equipped.get("light"):
+            await add_to_inventory(db, user_id, "torch", 1)
         return Player(
             user_id=row["user_id"],
             display_name=row["display_name"],
@@ -74,6 +81,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             sprinting=bool(row["sprinting"]),
             weapon=equipped.get("weapon"),
             boots=equipped.get("boots"),
+            light=equipped.get("light"),
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -81,6 +89,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
         (user_id, display_name, SPAWN_X, SPAWN_Y,
          PLAYER_START_HP, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE),
     )
+    await add_to_inventory(db, user_id, "torch", 1)
     return Player(user_id=user_id, display_name=display_name)
 
 

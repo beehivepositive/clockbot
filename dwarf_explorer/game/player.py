@@ -48,6 +48,7 @@ class Player:
     sprinting: bool = False
     weapon: str | None = None
     boots: str | None = None
+    light: str | None = None
 
 
 def can_move_village(target_tile: TileData) -> tuple[bool, str]:

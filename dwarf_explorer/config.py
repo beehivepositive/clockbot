@@ -61,6 +61,7 @@ ITEM_EMOJI = {
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F5E1\uFE0F",    # 🗡️
     "hiking_boots": "\U0001F97E",    # 🥾
+    "torch": "\U0001F526",           # 🔦
 }
 
 WALKABLE_TILES = {
@@ -190,12 +191,20 @@ SHOP_CATALOG = [
     },
 ]
 
-EQUIP_SLOTS = {"weapon", "boots"}
+EQUIP_SLOTS = {"weapon", "boots", "light"}
+
+# Maps item_id → equipment slot (for items not in SHOP_CATALOG)
+ITEM_EQUIP_SLOTS = {
+    "knife":        "weapon",
+    "hiking_boots": "boots",
+    "torch":        "light",
+}
 
 # Equipment stat bonuses: {item_id: {stat: bonus}}
 EQUIP_BONUSES = {
     "knife":        {"attack": 5},
     "hiking_boots": {},
+    "torch":        {},
 }
 
 # --- World Map Image ---

@@ -1,3 +1,5 @@
+import math
+
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI,
@@ -5,14 +7,17 @@ from dwarf_explorer.config import (
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
 
+_BLACK = "\u2B1B"   # ⬛ — darkness tile
+_FOV_RADIUS = 3.0   # torch illumination radius in tiles
+
 
 def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
     if location == "cave":
-        return CAVE_EMOJI.get(tile.terrain, "\u2B1B")
+        return CAVE_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
-        return VILLAGE_EMOJI.get(tile.terrain, "\u2B1B")
+        return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop"):
-        return BUILDING_EMOJI.get(tile.terrain, "\u2B1B")
+        return BUILDING_EMOJI.get(tile.terrain, _BLACK)
     # Wilderness: structure > enemy > item > terrain
     if tile.structure and tile.structure in STRUCTURE_EMOJI:
         return STRUCTURE_EMOJI[tile.structure]
@@ -20,7 +25,7 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return ENTITY_EMOJI[tile.enemy]
     if tile.ground_item and tile.ground_item in ITEM_EMOJI:
         return ITEM_EMOJI[tile.ground_item]
-    return TERRAIN_EMOJI.get(tile.terrain, "\u2B1B")
+    return TERRAIN_EMOJI.get(tile.terrain, _BLACK)
 
 
 def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "") -> str:
@@ -28,6 +33,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 
     Viewport size is inferred from the grid dimensions so caves/buildings
     (7×7) and wilderness (9×9) both render correctly.
+
+    Cave FOV rules:
+    - Torch equipped: tiles within _FOV_RADIUS tiles of player are lit; rest = ⬛
+    - No torch, on entrance: player icon visible, rest = ⬛
+    - No torch, elsewhere: everything = ⬛ (player cannot see themselves)
     """
     if player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
@@ -41,14 +51,38 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     vp_size   = len(grid)
     vp_center = vp_size // 2
 
+    # Cave visibility pre-computation
+    torch_on   = False
+    on_entrance = False
+    if location == "cave":
+        torch_on    = player.light is not None
+        on_entrance = grid[vp_center][vp_center].terrain == "cave_entrance"
+
     lines: list[str] = []
     for row_y in range(vp_size):
         row_emojis: list[str] = []
         for col_x in range(vp_size):
-            if col_x == vp_center and row_y == vp_center:
-                row_emojis.append(ENTITY_EMOJI["player"])
+            is_center = (col_x == vp_center and row_y == vp_center)
+
+            if location == "cave":
+                dist = math.hypot(col_x - vp_center, row_y - vp_center)
+                if is_center:
+                    # Show player only if torch on OR standing on entrance
+                    if torch_on or on_entrance:
+                        row_emojis.append(ENTITY_EMOJI["player"])
+                    else:
+                        row_emojis.append(_BLACK)
+                else:
+                    if torch_on and dist <= _FOV_RADIUS:
+                        row_emojis.append(_tile_emoji(grid[row_y][col_x], location="cave"))
+                    else:
+                        row_emojis.append(_BLACK)
             else:
-                row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
+                if is_center:
+                    row_emojis.append(ENTITY_EMOJI["player"])
+                else:
+                    row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
+
         lines.append("".join(row_emojis))
 
     lines.append("")
@@ -61,7 +95,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     elif player.in_village:
         pos = f"\U0001F4CD Village ({player.village_x},{player.village_y})"
     elif player.in_cave:
-        pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y})"
+        dark_tag = "  \u26AB Darkness" if not torch_on else "  \U0001F526"
+        pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y}){dark_tag}"
     else:
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
         pos = f"\U0001F4CD Wilderness ({player.world_x},{player.world_y}){sprint_tag}"
@@ -78,6 +113,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 _ITEM_SLOT_EMOJI = {
     "knife":        "\U0001F5E1\uFE0F",
     "hiking_boots": "\U0001F97E",
+    "torch":        "\U0001F526",
     "sword":        "\U0001F5E1\uFE0F",
     "shield":       "\U0001F6E1\uFE0F",
     "potion":       "\U0001F9EA",
@@ -90,15 +126,34 @@ _ITEM_SLOT_EMOJI = {
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
+# Slot display: label icon → slot name
+_EQUIP_SLOT_ICONS = [
+    ("⚔️",  "weapon"),
+    ("\U0001F97E", "boots"),
+    ("\U0001F526", "light"),
+]
+
 
 def _item_emoji(item_id: str) -> str:
     return _ITEM_SLOT_EMOJI.get(item_id, "\U0001F4E6")
 
 
-def render_inventory(items: list[dict], selected: int, equipped: dict) -> str:
-    """Render 5×2 inventory grid as text. selected = slot index 0-9."""
+def render_inventory(items: list[dict], selected: int, equipped: dict,
+                     equip_label: str = "⚔️ Equip") -> str:
+    """Render equipped row + 5×2 inventory grid as text."""
     COLS = 5
     lines = ["\U0001F392 **Inventory**"]
+
+    # --- Equipped row ---
+    eq_parts = []
+    for icon, slot in _EQUIP_SLOT_ICONS:
+        item_id = equipped.get(slot)
+        cell = f"{icon}{_item_emoji(item_id)}" if item_id else f"{icon}{_EMPTY_SLOT}"
+        eq_parts.append(cell)
+    lines.append("**Equipped:** " + "  ".join(eq_parts))
+    lines.append("")
+
+    # --- Inventory grid ---
     slots: list[str] = []
     for i in range(10):
         if i < len(items):
@@ -118,13 +173,11 @@ def render_inventory(items: list[dict], selected: int, equipped: dict) -> str:
     lines.append("")
     if selected < len(items):
         item = items[selected]
-        e_slots = [f"{slot}:{iid}" for slot, iid in equipped.items()]
-        eq_str = f"  Equipped: {', '.join(e_slots)}" if e_slots else ""
-        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}{eq_str}")
+        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
     else:
         lines.append("Selected: *(empty slot)*")
 
-    lines.append("◀▶ navigate  |  ⚔️ Equip  |  ❌ Close")
+    lines.append(f"◀▶ navigate  |  {equip_label}  |  ❌ Close")
     return "\n".join(lines)
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import discord
 
-from dwarf_explorer.config import DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES
+from dwarf_explorer.config import DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world,
@@ -13,7 +13,7 @@ from dwarf_explorer.database.repositories import (
     update_player_sprint,
     update_player_stats,
     get_cave_entrance_exit,
-    equip_item,
+    equip_item, unequip_item,
     get_inventory,
     add_to_inventory,
     remove_from_inventory,
@@ -145,13 +145,13 @@ class GameView(discord.ui.View):
 
 
 class InventoryView(discord.ui.View):
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int, equip_label: str = "⚔️ Equip"):
         super().__init__(timeout=None)
-        for label, emoji, action in [
-            ("◀", None, "inv_prev"),
-            ("▶", None, "inv_next"),
-            ("⚔️ Equip", None, "inv_equip"),
-            ("❌ Close", None, "inv_close"),
+        for label, action in [
+            ("◀", "inv_prev"),
+            ("▶", "inv_next"),
+            (equip_label, "inv_equip"),
+            ("❌ Close", "inv_close"),
         ]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
@@ -196,6 +196,23 @@ class ShopView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, action),
                 row=0,
             ))
+
+
+# ── Inventory helpers ─────────────────────────────────────────────────────────
+
+def _equipped_dict(player: Player) -> dict:
+    d = {}
+    if player.weapon: d["weapon"] = player.weapon
+    if player.boots:  d["boots"]  = player.boots
+    if player.light:  d["light"]  = player.light
+    return d
+
+
+def _equip_label(items: list[dict], selected: int, equipped: dict) -> str:
+    """Return 'Unequip' if selected item is currently equipped, else 'Equip'."""
+    if selected < len(items) and items[selected]["item_id"] in equipped.values():
+        return "↩ Unequip"
+    return "⚔️ Equip"
 
 
 # ── Movement ──────────────────────────────────────────────────────────────────
@@ -509,13 +526,10 @@ async def handle_inventory(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     _ui_state[user_id] = {"type": "inventory", "selected": 0}
     items = await get_inventory(db, user_id)
-    equipped = {}
-    if player.weapon:
-        equipped["weapon"] = player.weapon
-    if player.boots:
-        equipped["boots"] = player.boots
-    content = render_inventory(items, 0, equipped)
-    view = InventoryView(guild_id, user_id)
+    equipped = _equipped_dict(player)
+    label = _equip_label(items, 0, equipped)
+    content = render_inventory(items, 0, equipped, label)
+    view = InventoryView(guild_id, user_id, label)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -528,56 +542,64 @@ async def handle_inv_nav(
     items = await get_inventory(db, user_id)
     new_sel = (state["selected"] + delta) % max(1, len(items))
     _ui_state[user_id] = {"type": "inventory", "selected": new_sel}
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
-    content = render_inventory(items, new_sel, equipped)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
+    equipped = _equipped_dict(player)
+    label = _equip_label(items, new_sel, equipped)
+    content = render_inventory(items, new_sel, equipped, label)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=InventoryView(guild_id, user_id, label))
 
 
 async def handle_inv_equip(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
+    """Handles both equip and unequip based on whether the selected item is already equipped."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
     sel = state.get("selected", 0)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
 
     if sel >= len(items):
-        content = render_inventory(items, sel, equipped) + "\n*(No item selected)*"
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
+        label = _equip_label(items, sel, equipped)
+        content = render_inventory(items, sel, equipped, label) + "\n*(No item selected)*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=InventoryView(guild_id, user_id, label))
         return
 
     item_id = items[sel]["item_id"]
-    # Find equip slot from shop catalog or EQUIP_BONUSES
-    from dwarf_explorer.config import SHOP_CATALOG
-    slot = None
-    for entry in SHOP_CATALOG:
-        if entry["id"] == item_id:
-            slot = entry.get("equip_slot")
-            break
 
+    # Unequip if already equipped
+    if item_id in equipped.values():
+        slot = next(s for s, v in equipped.items() if v == item_id)
+        await unequip_item(db, user_id, slot)
+        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        equipped = _equipped_dict(player)
+        label = _equip_label(items, sel, equipped)
+        content = render_inventory(items, sel, equipped, label) + f"\n*Unequipped {item_id.replace('_', ' ').title()}.*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=InventoryView(guild_id, user_id, label))
+        return
+
+    # Equip — look up slot from ITEM_EQUIP_SLOTS
+    slot = ITEM_EQUIP_SLOTS.get(item_id)
     if not slot:
-        content = render_inventory(items, sel, equipped) + f"\n*{item_id} cannot be equipped.*"
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
+        label = _equip_label(items, sel, equipped)
+        content = render_inventory(items, sel, equipped, label) + f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=InventoryView(guild_id, user_id, label))
         return
 
     await equip_item(db, user_id, slot, item_id)
-    # Apply stat bonuses
     bonuses = EQUIP_BONUSES.get(item_id, {})
     if bonuses:
         await update_player_stats(db, user_id, **bonuses)
-    # Reload player
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
-    content = render_inventory(items, sel, equipped) + f"\n*Equipped {item_id}!*"
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=InventoryView(guild_id, user_id))
+    equipped = _equipped_dict(player)
+    label = _equip_label(items, sel, equipped)
+    content = render_inventory(items, sel, equipped, label) + f"\n*Equipped {item_id.replace('_', ' ').title()}!*"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=InventoryView(guild_id, user_id, label))
 
 
 async def handle_inv_close(
@@ -656,9 +678,7 @@ async def _open_bank(
     _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": "player"}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, 0, "player", equipped)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
 
@@ -676,9 +696,7 @@ async def handle_bank_nav(
     _ui_state[user_id] = {"type": "bank", "selected": new_sel, "bank_view": bv}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, new_sel, bv, equipped)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, bv))
 
@@ -693,9 +711,7 @@ async def handle_bank_switch(
     _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": new_view}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, 0, new_view, equipped)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, new_view))
 
@@ -711,9 +727,7 @@ async def handle_bank_deposit(
     if sel >= len(items):
         player_items = items
         bank_items = await get_bank_items(db, user_id)
-        equipped = {}
-        if player.weapon: equipped["weapon"] = player.weapon
-        if player.boots:  equipped["boots"] = player.boots
+        equipped = _equipped_dict(player)
         content = render_bank(player_items, bank_items, sel, "player", equipped) + "\n*(Empty slot)*"
         await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
         return
@@ -721,9 +735,7 @@ async def handle_bank_deposit(
     ok = await bank_deposit(db, user_id, item_id)
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
     new_sel = min(sel, max(0, len(player_items) - 1))
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
@@ -742,9 +754,7 @@ async def handle_bank_withdraw(
     if sel >= len(items):
         player_items = await get_inventory(db, user_id)
         bank_items = items
-        equipped = {}
-        if player.weapon: equipped["weapon"] = player.weapon
-        if player.boots:  equipped["boots"] = player.boots
+        equipped = _equipped_dict(player)
         content = render_bank(player_items, bank_items, sel, "bank", equipped) + "\n*(Empty slot)*"
         await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "bank"))
         return
@@ -752,9 +762,7 @@ async def handle_bank_withdraw(
     ok = await bank_withdraw(db, user_id, item_id)
     player_items = await get_inventory(db, user_id)
     bank_items_new = await get_bank_items(db, user_id)
-    equipped = {}
-    if player.weapon: equipped["weapon"] = player.weapon
-    if player.boots:  equipped["boots"] = player.boots
+    equipped = _equipped_dict(player)
     new_sel = min(sel, max(0, len(bank_items_new) - 1))
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
