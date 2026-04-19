@@ -93,6 +93,7 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         terrain = target_tile.structure or target_tile.terrain
         messages = {
             "mountain": "A mountain blocks your path.",
+            "snow": "The snowy mountains are impassable.",
             "dense_forest": "The forest is too thick to pass through.",
             "shallow_water": "The water is too deep to cross.",
             "deep_water": "The ocean stretches endlessly before you.",

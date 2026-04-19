@@ -227,6 +227,36 @@ def _generate_cave_interior(
                    for cx2, cy2 in chest_positions):
                 chest_positions.add(pos)
 
+    # --- Cave rocks (mineable) ---
+    rock_positions: set[tuple[int, int]] = set()
+    rock_candidates = [
+        p for p in carved
+        if p not in entrance_set
+        and p not in chest_positions
+        and all(abs(p[0] - ex) + abs(p[1] - ey) > 4 for ex, ey in entrances)
+    ]
+    rng.shuffle(rock_candidates)
+    rock_count = len(rock_candidates) // 8  # ~12% of floor tiles
+    for pos in rock_candidates[:rock_count]:
+        rock_positions.add(pos)
+
+    # --- Cave enemies ---
+    enemy_positions: dict[tuple[int, int], str] = {}
+    enemy_types = ["cave_bat", "cave_spider", "cave_golem"]
+    enemy_weights = [60, 30, 10]
+    enemy_candidates = [
+        p for p in carved
+        if p not in entrance_set
+        and p not in chest_positions
+        and p not in rock_positions
+        and all(abs(p[0] - ex) + abs(p[1] - ey) > 6 for ex, ey in entrances)
+    ]
+    rng.shuffle(enemy_candidates)
+    enemy_count = len(enemy_candidates) // 10  # 10% chance per eligible tile
+    for pos in enemy_candidates[:enemy_count]:
+        enemy_type = rng.choices(enemy_types, weights=enemy_weights, k=1)[0]
+        enemy_positions[pos] = enemy_type
+
     # --- Build tile list ---
     tiles: list[tuple[int, int, str]] = []
     for y in range(height):
@@ -235,6 +265,10 @@ def _generate_cave_interior(
                 tiles.append((x, y, "cave_entrance"))
             elif (x, y) in chest_positions:
                 tiles.append((x, y, "cave_chest"))
+            elif (x, y) in enemy_positions:
+                tiles.append((x, y, enemy_positions[(x, y)]))
+            elif (x, y) in rock_positions:
+                tiles.append((x, y, "cave_rock"))
             elif (x, y) in carved:
                 tiles.append((x, y, "stone_floor"))
             else:

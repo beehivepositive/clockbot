@@ -16,7 +16,7 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return CAVE_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
-    if location in ("house", "church", "bank", "shop"):
+    if location in ("house", "church", "bank", "shop", "blacksmith"):
         return BUILDING_EMOJI.get(tile.terrain, _BLACK)
     # Wilderness: structure > enemy > item > terrain
     if tile.structure and tile.structure in STRUCTURE_EMOJI:
@@ -89,7 +89,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
     gold = f"\U0001F4B0 {player.gold}"
     if player.in_house:
-        loc_labels = {"house": "House", "church": "Church", "bank": "Bank", "shop": "Shop"}
+        loc_labels = {"house": "House", "church": "Church", "bank": "Bank", "shop": "Shop", "blacksmith": "Blacksmith"}
         label = loc_labels.get(player.house_type, "Building")
         pos = f"\U0001F4CD {label} ({player.house_x},{player.house_y})"
     elif player.in_village:
@@ -136,18 +136,6 @@ _ITEM_SLOT_EMOJI = {
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
-# Slot order and icons for the equipped bar (only non-empty slots are shown)
-_SLOT_ORDER = ["hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory"]
-_SLOT_ICONS = {
-    "hand_1":    "✋",
-    "hand_2":    "🤚",
-    "head":      "\U0001FAA8",   # 🪨 placeholder until helmet item exists
-    "chest":     "\U0001F6E1\uFE0F",
-    "legs":      "\U0001F9B5",
-    "boots":     "\U0001F97E",
-    "accessory": "\U0001F48D",
-}
-
 
 def _item_emoji(item_id: str) -> str:
     return _ITEM_SLOT_EMOJI.get(item_id, "\U0001F4E6")
@@ -159,17 +147,23 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
     COLS = 5
     lines = ["\U0001F392 **Inventory**"]
 
-    # --- Equipped row: only show occupied slots ---
-    eq_parts = []
-    for slot in _SLOT_ORDER:
+    # --- Equipped bar: persistent hand + boot slots, optional others ---
+    h1 = equipped.get("hand_1")
+    h2 = equipped.get("hand_2")
+    boots_item = equipped.get("boots")
+
+    hand1_cell = _item_emoji(h1) if h1 else "\u270B"   # ✋
+    hand2_cell = _item_emoji(h2) if h2 else "\U0001F91A"  # 🤚
+    boots_cell = _item_emoji(boots_item) if boots_item else "\U0001F9B6"  # 🦶
+
+    eq_parts = [hand1_cell, hand2_cell, boots_cell]
+
+    for slot in ("head", "chest", "legs", "accessory"):
         item_id = equipped.get(slot)
         if item_id:
-            icon = _SLOT_ICONS.get(slot, "◼")
-            eq_parts.append(f"{icon}{_item_emoji(item_id)}")
-    if eq_parts:
-        lines.append("**Equipped:** " + "  ".join(eq_parts))
-    else:
-        lines.append("**Equipped:** *(nothing)*")
+            eq_parts.append(_item_emoji(item_id))
+
+    lines.append("**Equipped:** " + "  ".join(eq_parts))
     lines.append("")
 
     # --- Inventory grid ---

@@ -260,6 +260,123 @@ def _generate_structures_sync(
 
 # ── Path generation ────────────────────────────────────────────────────────────
 
+def _line_samples(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    oversample: int = 3,
+) -> list[tuple[int, int]]:
+    """Return integer tile positions along the straight line from start to end."""
+    sx, sy = start
+    ex, ey = end
+    dist = math.hypot(ex - sx, ey - sy)
+    steps = max(int(dist * oversample), 1)
+    seen: set[tuple[int, int]] = set()
+    pts: list[tuple[int, int]] = []
+    for i in range(steps + 1):
+        t = i / steps
+        ix = int(round(sx + t * (ex - sx)))
+        iy = int(round(sy + t * (ey - sy)))
+        if (ix, iy) not in seen:
+            seen.add((ix, iy))
+            pts.append((ix, iy))
+    return pts
+
+
+def _meander_segment(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    worm_seed: int,
+    bridge_all: set[tuple[int, int]],
+    river_tiles: set[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Walk from start to end with perpendicular Perlin meander.
+
+    Always hits start and end exactly (sine-bell fade).
+    Avoids river tiles unless they are bridge tiles.
+    """
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    dist = math.hypot(dx, dy)
+    if dist < 1:
+        return [start]
+
+    ux, uy = dx / dist, dy / dist
+    px, py = -uy, ux  # perpendicular unit vector
+
+    freq = 0.025
+    amp = min(dist * 0.18, 14.0)
+
+    steps = max(int(dist * 2), 2)
+    path: list[tuple[int, int]] = []
+
+    for i in range(steps + 1):
+        t = i / steps
+        bx = sx + t * dx
+        by = sy + t * dy
+        n = fbm(bx * freq, by * freq, worm_seed, octaves=3)
+        fade = math.sin(math.pi * t)
+        offset = (n - 0.5) * 2.0 * amp * fade
+        fx = bx + px * offset
+        fy = by + py * offset
+        ix = max(0, min(WORLD_SIZE - 1, int(round(fx))))
+        iy = max(0, min(WORLD_SIZE - 1, int(round(fy))))
+
+        # If meandered into a river (not bridge), fall back to straight line pos
+        if (ix, iy) in river_tiles and (ix, iy) not in bridge_all:
+            ix = max(0, min(WORLD_SIZE - 1, int(round(bx))))
+            iy = max(0, min(WORLD_SIZE - 1, int(round(by))))
+            if (ix, iy) in river_tiles and (ix, iy) not in bridge_all:
+                continue  # skip this point
+
+        if not path or (ix, iy) != path[-1]:
+            path.append((ix, iy))
+
+    # Always end exactly at target
+    if not path or path[-1] != end:
+        path.append(end)
+    return path
+
+
+def _build_mst(positions: list[tuple[int, int]]) -> list[tuple[tuple[int,int], tuple[int,int]]]:
+    """Greedy minimum spanning tree (nearest-neighbour Prim's) of positions."""
+    if len(positions) < 2:
+        return []
+    connected = {positions[0]}
+    remaining = set(positions[1:])
+    edges: list[tuple[tuple[int,int], tuple[int,int]]] = []
+    while remaining:
+        best_dist = float("inf")
+        best_edge = None
+        for c in connected:
+            for r in remaining:
+                d = math.hypot(r[0] - c[0], r[1] - c[1])
+                if d < best_dist:
+                    best_dist = d
+                    best_edge = (c, r)
+        if best_edge is None:
+            break
+        edges.append(best_edge)
+        connected.add(best_edge[1])
+        remaining.discard(best_edge[1])
+    return edges
+
+
+def _crossing_center(
+    samples: list[tuple[int, int]],
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+) -> tuple[float, float] | None:
+    """Return center of river-crossing tiles (excluding bridges), or None."""
+    crossings = [(x, y) for x, y in samples
+                 if (x, y) in river_tiles and (x, y) not in bridge_all]
+    if not crossings:
+        return None
+    return (sum(x for x, y in crossings) / len(crossings),
+            sum(y for x, y in crossings) / len(crossings))
+
+
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -268,78 +385,73 @@ def _generate_village_paths_sync(
     existing_path_tiles: set[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
 ) -> list[tuple[int, int, str]]:
-    """Connect villages and bridge endpoints into a road network using a Perlin worm.
+    """Connect villages and bridge endpoints into a road network.
 
-    bridge_endpoints: only bank-edge bridge tiles (adjacent to dry land) — used as
-        path targets so worms start and end on reachable ground.
-    bridge_all: all bridge tiles — used as passable_tiles so worms can cross rivers.
-    The worm moves in float space for organic-looking curves, strictly avoids
-    water biomes and river tiles, and can cross bridge tiles.  Paths merge
-    naturally at Y-junctions when the worm reaches an existing road.
-    Connections are deduplicated so (A→B) prevents a redundant (B→A) run.
+    Algorithm:
+    1. Build MST connecting villages via nearest-neighbour Prim's.
+    2. For each MST edge: if the straight line crosses a river, find the nearest
+       bridge endpoint to the crossing and route through it as a waypoint.
+    3. Generate each sub-segment as a straight line with Perlin perpendicular meander.
+    4. After villages are connected, connect each isolated bridge endpoint to the
+       nearest existing path node.
     """
-    path_tiles:     set[tuple[int, int]] = set(existing_path_tiles)
-    overrides:      list[tuple[int, int, str]] = []
-    avoid_tiles:    set[tuple[int, int]] = set(river_tiles)
-    passable_tiles: set[tuple[int, int]] = set(bridge_all)
-
-    all_targets = list(village_positions) + list(bridge_endpoints)
+    path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
+    overrides: list[tuple[int, int, str]] = []
     connected_pairs: set[frozenset] = set()
 
-    def _connect(start: tuple[int, int], end: tuple[int, int]) -> None:
+    def _add_segment(start: tuple[int, int], end: tuple[int, int]) -> None:
         pair = frozenset([start, end])
         if pair in connected_pairs:
             return
         connected_pairs.add(pair)
-
-        # Exclude start's own 9×9 zone so worm doesn't immediately stop on its ring
-        own_zone = {(start[0] + ddx, start[1] + ddy)
-                    for ddx in range(-4, 5) for ddy in range(-4, 5)}
-        stop = path_tiles - own_zone
-
         worm_seed = (seed ^ (start[0] * 31 + start[1] * 97 +
-                             end[0] * 7   + end[1] * 13)) & 0xFFFFFFFF
-        path = _path_worm(start, end, seed, worm_seed,
-                          avoid_tiles, stop, passable_tiles)
-        if not path:
-            return
-
-        for px, py in path:
+                             end[0] * 7 + end[1] * 13)) & 0xFFFFFFFF
+        seg = _meander_segment(start, end, worm_seed, bridge_all, river_tiles)
+        for px, py in seg:
             if (px, py) not in path_tiles:
                 path_tiles.add((px, py))
-                overrides.append((px, py, 'path'))
+                overrides.append((px, py, "path"))
 
-    # --- Villages: connect to 1-2 nearest targets ---
-    for vx, vy in village_positions:
-        candidates = sorted(
-            (math.hypot(tx - vx, ty - vy), (tx, ty))
-            for (tx, ty) in all_targets
-            if (tx, ty) != (vx, vy)
-        )
-        if not candidates:
-            continue
-        targets = [candidates[0][1]]
-        if len(candidates) > 1 and candidates[1][0] < candidates[0][0] * 2.0:
-            targets.append(candidates[1][1])
+    def _route(a: tuple[int, int], b: tuple[int, int]) -> None:
+        """Route from a to b, detouring through nearest bridge if crossing a river."""
+        samples = _line_samples(a, b)
+        center = _crossing_center(samples, river_tiles, bridge_all)
+        if center is not None and bridge_endpoints:
+            cx, cy = center
+            nearest_ep = min(bridge_endpoints,
+                             key=lambda ep: math.hypot(ep[0] - cx, ep[1] - cy))
+            # Only detour if bridge is not wildly out of the way
+            direct_dist = math.hypot(b[0] - a[0], b[1] - a[1])
+            detour_dist = (math.hypot(nearest_ep[0] - a[0], nearest_ep[1] - a[1]) +
+                           math.hypot(b[0] - nearest_ep[0], b[1] - nearest_ep[1]))
+            if detour_dist < direct_dist * 2.5:
+                _add_segment(a, nearest_ep)
+                _add_segment(nearest_ep, b)
+                return
+        _add_segment(a, b)
 
-        for target in targets:
-            _connect((vx, vy), target)
+    # Step 1: MST of villages
+    mst_edges = _build_mst(village_positions)
+    for a, b in mst_edges:
+        _route(a, b)
 
-    # --- Bridges: connect to 2 nearest targets (both banks) ---
+    # Step 2: Connect bridge endpoints that have no nearby path
     for bx, by in bridge_endpoints:
-        candidates = sorted(
-            (math.hypot(tx - bx, ty - by), (tx, ty))
-            for (tx, ty) in all_targets
-            if (tx, ty) != (bx, by)
+        nearby = any(
+            abs(bx - px) + abs(by - py) <= 6
+            for px, py in path_tiles
         )
-        if not candidates:
+        if nearby:
             continue
-        targets = [candidates[0][1]]
-        if len(candidates) > 1 and candidates[1][0] <= 120:
-            targets.append(candidates[1][1])
-
-        for target in targets:
-            _connect((bx, by), target)
+        # Connect to nearest village or existing path node
+        all_targets = village_positions + list(bridge_endpoints)
+        candidates = sorted(
+            all_targets,
+            key=lambda t: math.hypot(t[0] - bx, t[1] - by)
+        )
+        for target in candidates[:2]:
+            if target != (bx, by):
+                _add_segment((bx, by), target)
 
     return overrides
 

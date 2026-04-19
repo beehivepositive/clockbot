@@ -50,8 +50,8 @@ def _generate_village_interior(
 
     buildings: list[tuple[int, int, str]] = []
 
-    # ── Required special buildings (church, bank, shop) ────────────────────
-    required = ["vil_church", "vil_bank", "vil_shop"]
+    # ── Required special buildings (church, bank, shop, blacksmith) ────────
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(200):
@@ -134,7 +134,7 @@ def _connect_to_road(
         if not (1 <= npx < W - 1 and 1 <= npy < H - 1):
             break
         t = grid[npy][npx]
-        if t not in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_well", "vil_tree"):
+        if t not in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_well", "vil_tree"):
             grid[npy][npx] = "vil_path"
         px, py = npx, npy
 
@@ -229,6 +229,21 @@ def _shop_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], s
     return tiles
 
 
+def _blacksmith_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+    tiles: dict[tuple[int,int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
+    tiles[(W//2, H-1)] = "b_door"
+    # Forge (fire) at back
+    tiles[(W//2, 1)] = "b_forge"
+    # Anvil in centre
+    tiles[(W//2, H//2)] = "b_anvil"
+    # NPC near anvil
+    tiles[(W//2 - 1, H//2)] = "b_blacksmith_npc"
+    return tiles
+
+
 def _generate_building_interior(
     house_id: int, seed: int, village_id: int,
     building_type: str, door_vx: int, door_vy: int,
@@ -244,6 +259,9 @@ def _generate_building_interior(
     elif building_type in ("vil_shop", "shop"):
         W, H = rng.randint(8, 11), rng.randint(7, 9)
         tiles_dict = _shop_interior(rng, W, H)
+    elif building_type in ("vil_blacksmith", "blacksmith"):
+        W, H = rng.randint(7, 9), rng.randint(6, 8)
+        tiles_dict = _blacksmith_interior(rng, W, H)
     else:  # house
         W, H = rng.randint(7, 11), rng.randint(6, 9)
         tiles_dict = _house_interior(rng, W, H)
@@ -290,7 +308,8 @@ async def get_or_create_village(
     # Generate interiors for each building
     for bx, by, btype in buildings:
         canonical = {"vil_house": "house", "vil_church": "church",
-                     "vil_bank": "bank", "vil_shop": "shop"}.get(btype, "house")
+                     "vil_bank": "bank", "vil_shop": "shop",
+                     "vil_blacksmith": "blacksmith"}.get(btype, "house")
         hcursor = await db.execute(
             "INSERT INTO houses (village_id, building_type, width, height) VALUES (?, ?, 1, 1)",
             (village_id, canonical),

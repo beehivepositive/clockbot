@@ -6,7 +6,7 @@ import discord
 
 from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
-    TWO_HANDED_ITEMS, ITEM_SELL_PRICES,
+    TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, ENEMY_STATS,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -240,6 +240,32 @@ async def _auto_unequip_depleted(db, user_id: int, item_id: str, player: Player)
             await unequip_item(db, user_id, slot)
 
 
+async def _resolve_cave_combat(
+    player: Player, enemy_type: str,
+    cave_x: int, cave_y: int, db, user_id: int
+) -> str:
+    from dwarf_explorer.config import ENEMY_STATS
+    hp, atk, defn, xp_rew, gold_rew = ENEMY_STATS[enemy_type]
+    enemy_dmg = max(0, atk - player.defense)
+    player_dmg = max(1, player.attack - defn)
+    player.hp = max(0, player.hp - enemy_dmg)
+    player.gold += gold_rew
+    player.xp += xp_rew
+    await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
+    await db.execute(
+        "UPDATE cave_tiles SET tile_type='stone_floor'"
+        " WHERE cave_id=? AND local_x=? AND local_y=?",
+        (player.cave_id, cave_x, cave_y),
+    )
+    name = enemy_type.replace("cave_", "").replace("_", " ").title()
+    result = f"\u2694\uFE0F You fight the {name}! Dealt {player_dmg}. Took {enemy_dmg} damage."
+    if player.hp <= 0:
+        result += " You have been knocked out! (HP: 0)"
+    else:
+        result += f" Got {xp_rew}XP, {gold_rew}g."
+    return result
+
+
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 def _game_view(guild_id: int, user_id: int, player: Player) -> GameView:
@@ -314,6 +340,13 @@ async def _move_steps(
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
+            # Check for cave enemies
+            if target.terrain in CAVE_ENEMY_TYPES:
+                combat_msg = await _resolve_cave_combat(player, target.terrain, nx, ny, db, user_id)
+                player.cave_x, player.cave_y = nx, ny
+                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                return render_grid(grid, player, combat_msg), _game_view(guild_id, user_id, player)
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -431,6 +464,25 @@ async def handle_interact(
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player, "A locked vault. Speak with the banker.")
 
+        elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
+            # Smelt iron ore → iron ingot
+            ore_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
+            )
+            if not ore_row or ore_row["quantity"] < 1:
+                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+                content = render_grid(grid, player, "\"Bring me iron ore and I'll smelt it into ingots.\"")
+            else:
+                count = ore_row["quantity"]
+                await remove_from_inventory(db, user_id, "iron_ore", count)
+                await add_to_inventory(db, user_id, "iron_ingot", count)
+                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+                content = render_grid(grid, player, f"The blacksmith smelts {count} iron ore into {count} iron ingots!")
+
+        elif htile.terrain == "b_anvil":
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "A sturdy anvil. Speak with the blacksmith to smelt ore.")
+
         else:
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
@@ -441,7 +493,7 @@ async def handle_interact(
     elif player.in_village:
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
 
-        if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop"):
+        if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
             result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
             if result:
                 house_id, btype, hx, hy = result
@@ -456,7 +508,7 @@ async def handle_interact(
                     db, user_id, True, house_id, hx, hy,
                     player.village_x, player.village_y, btype,
                 )
-                labels = {"house": "house", "church": "church", "bank": "bank", "shop": "shop"}
+                labels = {"house": "house", "church": "church", "bank": "bank", "shop": "shop", "blacksmith": "blacksmith"}
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
             else:
@@ -501,6 +553,32 @@ async def handle_interact(
                    + (f", and a {loot['item']}!" if loot["item"] else "."))
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             content = render_grid(grid, player, msg)
+
+        elif cave_tile.terrain == "cave_rock":
+            hand_items = set()
+            if player.hand_1: hand_items.add(player.hand_1)
+            if player.hand_2: hand_items.add(player.hand_2)
+            if "pickaxe" not in hand_items:
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                content = render_grid(grid, player, "You need a pickaxe to mine this rock.")
+            else:
+                rng = _random.Random()
+                loot = []
+                await db.execute(
+                    "UPDATE cave_tiles SET tile_type='stone_floor'"
+                    " WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (player.cave_id, player.cave_x, player.cave_y),
+                )
+                await add_to_inventory(db, user_id, "stone", 1)
+                loot.append("rock")
+                if rng.random() < 0.33:
+                    await add_to_inventory(db, user_id, "flint", 1)
+                    loot.append("flint")
+                if rng.random() < 0.15:
+                    await add_to_inventory(db, user_id, "iron_ore", 1)
+                    loot.append("iron ore")
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
 
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -1030,7 +1108,7 @@ async def handle_help(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
-WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "snow", "path",
+WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "path",
                        "sapling", "short_grass", "seedling"}
 
 

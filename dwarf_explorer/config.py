@@ -28,7 +28,7 @@ TERRAIN_EMOJI = {
     "dense_forest": "\U0001F333",    # 🌳
     "hills": "\u26F0\uFE0F",        # ⛰️
     "mountain": "\U0001F3D4\uFE0F", # 🏔️
-    "snow": "\u2744\uFE0F",         # ❄️
+    "snow": "\u2744\uFE0F\U0001F3D4\uFE0F",  # ❄️🏔️ snowy mountains — impassable
     "path": "\U0001F7EB",           # 🟫
     "void": "\u2B1B",               # ⬛
     # Player-modifiable terrain
@@ -69,6 +69,7 @@ ITEM_EMOJI = {
     "axe": "\U0001FA93",             # 🪓
     "shovel": "\u26CF\uFE0F",       # ⛏️
     "watering_can": "\U0001FAA3",    # 🪣
+    "pickaxe": "\u26CF\uFE0F",      # ⛏️
     "log": "\U0001FAB5",             # 🪵
     "stick": "\U0001F38B",           # 🎋
     "resin": "\U0001F7E1",           # 🟡
@@ -76,12 +77,16 @@ ITEM_EMOJI = {
     "dry_grass": "\U0001F33E",       # 🌾
     "seed": "\U0001F330",            # 🌰
     "sapling": "\U0001F331",         # 🌱
+    "flint": "\U0001FAA8",           # 🪨
+    "iron_ore": "\U0001F7EB",        # 🟫
+    "iron_ingot": "\U0001F9F1",      # 🧱
 }
 
 WALKABLE_TILES = {
-    "sand", "plains", "grass", "forest", "hills", "snow", "path",
+    "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "shrine", "cave", "bridge",
     "sapling", "short_grass", "seedling",
+    # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
@@ -100,6 +105,9 @@ ENEMY_STATS = {
     "wolf": (20, 5, 2, 10, 5),
     "bear": (40, 10, 5, 25, 15),
     "spider": (15, 8, 1, 15, 8),
+    "cave_bat": (10, 4, 1, 5, 3),
+    "cave_spider": (20, 8, 2, 15, 8),
+    "cave_golem": (60, 15, 10, 50, 25),
 }
 
 # Player defaults
@@ -114,9 +122,16 @@ CAVE_EMOJI = {
     "stone_wall": "\u2B1B",                  # ⬛
     "cave_entrance": "\U0001F573\uFE0F",    # 🕳️
     "cave_chest": "\U0001F4E6",             # 📦  (overridable with :chest:)
+    "cave_rock": "\U0001FAA8",              # 🪨
+    "cave_bat": "\U0001F987",               # 🦇
+    "cave_spider": "\U0001F577\uFE0F",      # 🕷️
+    "cave_golem": "\U0001FAA8",             # 🪨 (looks like a rock creature)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest"}
+# cave_rock, cave_bat, cave_spider, cave_golem all block movement
+
+CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem"}
 
 # Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
 CHEST_LOOT = [
@@ -133,57 +148,63 @@ CAVE_WALK_STEPS = 500
 # --- Village System ---
 
 VILLAGE_EMOJI = {
-    "vil_grass":   "\U0001F33F",            # 🌿  (overridable with :grass:)
-    "vil_path":    "\U0001F7EB",            # 🟫
-    "vil_well":    "\u26F2",                # ⛲
-    "vil_garden":  "\U0001F33B",            # 🌻
-    "vil_tree":    "\U0001F332",            # 🌲
-    "vil_house":   "\U0001F3E0",            # 🏠
-    "vil_church":  "\u26EA",               # ⛪
-    "vil_bank":    "\U0001F3E6",            # 🏦
-    "vil_shop":    "\U0001F3EA",            # 🏪
+    "vil_grass":        "\U0001F33F",        # 🌿  (overridable with :grass:)
+    "vil_path":         "\U0001F7EB",        # 🟫
+    "vil_well":         "\u26F2",            # ⛲
+    "vil_garden":       "\U0001F33B",        # 🌻
+    "vil_tree":         "\U0001F332",        # 🌲
+    "vil_house":        "\U0001F3E0",        # 🏠
+    "vil_church":       "\u26EA",            # ⛪
+    "vil_bank":         "\U0001F3E6",        # 🏦
+    "vil_shop":         "\U0001F3EA",        # 🏪
+    "vil_blacksmith":   "\u2692\uFE0F",      # ⚒️
 }
 
 # All building interior tiles use BUILDING_EMOJI
 BUILDING_EMOJI = {
     # Shared floor/wall/door
-    "b_floor":       "\U0001F7EB",           # 🟫  (overridable with :grey_square:)
-    "b_wall":        "\u2B1B",               # ⬛
-    "b_door":        "\U0001F6AA",           # 🚪
+    "b_floor":            "\U0001F7EB",       # 🟫  (overridable with :grey_square:)
+    "b_wall":             "\u2B1B",           # ⬛
+    "b_door":             "\U0001F6AA",       # 🚪
     # House furniture
-    "b_bed":         "\U0001F6CF\uFE0F",    # 🛏️
-    "b_table":       "\U0001FAB5",           # 🪵  (overridable with :table:)
-    "b_chair":       "\U0001FA91",           # 🪑
-    "b_stove":       "\U0001F525",           # 🔥  (overridable with :hearth:)
-    "b_bookshelf":   "\U0001F4DA",           # 📚
+    "b_bed":              "\U0001F6CF\uFE0F", # 🛏️
+    "b_table":            "\U0001FAB5",       # 🪵  (overridable with :table:)
+    "b_chair":            "\U0001FA91",       # 🪑
+    "b_stove":            "\U0001F525",       # 🔥  (overridable with :hearth:)
+    "b_bookshelf":        "\U0001F4DA",       # 📚
     # Church unique
-    "b_pew":         "\U0001FA91",           # 🪑
-    "b_altar":       "\u26E9\uFE0F",        # ⛩️
-    "b_candle":      "\U0001F56F\uFE0F",    # 🕯️
-    "b_priest":      "\U0001F9D9",           # 🧙
+    "b_pew":              "\U0001FA91",       # 🪑
+    "b_altar":            "\u26E9\uFE0F",    # ⛩️
+    "b_candle":           "\U0001F56F\uFE0F",# 🕯️
+    "b_priest":           "\U0001F9D9",       # 🧙
     # Bank unique
-    "b_counter":     "\U0001F7E6",           # 🟦
-    "b_bank_npc":    "\U0001F9D1",           # 🧑
-    "b_safe":        "\U0001F512",           # 🔒
+    "b_counter":          "\U0001F7E6",       # 🟦
+    "b_bank_npc":         "\U0001F9D1",       # 🧑
+    "b_safe":             "\U0001F512",       # 🔒
     # Shop unique
-    "b_shelf":       "\U0001F4E6",           # 📦  (overridable with :chest:)
-    "b_shop_npc":    "\U0001F9D1",           # 🧑
-    "b_shop_counter":"\U0001F7E6",           # 🟦
+    "b_shelf":            "\U0001F4E6",       # 📦  (overridable with :chest:)
+    "b_shop_npc":         "\U0001F9D1",       # 🧑
+    "b_shop_counter":     "\U0001F7E6",       # 🟦
+    # Blacksmith unique
+    "b_anvil":            "\U0001F528",       # 🔨
+    "b_blacksmith_npc":   "\U0001F9D1",       # 🧑
+    "b_forge":            "\U0001F525",       # 🔥
 }
 
 VILLAGE_WALKABLE = {
     "vil_grass", "vil_path", "vil_garden",
-    "vil_house", "vil_church", "vil_bank", "vil_shop",
+    "vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
 }
 
 BUILDING_WALKABLE = {
     "b_floor", "b_door",
-    "b_priest", "b_bank_npc", "b_shop_npc",
+    "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
     "b_pew", "b_table", "b_stove", "b_bed",
+    "b_anvil",
 }
 
-VILLAGE_MIN_SIZE = 32
-VILLAGE_MAX_SIZE = 48
+VILLAGE_MIN_SIZE = 16
+VILLAGE_MAX_SIZE = 16
 
 # --- Items & Equipment ---
 
@@ -191,7 +212,7 @@ SHOP_CATALOG = [
     {
         "id": "knife",
         "name": "Knife",
-        "emoji": "\U0001F5E1\uFE0F",   # 🗡️
+        "emoji": "\U0001F5E1\uFE0F",
         "price": 25,
         "equip_slot": "hand",
         "description": "A sharp blade. +5 attack. Cut grass & plains.",
@@ -199,7 +220,7 @@ SHOP_CATALOG = [
     {
         "id": "hiking_boots",
         "name": "Hiking Boots",
-        "emoji": "\U0001F97E",         # 🥾
+        "emoji": "\U0001F97E",
         "price": 50,
         "equip_slot": "boots",
         "description": "Sturdy boots. Enables sprinting.",
@@ -207,15 +228,15 @@ SHOP_CATALOG = [
     {
         "id": "axe",
         "name": "Axe",
-        "emoji": "\U0001FA93",         # 🪓
+        "emoji": "\U0001FA93",
         "price": 40,
         "equip_slot": "hand",
-        "description": "Chop down forest tiles. Yields log + drops.",
+        "description": "Two-handed. Chop down forest tiles. Yields log + drops.",
     },
     {
         "id": "shovel",
         "name": "Shovel",
-        "emoji": "\u26CF\uFE0F",      # ⛏️
+        "emoji": "\u26CF\uFE0F",
         "price": 60,
         "equip_slot": "hand",
         "description": "Two-handed. Dig up saplings from the ground.",
@@ -223,18 +244,25 @@ SHOP_CATALOG = [
     {
         "id": "watering_can",
         "name": "Watering Can",
-        "emoji": "\U0001FAA3",         # 🪣
+        "emoji": "\U0001FAA3",
         "price": 35,
         "equip_slot": "hand",
         "description": "Water saplings, seedlings & short grass to grow.",
+    },
+    {
+        "id": "pickaxe",
+        "name": "Pickaxe",
+        "emoji": "\u26CF\uFE0F",
+        "price": 55,
+        "equip_slot": "hand",
+        "description": "Mine cave rocks: 66% rock, 33% flint, 15% iron ore.",
     },
 ]
 
 # Equipment slots
 EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory"}
 
-# Maps item_id → equipment slot type
-# "hand" items resolve to hand_1 or hand_2 at equip time
+# Maps item_id → equipment slot type ("hand" resolves to hand_1 or hand_2 at equip time)
 ITEM_EQUIP_SLOTS = {
     "knife":        "hand",
     "axe":          "hand",
@@ -242,17 +270,19 @@ ITEM_EQUIP_SLOTS = {
     "watering_can": "hand",
     "seed":         "hand",
     "sapling":      "hand",
-    "hiking_boots": "boots",
     "shovel":       "hand",
+    "pickaxe":      "hand",
+    "hiking_boots": "boots",
 }
 
-# Items that require both hand slots
-TWO_HANDED_ITEMS = {"shovel"}
+# Items that occupy both hand slots
+TWO_HANDED_ITEMS = {"shovel", "axe"}
 
 # Equipment stat bonuses: {item_id: {stat: bonus}}
 EQUIP_BONUSES = {
     "knife":        {"attack": 5},
     "axe":          {"attack": 3},
+    "pickaxe":      {"attack": 4},
     "hiking_boots": {},
     "torch":        {},
     "shovel":       {},
@@ -261,13 +291,14 @@ EQUIP_BONUSES = {
     "sapling":      {},
 }
 
-# Sell prices at the shop (60% of buy price for shop items, flat for others)
+# Sell prices at the shop (60% of buy price for shop items)
 ITEM_SELL_PRICES = {
     "knife":        15,
     "hiking_boots": 30,
     "axe":          24,
     "shovel":       36,
     "watering_can": 21,
+    "pickaxe":      33,
     "gem":          30,
     "potion":       15,
     "sword":        50,
@@ -283,6 +314,9 @@ ITEM_SELL_PRICES = {
     "stone":        3,
     "key":          20,
     "map_fragment": 25,
+    "flint":        6,
+    "iron_ore":     12,
+    "iron_ingot":   25,
 }
 
 # --- World Map Image ---
@@ -299,7 +333,7 @@ TILE_COLORS = {
     "dense_forest": (10, 80, 20),
     "hills": (140, 130, 100),
     "mountain": (100, 100, 100),
-    "snow": (240, 240, 255),
+    "snow": (220, 230, 255),
     "path": (139, 90, 43),
     "village": (200, 160, 60),
     "ruins": (120, 100, 80),
@@ -316,15 +350,9 @@ TILE_COLORS = {
 # --- Custom Emoji Resolution ---
 
 def apply_custom_emojis(guild_emojis: list) -> None:
-    """Mutate emoji dicts to use guild custom emojis where configured.
-
-    Called once at bot startup with bot.emojis or guild.emojis.
-    Custom emoji string format: <:name:id>
-    """
     cache = {e.name: f"<:{e.name}:{e.id}>" for e in guild_emojis}
 
     _replace = [
-        # (emoji_dict,  tile_key,       custom_emoji_name)
         (TERRAIN_EMOJI,  "sand",         "sand"),
         (TERRAIN_EMOJI,  "grass",        "grass"),
         (TERRAIN_EMOJI,  "plains",       "dry_grass"),
