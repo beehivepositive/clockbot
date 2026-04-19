@@ -120,11 +120,11 @@ def _path_worm(
 
         # --- Steer: Perlin noise rotation + pull toward target ---
         n = fbm(x * freq, y * freq, worm_seed, octaves=3)
-        rot = math.radians((n - 0.5) * 130.0)   # ±65° wiggle — more organic curves
+        rot = math.radians((n - 0.5) * 160.0)   # ±80° wiggle — organic curves
         ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
         tdx, tdy = _norm2(tx - x, ty - y)
-        # 60% noise worm, 40% pull toward target — more meander
-        dx, dy = _norm2(ndx * 0.60 + tdx * 0.40, ndy * 0.60 + tdy * 0.40)
+        # 35% noise, 65% pull toward target — meanders but always converges
+        dx, dy = _norm2(ndx * 0.35 + tdx * 0.65, ndy * 0.35 + tdy * 0.65)
 
         # Validate next step; rotate if blocked
         nx_int = int(round(x + dx))
@@ -282,63 +282,6 @@ def _line_samples(
     return pts
 
 
-def _meander_segment(
-    start: tuple[int, int],
-    end: tuple[int, int],
-    worm_seed: int,
-    bridge_all: set[tuple[int, int]],
-    river_tiles: set[tuple[int, int]],
-) -> list[tuple[int, int]]:
-    """Walk from start to end with perpendicular Perlin meander.
-
-    Always hits start and end exactly (sine-bell fade).
-    Avoids river tiles unless they are bridge tiles.
-    """
-    sx, sy = start
-    ex, ey = end
-    dx = ex - sx
-    dy = ey - sy
-    dist = math.hypot(dx, dy)
-    if dist < 1:
-        return [start]
-
-    ux, uy = dx / dist, dy / dist
-    px, py = -uy, ux  # perpendicular unit vector
-
-    freq = 0.025
-    amp = min(dist * 0.18, 14.0)
-
-    steps = max(int(dist * 2), 2)
-    path: list[tuple[int, int]] = []
-
-    for i in range(steps + 1):
-        t = i / steps
-        bx = sx + t * dx
-        by = sy + t * dy
-        n = fbm(bx * freq, by * freq, worm_seed, octaves=3)
-        fade = math.sin(math.pi * t)
-        offset = (n - 0.5) * 2.0 * amp * fade
-        fx = bx + px * offset
-        fy = by + py * offset
-        ix = max(0, min(WORLD_SIZE - 1, int(round(fx))))
-        iy = max(0, min(WORLD_SIZE - 1, int(round(fy))))
-
-        # If meandered into a river (not bridge), fall back to straight line pos
-        if (ix, iy) in river_tiles and (ix, iy) not in bridge_all:
-            ix = max(0, min(WORLD_SIZE - 1, int(round(bx))))
-            iy = max(0, min(WORLD_SIZE - 1, int(round(by))))
-            if (ix, iy) in river_tiles and (ix, iy) not in bridge_all:
-                continue  # skip this point
-
-        if not path or (ix, iy) != path[-1]:
-            path.append((ix, iy))
-
-    # Always end exactly at target
-    if not path or path[-1] != end:
-        path.append(end)
-    return path
-
-
 def _build_mst(positions: list[tuple[int, int]]) -> list[tuple[tuple[int,int], tuple[int,int]]]:
     """Greedy minimum spanning tree (nearest-neighbour Prim's) of positions."""
     if len(positions) < 2:
@@ -383,28 +326,6 @@ def _crossing_center(
             sum(y for x, y in crossings) / len(crossings))
 
 
-def _straight_path(
-    start: tuple[int, int], end: tuple[int, int]
-) -> list[tuple[int, int]]:
-    """Integer tile positions along a straight line from start to end."""
-    sx, sy = start
-    ex, ey = end
-    dist = math.hypot(ex - sx, ey - sy)
-    steps = max(int(dist * 2), 1)
-    seen: set[tuple[int, int]] = set()
-    path: list[tuple[int, int]] = []
-    for i in range(steps + 1):
-        t = i / steps
-        ix = int(round(sx + t * (ex - sx)))
-        iy = int(round(sy + t * (ey - sy)))
-        if (ix, iy) not in seen:
-            seen.add((ix, iy))
-            path.append((ix, iy))
-    if not path or path[-1] != end:
-        path.append(end)
-    return path
-
-
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -434,7 +355,16 @@ def _generate_village_paths_sync(
         connected_pairs.add(pair)
         worm_seed = (seed ^ (start[0] * 31 + start[1] * 97 +
                              end[0] * 7 + end[1] * 13)) & 0xFFFFFFFF
-        seg = _meander_segment(start, end, worm_seed, bridge_all, river_tiles)
+
+        # Exclude our own start zone so the worm doesn't Y-junction on itself
+        own_zone = {(start[0] + ddx, start[1] + ddy)
+                    for ddx in range(-4, 5) for ddy in range(-4, 5)}
+        stop = path_tiles - own_zone
+
+        dist = math.hypot(end[0] - start[0], end[1] - start[1])
+        seg = _path_worm(start, end, seed, worm_seed,
+                         river_tiles, stop, bridge_all,
+                         max_steps=int(dist * 3) + 50)
         for px, py in seg:
             if (px, py) not in path_tiles:
                 path_tiles.add((px, py))
