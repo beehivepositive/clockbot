@@ -89,6 +89,20 @@ class Database:
                 "ALTER TABLE players ADD COLUMN boots TEXT",
                 # buildings table
                 "ALTER TABLE houses ADD COLUMN building_type TEXT NOT NULL DEFAULT 'house'",
+                # Equipment table (create if missing)
+                """CREATE TABLE IF NOT EXISTS equipment (
+                    user_id INTEGER NOT NULL,
+                    slot TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    PRIMARY KEY (user_id, slot)
+                )""",
+                # Bank items table (create if missing)
+                """CREATE TABLE IF NOT EXISTS bank_items (
+                    user_id INTEGER NOT NULL,
+                    item_id TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (user_id, item_id)
+                )""",
             ]
             for sql in migrations:
                 try:
