@@ -363,18 +363,46 @@ def _build_mst(positions: list[tuple[int, int]]) -> list[tuple[tuple[int,int], t
     return edges
 
 
+def _is_water(x: int, y: int, seed: int, river_tiles: set[tuple[int, int]]) -> bool:
+    """True if tile is water — either a river override OR a water biome tile."""
+    return (x, y) in river_tiles or get_biome(x, y, seed) in _WATER_BIOMES
+
+
 def _crossing_center(
     samples: list[tuple[int, int]],
+    seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
 ) -> tuple[float, float] | None:
-    """Return center of river-crossing tiles (excluding bridges), or None."""
+    """Return center of water-crossing tiles (river overrides OR biome water, not bridges)."""
     crossings = [(x, y) for x, y in samples
-                 if (x, y) in river_tiles and (x, y) not in bridge_all]
+                 if (x, y) not in bridge_all and _is_water(x, y, seed, river_tiles)]
     if not crossings:
         return None
     return (sum(x for x, y in crossings) / len(crossings),
             sum(y for x, y in crossings) / len(crossings))
+
+
+def _straight_path(
+    start: tuple[int, int], end: tuple[int, int]
+) -> list[tuple[int, int]]:
+    """Integer tile positions along a straight line from start to end."""
+    sx, sy = start
+    ex, ey = end
+    dist = math.hypot(ex - sx, ey - sy)
+    steps = max(int(dist * 2), 1)
+    seen: set[tuple[int, int]] = set()
+    path: list[tuple[int, int]] = []
+    for i in range(steps + 1):
+        t = i / steps
+        ix = int(round(sx + t * (ex - sx)))
+        iy = int(round(sy + t * (ey - sy)))
+        if (ix, iy) not in seen:
+            seen.add((ix, iy))
+            path.append((ix, iy))
+    if not path or path[-1] != end:
+        path.append(end)
+    return path
 
 
 def _generate_village_paths_sync(
@@ -413,20 +441,32 @@ def _generate_village_paths_sync(
                 overrides.append((px, py, "path"))
 
     def _route(a: tuple[int, int], b: tuple[int, int]) -> None:
-        """Route from a to b, detouring through nearest bridge if crossing a river."""
+        """Route from a to b, detouring through a bridge pair if crossing water."""
         samples = _line_samples(a, b)
-        center = _crossing_center(samples, river_tiles, bridge_all)
-        if center is not None and bridge_endpoints:
+        center = _crossing_center(samples, seed, river_tiles, bridge_all)
+        if center is not None and len(bridge_endpoints) >= 2:
             cx, cy = center
-            nearest_ep = min(bridge_endpoints,
-                             key=lambda ep: math.hypot(ep[0] - cx, ep[1] - cy))
-            # Only detour if bridge is not wildly out of the way
+            # Sort all endpoints by distance to the crossing centre
+            sorted_eps = sorted(bridge_endpoints,
+                                key=lambda ep: math.hypot(ep[0] - cx, ep[1] - cy))
+            # Take the closest endpoint on each side of the crossing:
+            # ep_a is closest to A, ep_b is closest to B among the two nearest
+            ep1, ep2 = sorted_eps[0], sorted_eps[1]
+            # Assign: ep_a faces A, ep_b faces B
+            if (math.hypot(ep1[0]-a[0], ep1[1]-a[1]) <=
+                    math.hypot(ep2[0]-a[0], ep2[1]-a[1])):
+                ep_a, ep_b = ep1, ep2
+            else:
+                ep_a, ep_b = ep2, ep1
+
             direct_dist = math.hypot(b[0] - a[0], b[1] - a[1])
-            detour_dist = (math.hypot(nearest_ep[0] - a[0], nearest_ep[1] - a[1]) +
-                           math.hypot(b[0] - nearest_ep[0], b[1] - nearest_ep[1]))
-            if detour_dist < direct_dist * 2.5:
-                _add_segment(a, nearest_ep)
-                _add_segment(nearest_ep, b)
+            detour_dist = (math.hypot(ep_a[0]-a[0], ep_a[1]-a[1]) +
+                           math.hypot(ep_b[0]-ep_a[0], ep_b[1]-ep_a[1]) +
+                           math.hypot(b[0]-ep_b[0], b[1]-ep_b[1]))
+            if detour_dist < direct_dist * 3.0:
+                _add_segment(a, ep_a)
+                _add_segment(ep_a, ep_b)
+                _add_segment(ep_b, b)
                 return
         _add_segment(a, b)
 
@@ -435,18 +475,31 @@ def _generate_village_paths_sync(
     for a, b in mst_edges:
         _route(a, b)
 
-    # Step 2: Connect bridge endpoints that have no nearby path
+    # Step 2: Connect paired bridge endpoints across the same crossing
+    # Group endpoints by proximity (within 12 tiles = same bridge span)
+    paired: set[int] = set()
+    for i, ep_i in enumerate(bridge_endpoints):
+        if i in paired:
+            continue
+        for j, ep_j in enumerate(bridge_endpoints):
+            if j <= i or j in paired:
+                continue
+            if math.hypot(ep_j[0]-ep_i[0], ep_j[1]-ep_i[1]) <= 12:
+                _add_segment(ep_i, ep_j)
+                paired.add(i)
+                paired.add(j)
+                break
+
+    # Step 3: Connect any bridge endpoint still isolated from the path network
     for bx, by in bridge_endpoints:
         nearby = any(
-            abs(bx - px) + abs(by - py) <= 6
+            abs(bx - px) + abs(by - py) <= 4
             for px, py in path_tiles
         )
         if nearby:
             continue
-        # Connect to nearest village or existing path node
-        all_targets = village_positions + list(bridge_endpoints)
         candidates = sorted(
-            all_targets,
+            village_positions + list(bridge_endpoints),
             key=lambda t: math.hypot(t[0] - bx, t[1] - by)
         )
         for target in candidates[:2]:

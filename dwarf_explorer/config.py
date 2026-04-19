@@ -200,7 +200,7 @@ BUILDING_WALKABLE = {
     "b_floor", "b_door",
     "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
     "b_pew", "b_table", "b_stove", "b_bed",
-    "b_anvil",
+    "b_anvil", "b_chair",
 }
 
 VILLAGE_MIN_SIZE = 16

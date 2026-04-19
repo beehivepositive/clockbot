@@ -155,11 +155,14 @@ def _house_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], 
     # Stove opposite corner
     sx = W - 2 if bx == 1 else 1
     tiles[(sx, 1)] = "b_stove"
-    # Table + chairs middle
+    # Table + chairs middle (never place chair on the tile above the door)
     tx, ty = W//2, H//2
     tiles[(tx, ty)] = "b_table"
+    door_x, door_y = W//2, H-1
     for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
         ccx, ccy = tx+cdx, ty+cdy
+        if (ccx, ccy) == (door_x, door_y - 1):
+            continue  # would block the door
         if 1 <= ccx < W-1 and 1 <= ccy < H-1 and tiles[(ccx,ccy)] == "b_floor":
             tiles[(ccx, ccy)] = "b_chair"
     # Bookshelf
