@@ -98,16 +98,20 @@ def _corridor_to_point(
     sx: int, sy: int, tx: int, ty: int,
     width: int, height: int,
 ) -> None:
-    """Carve an L-shaped corridor from (sx,sy) to (tx,ty) for guaranteed connectivity."""
+    """Carve a 3-wide L-shaped corridor from (sx,sy) to (tx,ty) for guaranteed connectivity."""
     x, y = sx, sy
     while x != tx:
         x += 1 if x < tx else -1
-        if 1 <= x < width - 1 and 1 <= y < height - 1:
-            carved.add((x, y))
+        for off in (-1, 0, 1):
+            nx2, ny2 = x, y + off
+            if 1 <= nx2 < width - 1 and 1 <= ny2 < height - 1:
+                carved.add((nx2, ny2))
     while y != ty:
         y += 1 if y < ty else -1
-        if 1 <= x < width - 1 and 1 <= y < height - 1:
-            carved.add((x, y))
+        for off in (-1, 0, 1):
+            nx2, ny2 = x + off, y
+            if 1 <= nx2 < width - 1 and 1 <= ny2 < height - 1:
+                carved.add((nx2, ny2))
 
 
 def _inward_step(ex: int, ey: int, edge: str, width: int, height: int) -> tuple[int, int]:

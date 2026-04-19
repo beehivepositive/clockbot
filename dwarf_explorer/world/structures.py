@@ -15,6 +15,11 @@ _SPAWN_BUFFER = 12
 _WATER_BIOMES = {"deep_water", "shallow_water"}
 
 
+def _wander_cost(nx: int, ny: int, seed: int) -> int:
+    """0–2 extra cost per step so A* takes organic-looking paths instead of straight lines."""
+    return ((nx * 374761393) ^ (ny * 668265263) ^ seed) % 3
+
+
 def _near_spawn(x: int, y: int) -> bool:
     cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
     return abs(x - cx) < _SPAWN_BUFFER and abs(y - cy) < _SPAWN_BUFFER
@@ -47,6 +52,7 @@ def _astar_path(
     seed: int,
     avoid_tiles: set[tuple[int, int]],
     stop_tiles: set[tuple[int, int]],
+    passable_tiles: set[tuple[int, int]] | None = None,
     max_nodes: int = 80_000,
 ) -> list[tuple[int, int]]:
     """A* from start to end, stopping early at any stop_tile.
@@ -92,11 +98,12 @@ def _astar_path(
             if (nx, ny) in avoid_tiles:
                 continue
             if get_biome(nx, ny, seed) in _WATER_BIOMES:
-                continue
+                if passable_tiles is None or (nx, ny) not in passable_tiles:
+                    continue
             if (nx, ny) in visited:
                 continue
 
-            ng = current_g + 1
+            ng = current_g + 1 + _wander_cost(nx, ny, seed)
             if ng < g_score.get((nx, ny), 10 ** 9):
                 g_score[(nx, ny)] = ng
                 h = abs(nx - ex) + abs(ny - ey)
@@ -234,6 +241,7 @@ def _generate_village_paths_sync(
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides:  list[tuple[int, int, str]] = []
     avoid_tiles: set[tuple[int, int]] = set(river_tiles)
+    bridge_tile_set: set[tuple[int, int]] = set(bridge_positions)
 
     all_targets = list(village_positions) + list(bridge_positions)
 
@@ -251,7 +259,8 @@ def _generate_village_paths_sync(
                     for dx in range(-3, 4) for dy in range(-3, 4)}
         stop = path_tiles - own_zone
 
-        path = _astar_path(start, end, seed, avoid_tiles, stop)
+        path = _astar_path(start, end, seed, avoid_tiles, stop,
+                           passable_tiles=bridge_tile_set)
         if not path:
             return   # unreachable — skip silently
 
@@ -276,7 +285,7 @@ def _generate_village_paths_sync(
         for target in targets:
             _connect((vx, vy), target)
 
-    # --- Bridges: connect each bridge to its nearest target ---
+    # --- Bridges: connect each bridge to its 2 nearest targets (both banks) ---
     for bx, by in bridge_positions:
         candidates = sorted(
             (math.hypot(tx - bx, ty - by), (tx, ty))
@@ -285,16 +294,12 @@ def _generate_village_paths_sync(
         )
         if not candidates:
             continue
-        dist, nearest = candidates[0]
-        if dist > 120:
-            continue
+        targets = [candidates[0][1]]
+        if len(candidates) > 1 and candidates[1][0] <= 120:
+            targets.append(candidates[1][1])
 
-        # Skip if bridge is already adjacent to an existing path tile
-        if any((bx + dx, by + dy) in path_tiles
-               for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))):
-            continue
-
-        _connect((bx, by), nearest)
+        for target in targets:
+            _connect((bx, by), target)
 
     return overrides
 
