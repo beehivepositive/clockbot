@@ -15,6 +15,23 @@ _SPAWN_BUFFER = 12
 _WATER_BIOMES = {"deep_water", "shallow_water"}
 
 
+def _is_bridge_endpoint(
+    bx: int, by: int, seed: int, river_tile_set: set[tuple[int, int]]
+) -> bool:
+    """Return True if this bridge tile has at least one non-water, non-river neighbour.
+
+    Such tiles sit on the bank edge of a bridge — starting a path worm from
+    them ensures the worm can immediately step onto dry land.
+    """
+    for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+        nx, ny = bx + dx, by + dy
+        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+            if (nx, ny) not in river_tile_set:
+                if get_biome(nx, ny, seed) not in _WATER_BIOMES:
+                    return True
+    return False
+
+
 def _near_spawn(x: int, y: int) -> bool:
     cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
     return abs(x - cx) < _SPAWN_BUFFER and abs(y - cy) < _SPAWN_BUFFER
@@ -103,11 +120,11 @@ def _path_worm(
 
         # --- Steer: Perlin noise rotation + pull toward target ---
         n = fbm(x * freq, y * freq, worm_seed, octaves=3)
-        rot = math.radians((n - 0.5) * 110.0)   # ±55° wiggle
+        rot = math.radians((n - 0.5) * 130.0)   # ±65° wiggle — more organic curves
         ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
         tdx, tdy = _norm2(tx - x, ty - y)
-        # 50% noise worm, 50% pull toward target
-        dx, dy = _norm2(ndx * 0.50 + tdx * 0.50, ndy * 0.50 + tdy * 0.50)
+        # 60% noise worm, 40% pull toward target — more meander
+        dx, dy = _norm2(ndx * 0.60 + tdx * 0.40, ndy * 0.60 + tdy * 0.40)
 
         # Validate next step; rotate if blocked
         nx_int = int(round(x + dx))
@@ -246,12 +263,16 @@ def _generate_structures_sync(
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
-    bridge_positions: list[tuple[int, int]],
+    bridge_endpoints: list[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
     existing_path_tiles: set[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
 ) -> list[tuple[int, int, str]]:
-    """Connect villages and bridges into a road network using a Perlin worm.
+    """Connect villages and bridge endpoints into a road network using a Perlin worm.
 
+    bridge_endpoints: only bank-edge bridge tiles (adjacent to dry land) — used as
+        path targets so worms start and end on reachable ground.
+    bridge_all: all bridge tiles — used as passable_tiles so worms can cross rivers.
     The worm moves in float space for organic-looking curves, strictly avoids
     water biomes and river tiles, and can cross bridge tiles.  Paths merge
     naturally at Y-junctions when the worm reaches an existing road.
@@ -260,9 +281,9 @@ def _generate_village_paths_sync(
     path_tiles:     set[tuple[int, int]] = set(existing_path_tiles)
     overrides:      list[tuple[int, int, str]] = []
     avoid_tiles:    set[tuple[int, int]] = set(river_tiles)
-    passable_tiles: set[tuple[int, int]] = set(bridge_positions)
+    passable_tiles: set[tuple[int, int]] = set(bridge_all)
 
-    all_targets = list(village_positions) + list(bridge_positions)
+    all_targets = list(village_positions) + list(bridge_endpoints)
     connected_pairs: set[frozenset] = set()
 
     def _connect(start: tuple[int, int], end: tuple[int, int]) -> None:
@@ -305,7 +326,7 @@ def _generate_village_paths_sync(
             _connect((vx, vy), target)
 
     # --- Bridges: connect to 2 nearest targets (both banks) ---
-    for bx, by in bridge_positions:
+    for bx, by in bridge_endpoints:
         candidates = sorted(
             (math.hypot(tx - bx, ty - by), (tx, ty))
             for (tx, ty) in all_targets
@@ -345,7 +366,8 @@ async def place_structures(seed: int, db) -> None:
     bridge_rows = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'bridge'"
     )
-    bridge_positions = [(r["world_x"], r["world_y"]) for r in bridge_rows]
+    bridge_all_list = [(r["world_x"], r["world_y"]) for r in bridge_rows]
+    bridge_all_set = set(bridge_all_list)
 
     # 5. Existing path tiles
     path_rows = await db.fetch_all(
@@ -359,11 +381,17 @@ async def place_structures(seed: int, db) -> None:
     )
     river_tiles = {(r["world_x"], r["world_y"]) for r in river_rows}
 
+    # Filter bridges to only bank-edge tiles (adjacent to dry land)
+    bridge_endpoints = [
+        (bx, by) for bx, by in bridge_all_list
+        if _is_bridge_endpoint(bx, by, seed, river_tiles | bridge_all_set)
+    ]
+
     # 7. Generate inter-village/bridge paths
-    if village_positions or bridge_positions:
+    if village_positions or bridge_endpoints:
         path_overrides = await asyncio.to_thread(
             _generate_village_paths_sync,
-            seed, village_positions, bridge_positions, existing_paths, river_tiles,
+            seed, village_positions, bridge_endpoints, bridge_all_set, existing_paths, river_tiles,
         )
         if path_overrides:
             await db.executemany(

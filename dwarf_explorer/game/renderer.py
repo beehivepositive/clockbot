@@ -55,7 +55,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     torch_on   = False
     on_entrance = False
     if location == "cave":
-        torch_on    = player.light is not None
+        torch_on    = player.hand_1 == "torch" or player.hand_2 == "torch"
         on_entrance = grid[vp_center][vp_center].terrain == "cave_entrance"
 
     lines: list[str] = []
@@ -123,15 +123,30 @@ _ITEM_SLOT_EMOJI = {
     "key":          "\U0001F511",
     "fish":         "\U0001F41F",
     "map_fragment": "\U0001F5FA\uFE0F",
+    "axe":          "\U0001FA93",
+    "shovel":       "\u26CF\uFE0F",
+    "watering_can": "\U0001FAA3",
+    "log":          "\U0001FAB5",
+    "stick":        "\U0001F38B",
+    "resin":        "\U0001F7E1",
+    "plant_fiber":  "\U0001F9F5",
+    "dry_grass":    "\U0001F33E",
+    "seed":         "\U0001F330",
+    "sapling":      "\U0001F331",
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
-# Slot display: label icon → slot name
-_EQUIP_SLOT_ICONS = [
-    ("⚔️",  "weapon"),
-    ("\U0001F97E", "boots"),
-    ("\U0001F526", "light"),
-]
+# Slot order and icons for the equipped bar (only non-empty slots are shown)
+_SLOT_ORDER = ["hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory"]
+_SLOT_ICONS = {
+    "hand_1":    "✋",
+    "hand_2":    "🤚",
+    "head":      "\U0001FAA8",   # 🪨 placeholder until helmet item exists
+    "chest":     "\U0001F6E1\uFE0F",
+    "legs":      "\U0001F9B5",
+    "boots":     "\U0001F97E",
+    "accessory": "\U0001F48D",
+}
 
 
 def _item_emoji(item_id: str) -> str:
@@ -144,13 +159,17 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
     COLS = 5
     lines = ["\U0001F392 **Inventory**"]
 
-    # --- Equipped row ---
+    # --- Equipped row: only show occupied slots ---
     eq_parts = []
-    for icon, slot in _EQUIP_SLOT_ICONS:
+    for slot in _SLOT_ORDER:
         item_id = equipped.get(slot)
-        cell = f"{icon}{_item_emoji(item_id)}" if item_id else f"{icon}{_EMPTY_SLOT}"
-        eq_parts.append(cell)
-    lines.append("**Equipped:** " + "  ".join(eq_parts))
+        if item_id:
+            icon = _SLOT_ICONS.get(slot, "◼")
+            eq_parts.append(f"{icon}{_item_emoji(item_id)}")
+    if eq_parts:
+        lines.append("**Equipped:** " + "  ".join(eq_parts))
+    else:
+        lines.append("**Equipped:** *(nothing)*")
     lines.append("")
 
     # --- Inventory grid ---
@@ -229,15 +248,37 @@ def render_bank(
     return "\n".join(lines)
 
 
-def render_shop(catalog: list[dict], selected: int, player_gold: int) -> str:
-    """Render shop menu."""
-    lines = ["\U0001F3EA **Shop**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
-    for i, item in enumerate(catalog):
-        prefix = "▶ " if i == selected else "  "
-        bracket_open  = "[" if i == selected else ""
-        bracket_close = "]" if i == selected else ""
-        lines.append(f"{prefix}{bracket_open}{item['emoji']} {item['name']} — {item['price']} gold{bracket_close}")
-        lines.append(f"   *{item['description']}*")
-    lines.append("")
-    lines.append("◀▶ navigate  |  💰 Buy  |  ❌ Close")
+def render_shop(catalog: list[dict], selected: int, player_gold: int,
+                mode: str = "buy", sell_items: list[dict] | None = None,
+                sell_prices: dict | None = None) -> str:
+    """Render shop menu. mode='buy' shows catalog; mode='sell' shows inventory."""
+    if mode == "sell":
+        lines = ["\U0001F3EA **Shop — Sell Items**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
+        items = sell_items or []
+        if not items:
+            lines.append("*(Your inventory is empty)*")
+        else:
+            for i, item in enumerate(items):
+                price = (sell_prices or {}).get(item["item_id"], 0)
+                prefix = "▶ " if i == selected else "  "
+                brk_o = "[" if i == selected else ""
+                brk_c = "]" if i == selected else ""
+                qty_str = f" ×{item['quantity']}" if item["quantity"] > 1 else ""
+                price_str = f"{price}g" if price else "no value"
+                lines.append(
+                    f"{prefix}{brk_o}{_item_emoji(item['item_id'])} "
+                    f"{item['item_id'].replace('_', ' ').title()}{qty_str} — {price_str}{brk_c}"
+                )
+        lines.append("")
+        lines.append("◀▶ navigate  |  💰 Sell  |  🛒 Buy Mode  |  ❌ Close")
+    else:
+        lines = ["\U0001F3EA **Shop**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
+        for i, item in enumerate(catalog):
+            prefix = "▶ " if i == selected else "  "
+            bracket_open  = "[" if i == selected else ""
+            bracket_close = "]" if i == selected else ""
+            lines.append(f"{prefix}{bracket_open}{item['emoji']} {item['name']} — {item['price']} gold{bracket_close}")
+            lines.append(f"   *{item['description']}*")
+        lines.append("")
+        lines.append("◀▶ navigate  |  💰 Buy  |  💲 Sell Mode  |  ❌ Close")
     return "\n".join(lines)

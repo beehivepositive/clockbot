@@ -8,7 +8,7 @@ from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_sprint,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
-    handle_shop_nav, handle_shop_buy, handle_shop_close,
+    handle_shop_nav, handle_shop_buy, handle_shop_sell, handle_shop_mode, handle_shop_close,
     handle_bank_nav, handle_bank_switch,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
 )
@@ -78,6 +78,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_shop_nav(interaction, gid, uid, +1)
             elif act == "shop_buy":
                 await handle_shop_buy(interaction, gid, uid)
+            elif act == "shop_sell":
+                await handle_shop_sell(interaction, gid, uid)
+            elif act == "shop_mode":
+                await handle_shop_mode(interaction, gid, uid)
             elif act == "shop_close":
                 await handle_shop_close(interaction, gid, uid)
             # Bank

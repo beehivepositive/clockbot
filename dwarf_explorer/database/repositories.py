@@ -35,18 +35,45 @@ async def mark_world_initialized(db: Database, guild_id: int) -> None:
 async def get_or_create_player(db: Database, user_id: int, display_name: str) -> Player:
     row = await db.fetch_one("SELECT * FROM players WHERE user_id = ?", (user_id,))
     if row:
-        # Load equipment
+        # Load equipment — migrate old slot names if present
         eq_rows = await db.fetch_all(
             "SELECT slot, item_id FROM equipment WHERE user_id = ?", (user_id,)
         )
         equipped = {r["slot"]: r["item_id"] for r in eq_rows}
+
+        # Migrate legacy slot names
+        if "weapon" in equipped and "hand_1" not in equipped:
+            equipped["hand_1"] = equipped.pop("weapon")
+            await db.execute(
+                "UPDATE equipment SET slot='hand_1' WHERE user_id=? AND slot='weapon'", (user_id,)
+            )
+        if "light" in equipped:
+            if "hand_1" not in equipped:
+                equipped["hand_1"] = equipped.pop("light")
+                await db.execute(
+                    "UPDATE equipment SET slot='hand_1' WHERE user_id=? AND slot='light'", (user_id,)
+                )
+            elif "hand_2" not in equipped:
+                equipped["hand_2"] = equipped.pop("light")
+                await db.execute(
+                    "UPDATE equipment SET slot='hand_2' WHERE user_id=? AND slot='light'", (user_id,)
+                )
+            else:
+                equipped.pop("light")
+                await db.execute(
+                    "DELETE FROM equipment WHERE user_id=? AND slot='light'", (user_id,)
+                )
+
         # Give torch for testing if player doesn't already have one
-        torch_row = await db.fetch_one(
-            "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = 'torch'",
-            (user_id,),
-        )
-        if not torch_row and not equipped.get("light"):
-            await add_to_inventory(db, user_id, "torch", 1)
+        has_torch_equipped = equipped.get("hand_1") == "torch" or equipped.get("hand_2") == "torch"
+        if not has_torch_equipped:
+            torch_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = 'torch'",
+                (user_id,),
+            )
+            if not torch_row:
+                await add_to_inventory(db, user_id, "torch", 1)
+
         return Player(
             user_id=row["user_id"],
             display_name=row["display_name"],
@@ -79,9 +106,13 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             house_vy=row["house_vy"] or 0,
             house_type=row["house_type"] or "house",
             sprinting=bool(row["sprinting"]),
-            weapon=equipped.get("weapon"),
+            hand_1=equipped.get("hand_1"),
+            hand_2=equipped.get("hand_2"),
+            head=equipped.get("head"),
+            chest=equipped.get("chest"),
+            legs=equipped.get("legs"),
             boots=equipped.get("boots"),
-            light=equipped.get("light"),
+            accessory=equipped.get("accessory"),
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -283,3 +314,13 @@ async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int 
         )
     await add_to_inventory(db, user_id, item_id, quantity)
     return True
+
+
+# --- Tile overrides ---
+
+async def set_tile_override(db: Database, world_x: int, world_y: int, tile_type: str) -> None:
+    """Insert or replace a tile override (used for player-modified terrain)."""
+    await db.execute(
+        "INSERT OR REPLACE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
+        (world_x, world_y, tile_type),
+    )

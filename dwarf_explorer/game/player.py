@@ -46,9 +46,13 @@ class Player:
     house_type: str = "house"   # "house" | "church" | "bank" | "shop"
     # Equipment & sprint
     sprinting: bool = False
-    weapon: str | None = None
+    hand_1: str | None = None
+    hand_2: str | None = None
+    head: str | None = None
+    chest: str | None = None
+    legs: str | None = None
     boots: str | None = None
-    light: str | None = None
+    accessory: str | None = None
 
 
 def can_move_village(target_tile: TileData) -> tuple[bool, str]:

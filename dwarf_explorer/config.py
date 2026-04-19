@@ -31,6 +31,10 @@ TERRAIN_EMOJI = {
     "snow": "\u2744\uFE0F",         # ❄️
     "path": "\U0001F7EB",           # 🟫
     "void": "\u2B1B",               # ⬛
+    # Player-modifiable terrain
+    "sapling":     "\U0001F331",    # 🌱
+    "short_grass": "\U0001F7E9",    # 🟩
+    "seedling":    "\U0001FAB4",    # 🪴
 }
 
 STRUCTURE_EMOJI = {
@@ -62,11 +66,22 @@ ITEM_EMOJI = {
     "knife": "\U0001F5E1\uFE0F",    # 🗡️
     "hiking_boots": "\U0001F97E",    # 🥾
     "torch": "\U0001F526",           # 🔦
+    "axe": "\U0001FA93",             # 🪓
+    "shovel": "\u26CF\uFE0F",       # ⛏️
+    "watering_can": "\U0001FAA3",    # 🪣
+    "log": "\U0001FAB5",             # 🪵
+    "stick": "\U0001F38B",           # 🎋
+    "resin": "\U0001F7E1",           # 🟡
+    "plant_fiber": "\U0001F9F5",     # 🧵
+    "dry_grass": "\U0001F33E",       # 🌾
+    "seed": "\U0001F330",            # 🌰
+    "sapling": "\U0001F331",         # 🌱
 }
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "snow", "path",
     "village", "ruins", "shrine", "cave", "bridge",
+    "sapling", "short_grass", "seedling",
 }
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
@@ -118,7 +133,7 @@ CAVE_WALK_STEPS = 500
 # --- Village System ---
 
 VILLAGE_EMOJI = {
-    "vil_grass":   "\U0001F33F",            # 🌿
+    "vil_grass":   "\U0001F33F",            # 🌿  (overridable with :grass:)
     "vil_path":    "\U0001F7EB",            # 🟫
     "vil_well":    "\u26F2",                # ⛲
     "vil_garden":  "\U0001F33B",            # 🌻
@@ -151,7 +166,7 @@ BUILDING_EMOJI = {
     "b_bank_npc":    "\U0001F9D1",           # 🧑
     "b_safe":        "\U0001F512",           # 🔒
     # Shop unique
-    "b_shelf":       "\U0001F4E6",           # 📦
+    "b_shelf":       "\U0001F4E6",           # 📦  (overridable with :chest:)
     "b_shop_npc":    "\U0001F9D1",           # 🧑
     "b_shop_counter":"\U0001F7E6",           # 🟦
 }
@@ -178,8 +193,8 @@ SHOP_CATALOG = [
         "name": "Knife",
         "emoji": "\U0001F5E1\uFE0F",   # 🗡️
         "price": 25,
-        "equip_slot": "weapon",
-        "description": "A sharp blade. +5 attack.",
+        "equip_slot": "hand",
+        "description": "A sharp blade. +5 attack. Cut grass & plains.",
     },
     {
         "id": "hiking_boots",
@@ -189,22 +204,85 @@ SHOP_CATALOG = [
         "equip_slot": "boots",
         "description": "Sturdy boots. Enables sprinting.",
     },
+    {
+        "id": "axe",
+        "name": "Axe",
+        "emoji": "\U0001FA93",         # 🪓
+        "price": 40,
+        "equip_slot": "hand",
+        "description": "Chop down forest tiles. Yields log + drops.",
+    },
+    {
+        "id": "shovel",
+        "name": "Shovel",
+        "emoji": "\u26CF\uFE0F",      # ⛏️
+        "price": 60,
+        "equip_slot": "hand",
+        "description": "Two-handed. Dig up saplings from the ground.",
+    },
+    {
+        "id": "watering_can",
+        "name": "Watering Can",
+        "emoji": "\U0001FAA3",         # 🪣
+        "price": 35,
+        "equip_slot": "hand",
+        "description": "Water saplings, seedlings & short grass to grow.",
+    },
 ]
 
-EQUIP_SLOTS = {"weapon", "boots", "light"}
+# Equipment slots
+EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory"}
 
-# Maps item_id → equipment slot (for items not in SHOP_CATALOG)
+# Maps item_id → equipment slot type
+# "hand" items resolve to hand_1 or hand_2 at equip time
 ITEM_EQUIP_SLOTS = {
-    "knife":        "weapon",
+    "knife":        "hand",
+    "axe":          "hand",
+    "torch":        "hand",
+    "watering_can": "hand",
+    "seed":         "hand",
+    "sapling":      "hand",
     "hiking_boots": "boots",
-    "torch":        "light",
+    "shovel":       "hand",
 }
+
+# Items that require both hand slots
+TWO_HANDED_ITEMS = {"shovel"}
 
 # Equipment stat bonuses: {item_id: {stat: bonus}}
 EQUIP_BONUSES = {
     "knife":        {"attack": 5},
+    "axe":          {"attack": 3},
     "hiking_boots": {},
     "torch":        {},
+    "shovel":       {},
+    "watering_can": {},
+    "seed":         {},
+    "sapling":      {},
+}
+
+# Sell prices at the shop (60% of buy price for shop items, flat for others)
+ITEM_SELL_PRICES = {
+    "knife":        15,
+    "hiking_boots": 30,
+    "axe":          24,
+    "shovel":       36,
+    "watering_can": 21,
+    "gem":          30,
+    "potion":       15,
+    "sword":        50,
+    "log":          5,
+    "stick":        2,
+    "resin":        8,
+    "plant_fiber":  3,
+    "dry_grass":    2,
+    "seed":         1,
+    "sapling":      4,
+    "fish":         8,
+    "wood":         5,
+    "stone":        3,
+    "key":          20,
+    "map_fragment": 25,
 }
 
 # --- World Map Image ---
@@ -229,6 +307,9 @@ TILE_COLORS = {
     "cave": (60, 40, 30),
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),
+    "sapling": (100, 200, 80),
+    "short_grass": (120, 200, 60),
+    "seedling": (130, 210, 70),
 }
 
 
@@ -252,6 +333,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI, "b_stove",      "hearth"),
         (BUILDING_EMOJI, "b_table",      "table"),
         (BUILDING_EMOJI, "b_floor",      "grey_square"),
+        (BUILDING_EMOJI, "b_shelf",      "chest"),
+        (VILLAGE_EMOJI,  "vil_grass",    "grass"),
     ]
 
     for d, tile_key, emoji_name in _replace:

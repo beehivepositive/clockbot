@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import random as _random
+
 import discord
 
-from dwarf_explorer.config import DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS
+from dwarf_explorer.config import (
+    DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
+    TWO_HANDED_ITEMS, ITEM_SELL_PRICES,
+)
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world,
@@ -20,6 +25,7 @@ from dwarf_explorer.database.repositories import (
     get_bank_items,
     bank_deposit,
     bank_withdraw,
+    set_tile_override,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, open_chest
@@ -34,17 +40,12 @@ from dwarf_explorer.game.renderer import (
 )
 
 # ── In-memory UI state (transient per user) ───────────────────────────────────
-# {user_id: {"type": str, "selected": int, "bank_view": str}}
+# {user_id: {"type": str, "selected": int, "bank_view": str, "mode": str}}
 _ui_state: dict[int, dict] = {}
 
 
 def _embed(content: str) -> discord.Embed:
-    """Wrap game content in an embed to bypass Discord's 2000-char content limit.
-
-    Discord embeds allow up to 4096 chars in description, vs 2000 for content.
-    Custom emojis like <:dry_grass:123456789012345678> are ~31 chars each;
-    a full 9×9 grid of them would be ~2600 chars — safely under 4096.
-    """
+    """Wrap game content in an embed to bypass Discord's 2000-char content limit."""
     return discord.Embed(description=content)
 
 
@@ -182,29 +183,41 @@ class BankView(discord.ui.View):
 
 
 class ShopView(discord.ui.View):
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int, mode: str = "buy"):
         super().__init__(timeout=None)
-        for label, action in [
+        if mode == "buy":
+            action_label, action_id = "💰 Buy", "shop_buy"
+            mode_label, mode_id = "💲 Sell", "shop_mode"
+        else:
+            action_label, action_id = "💰 Sell", "shop_sell"
+            mode_label, mode_id = "🛒 Buy", "shop_mode"
+        for label, act in [
             ("◀", "shop_prev"),
             ("▶", "shop_next"),
-            ("💰 Buy", "shop_buy"),
+            (action_label, action_id),
+            (mode_label, mode_id),
             ("❌ Close", "shop_close"),
         ]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
                 label=label,
-                custom_id=_custom_id(guild_id, user_id, action),
+                custom_id=_custom_id(guild_id, user_id, act),
                 row=0,
             ))
 
 
-# ── Inventory helpers ─────────────────────────────────────────────────────────
+# ── Equipment helpers ─────────────────────────────────────────────────────────
 
 def _equipped_dict(player: Player) -> dict:
     d = {}
-    if player.weapon: d["weapon"] = player.weapon
-    if player.boots:  d["boots"]  = player.boots
-    if player.light:  d["light"]  = player.light
+    for slot, val in [
+        ("hand_1", player.hand_1), ("hand_2", player.hand_2),
+        ("head", player.head), ("chest", player.chest),
+        ("legs", player.legs), ("boots", player.boots),
+        ("accessory", player.accessory),
+    ]:
+        if val:
+            d[slot] = val
     return d
 
 
@@ -213,6 +226,18 @@ def _equip_label(items: list[dict], selected: int, equipped: dict) -> str:
     if selected < len(items) and items[selected]["item_id"] in equipped.values():
         return "↩ Unequip"
     return "⚔️ Equip"
+
+
+async def _auto_unequip_depleted(db, user_id: int, item_id: str, player: Player) -> None:
+    """Unequip item from hand slots if its inventory stack is now empty."""
+    row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
+    )
+    if row:
+        return
+    for slot in ("hand_1", "hand_2"):
+        if getattr(player, slot, None) == item_id:
+            await unequip_item(db, user_id, slot)
 
 
 # ── Movement ──────────────────────────────────────────────────────────────────
@@ -379,11 +404,9 @@ async def handle_interact(
             content = render_grid(grid, player, "You step outside.")
 
         elif htile.terrain == "b_bank_npc" and player.house_type == "bank":
-            # Enter bank UI
             return await _open_bank(interaction, guild_id, user_id, player, db)
 
         elif htile.terrain == "b_shop_npc" and player.house_type == "shop":
-            # Enter shop UI
             return await _open_shop(interaction, guild_id, user_id, player)
 
         elif htile.terrain in ("b_bed", "b_stove", "b_table", "b_bookshelf"):
@@ -487,9 +510,21 @@ async def handle_interact(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     else:
+        # Wilderness interact
         tile = await load_single_tile(player.world_x, player.world_y, seed, db)
+        wx, wy = player.world_x, player.world_y
+
+        # Items currently held in hands
+        hand_items: set[str] = set()
+        if player.hand_1:
+            hand_items.add(player.hand_1)
+        if player.hand_2:
+            hand_items.add(player.hand_2)
+
+        terrain = tile.terrain
+
         if tile.structure == "cave":
-            cave_id, ex, ey = await get_or_create_cave(seed, player.world_x, player.world_y, db)
+            cave_id, ex, ey = await get_or_create_cave(seed, wx, wy, db)
             player.in_cave = True
             player.cave_id = cave_id
             player.cave_x, player.cave_y = ex, ey
@@ -498,19 +533,91 @@ async def handle_interact(
             content = render_grid(grid, player, "You enter the cave...")
 
         elif tile.structure == "village":
-            vid, vx, vy = await get_or_create_village(seed, player.world_x, player.world_y, db)
+            vid, vx, vy = await get_or_create_village(seed, wx, wy, db)
             player.in_village = True
             player.village_id = vid
             player.village_x, player.village_y = vx, vy
-            player.village_wx, player.village_wy = player.world_x, player.world_y
-            await update_player_village_state(
-                db, user_id, True, vid, vx, vy, player.world_x, player.world_y,
-            )
+            player.village_wx, player.village_wy = wx, wy
+            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
             grid = await load_village_viewport(vid, vx, vy, db)
             content = render_grid(grid, player, "You enter the village.")
 
+        elif terrain in ("forest", "dense_forest") and "axe" in hand_items:
+            # Chop tree
+            rng = _random.Random()
+            await set_tile_override(db, wx, wy, "sapling")
+            await add_to_inventory(db, user_id, "log", 1)
+            extras = []
+            if rng.random() < 0.66:
+                await add_to_inventory(db, user_id, "stick", 1)
+                extras.append("a stick")
+            if rng.random() < 0.33:
+                await add_to_inventory(db, user_id, "resin", 1)
+                extras.append("some resin")
+            extra_str = (", " + ", ".join(extras)) if extras else ""
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, f"You chop down the tree! Got a log{extra_str}. A sapling remains.")
+
+        elif terrain == "sapling" and "shovel" in hand_items:
+            # Dig up sapling
+            await set_tile_override(db, wx, wy, "path")
+            await add_to_inventory(db, user_id, "sapling", 1)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You dig up the sapling. The ground becomes a path.")
+
+        elif terrain == "path" and "sapling" in hand_items:
+            # Plant sapling
+            await set_tile_override(db, wx, wy, "sapling")
+            await remove_from_inventory(db, user_id, "sapling", 1)
+            await _auto_unequip_depleted(db, user_id, "sapling", player)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You plant the sapling.")
+
+        elif terrain == "path" and "seed" in hand_items:
+            # Plant seed → seedling
+            await set_tile_override(db, wx, wy, "seedling")
+            await remove_from_inventory(db, user_id, "seed", 1)
+            await _auto_unequip_depleted(db, user_id, "seed", player)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You plant the seed. A seedling sprouts!")
+
+        elif terrain == "sapling" and "watering_can" in hand_items:
+            # Water sapling → forest
+            await set_tile_override(db, wx, wy, "forest")
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
+
+        elif terrain == "short_grass" and "watering_can" in hand_items:
+            # Water short grass → grass
+            await set_tile_override(db, wx, wy, "grass")
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You water the short grass. It grows lush!")
+
+        elif terrain == "seedling" and "watering_can" in hand_items:
+            # Water seedling → grass
+            await set_tile_override(db, wx, wy, "grass")
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You water the seedling. It grows into grass!")
+
+        elif terrain == "grass" and "knife" in hand_items:
+            # Cut grass → short_grass + plant_fiber
+            await set_tile_override(db, wx, wy, "short_grass")
+            await add_to_inventory(db, user_id, "plant_fiber", 1)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You cut the grass and collect plant fiber.")
+
+        elif terrain == "plains" and "knife" in hand_items:
+            # Cut plains → short_grass + dry_grass item + seeds
+            rng = _random.Random()
+            await set_tile_override(db, wx, wy, "short_grass")
+            await add_to_inventory(db, user_id, "dry_grass", 1)
+            seeds = 2 + (1 if rng.random() < 0.5 else 0)
+            await add_to_inventory(db, user_id, "seed", seeds)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, f"You cut the plains grass. Got dry grass and {seeds} seeds!")
+
         else:
-            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player)
@@ -571,8 +678,12 @@ async def handle_inv_equip(
 
     # Unequip if already equipped
     if item_id in equipped.values():
-        slot = next(s for s, v in equipped.items() if v == item_id)
-        await unequip_item(db, user_id, slot)
+        if item_id in TWO_HANDED_ITEMS:
+            await unequip_item(db, user_id, "hand_1")
+            await unequip_item(db, user_id, "hand_2")
+        else:
+            slot = next(s for s, v in equipped.items() if v == item_id)
+            await unequip_item(db, user_id, slot)
         player = await get_or_create_player(db, user_id, interaction.user.display_name)
         equipped = _equipped_dict(player)
         label = _equip_label(items, sel, equipped)
@@ -581,16 +692,42 @@ async def handle_inv_equip(
                                                 view=InventoryView(guild_id, user_id, label))
         return
 
-    # Equip — look up slot from ITEM_EQUIP_SLOTS
-    slot = ITEM_EQUIP_SLOTS.get(item_id)
-    if not slot:
+    # Look up slot type
+    slot_type = ITEM_EQUIP_SLOTS.get(item_id)
+    if not slot_type:
         label = _equip_label(items, sel, equipped)
         content = render_inventory(items, sel, equipped, label) + f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=InventoryView(guild_id, user_id, label))
         return
 
-    await equip_item(db, user_id, slot, item_id)
+    # Resolve hand slot
+    if slot_type == "hand":
+        if item_id in TWO_HANDED_ITEMS:
+            if equipped.get("hand_1") or equipped.get("hand_2"):
+                label = _equip_label(items, sel, equipped)
+                content = render_inventory(items, sel, equipped, label) + "\n*Your hands must be free for a two-handed item.*"
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=InventoryView(guild_id, user_id, label))
+                return
+            await equip_item(db, user_id, "hand_1", item_id)
+            await equip_item(db, user_id, "hand_2", item_id)
+        else:
+            if not equipped.get("hand_1"):
+                resolved_slot = "hand_1"
+            elif not equipped.get("hand_2"):
+                resolved_slot = "hand_2"
+            else:
+                label = _equip_label(items, sel, equipped)
+                content = render_inventory(items, sel, equipped, label) + "\n*Both hands are full.*"
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=InventoryView(guild_id, user_id, label))
+                return
+            await equip_item(db, user_id, resolved_slot, item_id)
+    else:
+        # Direct slot (boots, head, chest, legs, accessory) — replace if occupied
+        await equip_item(db, user_id, slot_type, item_id)
+
     bonuses = EQUIP_BONUSES.get(item_id, {})
     if bonuses:
         await update_player_stats(db, user_id, **bonuses)
@@ -627,9 +764,10 @@ async def handle_inv_close(
 async def _open_shop(
     interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
 ) -> None:
-    _ui_state[user_id] = {"type": "shop", "selected": 0}
-    content = render_shop(SHOP_CATALOG, 0, player.gold)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
+    _ui_state[user_id] = {"type": "shop", "selected": 0, "mode": "buy"}
+    content = render_shop(SHOP_CATALOG, 0, player.gold, mode="buy")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "buy"))
 
 
 async def handle_shop_nav(
@@ -637,11 +775,22 @@ async def handle_shop_nav(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0})
-    new_sel = (state["selected"] + delta) % len(SHOP_CATALOG)
-    _ui_state[user_id] = {"type": "shop", "selected": new_sel}
-    content = render_shop(SHOP_CATALOG, new_sel, player.gold)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
+    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
+    mode = state.get("mode", "buy")
+    if mode == "sell":
+        items = await get_inventory(db, user_id)
+        total = max(1, len(items))
+        new_sel = (state["selected"] + delta) % total
+        _ui_state[user_id] = {**state, "selected": new_sel}
+        content = render_shop(SHOP_CATALOG, new_sel, player.gold,
+                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES)
+    else:
+        total = len(SHOP_CATALOG)
+        new_sel = (state["selected"] + delta) % total
+        _ui_state[user_id] = {**state, "selected": new_sel}
+        content = render_shop(SHOP_CATALOG, new_sel, player.gold, mode="buy")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, mode))
 
 
 async def handle_shop_buy(
@@ -649,18 +798,75 @@ async def handle_shop_buy(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0})
+    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
     sel = state.get("selected", 0)
     item = SHOP_CATALOG[sel]
     if player.gold < item["price"]:
-        content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Not enough gold! Need {item['price']}.*"
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
+        content = render_shop(SHOP_CATALOG, sel, player.gold, mode="buy") + f"\n*Not enough gold! Need {item['price']}.*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=ShopView(guild_id, user_id, "buy"))
         return
     player.gold -= item["price"]
     await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"])
-    content = render_shop(SHOP_CATALOG, sel, player.gold) + f"\n*Purchased {item['name']}!*"
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=ShopView(guild_id, user_id))
+    content = render_shop(SHOP_CATALOG, sel, player.gold, mode="buy") + f"\n*Purchased {item['name']}!*"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "buy"))
+
+
+async def handle_shop_sell(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "mode": "sell"})
+    sel = state.get("selected", 0)
+    items = await get_inventory(db, user_id)
+    if sel >= len(items):
+        content = render_shop(SHOP_CATALOG, sel, player.gold,
+                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + "\n*(No item selected)*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=ShopView(guild_id, user_id, "sell"))
+        return
+    item_id = items[sel]["item_id"]
+    price = ITEM_SELL_PRICES.get(item_id, 0)
+    if price == 0:
+        content = render_shop(SHOP_CATALOG, sel, player.gold,
+                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + \
+                  f"\n*The shop won't buy {item_id.replace('_', ' ').title()}.*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=ShopView(guild_id, user_id, "sell"))
+        return
+    await remove_from_inventory(db, user_id, item_id, 1)
+    player.gold += price
+    await update_player_stats(db, user_id, gold=player.gold)
+    items = await get_inventory(db, user_id)
+    new_sel = min(sel, max(0, len(items) - 1))
+    if user_id in _ui_state:
+        _ui_state[user_id]["selected"] = new_sel
+    content = render_shop(SHOP_CATALOG, new_sel, player.gold,
+                          mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + \
+              f"\n*Sold {item_id.replace('_', ' ').title()} for {price} gold!*"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "sell"))
+
+
+async def handle_shop_mode(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
+    new_mode = "sell" if state.get("mode", "buy") == "buy" else "buy"
+    _ui_state[user_id] = {"type": "shop", "selected": 0, "mode": new_mode}
+    if new_mode == "sell":
+        items = await get_inventory(db, user_id)
+        content = render_shop(SHOP_CATALOG, 0, player.gold,
+                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES)
+    else:
+        content = render_shop(SHOP_CATALOG, 0, player.gold, mode="buy")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, new_mode))
 
 
 async def handle_shop_close(
@@ -680,7 +886,8 @@ async def _open_bank(
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, 0, "player", equipped)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, "player"))
 
 
 async def handle_bank_nav(
@@ -690,7 +897,6 @@ async def handle_bank_nav(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
     bv = state.get("bank_view", "player")
-    source = await get_inventory(db, user_id) if bv == "player" else await get_bank_items(db, user_id)
     total = max(1, (10 if bv == "player" else 36))
     new_sel = (state["selected"] + delta) % total
     _ui_state[user_id] = {"type": "bank", "selected": new_sel, "bank_view": bv}
@@ -698,7 +904,8 @@ async def handle_bank_nav(
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, new_sel, bv, equipped)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, bv))
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, bv))
 
 
 async def handle_bank_switch(
@@ -713,7 +920,8 @@ async def handle_bank_switch(
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     content = render_bank(player_items, bank_items, 0, new_view, equipped)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, new_view))
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, new_view))
 
 
 async def handle_bank_deposit(
@@ -729,7 +937,8 @@ async def handle_bank_deposit(
         bank_items = await get_bank_items(db, user_id)
         equipped = _equipped_dict(player)
         content = render_bank(player_items, bank_items, sel, "player", equipped) + "\n*(Empty slot)*"
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=BankView(guild_id, user_id, "player"))
         return
     item_id = items[sel]["item_id"]
     ok = await bank_deposit(db, user_id, item_id)
@@ -740,7 +949,8 @@ async def handle_bank_deposit(
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
     content = render_bank(player_items, bank_items, new_sel, "player", equipped) + suffix
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "player"))
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, "player"))
 
 
 async def handle_bank_withdraw(
@@ -756,7 +966,8 @@ async def handle_bank_withdraw(
         bank_items = items
         equipped = _equipped_dict(player)
         content = render_bank(player_items, bank_items, sel, "bank", equipped) + "\n*(Empty slot)*"
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "bank"))
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=BankView(guild_id, user_id, "bank"))
         return
     item_id = items[sel]["item_id"]
     ok = await bank_withdraw(db, user_id, item_id)
@@ -767,7 +978,8 @@ async def handle_bank_withdraw(
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
     content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped) + suffix
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=BankView(guild_id, user_id, "bank"))
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, "bank"))
 
 
 async def handle_bank_close(
@@ -818,7 +1030,8 @@ async def handle_help(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
-WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "snow", "path"}
+WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "snow", "path",
+                       "sapling", "short_grass", "seedling"}
 
 
 async def handle_help_back(
