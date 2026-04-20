@@ -9,6 +9,7 @@ from dwarf_explorer.world.noise import fbm
 from dwarf_explorer.world.terrain import get_biome
 
 _WATER_BIOMES = {"deep_water", "shallow_water"}
+_HIGH_COST_BIOMES = {"mountain", "snow"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -146,6 +147,23 @@ def _trib_path(
             gdx * grad_w + tdx * conv_weight + ndx * noise_weight,
             gdy * grad_w + tdy * conv_weight + ndy * noise_weight,
         )
+
+        # Mountain/snow avoidance: try rotated alternatives before stepping uphill
+        nx_cand = int(round(x + dx))
+        ny_cand = int(round(y + dy))
+        if (0 <= nx_cand < WORLD_SIZE and 0 <= ny_cand < WORLD_SIZE and
+                get_biome(nx_cand, ny_cand, seed) in _HIGH_COST_BIOMES):
+            for angle_deg in (30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180):
+                c, s = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+                rdx, rdy = _norm2(c * dx - s * dy, s * dx + c * dy)
+                rnx = int(round(x + rdx))
+                rny = int(round(y + rdy))
+                if (0 <= rnx < WORLD_SIZE and 0 <= rny < WORLD_SIZE and
+                        get_biome(rnx, rny, seed) not in _HIGH_COST_BIOMES):
+                    dx, dy = rdx, rdy
+                    break
+            # If no clear alternative, keep original direction rather than getting stuck
+
         x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
         y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
 
