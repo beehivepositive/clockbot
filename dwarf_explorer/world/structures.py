@@ -6,7 +6,6 @@ import math
 import random
 
 from dwarf_explorer.world.terrain import get_biome
-from dwarf_explorer.world.noise import fbm
 from dwarf_explorer.config import WORLD_SIZE, WALKABLE_TILES
 
 _STRUCTURE_SEED_OFFSET = 2000
@@ -47,83 +46,6 @@ def _is_adjacent_to(x: int, y: int, seed: int, biome: str) -> bool:
     return False
 
 
-# ── Perlin worm (meander) ─────────────────────────────────────────────────────
-
-def _norm2(dx: float, dy: float) -> tuple[float, float]:
-    m = math.hypot(dx, dy)
-    return (dx / m, dy / m) if m > 1e-9 else (1.0, 0.0)
-
-
-def _rotate2(dx: float, dy: float, angle: float) -> tuple[float, float]:
-    c, s = math.cos(angle), math.sin(angle)
-    return (c * dx - s * dy, s * dx + c * dy)
-
-
-def _path_worm(
-    start: tuple[int, int],
-    target: tuple[int, int],
-    seed: int,
-    worm_seed: int,
-    avoid_tiles: set[tuple[int, int]],
-    passable_tiles: set[tuple[int, int]],
-    max_steps: int = 400,
-) -> list[tuple[int, int]]:
-    """Perlin-worm road from start to target, avoiding water.
-
-    Shorter budget than before because it's used between sparse waypoints
-    that are already guaranteed to be on dry land. Bridge tiles in
-    passable_tiles bypass the water-biome check.
-    """
-    x, y = float(start[0]), float(start[1])
-    tx, ty = float(target[0]), float(target[1])
-    dx, dy = _norm2(tx - x, ty - y)
-    freq = 0.045
-    path: list[tuple[int, int]] = []
-
-    def _ok(nx: int, ny: int) -> bool:
-        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
-            return False
-        if (nx, ny) in avoid_tiles:
-            return False
-        if get_biome(nx, ny, seed) in _WATER_BIOMES and (nx, ny) not in passable_tiles:
-            return False
-        return True
-
-    for _ in range(max_steps):
-        ix, iy = int(round(x)), int(round(y))
-        if not path or (ix, iy) != path[-1]:
-            if not _ok(ix, iy):
-                break
-            path.append((ix, iy))
-
-        if (ix, iy) == (int(round(tx)), int(round(ty))):
-            break
-
-        # Noise rotation + pull toward target
-        n = fbm(x * freq, y * freq, worm_seed, octaves=3)
-        rot = math.radians((n - 0.5) * 120.0)   # ±60° wiggle
-        ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
-        tdx, tdy = _norm2(tx - x, ty - y)
-        dx, dy = _norm2(ndx * 0.4 + tdx * 0.6, ndy * 0.4 + tdy * 0.6)
-
-        # If next step is blocked, try rotated fallbacks
-        nx_int = int(round(x + dx))
-        ny_int = int(round(y + dy))
-        if not _ok(nx_int, ny_int):
-            for angle_deg in (45, -45, 90, -90, 135, -135, 180):
-                rdx, rdy = _norm2(*_rotate2(tdx, tdy, math.radians(angle_deg)))
-                if _ok(int(round(x + rdx)), int(round(y + rdy))):
-                    dx, dy = rdx, rdy
-                    break
-            else:
-                break
-
-        x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
-        y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
-
-    return path
-
-
 # ── A* pathfinder ─────────────────────────────────────────────────────────────
 
 def _tile_move_cost(
@@ -151,11 +73,10 @@ def _astar(
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int]] | None:
     """8-directional A* from start to goal, treating water as near-impassable.
 
-    Returns a tile path guaranteed to not cross water (unless no dry route
-    exists at all, in which case falls back to a straight line).
+    Returns the tile path, or None if no path was found.
     """
     if start == goal:
         return [start]
@@ -164,7 +85,7 @@ def _astar(
     heapq.heappush(open_heap, (0.0, 0.0, start[0], start[1]))
     came_from: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
     g_score: dict[tuple[int, int], float] = {start: 0.0}
-    max_iters = WORLD_SIZE * WORLD_SIZE
+    max_iters = 60_000
 
     for _ in range(max_iters):
         if not open_heap:
@@ -181,7 +102,7 @@ def _astar(
             return path
 
         if g > g_score.get((cx, cy), float("inf")):
-            continue  # stale heap entry
+            continue
 
         for ddx in (-1, 0, 1):
             for ddy in (-1, 0, 1):
@@ -199,31 +120,51 @@ def _astar(
                     h = math.hypot(goal[0] - nx, goal[1] - ny)
                     heapq.heappush(open_heap, (new_g + h, new_g, nx, ny))
 
-    # A* exhausted without reaching goal — fall back to straight line
-    return _line_samples(start, goal)
+    return None  # no path found
 
 
-def _astar_sparse_waypoints(
-    start: tuple[int, int],
-    end: tuple[int, int],
+def _snap_to_dry(
+    x: int, y: int,
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
-    step: int = 14,
-) -> list[tuple[int, int]]:
-    """Run A* then subsample to sparse waypoints every `step` tiles.
+    radius: int = 8,
+) -> tuple[int, int]:
+    """Return nearest non-water tile to (x, y), or (x, y) itself if already dry."""
+    if not _is_water(x, y, seed, river_tiles) or (x, y) in bridge_all:
+        return (x, y)
+    for r in range(1, radius + 1):
+        for ddx in range(-r, r + 1):
+            for ddy in ((-r, r) if abs(ddx) < r else range(-r, r + 1)):
+                nx, ny = x + ddx, y + ddy
+                if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+                    if not _is_water(nx, ny, seed, river_tiles):
+                        return (nx, ny)
+    return (x, y)
 
-    Returns a short list of dry-land waypoints. The Perlin worm is then
-    used to meander organically between each consecutive pair.
-    """
-    full = _astar(start, end, seed, river_tiles, bridge_all)
-    if len(full) <= step * 2:
-        return full  # short path — just return as-is
-    pts = [full[0]]
-    for i in range(step, len(full) - 1, step):
-        pts.append(full[i])
-    pts.append(full[-1])
-    return pts
+
+def _perpendicular_waypoint(
+    a: tuple[int, int],
+    b: tuple[int, int],
+    rng: random.Random,
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+    offset_range: tuple[int, int] = (8, 18),
+) -> tuple[int, int]:
+    """Return a dry waypoint offset perpendicularly from the midpoint of a→b."""
+    mx = (a[0] + b[0]) // 2
+    my = (a[1] + b[1]) // 2
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    # Perpendicular: rotate 90°
+    length = math.hypot(dx, dy) or 1.0
+    px, py = -dy / length, dx / length
+    offset = rng.randint(*offset_range) * rng.choice((-1, 1))
+    wx = int(round(mx + px * offset))
+    wy = int(round(my + py * offset))
+    wx = max(2, min(WORLD_SIZE - 3, wx))
+    wy = max(2, min(WORLD_SIZE - 3, wy))
+    return _snap_to_dry(wx, wy, seed, river_tiles, bridge_all)
 
 
 # ── Structure generation ───────────────────────────────────────────────────────
@@ -339,116 +280,9 @@ def _generate_structures_sync(
 
 # ── Path generation ────────────────────────────────────────────────────────────
 
-def _line_samples(
-    start: tuple[int, int],
-    end: tuple[int, int],
-    oversample: int = 3,
-) -> list[tuple[int, int]]:
-    """Return integer tile positions along the straight line from start to end."""
-    sx, sy = start
-    ex, ey = end
-    dist = math.hypot(ex - sx, ey - sy)
-    steps = max(int(dist * oversample), 1)
-    seen: set[tuple[int, int]] = set()
-    pts: list[tuple[int, int]] = []
-    for i in range(steps + 1):
-        t = i / steps
-        ix = int(round(sx + t * (ex - sx)))
-        iy = int(round(sy + t * (ey - sy)))
-        if (ix, iy) not in seen:
-            seen.add((ix, iy))
-            pts.append((ix, iy))
-    return pts
-
-
-def _build_mst(positions: list[tuple[int, int]]) -> list[tuple[tuple[int,int], tuple[int,int]]]:
-    """Greedy minimum spanning tree (nearest-neighbour Prim's) of positions."""
-    if len(positions) < 2:
-        return []
-    connected = {positions[0]}
-    remaining = set(positions[1:])
-    edges: list[tuple[tuple[int,int], tuple[int,int]]] = []
-    while remaining:
-        best_dist = float("inf")
-        best_edge = None
-        for c in connected:
-            for r in remaining:
-                d = math.hypot(r[0] - c[0], r[1] - c[1])
-                if d < best_dist:
-                    best_dist = d
-                    best_edge = (c, r)
-        if best_edge is None:
-            break
-        edges.append(best_edge)
-        connected.add(best_edge[1])
-        remaining.discard(best_edge[1])
-    return edges
-
-
 def _is_water(x: int, y: int, seed: int, river_tiles: set[tuple[int, int]]) -> bool:
     """True if tile is water — either a river override OR a water biome tile."""
     return (x, y) in river_tiles or get_biome(x, y, seed) in _WATER_BIOMES
-
-
-def _line_has_water(
-    a: tuple[int, int],
-    b: tuple[int, int],
-    seed: int,
-    river_tiles: set[tuple[int, int]],
-    bridge_all: set[tuple[int, int]],
-) -> bool:
-    """True if the straight line from a to b crosses any water tile (bridge tiles exempt)."""
-    for x, y in _line_samples(a, b):
-        if (x, y) not in bridge_all and _is_water(x, y, seed, river_tiles):
-            return True
-    return False
-
-
-def _away_from_water_dir(
-    x: int, y: int,
-    seed: int,
-    river_tiles: set[tuple[int, int]],
-    scan_radius: int = 20,
-) -> tuple[float, float]:
-    """Unit vector pointing away from the nearest water tile."""
-    for r in range(1, scan_radius + 1):
-        for ddx in range(-r, r + 1):
-            for ddy in ((-r, r) if abs(ddx) < r else range(-r, r + 1)):
-                nx, ny = x + ddx, y + ddy
-                if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
-                    if _is_water(nx, ny, seed, river_tiles):
-                        # Direction toward water → negate for away
-                        return _norm2(-float(ddx), -float(ddy))
-    return (1.0, 0.0)  # no water nearby
-
-
-def _find_escape_point(
-    start: tuple[int, int],
-    seed: int,
-    river_tiles: set[tuple[int, int]],
-    escape_dist: int = 25,
-) -> tuple[int, int] | None:
-    """Walk away from nearest water ~escape_dist tiles and return the endpoint."""
-    esc_dx, esc_dy = _away_from_water_dir(start[0], start[1], seed, river_tiles)
-    x, y = float(start[0]), float(start[1])
-
-    for _ in range(escape_dist * 4):
-        nx = int(round(x + esc_dx))
-        ny = int(round(y + esc_dy))
-        nx = max(0, min(WORLD_SIZE - 1, nx))
-        ny = max(0, min(WORLD_SIZE - 1, ny))
-
-        if _is_water(nx, ny, seed, river_tiles):
-            # Deflect 45° and try again
-            esc_dx, esc_dy = _norm2(*_rotate2(esc_dx, esc_dy, math.radians(45)))
-            continue
-
-        x, y = float(nx), float(ny)
-        if math.hypot(x - start[0], y - start[1]) >= escape_dist:
-            return (int(x), int(y))
-
-    pt = (int(round(x)), int(round(y)))
-    return pt if pt != start else None
 
 
 def _generate_village_paths_sync(
@@ -462,96 +296,71 @@ def _generate_village_paths_sync(
     """Connect villages and bridge endpoints into a road network.
 
     Algorithm:
-    Phase 1 — For each node, look at every other node sorted by distance.
-      If the straight line to that node contains NO water tile (bridge tiles OK),
-      deploy a Perlin worm to connect. Stop after 2 successful connections.
-
-    Phase 2 — Any node still unconnected escapes away from the nearest water
-      ~25 tiles, creates a virtual escape node there, and that node repeats
-      Phase 1. Repeat up to 3 times until connected or exhausted.
+    - Combine all nodes (villages + bridge endpoints).
+    - For each node, try to A* connect to its 3 nearest neighbours.
+    - Each connection uses 1–2 random perpendicular waypoints for meander:
+        node → waypoint → target (each leg is a separate A* call).
+    - If A* returns None (no path), skip that pair silently.
+    - Track connected pairs to avoid duplicate roads.
     """
+    rng = random.Random(seed + _PATH_SEED_OFFSET)
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
     connected_pairs: set[frozenset] = set()
-    node_conn_count: dict[tuple[int, int], int] = {}
 
-    def _worm_connect(a: tuple[int, int], b: tuple[int, int]) -> bool:
-        """Worm from a to b. Returns True if worm reached within 10 tiles of b."""
+    def _astar_connect(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        """A* from a to b; write path tiles. Returns True on success."""
         pair = frozenset([a, b])
         if pair in connected_pairs:
             return True
-        connected_pairs.add(pair)
 
-        worm_seed = (seed ^ (a[0] * 31 + a[1] * 97 + b[0] * 7 + b[1] * 13)) & 0xFFFFFFFF
+        # Build waypoint list: a → [wp1, optional wp2] → b
         dist = math.hypot(b[0] - a[0], b[1] - a[1])
-        seg = _path_worm(a, b, seed, worm_seed, river_tiles, bridge_all,
-                         max_steps=int(dist * 5) + 150)
+        waypoints: list[tuple[int, int]] = []
+        if dist > 20:
+            wp1 = _perpendicular_waypoint(a, b, rng, seed, river_tiles, bridge_all,
+                                          offset_range=(8, max(9, int(dist * 0.2))))
+            waypoints.append(wp1)
+            if dist > 50 and rng.random() < 0.6:
+                # Second waypoint on the far third of the route
+                far_a = waypoints[-1]
+                far_b = b
+                wp2 = _perpendicular_waypoint(far_a, far_b, rng, seed, river_tiles, bridge_all,
+                                              offset_range=(6, max(7, int(dist * 0.15))))
+                waypoints.append(wp2)
 
-        if not seg:
-            return False
-        end_dist = math.hypot(seg[-1][0] - b[0], seg[-1][1] - b[1])
-        if end_dist > 10:
-            # Worm failed to reach — discard tiles to avoid path overfill
-            return False
+        stops = [a] + waypoints + [b]
+        full_path: list[tuple[int, int]] = []
+        for i in range(len(stops) - 1):
+            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all)
+            if seg is None:
+                return False
+            # Avoid duplicating the junction tile between segments
+            full_path.extend(seg if not full_path else seg[1:])
 
-        for px, py in seg:
+        connected_pairs.add(pair)
+        for px, py in full_path:
             if (px, py) not in path_tiles and not _is_water(px, py, seed, river_tiles):
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
-        node_conn_count[a] = node_conn_count.get(a, 0) + 1
-        node_conn_count[b] = node_conn_count.get(b, 0) + 1
         return True
-
-    def _try_connect_from(node: tuple[int, int], candidates: list[tuple[int, int]]) -> int:
-        """Try to connect node to up to 2 candidates with clear lines. Returns count made."""
-        made = 0
-        for other in candidates:
-            if other == node:
-                continue
-            if _line_has_water(node, other, seed, river_tiles, bridge_all):
-                continue
-            if _worm_connect(node, other):
-                made += 1
-                if made >= 2:
-                    break
-        return made
 
     all_nodes = village_positions + bridge_endpoints
     if len(all_nodes) < 2:
         return overrides
 
-    # Phase 1: connect nodes that have a clear (no-water) line of sight
+    k = 3  # connect each node to up to k nearest neighbours
     for node in all_nodes:
-        candidates = sorted(
+        nearest = sorted(
             [n for n in all_nodes if n != node],
             key=lambda n: math.hypot(n[0] - node[0], n[1] - node[1]),
         )
-        _try_connect_from(node, candidates)
-
-    # Phase 2: isolated nodes escape away from water and retry
-    for node in all_nodes:
-        if node_conn_count.get(node, 0) > 0:
-            continue
-
-        current = node
-        for _attempt in range(3):
-            esc = _find_escape_point(current, seed, river_tiles, escape_dist=25)
-            if esc is None:
-                break
-
-            # Worm from the original node to the escape point
-            _worm_connect(node, esc)
-
-            # From escape point, look for any node with a clear line
-            all_candidates = sorted(
-                all_nodes,
-                key=lambda n: math.hypot(n[0] - esc[0], n[1] - esc[1]),
-            )
-            made = _try_connect_from(esc, all_candidates)
-            if made > 0:
-                break
-
-            current = esc  # push further away next iteration
+        connected = 0
+        for target in nearest:
+            if _astar_connect(node, target):
+                connected += 1
+                if connected >= k:
+                    break
 
     return overrides
 
