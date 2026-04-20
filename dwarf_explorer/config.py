@@ -115,6 +115,31 @@ PLAYER_START_HP = 100
 PLAYER_START_ATTACK = 10
 PLAYER_START_DEFENSE = 5
 
+# --- Combat System ---
+
+COMBAT_MOVES_DEFAULT = 3
+
+# Special abilities per enemy type
+ENEMY_ABILITIES = {
+    "wolf":       {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
+    "bear":       {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": False},
+    "spider":     {"cobweb": True,  "poison": False, "hit_run": False, "roar": False, "slam": False},
+    "cave_bat":   {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "cave_spider":{"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False},
+    "cave_golem": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+}
+
+ARENA_EMOJI = {
+    "cobweb": "\U0001F578\uFE0F",   # 🕸️
+}
+
+# Terrain that blocks movement inside the combat arena
+ARENA_IMPASSABLE = {
+    "mountain", "snow", "deep_water", "shallow_water", "dense_forest",
+    "stone_wall", "b_wall", "void", "cave_rock",
+    "river",
+}
+
 # --- Cave System ---
 
 CAVE_EMOJI = {

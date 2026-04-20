@@ -380,40 +380,21 @@ def _generate_village_paths_sync(
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
 
-    # Step 1: MST of villages
-    mst_edges = _build_mst(village_positions)
-    for a, b in mst_edges:
-        _add_path(a, b)
+    # K-nearest-neighbor graph over ALL nodes (villages + bridge endpoints).
+    # Each node connects to its 2 nearest other nodes via A*.
+    # This guarantees every node has at least 2 connections and the network
+    # is densely connected without relying on MST + separate bridge steps.
+    all_nodes = village_positions + bridge_endpoints
+    if len(all_nodes) < 2:
+        return overrides
 
-    # Step 2: Connect paired bridge endpoints across the same crossing
-    paired: set[int] = set()
-    for i, ep_i in enumerate(bridge_endpoints):
-        if i in paired:
-            continue
-        for j, ep_j in enumerate(bridge_endpoints):
-            if j <= i or j in paired:
-                continue
-            if math.hypot(ep_j[0]-ep_i[0], ep_j[1]-ep_i[1]) <= 12:
-                _add_path(ep_i, ep_j)
-                paired.add(i)
-                paired.add(j)
-                break
-
-    # Step 3: Connect any bridge endpoint still isolated from the path network
-    for bx, by in bridge_endpoints:
-        nearby = any(
-            abs(bx - px) + abs(by - py) <= 4
-            for px, py in path_tiles
+    for node in all_nodes:
+        nearest = sorted(
+            [n for n in all_nodes if n != node],
+            key=lambda n: math.hypot(n[0] - node[0], n[1] - node[1]),
         )
-        if nearby:
-            continue
-        candidates = sorted(
-            village_positions + list(bridge_endpoints),
-            key=lambda t: math.hypot(t[0] - bx, t[1] - by)
-        )
-        for target in candidates[:2]:
-            if target != (bx, by):
-                _add_path((bx, by), target)
+        for target in nearest[:2]:
+            _add_path(node, target)
 
     return overrides
 

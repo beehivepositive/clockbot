@@ -7,6 +7,7 @@ import discord
 from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, ENEMY_STATS,
+    COMBAT_MOVES_DEFAULT,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -17,6 +18,8 @@ from dwarf_explorer.database.repositories import (
     update_player_house_state,
     update_player_sprint,
     update_player_stats,
+    save_combat_state,
+    clear_combat_state,
     get_cave_entrance_exit,
     equip_item, unequip_item,
     get_inventory,
@@ -26,6 +29,12 @@ from dwarf_explorer.database.repositories import (
     bank_deposit,
     bank_withdraw,
     set_tile_override,
+)
+from dwarf_explorer.game.combat import (
+    build_arena_from_viewport,
+    action_move, action_attack, action_flee, action_free_cobweb, action_use_potion,
+    resolve_enemy_turn, apply_victory, apply_death_reset,
+    render_arena, ARENA_SIZE,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, open_chest
@@ -206,6 +215,61 @@ class ShopView(discord.ui.View):
             ))
 
 
+class CombatView(discord.ui.View):
+    """9-button arena combat view. 3 rows: diagonals+attack+end, ←·→+potion+flee, ↙↓↘."""
+
+    def __init__(self, guild_id: int, user_id: int, trapped: bool = False,
+                 moves_left: int = COMBAT_MOVES_DEFAULT):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        disabled = (moves_left <= 0)
+
+        # Row 0: ↖ ↑ ↗ ⚔️ ⏭
+        for emoji, action in [("↖", "c_upleft"), ("⬆️", "c_up"), ("↗", "c_upright"),
+                               ("⚔️", "c_attack"), ("⏭", "c_endturn")]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary if emoji in ("↖","⬆️","↗") else discord.ButtonStyle.danger if emoji == "⚔️" else discord.ButtonStyle.secondary,
+                label=emoji, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=0,
+            ))
+
+        # Row 1: ← [Free🕸/Wait] → 🧪 🏃
+        center_label = "🕸️ Free" if trapped else "·"
+        center_action = "c_free" if trapped else "c_wait"
+        center_disabled = (not trapped and True) or disabled  # Wait is always disabled
+        if trapped:
+            center_disabled = disabled
+
+        for label, action, dis in [
+            ("⬅️",       "c_left",   disabled),
+            (center_label, center_action, center_disabled),
+            ("➡️",       "c_right",  disabled),
+            ("🧪",       "c_potion", disabled),
+            ("🏃",       "c_flee",   disabled),
+        ]:
+            style = discord.ButtonStyle.success if action == "c_free" else (
+                discord.ButtonStyle.secondary if action == "c_wait" else discord.ButtonStyle.primary
+            )
+            self.add_item(discord.ui.Button(
+                style=style, label=label, disabled=dis,
+                custom_id=_custom_id(gid, uid, action), row=1,
+            ))
+
+        # Row 2: ↙ ↓ ↘ (spacers fill rest)
+        for emoji, action in [("↙", "c_downleft"), ("⬇️", "c_down"), ("↘", "c_downright")]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=emoji, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=2,
+            ))
+        for i in range(2):
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, f"csp{i}"), row=2,
+            ))
+
+
 # ── Equipment helpers ─────────────────────────────────────────────────────────
 
 def _equipped_dict(player: Player) -> dict:
@@ -340,13 +404,30 @@ async def _move_steps(
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
-            # Check for cave enemies
+            # Trigger arena combat when stepping on an enemy tile
             if target.terrain in CAVE_ENEMY_TYPES:
-                combat_msg = await _resolve_cave_combat(player, target.terrain, nx, ny, db, user_id)
                 player.cave_x, player.cave_y = nx, ny
                 await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
-                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                return render_grid(grid, player, combat_msg), _game_view(guild_id, user_id, player)
+                # Build the arena from the current viewport
+                grid = await load_cave_viewport(player.cave_id, nx, ny, db)
+                rng = _random.Random(hash((user_id, nx, ny, target.terrain)))
+                arena, ex, ey = build_arena_from_viewport(grid, target.terrain, rng)
+                # Initialise player combat state
+                player.in_combat = True
+                player.combat_enemy_type = target.terrain
+                player.combat_enemy_hp = ENEMY_STATS[target.terrain][0]
+                player.combat_enemy_x = ex
+                player.combat_enemy_y = ey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = COMBAT_MOVES_DEFAULT
+                _ui_state[user_id] = {"type": "combat", "arena": arena}
+                await save_combat_state(db, user_id, player)
+                content = render_arena(arena, player)
+                view = CombatView(guild_id, user_id,
+                                  trapped=arena["player_trapped"],
+                                  moves_left=player.combat_moves_left)
+                return content, view
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -380,6 +461,227 @@ async def handle_move(
     steps = 2 if (player.sprinting and player.boots is not None) else 1
     content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Combat handlers ───────────────────────────────────────────────────────────
+
+def _combat_view(guild_id: int, user_id: int, arena: dict, player) -> CombatView:
+    return CombatView(guild_id, user_id,
+                      trapped=arena["player_trapped"],
+                      moves_left=player.combat_moves_left)
+
+
+async def _finish_combat(
+    db, guild_id: int, user_id: int, player,
+    arena: dict, extra_msg: str,
+) -> tuple[str, discord.ui.View]:
+    """Clean up after combat ends (win, flee, or death). Return (content, view)."""
+    seed = await get_or_create_world(db, guild_id)
+    # Clear enemy tile in cave
+    if player.in_cave and player.combat_enemy_type:
+        await db.execute(
+            "UPDATE cave_tiles SET tile_type='stone_floor'"
+            " WHERE cave_id=? AND local_x=? AND local_y=?",
+            (player.cave_id, player.cave_x, player.cave_y),
+        )
+    player.in_combat = False
+    _ui_state.pop(user_id, None)
+    await clear_combat_state(db, user_id)
+
+    if player.hp <= 0:
+        msg = apply_death_reset(player)
+        await update_player_stats(db, user_id, hp=player.hp)
+        await update_player_cave_state(db, user_id, False, None, 0, 0)
+        await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
+        await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+        await update_player_position(db, user_id, player.world_x, player.world_y)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player)
+
+    await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
+    # Return to the appropriate location view
+    if player.in_cave:
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player)
+
+
+async def _after_player_action(
+    interaction: discord.Interaction,
+    db, guild_id: int, user_id: int,
+    player, arena: dict, msg: str,
+) -> None:
+    """Called after a player action. Run enemy turn if moves exhausted, or re-render."""
+    arena["combat_log"].append(msg)
+
+    # Enemy dead?
+    if player.combat_enemy_hp <= 0:
+        victory_msg = apply_victory(player)
+        arena["combat_log"].append(victory_msg)
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-4:]))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Player dead?
+    if player.hp <= 0:
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-4:]))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Still has moves left?
+    if player.combat_moves_left > 0:
+        await save_combat_state(db, user_id, player)
+        content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # No moves left → enemy turn
+    rng = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y,
+                               player.combat_enemy_hp)))
+    enemy_msg = resolve_enemy_turn(arena, player, rng)
+    arena["combat_log"].append(enemy_msg)
+
+    # Restore player moves for next turn
+    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+
+    # Check outcomes after enemy turn
+    if player.hp <= 0:
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-4:]))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if player.combat_enemy_hp <= 0:
+        victory_msg = apply_victory(player)
+        arena["combat_log"].append(victory_msg)
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-4:]))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    await save_combat_state(db, user_id, player)
+    content = render_arena(arena, player)
+    view = _combat_view(guild_id, user_id, arena, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def _load_combat(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> tuple | None:
+    """Load combat state. Returns (db, player, arena) or None if not in combat."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    arena = _ui_state.get(user_id, {}).get("arena")
+    if not player.in_combat or arena is None:
+        # Combat state lost (e.g. bot restart) — clear and return to game
+        if player.in_combat:
+            player.in_combat = False
+            await clear_combat_state(db, user_id)
+            seed = await get_or_create_world(db, guild_id)
+            if player.in_cave:
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            else:
+                grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            content = render_grid(grid, player, "Combat session lost — you escape unharmed.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player)
+            )
+        return None
+    return db, player, arena
+
+
+async def handle_combat_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y)))
+    msg = action_move(arena, player, direction)
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_attack(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_enemy_x)))
+    msg = action_attack(arena, player, rng)
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_flee(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y,
+                               player.combat_moves_left)))
+    msg, success = action_flee(arena, player, rng)
+    if success:
+        arena["combat_log"].append(msg)
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-3:]))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+    else:
+        await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_potion(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    # Check inventory for potion
+    has_potion = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='potion'", (user_id,)
+    )
+    if not has_potion:
+        arena["combat_log"].append("You have no potions!")
+        content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+    await remove_from_inventory(db, user_id, "potion", 1)
+    msg = action_use_potion(arena, player)
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_free_cobweb(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y)))
+    msg = action_free_cobweb(arena, player, rng)
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_end_turn(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Force end player's turn immediately."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+    player.combat_moves_left = 0  # exhaust moves
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena,
+                               "You end your turn.")
 
 
 # ── Sprint toggle ─────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE,
+    COMBAT_MOVES_DEFAULT,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -44,6 +45,15 @@ class Player:
     house_vx: int = 0
     house_vy: int = 0
     house_type: str = "house"   # "house" | "church" | "bank" | "shop"
+    # Combat state
+    in_combat: bool = False
+    combat_enemy_type: str | None = None
+    combat_enemy_hp: int = 0
+    combat_enemy_x: int = 0
+    combat_enemy_y: int = 0
+    combat_player_x: int = 4
+    combat_player_y: int = 4
+    combat_moves_left: int = COMBAT_MOVES_DEFAULT
     # Equipment & sprint
     sprinting: bool = False
     hand_1: str | None = None

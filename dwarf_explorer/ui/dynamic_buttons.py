@@ -11,10 +11,16 @@ from dwarf_explorer.ui.game_view import (
     handle_shop_nav, handle_shop_buy, handle_shop_sell, handle_shop_mode, handle_shop_close,
     handle_bank_nav, handle_bank_switch,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
+    handle_combat_move, handle_combat_attack, handle_combat_flee,
+    handle_combat_potion, handle_combat_free_cobweb, handle_combat_end_turn,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
-_IGNORED_ACTIONS = {"sp1", "sp2"}
+_COMBAT_MOVE_ACTIONS = {
+    "c_up", "c_down", "c_left", "c_right",
+    "c_upleft", "c_upright", "c_downleft", "c_downright",
+}
+_IGNORED_ACTIONS = {"sp1", "sp2", "c_wait", "csp0", "csp1"}
 
 
 class GameButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -48,7 +54,20 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
         gid, uid, act = self.guild_id, self.user_id, self.action
 
         try:
-            if act in _MOVE_ACTIONS:
+            if act in _COMBAT_MOVE_ACTIONS:
+                direction = act[2:]  # strip "c_" prefix
+                await handle_combat_move(interaction, gid, uid, direction)
+            elif act == "c_attack":
+                await handle_combat_attack(interaction, gid, uid)
+            elif act == "c_flee":
+                await handle_combat_flee(interaction, gid, uid)
+            elif act == "c_potion":
+                await handle_combat_potion(interaction, gid, uid)
+            elif act == "c_free":
+                await handle_combat_free_cobweb(interaction, gid, uid)
+            elif act == "c_endturn":
+                await handle_combat_end_turn(interaction, gid, uid)
+            elif act in _MOVE_ACTIONS:
                 await handle_move(interaction, gid, uid, act)
             elif act == "interact":
                 await handle_interact(interaction, gid, uid)

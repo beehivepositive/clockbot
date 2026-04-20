@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT
 from dwarf_explorer.database.connection import Database
 from dwarf_explorer.game.player import Player
 
@@ -74,6 +74,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             if not torch_row:
                 await add_to_inventory(db, user_id, "torch", 1)
 
+        cols = row.keys()
         return Player(
             user_id=row["user_id"],
             display_name=row["display_name"],
@@ -105,6 +106,15 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             house_vx=row["house_vx"] or 0,
             house_vy=row["house_vy"] or 0,
             house_type=row["house_type"] or "house",
+            # Combat state
+            in_combat=bool(row["in_combat"]) if "in_combat" in cols else False,
+            combat_enemy_type=row["combat_enemy_type"] if "combat_enemy_type" in cols else None,
+            combat_enemy_hp=row["combat_enemy_hp"] if "combat_enemy_hp" in cols else 0,
+            combat_enemy_x=row["combat_enemy_x"] if "combat_enemy_x" in cols else 0,
+            combat_enemy_y=row["combat_enemy_y"] if "combat_enemy_y" in cols else 0,
+            combat_player_x=row["combat_player_x"] if "combat_player_x" in cols else 4,
+            combat_player_y=row["combat_player_y"] if "combat_player_y" in cols else 4,
+            combat_moves_left=row["combat_moves_left"] if "combat_moves_left" in cols else COMBAT_MOVES_DEFAULT,
             sprinting=bool(row["sprinting"]),
             hand_1=equipped.get("hand_1"),
             hand_2=equipped.get("hand_2"),
@@ -314,6 +324,29 @@ async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int 
         )
     await add_to_inventory(db, user_id, item_id, quantity)
     return True
+
+
+# --- Combat state ---
+
+async def save_combat_state(db: Database, user_id: int, player) -> None:
+    await db.execute(
+        "UPDATE players SET in_combat=?, combat_enemy_type=?, combat_enemy_hp=?,"
+        " combat_enemy_x=?, combat_enemy_y=?, combat_player_x=?, combat_player_y=?,"
+        " combat_moves_left=? WHERE user_id=?",
+        (int(player.in_combat), player.combat_enemy_type, player.combat_enemy_hp,
+         player.combat_enemy_x, player.combat_enemy_y,
+         player.combat_player_x, player.combat_player_y,
+         player.combat_moves_left, user_id),
+    )
+
+
+async def clear_combat_state(db: Database, user_id: int) -> None:
+    await db.execute(
+        "UPDATE players SET in_combat=0, combat_enemy_type=NULL, combat_enemy_hp=0,"
+        " combat_enemy_x=0, combat_enemy_y=0, combat_player_x=4, combat_player_y=4,"
+        " combat_moves_left=3 WHERE user_id=?",
+        (user_id,),
+    )
 
 
 # --- Tile overrides ---

@@ -103,6 +103,15 @@ class Database:
                     quantity INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (user_id, item_id)
                 )""",
+                # Combat state columns
+                "ALTER TABLE players ADD COLUMN in_combat INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN combat_enemy_type TEXT",
+                "ALTER TABLE players ADD COLUMN combat_enemy_hp INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN combat_enemy_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN combat_enemy_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN combat_player_x INTEGER NOT NULL DEFAULT 4",
+                "ALTER TABLE players ADD COLUMN combat_player_y INTEGER NOT NULL DEFAULT 4",
+                "ALTER TABLE players ADD COLUMN combat_moves_left INTEGER NOT NULL DEFAULT 3",
             ]
             for sql in migrations:
                 try:
