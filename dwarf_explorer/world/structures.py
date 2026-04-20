@@ -47,7 +47,84 @@ def _is_adjacent_to(x: int, y: int, seed: int, biome: str) -> bool:
     return False
 
 
-# ── A* pathfinder + Perlin meander ───────────────────────────────────────────
+# ── Perlin worm (meander) ─────────────────────────────────────────────────────
+
+def _norm2(dx: float, dy: float) -> tuple[float, float]:
+    m = math.hypot(dx, dy)
+    return (dx / m, dy / m) if m > 1e-9 else (1.0, 0.0)
+
+
+def _rotate2(dx: float, dy: float, angle: float) -> tuple[float, float]:
+    c, s = math.cos(angle), math.sin(angle)
+    return (c * dx - s * dy, s * dx + c * dy)
+
+
+def _path_worm(
+    start: tuple[int, int],
+    target: tuple[int, int],
+    seed: int,
+    worm_seed: int,
+    avoid_tiles: set[tuple[int, int]],
+    passable_tiles: set[tuple[int, int]],
+    max_steps: int = 400,
+) -> list[tuple[int, int]]:
+    """Perlin-worm road from start to target, avoiding water.
+
+    Shorter budget than before because it's used between sparse waypoints
+    that are already guaranteed to be on dry land. Bridge tiles in
+    passable_tiles bypass the water-biome check.
+    """
+    x, y = float(start[0]), float(start[1])
+    tx, ty = float(target[0]), float(target[1])
+    dx, dy = _norm2(tx - x, ty - y)
+    freq = 0.045
+    path: list[tuple[int, int]] = []
+
+    def _ok(nx: int, ny: int) -> bool:
+        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+            return False
+        if (nx, ny) in avoid_tiles:
+            return False
+        if get_biome(nx, ny, seed) in _WATER_BIOMES and (nx, ny) not in passable_tiles:
+            return False
+        return True
+
+    for _ in range(max_steps):
+        ix, iy = int(round(x)), int(round(y))
+        if not path or (ix, iy) != path[-1]:
+            if not _ok(ix, iy):
+                break
+            path.append((ix, iy))
+
+        if (ix, iy) == (int(round(tx)), int(round(ty))):
+            break
+
+        # Noise rotation + pull toward target
+        n = fbm(x * freq, y * freq, worm_seed, octaves=3)
+        rot = math.radians((n - 0.5) * 120.0)   # ±60° wiggle
+        ndx, ndy = _norm2(*_rotate2(dx, dy, rot))
+        tdx, tdy = _norm2(tx - x, ty - y)
+        dx, dy = _norm2(ndx * 0.4 + tdx * 0.6, ndy * 0.4 + tdy * 0.6)
+
+        # If next step is blocked, try rotated fallbacks
+        nx_int = int(round(x + dx))
+        ny_int = int(round(y + dy))
+        if not _ok(nx_int, ny_int):
+            for angle_deg in (45, -45, 90, -90, 135, -135, 180):
+                rdx, rdy = _norm2(*_rotate2(tdx, tdy, math.radians(angle_deg)))
+                if _ok(int(round(x + rdx)), int(round(y + rdy))):
+                    dx, dy = rdx, rdy
+                    break
+            else:
+                break
+
+        x = max(0.0, min(WORLD_SIZE - 1.0, x + dx))
+        y = max(0.0, min(WORLD_SIZE - 1.0, y + dy))
+
+    return path
+
+
+# ── A* pathfinder ─────────────────────────────────────────────────────────────
 
 def _tile_move_cost(
     x: int, y: int,
@@ -126,60 +203,27 @@ def _astar(
     return _line_samples(start, goal)
 
 
-def _smooth_path(
-    path: list[tuple[int, int]],
+def _astar_sparse_waypoints(
+    start: tuple[int, int],
+    end: tuple[int, int],
     seed: int,
     river_tiles: set[tuple[int, int]],
-    amplitude: float = 2.5,
-    freq: float = 0.07,
+    bridge_all: set[tuple[int, int]],
+    step: int = 14,
 ) -> list[tuple[int, int]]:
-    """Apply perpendicular Perlin noise meander to an A* backbone path.
+    """Run A* then subsample to sparse waypoints every `step` tiles.
 
-    Each tile is displaced perpendicularly to the local path direction.
-    Displaced tiles that land on water fall back to the original tile.
+    Returns a short list of dry-land waypoints. The Perlin worm is then
+    used to meander organically between each consecutive pair.
     """
-    if len(path) < 3:
-        return list(path)
-
-    result: list[tuple[int, int]] = []
-    seen: set[tuple[int, int]] = set()
-    n = len(path)
-
-    for i, (px, py) in enumerate(path):
-        # Local path direction
-        if i == 0:
-            ldx, ldy = float(path[1][0] - px), float(path[1][1] - py)
-        elif i == n - 1:
-            ldx, ldy = float(px - path[-2][0]), float(py - path[-2][1])
-        else:
-            ldx, ldy = float(path[i+1][0] - path[i-1][0]), float(path[i+1][1] - path[i-1][1])
-
-        m = math.hypot(ldx, ldy)
-        if m < 1e-9:
-            perp_x, perp_y = 0.0, 0.0
-        else:
-            perp_x, perp_y = -ldy / m, ldx / m  # 90° CCW rotation
-
-        # Parabolic taper: 0 at endpoints, 1 at midpoint
-        t = i / (n - 1)
-        taper = 4.0 * t * (1.0 - t)
-
-        noise_val = fbm(px * freq, py * freq, seed ^ 0xCAFE, octaves=2)
-        offset = (noise_val - 0.5) * 2.0 * amplitude * taper
-
-        mx = int(round(px + offset * perp_x))
-        my = int(round(py + offset * perp_y))
-
-        # Fall back to unperturbed tile if displaced position is water or OOB
-        if not (0 <= mx < WORLD_SIZE and 0 <= my < WORLD_SIZE) or \
-                _is_water(mx, my, seed, river_tiles):
-            mx, my = px, py
-
-        if (mx, my) not in seen:
-            seen.add((mx, my))
-            result.append((mx, my))
-
-    return result
+    full = _astar(start, end, seed, river_tiles, bridge_all)
+    if len(full) <= step * 2:
+        return full  # short path — just return as-is
+    pts = [full[0]]
+    for i in range(step, len(full) - 1, step):
+        pts.append(full[i])
+    pts.append(full[-1])
+    return pts
 
 
 # ── Structure generation ───────────────────────────────────────────────────────
@@ -357,40 +401,75 @@ def _generate_village_paths_sync(
     """Connect villages and bridge endpoints into a road network.
 
     Algorithm:
-    1. Build MST connecting villages via nearest-neighbour Prim's.
-    2. For each MST edge, run A* (water = near-impassable) to find a dry route.
-    3. Apply Perlin perpendicular meander to smooth the A* backbone.
-    4. Connect isolated bridge endpoints to nearest path node.
+    1. Group bridge endpoints into bridge-spans (endpoints ≤12 tiles apart).
+    2. K=2 nearest-neighbor graph over all nodes (villages + all bridge endpoints),
+       skipping same-bridge pairs and deduplicating bridge-span-to-bridge-span edges.
+    3. For each edge: A* finds sparse waypoints around water, then a Perlin worm
+       meanders organically between each consecutive pair of waypoints.
     """
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
     connected_pairs: set[frozenset] = set()
 
+    # --- Group bridge endpoints into spans (same bridge = both bank ends) ---
+    endpoint_to_span: dict[tuple[int, int], int] = {}
+    span_idx = 0
+    assigned: set[int] = set()
+    for i, ep in enumerate(bridge_endpoints):
+        if i in assigned:
+            continue
+        endpoint_to_span[ep] = span_idx
+        assigned.add(i)
+        for j, ep2 in enumerate(bridge_endpoints):
+            if j in assigned:
+                continue
+            if math.hypot(ep[0] - ep2[0], ep[1] - ep2[1]) <= 14:
+                endpoint_to_span[ep2] = span_idx
+                assigned.add(j)
+        span_idx += 1
+
+    connected_span_pairs: set[frozenset] = set()
+
     def _add_path(start: tuple[int, int], end: tuple[int, int]) -> None:
         pair = frozenset([start, end])
         if pair in connected_pairs:
             return
+
+        # Deduplicate bridge-span-to-bridge-span connections
+        sid_s = endpoint_to_span.get(start)
+        sid_e = endpoint_to_span.get(end)
+        if sid_s is not None and sid_e is not None and sid_s != sid_e:
+            span_pair = frozenset([sid_s, sid_e])
+            if span_pair in connected_span_pairs:
+                return
+            connected_span_pairs.add(span_pair)
+
         connected_pairs.add(pair)
 
-        backbone = _astar(start, end, seed, river_tiles, bridge_all)
-        seg = _smooth_path(backbone, seed, river_tiles)
-        for px, py in seg:
-            if (px, py) not in path_tiles and \
-                    not _is_water(px, py, seed, river_tiles):
-                path_tiles.add((px, py))
-                overrides.append((px, py, "path"))
+        # A* for water-safe sparse waypoints, then worm between each pair
+        waypoints = _astar_sparse_waypoints(start, end, seed, river_tiles, bridge_all)
+        for i in range(len(waypoints) - 1):
+            a, b = waypoints[i], waypoints[i + 1]
+            worm_seed = (seed ^ (a[0] * 31 + a[1] * 97 + b[0] * 7 + b[1] * 13)) & 0xFFFFFFFF
+            dist = math.hypot(b[0] - a[0], b[1] - a[1])
+            seg = _path_worm(a, b, seed, worm_seed, river_tiles, bridge_all,
+                             max_steps=int(dist * 5) + 120)
+            for px, py in seg:
+                if (px, py) not in path_tiles and \
+                        not _is_water(px, py, seed, river_tiles):
+                    path_tiles.add((px, py))
+                    overrides.append((px, py, "path"))
 
-    # K-nearest-neighbor graph over ALL nodes (villages + bridge endpoints).
-    # Each node connects to its 2 nearest other nodes via A*.
-    # This guarantees every node has at least 2 connections and the network
-    # is densely connected without relying on MST + separate bridge steps.
+    # K=2 nearest-neighbor graph: each node connects to 2 nearest nodes
+    # not on the same bridge span.
     all_nodes = village_positions + bridge_endpoints
     if len(all_nodes) < 2:
         return overrides
 
     for node in all_nodes:
+        node_span = endpoint_to_span.get(node)
         nearest = sorted(
-            [n for n in all_nodes if n != node],
+            [n for n in all_nodes if n != node and endpoint_to_span.get(n) != node_span],
             key=lambda n: math.hypot(n[0] - node[0], n[1] - node[1]),
         )
         for target in nearest[:2]:
