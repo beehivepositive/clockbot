@@ -390,6 +390,67 @@ def _is_water(x: int, y: int, seed: int, river_tiles: set[tuple[int, int]]) -> b
     return (x, y) in river_tiles or get_biome(x, y, seed) in _WATER_BIOMES
 
 
+def _line_has_water(
+    a: tuple[int, int],
+    b: tuple[int, int],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+) -> bool:
+    """True if the straight line from a to b crosses any water tile (bridge tiles exempt)."""
+    for x, y in _line_samples(a, b):
+        if (x, y) not in bridge_all and _is_water(x, y, seed, river_tiles):
+            return True
+    return False
+
+
+def _away_from_water_dir(
+    x: int, y: int,
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    scan_radius: int = 20,
+) -> tuple[float, float]:
+    """Unit vector pointing away from the nearest water tile."""
+    for r in range(1, scan_radius + 1):
+        for ddx in range(-r, r + 1):
+            for ddy in ((-r, r) if abs(ddx) < r else range(-r, r + 1)):
+                nx, ny = x + ddx, y + ddy
+                if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+                    if _is_water(nx, ny, seed, river_tiles):
+                        # Direction toward water → negate for away
+                        return _norm2(-float(ddx), -float(ddy))
+    return (1.0, 0.0)  # no water nearby
+
+
+def _find_escape_point(
+    start: tuple[int, int],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    escape_dist: int = 25,
+) -> tuple[int, int] | None:
+    """Walk away from nearest water ~escape_dist tiles and return the endpoint."""
+    esc_dx, esc_dy = _away_from_water_dir(start[0], start[1], seed, river_tiles)
+    x, y = float(start[0]), float(start[1])
+
+    for _ in range(escape_dist * 4):
+        nx = int(round(x + esc_dx))
+        ny = int(round(y + esc_dy))
+        nx = max(0, min(WORLD_SIZE - 1, nx))
+        ny = max(0, min(WORLD_SIZE - 1, ny))
+
+        if _is_water(nx, ny, seed, river_tiles):
+            # Deflect 45° and try again
+            esc_dx, esc_dy = _norm2(*_rotate2(esc_dx, esc_dy, math.radians(45)))
+            continue
+
+        x, y = float(nx), float(ny)
+        if math.hypot(x - start[0], y - start[1]) >= escape_dist:
+            return (int(x), int(y))
+
+    pt = (int(round(x)), int(round(y)))
+    return pt if pt != start else None
+
+
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -401,79 +462,96 @@ def _generate_village_paths_sync(
     """Connect villages and bridge endpoints into a road network.
 
     Algorithm:
-    1. Group bridge endpoints into bridge-spans (endpoints ≤12 tiles apart).
-    2. K=2 nearest-neighbor graph over all nodes (villages + all bridge endpoints),
-       skipping same-bridge pairs and deduplicating bridge-span-to-bridge-span edges.
-    3. For each edge: A* finds sparse waypoints around water, then a Perlin worm
-       meanders organically between each consecutive pair of waypoints.
+    Phase 1 — For each node, look at every other node sorted by distance.
+      If the straight line to that node contains NO water tile (bridge tiles OK),
+      deploy a Perlin worm to connect. Stop after 2 successful connections.
+
+    Phase 2 — Any node still unconnected escapes away from the nearest water
+      ~25 tiles, creates a virtual escape node there, and that node repeats
+      Phase 1. Repeat up to 3 times until connected or exhausted.
     """
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
     connected_pairs: set[frozenset] = set()
+    node_conn_count: dict[tuple[int, int], int] = {}
 
-    # --- Group bridge endpoints into spans (same bridge = both bank ends) ---
-    endpoint_to_span: dict[tuple[int, int], int] = {}
-    span_idx = 0
-    assigned: set[int] = set()
-    for i, ep in enumerate(bridge_endpoints):
-        if i in assigned:
-            continue
-        endpoint_to_span[ep] = span_idx
-        assigned.add(i)
-        for j, ep2 in enumerate(bridge_endpoints):
-            if j in assigned:
-                continue
-            if math.hypot(ep[0] - ep2[0], ep[1] - ep2[1]) <= 14:
-                endpoint_to_span[ep2] = span_idx
-                assigned.add(j)
-        span_idx += 1
-
-    connected_span_pairs: set[frozenset] = set()
-
-    def _add_path(start: tuple[int, int], end: tuple[int, int]) -> None:
-        pair = frozenset([start, end])
+    def _worm_connect(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        """Worm from a to b. Returns True if worm reached within 10 tiles of b."""
+        pair = frozenset([a, b])
         if pair in connected_pairs:
-            return
-
-        # Deduplicate bridge-span-to-bridge-span connections
-        sid_s = endpoint_to_span.get(start)
-        sid_e = endpoint_to_span.get(end)
-        if sid_s is not None and sid_e is not None and sid_s != sid_e:
-            span_pair = frozenset([sid_s, sid_e])
-            if span_pair in connected_span_pairs:
-                return
-            connected_span_pairs.add(span_pair)
-
+            return True
         connected_pairs.add(pair)
 
-        # A* for water-safe sparse waypoints, then worm between each pair
-        waypoints = _astar_sparse_waypoints(start, end, seed, river_tiles, bridge_all)
-        for i in range(len(waypoints) - 1):
-            a, b = waypoints[i], waypoints[i + 1]
-            worm_seed = (seed ^ (a[0] * 31 + a[1] * 97 + b[0] * 7 + b[1] * 13)) & 0xFFFFFFFF
-            dist = math.hypot(b[0] - a[0], b[1] - a[1])
-            seg = _path_worm(a, b, seed, worm_seed, river_tiles, bridge_all,
-                             max_steps=int(dist * 5) + 120)
-            for px, py in seg:
-                if (px, py) not in path_tiles and \
-                        not _is_water(px, py, seed, river_tiles):
-                    path_tiles.add((px, py))
-                    overrides.append((px, py, "path"))
+        worm_seed = (seed ^ (a[0] * 31 + a[1] * 97 + b[0] * 7 + b[1] * 13)) & 0xFFFFFFFF
+        dist = math.hypot(b[0] - a[0], b[1] - a[1])
+        seg = _path_worm(a, b, seed, worm_seed, river_tiles, bridge_all,
+                         max_steps=int(dist * 5) + 150)
 
-    # K=2 nearest-neighbor graph: each node connects to 2 nearest nodes
-    # not on the same bridge span.
+        if not seg:
+            return False
+        end_dist = math.hypot(seg[-1][0] - b[0], seg[-1][1] - b[1])
+        if end_dist > 10:
+            # Worm failed to reach — discard tiles to avoid path overfill
+            return False
+
+        for px, py in seg:
+            if (px, py) not in path_tiles and not _is_water(px, py, seed, river_tiles):
+                path_tiles.add((px, py))
+                overrides.append((px, py, "path"))
+        node_conn_count[a] = node_conn_count.get(a, 0) + 1
+        node_conn_count[b] = node_conn_count.get(b, 0) + 1
+        return True
+
+    def _try_connect_from(node: tuple[int, int], candidates: list[tuple[int, int]]) -> int:
+        """Try to connect node to up to 2 candidates with clear lines. Returns count made."""
+        made = 0
+        for other in candidates:
+            if other == node:
+                continue
+            if _line_has_water(node, other, seed, river_tiles, bridge_all):
+                continue
+            if _worm_connect(node, other):
+                made += 1
+                if made >= 2:
+                    break
+        return made
+
     all_nodes = village_positions + bridge_endpoints
     if len(all_nodes) < 2:
         return overrides
 
+    # Phase 1: connect nodes that have a clear (no-water) line of sight
     for node in all_nodes:
-        node_span = endpoint_to_span.get(node)
-        nearest = sorted(
-            [n for n in all_nodes if n != node and endpoint_to_span.get(n) != node_span],
+        candidates = sorted(
+            [n for n in all_nodes if n != node],
             key=lambda n: math.hypot(n[0] - node[0], n[1] - node[1]),
         )
-        for target in nearest[:2]:
-            _add_path(node, target)
+        _try_connect_from(node, candidates)
+
+    # Phase 2: isolated nodes escape away from water and retry
+    for node in all_nodes:
+        if node_conn_count.get(node, 0) > 0:
+            continue
+
+        current = node
+        for _attempt in range(3):
+            esc = _find_escape_point(current, seed, river_tiles, escape_dist=25)
+            if esc is None:
+                break
+
+            # Worm from the original node to the escape point
+            _worm_connect(node, esc)
+
+            # From escape point, look for any node with a clear line
+            all_candidates = sorted(
+                all_nodes,
+                key=lambda n: math.hypot(n[0] - esc[0], n[1] - esc[1]),
+            )
+            made = _try_connect_from(esc, all_candidates)
+            if made > 0:
+                break
+
+            current = esc  # push further away next iteration
 
     return overrides
 

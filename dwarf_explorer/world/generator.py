@@ -206,4 +206,10 @@ async def init_world(seed: int, db) -> None:
     from dwarf_explorer.world.rivers import generate_rivers
     from dwarf_explorer.world.structures import place_structures
     await generate_rivers(seed, db)
+    # Clear any river/bridge tiles that landed on the spawn clearing radius
+    await db.execute(
+        "DELETE FROM tile_overrides WHERE tile_type IN ('river','bridge') "
+        "AND ABS(world_x - ?) + ABS(world_y - ?) <= ?",
+        (SPAWN_X, SPAWN_Y, _SPAWN_CLEAR_RADIUS + 1),
+    )
     await place_structures(seed, db)
