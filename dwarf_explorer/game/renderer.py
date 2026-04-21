@@ -143,6 +143,7 @@ _ITEM_SLOT_EMOJI = {
     "small_pouch":  "\U0001F45C",
     "medium_pouch": "\U0001F45C",
     "large_pouch":  "\U0001F45C",
+    "fishing_net":  "\U0001F3A3",
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 

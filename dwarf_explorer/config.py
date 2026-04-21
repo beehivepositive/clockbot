@@ -86,6 +86,7 @@ ITEM_EMOJI = {
     "small_pouch": "\U0001F45C",     # 👜
     "medium_pouch": "\U0001F45C",    # 👜
     "large_pouch": "\U0001F45C",     # 👜
+    "fishing_net": "\U0001F3A3",     # 🎣
 }
 
 WALKABLE_TILES = {
@@ -464,3 +465,15 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     for d, tile_key, emoji_name in _replace:
         if emoji_name in cache:
             d[tile_key] = cache[emoji_name]
+
+    # Item emoji overrides — update both ITEM_EMOJI (ground) and renderer's inventory dict
+    _item_overrides = [
+        ("shovel",      "shovel"),
+        ("torch",       "torch"),
+        ("fishing_net", "net"),
+    ]
+    from dwarf_explorer.game import renderer as _renderer
+    for item_key, emoji_name in _item_overrides:
+        if emoji_name in cache:
+            ITEM_EMOJI[item_key] = cache[emoji_name]
+            _renderer._ITEM_SLOT_EMOJI[item_key] = cache[emoji_name]
