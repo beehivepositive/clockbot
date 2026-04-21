@@ -6,7 +6,7 @@ import random
 
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
-    CAVE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
+    CAVE_WALKABLE, CAVE_CHEST_TYPES, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
     WALKABLE_TILES, CHEST_LOOT,
 )
 from dwarf_explorer.world.generator import TileData
@@ -240,33 +240,23 @@ def _generate_cave_interior(
     for pos in rock_candidates[:rock_count]:
         rock_positions.add(pos)
 
-    # --- Cave enemies ---
-    enemy_positions: dict[tuple[int, int], str] = {}
-    enemy_types = ["cave_bat", "cave_spider", "cave_golem"]
-    enemy_weights = [60, 30, 10]
-    enemy_candidates = [
-        p for p in carved
-        if p not in entrance_set
-        and p not in chest_positions
-        and p not in rock_positions
-        and all(abs(p[0] - ex) + abs(p[1] - ey) > 6 for ex, ey in entrances)
-    ]
-    rng.shuffle(enemy_candidates)
-    enemy_count = len(enemy_candidates) // 10  # 10% chance per eligible tile
-    for pos in enemy_candidates[:enemy_count]:
-        enemy_type = rng.choices(enemy_types, weights=enemy_weights, k=1)[0]
-        enemy_positions[pos] = enemy_type
+    # --- Assign chest sizes (60% small, 30% medium, 10% large) ---
+    chest_types: dict[tuple[int, int], str] = {}
+    for pos in chest_positions:
+        chest_type = rng.choices(
+            ["cave_chest", "cave_chest_medium", "cave_chest_large"],
+            weights=[60, 30, 10], k=1
+        )[0]
+        chest_types[pos] = chest_type
 
-    # --- Build tile list ---
+    # --- Build tile list (enemies no longer placed as tiles — random encounters instead) ---
     tiles: list[tuple[int, int, str]] = []
     for y in range(height):
         for x in range(width):
             if (x, y) in entrance_set:
                 tiles.append((x, y, "cave_entrance"))
             elif (x, y) in chest_positions:
-                tiles.append((x, y, "cave_chest"))
-            elif (x, y) in enemy_positions:
-                tiles.append((x, y, enemy_positions[(x, y)]))
+                tiles.append((x, y, chest_types[(x, y)]))
             elif (x, y) in rock_positions:
                 tiles.append((x, y, "cave_rock"))
             elif (x, y) in carved:
@@ -346,19 +336,28 @@ async def get_or_create_cave(
     return row["cave_id"], row["local_x"], row["local_y"]
 
 
-async def open_chest(cave_id: int, local_x: int, local_y: int, db) -> dict:
-    rng = random.Random(cave_id * 9999 + local_x * 100 + local_y)
+async def populate_chest_loot(chest_id: int, chest_type: str, db) -> None:
+    """Populate a freshly-created chest with random loot."""
+    from dwarf_explorer.database.repositories import add_to_chest
+    rng = random.Random(chest_id * 7331)
     weights = [t[0] for t in CHEST_LOOT]
-    tier = rng.choices(CHEST_LOOT, weights=weights, k=1)[0]
-    _, gold_min, gold_max, xp_min, xp_max, item = tier
-    gold = rng.randint(gold_min, gold_max)
-    xp   = rng.randint(xp_min, xp_max)
-    await db.execute(
-        "UPDATE cave_tiles SET tile_type = 'stone_floor'"
-        " WHERE cave_id = ? AND local_x = ? AND local_y = ?",
-        (cave_id, local_x, local_y),
-    )
-    return {"gold": gold, "xp": xp, "item": item}
+
+    # More loot tiers for larger chests
+    num_tiers = {"cave_chest": 1, "cave_chest_medium": 2, "cave_chest_large": 3}.get(chest_type, 1)
+    for _ in range(num_tiers):
+        tier = rng.choices(CHEST_LOOT, weights=weights, k=1)[0]
+        _, gold_min, gold_max, _xp_min, _xp_max, item = tier
+        gold = rng.randint(gold_min, gold_max)
+        if gold > 0:
+            await add_to_chest(db, chest_id, "gold_coin", gold)
+        if item:
+            await add_to_chest(db, chest_id, item, 1)
+    # Always add some base items
+    await add_to_chest(db, chest_id, "potion", rng.randint(0, 1) or 1)
+    if chest_type in ("cave_chest_medium", "cave_chest_large"):
+        await add_to_chest(db, chest_id, "flint", rng.randint(1, 3))
+    if chest_type == "cave_chest_large":
+        await add_to_chest(db, chest_id, "gem", 1)
 
 
 async def load_cave_viewport(

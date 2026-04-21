@@ -63,6 +63,7 @@ class Player:
     legs: str | None = None
     boots: str | None = None
     accessory: str | None = None
+    pouch: str | None = None
 
 
 def can_move_village(target_tile: TileData) -> tuple[bool, str]:

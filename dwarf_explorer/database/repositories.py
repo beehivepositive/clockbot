@@ -123,6 +123,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             legs=equipped.get("legs"),
             boots=equipped.get("boots"),
             accessory=equipped.get("accessory"),
+            pouch=equipped.get("pouch"),
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -357,3 +358,58 @@ async def set_tile_override(db: Database, world_x: int, world_y: int, tile_type:
         "INSERT OR REPLACE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
         (world_x, world_y, tile_type),
     )
+
+
+# --- Chests ---
+
+async def get_or_create_chest(
+    db: Database, cave_id: int, local_x: int, local_y: int, chest_type: str
+) -> tuple[int, bool]:
+    """Return (chest_id, is_new). Creates chest record if first access."""
+    row = await db.fetch_one(
+        "SELECT chest_id FROM chests WHERE cave_id=? AND local_x=? AND local_y=?",
+        (cave_id, local_x, local_y),
+    )
+    if row:
+        return row["chest_id"], False
+    cursor = await db.execute(
+        "INSERT INTO chests (cave_id, local_x, local_y, chest_type) VALUES (?, ?, ?, ?)",
+        (cave_id, local_x, local_y, chest_type),
+    )
+    return cursor.lastrowid, True
+
+
+async def get_chest_items(db: Database, chest_id: int) -> list[dict]:
+    rows = await db.fetch_all(
+        "SELECT item_id, quantity FROM chest_items WHERE chest_id=? ORDER BY rowid",
+        (chest_id,),
+    )
+    return [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in rows]
+
+
+async def add_to_chest(db: Database, chest_id: int, item_id: str, quantity: int = 1) -> None:
+    await db.execute(
+        "INSERT INTO chest_items (chest_id, item_id, quantity) VALUES (?, ?, ?) "
+        "ON CONFLICT(chest_id, item_id) DO UPDATE SET quantity = quantity + ?",
+        (chest_id, item_id, quantity, quantity),
+    )
+
+
+async def remove_from_chest(db: Database, chest_id: int, item_id: str, quantity: int = 1) -> bool:
+    row = await db.fetch_one(
+        "SELECT quantity FROM chest_items WHERE chest_id=? AND item_id=?",
+        (chest_id, item_id),
+    )
+    if not row or row["quantity"] < quantity:
+        return False
+    new_qty = row["quantity"] - quantity
+    if new_qty <= 0:
+        await db.execute(
+            "DELETE FROM chest_items WHERE chest_id=? AND item_id=?", (chest_id, item_id)
+        )
+    else:
+        await db.execute(
+            "UPDATE chest_items SET quantity=? WHERE chest_id=? AND item_id=?",
+            (new_qty, chest_id, item_id),
+        )
+    return True

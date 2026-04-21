@@ -112,6 +112,21 @@ class Database:
                 "ALTER TABLE players ADD COLUMN combat_player_x INTEGER NOT NULL DEFAULT 4",
                 "ALTER TABLE players ADD COLUMN combat_player_y INTEGER NOT NULL DEFAULT 4",
                 "ALTER TABLE players ADD COLUMN combat_moves_left INTEGER NOT NULL DEFAULT 3",
+                # Chest inventory tables
+                """CREATE TABLE IF NOT EXISTS chests (
+                    chest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cave_id INTEGER NOT NULL,
+                    local_x INTEGER NOT NULL,
+                    local_y INTEGER NOT NULL,
+                    chest_type TEXT NOT NULL DEFAULT 'cave_chest',
+                    UNIQUE(cave_id, local_x, local_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS chest_items (
+                    chest_id INTEGER NOT NULL,
+                    item_id TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (chest_id, item_id)
+                )""",
             ]
             for sql in migrations:
                 try:

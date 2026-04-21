@@ -12,7 +12,9 @@ from dwarf_explorer.ui.game_view import (
     handle_bank_nav, handle_bank_switch,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
     handle_combat_move, handle_combat_attack, handle_combat_flee,
-    handle_combat_potion, handle_combat_free_cobweb, handle_combat_end_turn,
+    handle_combat_potion, handle_combat_end_turn,
+    handle_chest_nav, handle_chest_switch, handle_chest_take,
+    handle_chest_give, handle_chest_lootall, handle_chest_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -20,7 +22,7 @@ _COMBAT_MOVE_ACTIONS = {
     "c_up", "c_down", "c_left", "c_right",
     "c_upleft", "c_upright", "c_downleft", "c_downright",
 }
-_IGNORED_ACTIONS = {"sp1", "sp2", "c_wait", "csp0", "csp1"}
+_IGNORED_ACTIONS = {"sp1", "sp2", "c_wait", "csp0", "csp1", "c_free"}
 
 
 class GameButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -63,8 +65,6 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_flee(interaction, gid, uid)
             elif act == "c_potion":
                 await handle_combat_potion(interaction, gid, uid)
-            elif act == "c_free":
-                await handle_combat_free_cobweb(interaction, gid, uid)
             elif act == "c_endturn":
                 await handle_combat_end_turn(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
@@ -116,6 +116,21 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_bank_withdraw(interaction, gid, uid)
             elif act == "bank_close":
                 await handle_bank_close(interaction, gid, uid)
+            # Chest
+            elif act == "chest_prev":
+                await handle_chest_nav(interaction, gid, uid, -1)
+            elif act == "chest_next":
+                await handle_chest_nav(interaction, gid, uid, +1)
+            elif act == "chest_take":
+                await handle_chest_take(interaction, gid, uid)
+            elif act == "chest_give":
+                await handle_chest_give(interaction, gid, uid)
+            elif act == "chest_lootall":
+                await handle_chest_lootall(interaction, gid, uid)
+            elif act == "chest_switch":
+                await handle_chest_switch(interaction, gid, uid)
+            elif act == "chest_close":
+                await handle_chest_close(interaction, gid, uid)
 
         except discord.NotFound:
             await interaction.followup.send(

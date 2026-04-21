@@ -6,8 +6,8 @@ import discord
 
 from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
-    TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, ENEMY_STATS,
-    COMBAT_MOVES_DEFAULT,
+    TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
+    CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT, POUCH_SIZES,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -29,15 +29,19 @@ from dwarf_explorer.database.repositories import (
     bank_deposit,
     bank_withdraw,
     set_tile_override,
+    get_or_create_chest,
+    get_chest_items,
+    add_to_chest,
+    remove_from_chest,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
-    action_move, action_attack, action_flee, action_free_cobweb, action_use_potion,
+    action_move, action_attack, action_flee, action_use_potion,
     resolve_enemy_turn, apply_victory, apply_death_reset,
     render_arena, ARENA_SIZE,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
-from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, open_chest
+from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, populate_chest_loot
 from dwarf_explorer.world.villages import (
     get_or_create_village, get_building_at,
     load_village_viewport, load_village_single_tile,
@@ -45,7 +49,7 @@ from dwarf_explorer.world.villages import (
 )
 from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building
 from dwarf_explorer.game.renderer import (
-    render_grid, render_inventory, render_bank, render_shop,
+    render_grid, render_inventory, render_bank, render_shop, render_chest,
 )
 
 # ── In-memory UI state (transient per user) ───────────────────────────────────
@@ -215,43 +219,65 @@ class ShopView(discord.ui.View):
             ))
 
 
+class ChestView(discord.ui.View):
+    """Chest inventory view — chest side shows Take + LootAll, player side shows Give + Switch."""
+
+    def __init__(self, guild_id: int, user_id: int, view_mode: str = "chest"):
+        super().__init__(timeout=None)
+        if view_mode == "chest":
+            action_label, action_id = "📤 Take", "chest_take"
+            extra_label, extra_id = "📦 Loot All", "chest_lootall"
+        else:
+            action_label, action_id = "📥 Give", "chest_give"
+            extra_label, extra_id = "🔄 Switch", "chest_switch"
+        for label, act in [
+            ("◀", "chest_prev"),
+            ("▶", "chest_next"),
+            (action_label, action_id),
+            (extra_label, extra_id),
+            ("❌ Close", "chest_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, act),
+                row=0,
+            ))
+
+
 class CombatView(discord.ui.View):
-    """9-button arena combat view. 3 rows: diagonals+attack+end, ←·→+potion+flee, ↙↓↘."""
+    """Arena combat view. Arrows attempt cobweb escape when trapped. Attack disabled while trapped."""
 
     def __init__(self, guild_id: int, user_id: int, trapped: bool = False,
                  moves_left: int = COMBAT_MOVES_DEFAULT):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
         disabled = (moves_left <= 0)
+        attack_disabled = disabled or trapped  # can't attack while trapped
 
         # Row 0: ↖ ↑ ↗ ⚔️ ⏭
         for emoji, action in [("↖", "c_upleft"), ("⬆️", "c_up"), ("↗", "c_upright"),
                                ("⚔️", "c_attack"), ("⏭", "c_endturn")]:
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.primary if emoji in ("↖","⬆️","↗") else discord.ButtonStyle.danger if emoji == "⚔️" else discord.ButtonStyle.secondary,
-                label=emoji, disabled=disabled,
+                style=discord.ButtonStyle.primary if emoji in ("↖","⬆️","↗")
+                      else discord.ButtonStyle.danger if emoji == "⚔️"
+                      else discord.ButtonStyle.secondary,
+                label=emoji,
+                disabled=attack_disabled if emoji == "⚔️" else disabled,
                 custom_id=_custom_id(gid, uid, action), row=0,
             ))
 
-        # Row 1: ← [Free🕸/Wait] → 🧪 🏃
-        center_label = "🕸️ Free" if trapped else "·"
-        center_action = "c_free" if trapped else "c_wait"
-        center_disabled = (not trapped and True) or disabled  # Wait is always disabled
-        if trapped:
-            center_disabled = disabled
-
+        # Row 1: ← · → 🧪 🏃  (center is always a spacer — cobweb escape via arrows)
         for label, action, dis in [
-            ("⬅️",       "c_left",   disabled),
-            (center_label, center_action, center_disabled),
-            ("➡️",       "c_right",  disabled),
-            ("🧪",       "c_potion", disabled),
-            ("🏃",       "c_flee",   disabled),
+            ("⬅️", "c_left",  disabled),
+            ("·",  "c_wait",  True),
+            ("➡️", "c_right", disabled),
+            ("🧪", "c_potion", disabled),
+            ("🏃", "c_flee",  disabled),
         ]:
-            style = discord.ButtonStyle.success if action == "c_free" else (
-                discord.ButtonStyle.secondary if action == "c_wait" else discord.ButtonStyle.primary
-            )
             self.add_item(discord.ui.Button(
-                style=style, label=label, disabled=dis,
+                style=discord.ButtonStyle.secondary,
+                label=label, disabled=dis,
                 custom_id=_custom_id(gid, uid, action), row=1,
             ))
 
@@ -278,11 +304,16 @@ def _equipped_dict(player: Player) -> dict:
         ("hand_1", player.hand_1), ("hand_2", player.hand_2),
         ("head", player.head), ("chest", player.chest),
         ("legs", player.legs), ("boots", player.boots),
-        ("accessory", player.accessory),
+        ("accessory", player.accessory), ("pouch", player.pouch),
     ]:
         if val:
             d[slot] = val
     return d
+
+
+def _inv_capacity(player: Player) -> tuple[int, int]:
+    """Return (rows, cols) for player's current inventory based on equipped pouch."""
+    return POUCH_SIZES.get(player.pouch, POUCH_SIZES[None])
 
 
 def _equip_label(items: list[dict], selected: int, equipped: dict) -> str:
@@ -336,6 +367,14 @@ def _game_view(guild_id: int, user_id: int, player: Player) -> GameView:
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots is not None),
                     sprinting=player.sprinting)
+
+
+def _roll_encounter(rng: _random.Random) -> str | None:
+    """Roll for a random cave encounter. Returns enemy_type or None."""
+    for enemy_type, rate in CAVE_ENCOUNTER_RATES.items():
+        if rng.random() < rate:
+            return enemy_type
+    return None
 
 
 async def _move_steps(
@@ -404,36 +443,36 @@ async def _move_steps(
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
-            # Trigger arena combat when stepping on an enemy tile
-            if target.terrain in CAVE_ENEMY_TYPES:
-                player.cave_x, player.cave_y = nx, ny
-                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
-                # Build the arena from the current viewport
-                grid = await load_cave_viewport(player.cave_id, nx, ny, db)
-                rng = _random.Random(hash((user_id, nx, ny, target.terrain)))
-                arena, ex, ey = build_arena_from_viewport(grid, target.terrain, rng)
-                # Initialise player combat state
-                player.in_combat = True
-                player.combat_enemy_type = target.terrain
-                player.combat_enemy_hp = ENEMY_STATS[target.terrain][0]
-                player.combat_enemy_x = ex
-                player.combat_enemy_y = ey
-                player.combat_player_x = ARENA_SIZE // 2
-                player.combat_player_y = ARENA_SIZE // 2
-                player.combat_moves_left = COMBAT_MOVES_DEFAULT
-                _ui_state[user_id] = {"type": "combat", "arena": arena}
-                await save_combat_state(db, user_id, player)
-                content = render_arena(arena, player)
-                view = CombatView(guild_id, user_id,
-                                  trapped=arena["player_trapped"],
-                                  moves_left=player.combat_moves_left)
-                return content, view
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
             player.cave_x, player.cave_y = nx, ny
             await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+            # Random encounter on stone_floor tiles
+            if target.terrain == "stone_floor":
+                enc_rng = _random.Random(hash((user_id, nx, ny,
+                                              player.cave_id, player.gold)))
+                enemy_type = _roll_encounter(enc_rng)
+                if enemy_type:
+                    grid = await load_cave_viewport(player.cave_id, nx, ny, db)
+                    arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
+                    arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+                    player.in_combat = True
+                    player.combat_enemy_type = enemy_type
+                    player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+                    player.combat_enemy_x = ex
+                    player.combat_enemy_y = ey
+                    player.combat_player_x = ARENA_SIZE // 2
+                    player.combat_player_y = ARENA_SIZE // 2
+                    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+                    _ui_state[user_id] = {"type": "combat", "arena": arena}
+                    await save_combat_state(db, user_id, player)
+                    content = render_arena(arena, player)
+                    view = CombatView(guild_id, user_id,
+                                      trapped=arena["player_trapped"],
+                                      moves_left=player.combat_moves_left)
+                    return content, view
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player)
 
@@ -474,19 +513,20 @@ def _combat_view(guild_id: int, user_id: int, arena: dict, player) -> CombatView
 async def _finish_combat(
     db, guild_id: int, user_id: int, player,
     arena: dict, extra_msg: str,
+    won: bool = False,
 ) -> tuple[str, discord.ui.View]:
     """Clean up after combat ends (win, flee, or death). Return (content, view)."""
     seed = await get_or_create_world(db, guild_id)
-    # Clear enemy tile in cave
-    if player.in_cave and player.combat_enemy_type:
-        await db.execute(
-            "UPDATE cave_tiles SET tile_type='stone_floor'"
-            " WHERE cave_id=? AND local_x=? AND local_y=?",
-            (player.cave_id, player.cave_x, player.cave_y),
-        )
     player.in_combat = False
     _ui_state.pop(user_id, None)
     await clear_combat_state(db, user_id)
+
+    # Spider poison sac drop on victory
+    if won and player.combat_enemy_type in ("cave_spider", "spider"):
+        drop_rng = _random.Random(hash((user_id, player.cave_x, player.cave_y, "sac")))
+        if drop_rng.random() < 0.50:
+            await add_to_inventory(db, user_id, "poison_sac", 1)
+            extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
 
     if player.hp <= 0:
         msg = apply_death_reset(player)
@@ -520,7 +560,7 @@ async def _after_player_action(
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
-                                             " ".join(arena["combat_log"][-4:]))
+                                             " ".join(arena["combat_log"][-4:]), won=True)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -559,7 +599,7 @@ async def _after_player_action(
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
-                                             " ".join(arena["combat_log"][-4:]))
+                                             " ".join(arena["combat_log"][-4:]), won=True)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -601,8 +641,9 @@ async def handle_combat_move(
     if result is None:
         return
     db, player, arena = result
-    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y)))
-    msg = action_move(arena, player, direction)
+    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y,
+                               arena.get("poison_turns", 0))))
+    msg = action_move(arena, player, direction, rng)
     await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
 
@@ -614,7 +655,22 @@ async def handle_combat_attack(
         return
     db, player, arena = result
     rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_enemy_x)))
-    msg = action_attack(arena, player, rng)
+
+    # Slingshot: check for equipped slingshot and consume 1 rock
+    has_slingshot = player.hand_1 == "slingshot" or player.hand_2 == "slingshot"
+    if has_slingshot:
+        rock_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='rock'", (user_id,)
+        )
+        if not rock_row:
+            arena["combat_log"].append("No rocks left! Mine cave_rocks with a pickaxe.")
+            content = render_arena(arena, player)
+            view = _combat_view(guild_id, user_id, arena, player)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+        await remove_from_inventory(db, user_id, "rock", 1)
+
+    msg = action_attack(arena, player, rng, has_slingshot=has_slingshot)
     await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
 
@@ -658,17 +714,6 @@ async def handle_combat_potion(
     msg = action_use_potion(arena, player)
     await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
-
-async def handle_combat_free_cobweb(
-    interaction: discord.Interaction, guild_id: int, user_id: int
-) -> None:
-    result = await _load_combat(interaction, guild_id, user_id)
-    if result is None:
-        return
-    db, player, arena = result
-    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y)))
-    msg = action_free_cobweb(arena, player, rng)
-    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
 
 async def handle_combat_end_turn(
@@ -846,15 +891,23 @@ async def handle_interact(
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
-        elif cave_tile.terrain == "cave_chest":
-            loot = await open_chest(player.cave_id, player.cave_x, player.cave_y, db)
-            player.gold += loot["gold"]
-            player.xp += loot["xp"]
-            await update_player_stats(db, user_id, gold=player.gold, xp=player.xp)
-            msg = (f"You open the chest! Found {loot['gold']} gold, {loot['xp']} XP"
-                   + (f", and a {loot['item']}!" if loot["item"] else "."))
-            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            content = render_grid(grid, player, msg)
+        elif cave_tile.terrain in CAVE_CHEST_TYPES:
+            chest_id, is_new = await get_or_create_chest(
+                db, player.cave_id, player.cave_x, player.cave_y, cave_tile.terrain
+            )
+            if is_new:
+                await populate_chest_loot(chest_id, cave_tile.terrain, db)
+            chest_inv = await get_chest_items(db, chest_id)
+            inv_rows, inv_cols = _inv_capacity(player)
+            _ui_state[user_id] = {
+                "type": "chest", "chest_id": chest_id,
+                "chest_type": cave_tile.terrain, "selected": 0, "chest_view": "chest",
+            }
+            content = render_chest(chest_inv, [], 0, "chest", cave_tile.terrain,
+                                   inv_rows, inv_cols)
+            view = ChestView(guild_id, user_id, "chest")
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         elif cave_tile.terrain == "cave_rock":
             hand_items = set()
@@ -864,15 +917,16 @@ async def handle_interact(
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 content = render_grid(grid, player, "You need a pickaxe to mine this rock.")
             else:
-                rng = _random.Random()
+                rng = _random.Random(hash((user_id, player.cave_x, player.cave_y, player.xp)))
                 loot = []
                 await db.execute(
                     "UPDATE cave_tiles SET tile_type='stone_floor'"
                     " WHERE cave_id=? AND local_x=? AND local_y=?",
                     (player.cave_id, player.cave_x, player.cave_y),
                 )
-                await add_to_inventory(db, user_id, "stone", 1)
-                loot.append("rock")
+                rock_count = rng.randint(1, 3)
+                await add_to_inventory(db, user_id, "rock", rock_count)
+                loot.append(f"{rock_count} rock{'s' if rock_count > 1 else ''}")
                 if rng.random() < 0.33:
                     await add_to_inventory(db, user_id, "flint", 1)
                     loot.append("flint")
@@ -1015,7 +1069,8 @@ async def handle_inventory(
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     label = _equip_label(items, 0, equipped)
-    content = render_inventory(items, 0, equipped, label)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_inventory(items, 0, equipped, label, inv_rows, inv_cols)
     view = InventoryView(guild_id, user_id, label)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -1027,11 +1082,13 @@ async def handle_inv_nav(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
-    new_sel = (state["selected"] + delta) % max(1, len(items))
+    inv_rows, inv_cols = _inv_capacity(player)
+    total_slots = inv_rows * inv_cols
+    new_sel = (state["selected"] + delta) % max(1, total_slots)
     _ui_state[user_id] = {"type": "inventory", "selected": new_sel}
     equipped = _equipped_dict(player)
     label = _equip_label(items, new_sel, equipped)
-    content = render_inventory(items, new_sel, equipped, label)
+    content = render_inventory(items, new_sel, equipped, label, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=InventoryView(guild_id, user_id, label))
 
@@ -1055,9 +1112,24 @@ async def handle_inv_equip(
         return
 
     item_id = items[sel]["item_id"]
+    inv_rows, inv_cols = _inv_capacity(player)
 
     # Unequip if already equipped
     if item_id in equipped.values():
+        # Pouch unequip: check if current inv fits in smaller size
+        if item_id in ("small_pouch", "medium_pouch", "large_pouch"):
+            new_rows, new_cols = POUCH_SIZES[None]  # default size after unequip
+            # Find next smaller pouch that fits
+            pouch_order = [None, "small_pouch", "medium_pouch", "large_pouch"]
+            cur_idx = pouch_order.index(item_id)
+            new_rows, new_cols = POUCH_SIZES[pouch_order[cur_idx - 1]] if cur_idx > 0 else POUCH_SIZES[None]
+            new_capacity = new_rows * new_cols
+            if len(items) > new_capacity:
+                content = render_inventory(items, sel, equipped, "⚔️ Equip", inv_rows, inv_cols)
+                content += f"\n*Can't unequip: your inventory has {len(items)} items but the smaller pouch only fits {new_capacity}. Remove some items first.*"
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=InventoryView(guild_id, user_id, "⚔️ Equip"))
+                return
         if item_id in TWO_HANDED_ITEMS:
             await unequip_item(db, user_id, "hand_1")
             await unequip_item(db, user_id, "hand_2")
@@ -1066,8 +1138,9 @@ async def handle_inv_equip(
             await unequip_item(db, user_id, slot)
         player = await get_or_create_player(db, user_id, interaction.user.display_name)
         equipped = _equipped_dict(player)
+        inv_rows, inv_cols = _inv_capacity(player)
         label = _equip_label(items, sel, equipped)
-        content = render_inventory(items, sel, equipped, label) + f"\n*Unequipped {item_id.replace('_', ' ').title()}.*"
+        content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols) + f"\n*Unequipped {item_id.replace('_', ' ').title()}.*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=InventoryView(guild_id, user_id, label))
         return
@@ -1076,7 +1149,7 @@ async def handle_inv_equip(
     slot_type = ITEM_EQUIP_SLOTS.get(item_id)
     if not slot_type:
         label = _equip_label(items, sel, equipped)
-        content = render_inventory(items, sel, equipped, label) + f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*"
+        content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols) + f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=InventoryView(guild_id, user_id, label))
         return
@@ -1086,7 +1159,7 @@ async def handle_inv_equip(
         if item_id in TWO_HANDED_ITEMS:
             if equipped.get("hand_1") or equipped.get("hand_2"):
                 label = _equip_label(items, sel, equipped)
-                content = render_inventory(items, sel, equipped, label) + "\n*Your hands must be free for a two-handed item.*"
+                content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols) + "\n*Your hands must be free for a two-handed item.*"
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=InventoryView(guild_id, user_id, label))
                 return
@@ -1099,13 +1172,13 @@ async def handle_inv_equip(
                 resolved_slot = "hand_2"
             else:
                 label = _equip_label(items, sel, equipped)
-                content = render_inventory(items, sel, equipped, label) + "\n*Both hands are full.*"
+                content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols) + "\n*Both hands are full.*"
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=InventoryView(guild_id, user_id, label))
                 return
             await equip_item(db, user_id, resolved_slot, item_id)
     else:
-        # Direct slot (boots, head, chest, legs, accessory) — replace if occupied
+        # Direct slot (boots, head, chest, legs, accessory, pouch) — replace if occupied
         await equip_item(db, user_id, slot_type, item_id)
 
     bonuses = EQUIP_BONUSES.get(item_id, {})
@@ -1113,8 +1186,9 @@ async def handle_inv_equip(
         await update_player_stats(db, user_id, **bonuses)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
     label = _equip_label(items, sel, equipped)
-    content = render_inventory(items, sel, equipped, label) + f"\n*Equipped {item_id.replace('_', ' ').title()}!*"
+    content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols) + f"\n*Equipped {item_id.replace('_', ' ').title()}!*"
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=InventoryView(guild_id, user_id, label))
 
@@ -1363,6 +1437,242 @@ async def handle_bank_withdraw(
 
 
 async def handle_bank_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await handle_inv_close(interaction, guild_id, user_id)
+
+
+# ── Chest handlers ────────────────────────────────────────────────────────────
+
+async def _render_chest_state(
+    db, user_id: int, player, state: dict,
+) -> tuple[str, ChestView]:
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    view_mode = state.get("chest_view", "chest")
+    sel = state.get("selected", 0)
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_chest(chest_inv, player_inv, sel, view_mode,
+                           chest_type, inv_rows, inv_cols)
+    view = ChestView(player.channel_id or 0, user_id, view_mode)
+    # Rebuild view with correct guild_id from state if available
+    return content, view
+
+
+async def _load_chest(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> tuple | None:
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "chest":
+        await handle_inv_close(interaction, guild_id, user_id)
+        return None
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    return db, player, state
+
+
+async def handle_chest_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    result = await _load_chest(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, state = result
+    view_mode = state.get("chest_view", "chest")
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    if view_mode == "chest":
+        chest_inv = await get_chest_items(db, chest_id)
+        source_len = len(chest_inv)
+        from dwarf_explorer.game.renderer import render_chest as _rc
+        chest_sizes = {"cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9)}
+        c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
+        total = c_rows * c_cols
+    else:
+        player_inv = await get_inventory(db, user_id)
+        source_len = len(player_inv)
+        inv_rows, inv_cols = _inv_capacity(player)
+        total = inv_rows * inv_cols
+    new_sel = (state["selected"] + delta) % max(1, total)
+    _ui_state[user_id]["selected"] = new_sel
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_chest(chest_inv, player_inv, new_sel, view_mode,
+                           chest_type, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ChestView(guild_id, user_id, view_mode))
+
+
+async def handle_chest_switch(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    result = await _load_chest(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, state = result
+    new_view = "chest" if state.get("chest_view") == "player" else "player"
+    _ui_state[user_id]["chest_view"] = new_view
+    _ui_state[user_id]["selected"] = 0
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_chest(chest_inv, player_inv, 0, new_view,
+                           chest_type, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ChestView(guild_id, user_id, new_view))
+
+
+async def handle_chest_take(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Take selected item from chest into player inventory."""
+    result = await _load_chest(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, state = result
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    sel = state.get("selected", 0)
+    chest_inv = await get_chest_items(db, chest_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    player_inv = await get_inventory(db, user_id)
+
+    suffix = ""
+    if sel < len(chest_inv):
+        item_id = chest_inv[sel]["item_id"]
+        # Check inventory capacity for new items
+        existing_ids = {it["item_id"] for it in player_inv}
+        has_space = item_id in existing_ids or len(player_inv) < inv_rows * inv_cols
+        if not has_space:
+            suffix = "\n*Inventory full! Remove items or equip a larger pouch.*"
+        else:
+            if item_id == "gold_coin":
+                qty = chest_inv[sel]["quantity"]
+                player.gold += qty
+                await update_player_stats(db, user_id, gold=player.gold)
+                await remove_from_chest(db, chest_id, item_id, qty)
+                suffix = f"\n*Collected {qty} gold!*"
+            else:
+                await remove_from_chest(db, chest_id, item_id, 1)
+                await add_to_inventory(db, user_id, item_id, 1)
+                suffix = f"\n*Took {item_id.replace('_',' ').title()}.*"
+    else:
+        suffix = "\n*(Empty slot)*"
+
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    new_sel = min(sel, max(0, len(chest_inv) - 1))
+    _ui_state[user_id]["selected"] = new_sel
+    content = render_chest(chest_inv, player_inv, new_sel, "chest",
+                           chest_type, inv_rows, inv_cols) + suffix
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ChestView(guild_id, user_id, "chest"))
+
+
+async def handle_chest_give(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Give selected player item to chest."""
+    result = await _load_chest(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, state = result
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    sel = state.get("selected", 0)
+    player_inv = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    suffix = ""
+    if sel < len(player_inv):
+        item_id = player_inv[sel]["item_id"]
+        chest_inv = await get_chest_items(db, chest_id)
+        # Check chest capacity
+        chest_sizes = {"cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9)}
+        c_rows, c_cols = chest_sizes.get(chest_type, (2,9))
+        c_capacity = c_rows * c_cols
+        existing_chest_ids = {it["item_id"] for it in chest_inv}
+        has_space = item_id in existing_chest_ids or len(chest_inv) < c_capacity
+        if not has_space:
+            suffix = "\n*Chest is full!*"
+        else:
+            await remove_from_inventory(db, user_id, item_id, 1)
+            await add_to_chest(db, chest_id, item_id, 1)
+            suffix = f"\n*Put {item_id.replace('_',' ').title()} in chest.*"
+    else:
+        suffix = "\n*(Empty slot)*"
+
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    new_sel = min(sel, max(0, len(player_inv) - 1))
+    _ui_state[user_id]["selected"] = new_sel
+    content = render_chest(chest_inv, player_inv, new_sel, "player",
+                           chest_type, inv_rows, inv_cols) + suffix
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ChestView(guild_id, user_id, "player"))
+
+
+async def handle_chest_lootall(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Loot all chest items into player inventory up to capacity."""
+    result = await _load_chest(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, state = result
+    chest_id = state["chest_id"]
+    chest_type = state.get("chest_type", "cave_chest")
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    max_cap = inv_rows * inv_cols
+    existing_ids = {it["item_id"] for it in player_inv}
+
+    taken, skipped = [], []
+    for chest_item in chest_inv:
+        item_id = chest_item["item_id"]
+        qty = chest_item["quantity"]
+        if item_id == "gold_coin":
+            player.gold += qty
+            await remove_from_chest(db, chest_id, item_id, qty)
+            taken.append(f"{qty} gold")
+            continue
+        # Can we fit this item?
+        player_inv_fresh = await get_inventory(db, user_id)
+        cur_ids = {it["item_id"] for it in player_inv_fresh}
+        if item_id in cur_ids or len(player_inv_fresh) < max_cap:
+            await remove_from_chest(db, chest_id, item_id, qty)
+            await add_to_inventory(db, user_id, item_id, qty)
+            taken.append(item_id.replace('_',' ').title())
+        else:
+            skipped.append(item_id.replace('_',' ').title())
+
+    if player.gold != (await get_or_create_player(db, user_id, interaction.user.display_name)).gold:
+        await update_player_stats(db, user_id, gold=player.gold)
+
+    chest_inv = await get_chest_items(db, chest_id)
+    player_inv = await get_inventory(db, user_id)
+    suffix = ""
+    if taken:
+        suffix += f"\n*Looted: {', '.join(taken)}.*"
+    if skipped:
+        suffix += f"\n*Inventory full — left behind: {', '.join(skipped)}.*"
+    if not taken and not skipped:
+        suffix = "\n*Chest is empty.*"
+
+    content = render_chest(chest_inv, player_inv, 0, "chest",
+                           chest_type, inv_rows, inv_cols) + suffix
+    _ui_state[user_id]["selected"] = 0
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ChestView(guild_id, user_id, "chest"))
+
+
+async def handle_chest_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     await handle_inv_close(interaction, guild_id, user_id)

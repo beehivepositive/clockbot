@@ -106,10 +106,15 @@ _DIR_DELTA = {
 }
 
 
-def action_move(arena: dict, player, direction: str) -> str:
-    """Move player one tile. Costs 1 move. Returns status message."""
+def action_move(arena: dict, player, direction: str, rng: random.Random) -> str:
+    """Move player one tile. If trapped, attempt 50% escape instead. Costs 1 move."""
     if arena["player_trapped"]:
-        return "You're stuck in a cobweb! Use 🕸️ Free to break out."
+        player.combat_moves_left -= 1
+        if rng.random() < 0.50:
+            arena["player_trapped"] = False
+            arena["objects"].pop((player.combat_player_x, player.combat_player_y), None)
+            return "You struggle free from the cobweb! ✅"
+        return "You thrash against the cobweb but can't break free! 🕸️"
 
     dx, dy = _DIR_DELTA.get(direction, (0, 0))
     nx, ny = player.combat_player_x + dx, player.combat_player_y + dy
@@ -133,18 +138,24 @@ def action_move(arena: dict, player, direction: str) -> str:
     return "You move."
 
 
-def action_attack(arena: dict, player, rng: random.Random) -> str:
-    """Attack the enemy if adjacent. Costs 1 move."""
+def action_attack(arena: dict, player, rng: random.Random, has_slingshot: bool = False) -> str:
+    """Attack the enemy. Costs 1 move. Slingshot bypasses adjacency requirement."""
+    if arena["player_trapped"]:
+        player.combat_moves_left -= 1
+        return "You can't attack while tangled in a cobweb! 🕸️"
+
     player.combat_moves_left -= 1
-    if not _adjacent(player.combat_player_x, player.combat_player_y,
-                     player.combat_enemy_x, player.combat_enemy_y):
+    is_ranged = has_slingshot
+    if not is_ranged and not _adjacent(player.combat_player_x, player.combat_player_y,
+                                       player.combat_enemy_x, player.combat_enemy_y):
         return "The enemy is too far away! Move closer first."
 
     _hp, _atk, defn, _xp, _gold = ENEMY_STATS[player.combat_enemy_type]
     dmg = max(1, player.attack - defn)
     player.combat_enemy_hp -= dmg
     name = _enemy_name(player.combat_enemy_type)
-    return f"⚔️ You strike the {name} for **{dmg}** damage! ({player.combat_enemy_hp} HP left)"
+    prefix = "🪃 You sling a rock at" if is_ranged else "⚔️ You strike"
+    return f"{prefix} the {name} for **{dmg}** damage! ({player.combat_enemy_hp} HP left)"
 
 
 def action_flee(arena: dict, player, rng: random.Random) -> tuple[str, bool]:
@@ -159,15 +170,6 @@ def action_flee(arena: dict, player, rng: random.Random) -> tuple[str, bool]:
         return "🏃 You dash away and escape!", True
     return "🏃 You try to flee but can't get away!", False
 
-
-def action_free_cobweb(arena: dict, player, rng: random.Random) -> str:
-    """Attempt to break free from a cobweb. Costs 1 move."""
-    player.combat_moves_left -= 1
-    if rng.random() < 0.60:
-        arena["player_trapped"] = False
-        arena["objects"].pop((player.combat_player_x, player.combat_player_y), None)
-        return "You rip free from the cobweb! ✅"
-    return "You struggle but can't break free! 🕸️"
 
 
 def action_use_potion(arena: dict, player) -> str:

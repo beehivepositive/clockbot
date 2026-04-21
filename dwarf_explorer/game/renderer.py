@@ -2,7 +2,7 @@ import math
 
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
-    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI,
+    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, POUCH_SIZES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -126,6 +126,7 @@ _ITEM_SLOT_EMOJI = {
     "axe":          "\U0001FA93",
     "shovel":       "\u26CF\uFE0F",
     "watering_can": "\U0001FAA3",
+    "pickaxe":      "\u26CF\uFE0F",
     "log":          "\U0001FAB5",
     "stick":        "\U0001F38B",
     "resin":        "\U0001F7E1",
@@ -133,6 +134,15 @@ _ITEM_SLOT_EMOJI = {
     "dry_grass":    "\U0001F33E",
     "seed":         "\U0001F330",
     "sapling":      "\U0001F331",
+    "flint":        "\U0001FAA8",
+    "iron_ore":     "\U0001F7EB",
+    "iron_ingot":   "\U0001F9F1",
+    "slingshot":    "\U0001FA83",
+    "rock":         "\U0001FAA8",
+    "poison_sac":   "\U0001F9EA",
+    "small_pouch":  "\U0001F45C",
+    "medium_pouch": "\U0001F45C",
+    "large_pouch":  "\U0001F45C",
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
@@ -142,22 +152,24 @@ def _item_emoji(item_id: str) -> str:
 
 
 def render_inventory(items: list[dict], selected: int, equipped: dict,
-                     equip_label: str = "⚔️ Equip") -> str:
-    """Render equipped row + 5×2 inventory grid as text."""
-    COLS = 5
-    lines = ["\U0001F392 **Inventory**"]
+                     equip_label: str = "⚔️ Equip",
+                     inv_rows: int = 2, inv_cols: int = 5) -> str:
+    """Render equipped row + inventory grid as text. Grid size from pouch."""
+    total_slots = inv_rows * inv_cols
+    lines = [f"\U0001F392 **Inventory** ({inv_rows}×{inv_cols})"]
 
-    # --- Equipped bar: persistent hand + boot slots, optional others ---
+    # --- Equipped bar ---
     h1 = equipped.get("hand_1")
     h2 = equipped.get("hand_2")
     boots_item = equipped.get("boots")
+    pouch_item = equipped.get("pouch")
 
-    hand1_cell = _item_emoji(h1) if h1 else "\u270B"   # ✋
-    hand2_cell = _item_emoji(h2) if h2 else "\U0001F91A"  # 🤚
+    hand1_cell = _item_emoji(h1) if h1 else "\u270B"      # ✋
+    hand2_cell = _item_emoji(h2) if h2 else "\U0001F91A"   # 🤚
     boots_cell = _item_emoji(boots_item) if boots_item else "\U0001F9B6"  # 🦶
+    pouch_cell = _item_emoji(pouch_item) if pouch_item else "\U0001F45C"  # 👜 (empty)
 
-    eq_parts = [hand1_cell, hand2_cell, boots_cell]
-
+    eq_parts = [hand1_cell, hand2_cell, boots_cell, pouch_cell]
     for slot in ("head", "chest", "legs", "accessory"):
         item_id = equipped.get(slot)
         if item_id:
@@ -168,7 +180,7 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
 
     # --- Inventory grid ---
     slots: list[str] = []
-    for i in range(10):
+    for i in range(total_slots):
         if i < len(items):
             item = items[i]
             emoji = _item_emoji(item["item_id"])
@@ -180,8 +192,8 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
             cell = f"[{cell}]"
         slots.append(cell)
 
-    for row in range(2):
-        lines.append("  ".join(slots[row * COLS: row * COLS + COLS]))
+    for row in range(inv_rows):
+        lines.append("  ".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
 
     lines.append("")
     if selected < len(items):
@@ -239,6 +251,71 @@ def render_bank(
         lines.append("Selected: *(empty slot)*")
 
     lines.append(f"◀▶ navigate  |  {action_label}  |  🔄 Switch View  |  ❌ Close")
+    return "\n".join(lines)
+
+
+def render_chest(
+    chest_items: list[dict], player_items: list[dict],
+    selected: int, view: str,
+    chest_type: str = "cave_chest",
+    player_inv_rows: int = 2, player_inv_cols: int = 5,
+) -> str:
+    """Render chest UI. view = 'chest' or 'player'."""
+    chest_sizes = {
+        "cave_chest":        (2, 9),
+        "cave_chest_medium": (3, 9),
+        "cave_chest_large":  (4, 9),
+    }
+    chest_labels = {
+        "cave_chest":        "Small Chest",
+        "cave_chest_medium": "Medium Chest",
+        "cave_chest_large":  "Large Chest",
+    }
+    c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
+    c_total = c_rows * c_cols
+
+    if view == "chest":
+        title = f"\U0001F4E6 **{chest_labels.get(chest_type, 'Chest')}** ({c_rows}×{c_cols})"
+        source = chest_items
+        action_label = "📤 Take"
+        total_disp = c_total
+        disp_cols = c_cols
+    else:
+        p_total = player_inv_rows * player_inv_cols
+        title = f"\U0001F4E6 **Chest** — Your Inventory ({player_inv_rows}×{player_inv_cols})"
+        source = player_items
+        action_label = "📥 Give"
+        total_disp = p_total
+        disp_cols = player_inv_cols
+
+    lines = [title]
+    slots: list[str] = []
+    for i in range(total_disp):
+        if i < len(source):
+            item = source[i]
+            emoji = _item_emoji(item["item_id"])
+            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
+            cell = f"{emoji}{qty}"
+        else:
+            cell = _EMPTY_SLOT
+        if i == selected:
+            cell = f"[{cell}]"
+        slots.append(cell)
+
+    for row in range(total_disp // disp_cols):
+        lines.append("  ".join(slots[row * disp_cols: row * disp_cols + disp_cols]))
+
+    lines.append("")
+    if selected < len(source):
+        item = source[selected]
+        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
+    else:
+        lines.append("Selected: *(empty slot)*")
+
+    if view == "chest":
+        lines.append("◀▶ navigate  |  📤 Take  |  📦 Loot All  |  ❌ Close")
+    else:
+        lines.append("◀▶ navigate  |  📥 Give  |  🔄 Switch View  |  ❌ Close")
     return "\n".join(lines)
 
 

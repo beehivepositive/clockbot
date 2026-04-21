@@ -80,6 +80,12 @@ ITEM_EMOJI = {
     "flint": "\U0001FAA8",           # 🪨
     "iron_ore": "\U0001F7EB",        # 🟫
     "iron_ingot": "\U0001F9F1",      # 🧱
+    "slingshot": "\U0001FA83",       # 🪃
+    "rock": "\U0001FAA8",            # 🪨
+    "poison_sac": "\U0001F9EA",      # 🧪 (green tint in mind)
+    "small_pouch": "\U0001F45C",     # 👜
+    "medium_pouch": "\U0001F45C",    # 👜
+    "large_pouch": "\U0001F45C",     # 👜
 }
 
 WALKABLE_TILES = {
@@ -143,18 +149,22 @@ ARENA_IMPASSABLE = {
 # --- Cave System ---
 
 CAVE_EMOJI = {
-    "stone_floor": "\U0001F7EB",            # 🟫  (overridable with :grey_square:)
-    "stone_wall": "\u2B1B",                  # ⬛
-    "cave_entrance": "\U0001F573\uFE0F",    # 🕳️
-    "cave_chest": "\U0001F4E6",             # 📦  (overridable with :chest:)
-    "cave_rock": "\U0001FAA8",              # 🪨
-    "cave_bat": "\U0001F987",               # 🦇
-    "cave_spider": "\U0001F577\uFE0F",      # 🕷️
-    "cave_golem": "\U0001FAA8",             # 🪨 (looks like a rock creature)
+    "stone_floor":        "\U0001F7EB",            # 🟫  (overridable with :grey_square:)
+    "stone_wall":         "\u2B1B",                # ⬛
+    "cave_entrance":      "\U0001F573\uFE0F",      # 🕳️
+    "cave_chest":         "\U0001F4E6",            # 📦 small chest (overridable with :chest:)
+    "cave_chest_medium":  "\U0001F4E6",            # 📦 medium chest
+    "cave_chest_large":   "\U0001F381",            # 🎁 large chest
+    "cave_rock":          "\U0001FAA8",            # 🪨
+    "cave_bat":           "\U0001F987",            # 🦇
+    "cave_spider":        "\U0001F577\uFE0F",      # 🕷️
+    "cave_golem":         "\U0001FAA8",            # 🪨 (looks like a rock creature)
 }
 
-CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest"}
-# cave_rock, cave_bat, cave_spider, cave_golem all block movement
+CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large"}
+# cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
+
+CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
 
 CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem"}
 
@@ -280,12 +290,44 @@ SHOP_CATALOG = [
         "emoji": "\u26CF\uFE0F",
         "price": 55,
         "equip_slot": "hand",
-        "description": "Mine cave rocks: 66% rock, 33% flint, 15% iron ore.",
+        "description": "Mine cave rocks: yields 1-3 rocks, 33% flint, 15% iron ore.",
+    },
+    {
+        "id": "slingshot",
+        "name": "Slingshot",
+        "emoji": "\U0001FA83",
+        "price": 45,
+        "equip_slot": "hand",
+        "description": "Ranged weapon. Uses 1 rock per attack. Mine rocks in caves.",
+    },
+    {
+        "id": "small_pouch",
+        "name": "Small Pouch",
+        "emoji": "\U0001F45C",
+        "price": 80,
+        "equip_slot": "pouch",
+        "description": "Expands inventory to 2×9 (18 slots).",
+    },
+    {
+        "id": "medium_pouch",
+        "name": "Medium Pouch",
+        "emoji": "\U0001F45C",
+        "price": 180,
+        "equip_slot": "pouch",
+        "description": "Expands inventory to 3×9 (27 slots).",
+    },
+    {
+        "id": "large_pouch",
+        "name": "Large Pouch",
+        "emoji": "\U0001F45C",
+        "price": 350,
+        "equip_slot": "pouch",
+        "description": "Expands inventory to 4×9 (36 slots).",
     },
 ]
 
 # Equipment slots
-EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory"}
+EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory", "pouch"}
 
 # Maps item_id → equipment slot type ("hand" resolves to hand_1 or hand_2 at equip time)
 ITEM_EQUIP_SLOTS = {
@@ -297,7 +339,11 @@ ITEM_EQUIP_SLOTS = {
     "sapling":      "hand",
     "shovel":       "hand",
     "pickaxe":      "hand",
+    "slingshot":    "hand",
     "hiking_boots": "boots",
+    "small_pouch":  "pouch",
+    "medium_pouch": "pouch",
+    "large_pouch":  "pouch",
 }
 
 # Items that occupy both hand slots
@@ -308,12 +354,31 @@ EQUIP_BONUSES = {
     "knife":        {"attack": 5},
     "axe":          {"attack": 3},
     "pickaxe":      {"attack": 4},
+    "slingshot":    {"attack": 4},
     "hiking_boots": {},
     "torch":        {},
     "shovel":       {},
     "watering_can": {},
     "seed":         {},
     "sapling":      {},
+    "small_pouch":  {},
+    "medium_pouch": {},
+    "large_pouch":  {},
+}
+
+# Pouch inventory sizes: (rows, cols) — default 2×5 when no pouch equipped
+POUCH_SIZES: dict[str | None, tuple[int, int]] = {
+    None:           (2, 5),
+    "small_pouch":  (2, 9),
+    "medium_pouch": (3, 9),
+    "large_pouch":  (4, 9),
+}
+
+# Cave random encounter rates per step: {enemy_type: chance 0-1}
+CAVE_ENCOUNTER_RATES = {
+    "cave_bat":    0.07,
+    "cave_spider": 0.07,
+    "cave_golem":  0.04,
 }
 
 # Sell prices at the shop (60% of buy price for shop items)
@@ -342,6 +407,12 @@ ITEM_SELL_PRICES = {
     "flint":        6,
     "iron_ore":     12,
     "iron_ingot":   25,
+    "slingshot":    27,
+    "rock":         2,
+    "poison_sac":   20,
+    "small_pouch":  48,
+    "medium_pouch": 108,
+    "large_pouch":  210,
 }
 
 # --- World Map Image ---
