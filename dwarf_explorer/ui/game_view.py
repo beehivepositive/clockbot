@@ -70,13 +70,30 @@ class GameView(discord.ui.View):
     """Main game view.  Shows sprint button when boots are equipped."""
 
     def __init__(self, guild_id: int, user_id: int, boots_equipped: bool = False,
-                 sprinting: bool = False):
+                 sprinting: bool = False, mine_dirs: frozenset[str] = frozenset()):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
-        self._build_buttons(boots_equipped, sprinting)
+        self._build_buttons(boots_equipped, sprinting, mine_dirs)
 
-    def _build_buttons(self, boots_equipped: bool, sprinting: bool):
+    def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
+                 mine: bool) -> discord.ui.Button:
+        if mine:
+            return discord.ui.Button(
+                style=discord.ButtonStyle.danger,
+                emoji="\u26CF\uFE0F",  # ⛏️
+                custom_id=_custom_id(self.guild_id, self.user_id, f"mine_{direction}"),
+                row=row,
+            )
+        return discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            emoji=arrow_emoji,
+            custom_id=_custom_id(self.guild_id, self.user_id, direction),
+            row=row,
+        )
+
+    def _build_buttons(self, boots_equipped: bool, sprinting: bool,
+                       mine_dirs: frozenset[str]):
         sprint_label = "\U0001F97E"  # 🥾
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -95,13 +112,8 @@ class GameView(discord.ui.View):
                 row=0,
             )
 
-        up_btn = discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            emoji="\u2B06\uFE0F",
-            custom_id=_custom_id(self.guild_id, self.user_id, "up"),
-            row=0,
-        )
-        spacer2 = discord.ui.Button(
+        up_btn   = self._dir_btn("up",    "\u2B06\uFE0F", 0, "up"    in mine_dirs)
+        spacer2  = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="\u200b", disabled=True,
             custom_id=_custom_id(self.guild_id, self.user_id, "sp2"),
@@ -121,24 +133,9 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "map"),
             row=0,
         )
-        left_btn = discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            emoji="\u2B05\uFE0F",
-            custom_id=_custom_id(self.guild_id, self.user_id, "left"),
-            row=1,
-        )
-        down_btn = discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            emoji="\u2B07\uFE0F",
-            custom_id=_custom_id(self.guild_id, self.user_id, "down"),
-            row=1,
-        )
-        right_btn = discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            emoji="\u27A1\uFE0F",
-            custom_id=_custom_id(self.guild_id, self.user_id, "right"),
-            row=1,
-        )
+        left_btn  = self._dir_btn("left",  "\u2B05\uFE0F", 1, "left"  in mine_dirs)
+        down_btn  = self._dir_btn("down",  "\u2B07\uFE0F", 1, "down"  in mine_dirs)
+        right_btn = self._dir_btn("right", "\u27A1\uFE0F", 1, "right" in mine_dirs)
         inventory_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Inventory",
@@ -363,10 +360,25 @@ async def _resolve_cave_combat(
 
 # ── Movement ──────────────────────────────────────────────────────────────────
 
-def _game_view(guild_id: int, user_id: int, player: Player) -> GameView:
+def _game_view(guild_id: int, user_id: int, player: Player,
+               mine_dirs: frozenset[str] = frozenset()) -> GameView:
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots is not None),
-                    sprinting=player.sprinting)
+                    sprinting=player.sprinting,
+                    mine_dirs=mine_dirs)
+
+
+async def _cave_game_view(guild_id: int, user_id: int, player: Player, db) -> GameView:
+    """Build a GameView with mine buttons for any adjacent cave_rock tiles."""
+    mine_dirs: set[str] = set()
+    if player.in_cave:
+        for direction, (dx, dy) in DIRECTIONS.items():
+            tile = await load_cave_single_tile(
+                player.cave_id, player.cave_x + dx, player.cave_y + dy, db
+            )
+            if tile.terrain == "cave_rock":
+                mine_dirs.add(direction)
+    return _game_view(guild_id, user_id, player, frozenset(mine_dirs))
 
 
 def _roll_encounter(rng: _random.Random) -> str | None:
@@ -446,7 +458,7 @@ async def _move_steps(
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, reason), await _cave_game_view(guild_id, user_id, player, db)
             player.cave_x, player.cave_y = nx, ny
             await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
             # Random encounter on stone_floor tiles
@@ -474,7 +486,7 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left)
                     return content, view
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
 
     else:
         for _ in range(steps):
@@ -542,7 +554,7 @@ async def _finish_combat(
     # Return to the appropriate location view
     if player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db)
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player)
 
@@ -729,6 +741,60 @@ async def handle_combat_end_turn(
                                "You end your turn.")
 
 
+# ── Mine adjacent rock ────────────────────────────────────────────────────────
+
+async def handle_mine(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_cave:
+        await interaction.response.defer()
+        return
+
+    dx, dy = DIRECTIONS[direction]
+    nx, ny = player.cave_x + dx, player.cave_y + dy
+
+    hand_items: set[str] = {player.hand_1, player.hand_2} - {None}
+    if "pickaxe" not in hand_items:
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        content = render_grid(grid, player, "You need a pickaxe to mine that rock.")
+        view = await _cave_game_view(guild_id, user_id, player, db)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
+    if tile.terrain != "cave_rock":
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        content = render_grid(grid, player, "That rock has already been mined.")
+        view = await _cave_game_view(guild_id, user_id, player, db)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    rng = _random.Random(hash((user_id, nx, ny, player.xp)))
+    await db.execute(
+        "UPDATE cave_tiles SET tile_type='stone_floor'"
+        " WHERE cave_id=? AND local_x=? AND local_y=?",
+        (player.cave_id, nx, ny),
+    )
+    loot = []
+    rock_count = rng.randint(1, 3)
+    await add_to_inventory(db, user_id, "rock", rock_count)
+    loot.append(f"{rock_count} rock{'s' if rock_count > 1 else ''}")
+    if rng.random() < 0.33:
+        await add_to_inventory(db, user_id, "flint", 1)
+        loot.append("flint")
+    if rng.random() < 0.15:
+        await add_to_inventory(db, user_id, "iron_ore", 1)
+        loot.append("iron ore")
+
+    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
+    view = await _cave_game_view(guild_id, user_id, player, db)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
 # ── Sprint toggle ─────────────────────────────────────────────────────────────
 
 async def handle_sprint(
@@ -909,38 +975,11 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
-        elif cave_tile.terrain == "cave_rock":
-            hand_items = set()
-            if player.hand_1: hand_items.add(player.hand_1)
-            if player.hand_2: hand_items.add(player.hand_2)
-            if "pickaxe" not in hand_items:
-                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                content = render_grid(grid, player, "You need a pickaxe to mine this rock.")
-            else:
-                rng = _random.Random(hash((user_id, player.cave_x, player.cave_y, player.xp)))
-                loot = []
-                await db.execute(
-                    "UPDATE cave_tiles SET tile_type='stone_floor'"
-                    " WHERE cave_id=? AND local_x=? AND local_y=?",
-                    (player.cave_id, player.cave_x, player.cave_y),
-                )
-                rock_count = rng.randint(1, 3)
-                await add_to_inventory(db, user_id, "rock", rock_count)
-                loot.append(f"{rock_count} rock{'s' if rock_count > 1 else ''}")
-                if rng.random() < 0.33:
-                    await add_to_inventory(db, user_id, "flint", 1)
-                    loot.append("flint")
-                if rng.random() < 0.15:
-                    await add_to_inventory(db, user_id, "iron_ore", 1)
-                    loot.append("iron ore")
-                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
-
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
-        view = _game_view(guild_id, user_id, player)
+        view = await _cave_game_view(guild_id, user_id, player, db)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     else:

@@ -15,9 +15,11 @@ from dwarf_explorer.ui.game_view import (
     handle_combat_potion, handle_combat_end_turn,
     handle_chest_nav, handle_chest_switch, handle_chest_take,
     handle_chest_give, handle_chest_lootall, handle_chest_close,
+    handle_mine,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
+_MINE_ACTIONS   = {"mine_up", "mine_down", "mine_left", "mine_right"}
 _COMBAT_MOVE_ACTIONS = {
     "c_up", "c_down", "c_left", "c_right",
     "c_upleft", "c_upright", "c_downleft", "c_downright",
@@ -56,7 +58,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
         gid, uid, act = self.guild_id, self.user_id, self.action
 
         try:
-            if act in _COMBAT_MOVE_ACTIONS:
+            if act in _MINE_ACTIONS:
+                direction = act[5:]  # strip "mine_" prefix
+                await handle_mine(interaction, gid, uid, direction)
+            elif act in _COMBAT_MOVE_ACTIONS:
                 direction = act[2:]  # strip "c_" prefix
                 await handle_combat_move(interaction, gid, uid, direction)
             elif act == "c_attack":
