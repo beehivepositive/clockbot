@@ -8,9 +8,6 @@ from dwarf_explorer.config import (
 from dwarf_explorer.world.terrain import get_biome
 from dwarf_explorer.utils.helpers import chunk_to_world
 
-# Spawn clearing radius — tiles within this Manhattan distance of spawn are forced to grass
-_SPAWN_CLEAR_RADIUS = 3
-
 
 @dataclass
 class TileData:
@@ -41,9 +38,6 @@ def generate_chunk_terrain(chunk_x: int, chunk_y: int, seed: int) -> list[list[T
             wx = origin_x + local_x
             wy = origin_y + local_y
             biome = get_biome(wx, wy, seed)
-            # Clear a small area around world spawn so players aren't stuck
-            if abs(wx - SPAWN_X) + abs(wy - SPAWN_Y) <= _SPAWN_CLEAR_RADIUS:
-                biome = "grass"
             row.append(TileData(terrain=biome, world_x=wx, world_y=wy))
         grid.append(row)
 
@@ -120,8 +114,6 @@ async def load_viewport(center_x: int, center_y: int, seed: int, db=None) -> lis
                 row.append(TileData(terrain="void", world_x=wx, world_y=wy))
             else:
                 biome = get_biome(wx, wy, seed)
-                if abs(wx - SPAWN_X) + abs(wy - SPAWN_Y) <= _SPAWN_CLEAR_RADIUS:
-                    biome = "grass"
                 row.append(TileData(terrain=biome, world_x=wx, world_y=wy))
         grid.append(row)
 
@@ -182,8 +174,6 @@ async def load_single_tile(wx: int, wy: int, seed: int, db=None) -> TileData:
         return TileData(terrain="void", world_x=wx, world_y=wy)
 
     biome = get_biome(wx, wy, seed)
-    if abs(wx - SPAWN_X) + abs(wy - SPAWN_Y) <= _SPAWN_CLEAR_RADIUS:
-        biome = "grass"
     tile = TileData(terrain=biome, world_x=wx, world_y=wy)
 
     if db is not None:
@@ -201,15 +191,31 @@ async def load_single_tile(wx: int, wy: int, seed: int, db=None) -> TileData:
     return tile
 
 
+async def find_walkable_spawn(seed: int, db) -> tuple[int, int]:
+    """Find the nearest walkable tile to (SPAWN_X, SPAWN_Y).
+
+    Searches outward in expanding rings so the player always lands on dry,
+    passable ground even if a river flows through the default spawn point.
+    """
+    # Quick check: is default spawn already walkable?
+    default = await load_single_tile(SPAWN_X, SPAWN_Y, seed, db)
+    if default.walkable:
+        return (SPAWN_X, SPAWN_Y)
+
+    for radius in range(1, 30):
+        for dx in range(-radius, radius + 1):
+            for dy in ((-radius, radius) if abs(dx) < radius else range(-radius, radius + 1)):
+                wx, wy = SPAWN_X + dx, SPAWN_Y + dy
+                if 0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE:
+                    tile = await load_single_tile(wx, wy, seed, db)
+                    if tile.walkable:
+                        return (wx, wy)
+    return (SPAWN_X, SPAWN_Y)
+
+
 async def init_world(seed: int, db) -> None:
     """Generate and store all world features (rivers + structures) for a new world."""
     from dwarf_explorer.world.rivers import generate_rivers
     from dwarf_explorer.world.structures import place_structures
     await generate_rivers(seed, db)
-    # Clear any river/bridge tiles that landed on the spawn clearing radius
-    await db.execute(
-        "DELETE FROM tile_overrides WHERE tile_type IN ('river','bridge') "
-        "AND ABS(world_x - ?) + ABS(world_y - ?) <= ?",
-        (SPAWN_X, SPAWN_Y, _SPAWN_CLEAR_RADIUS + 1),
-    )
     await place_structures(seed, db)

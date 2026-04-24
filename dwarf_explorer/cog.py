@@ -11,7 +11,7 @@ from dwarf_explorer.database.repositories import (
     update_player_stats,
     is_world_initialized, mark_world_initialized,
 )
-from dwarf_explorer.world.generator import load_viewport, init_world
+from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
 from dwarf_explorer.ui.dynamic_buttons import GameButton
@@ -51,6 +51,11 @@ class DwarfExplorer(commands.Cog):
             await init_world(seed, db)
             await mark_world_initialized(db, guild_id)
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
+            # Relocate player if default spawn is on water (river may flow through it)
+            sx, sy = await find_walkable_spawn(seed, db)
+            if (sx, sy) != (player.world_x, player.world_y):
+                await update_player_stats(db, user_id, world_x=sx, world_y=sy)
+                player.world_x, player.world_y = sx, sy
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
@@ -82,23 +87,24 @@ class DwarfExplorer(commands.Cog):
         seed = await get_or_create_world(db, guild_id)
         player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
+        sx, sy = await find_walkable_spawn(seed, db)
         await update_player_stats(
             db, user_id,
-            world_x=SPAWN_X, world_y=SPAWN_Y,
+            world_x=sx, world_y=sy,
             in_cave=0, cave_id=None, cave_x=0, cave_y=0,
             in_village=0, village_id=None, village_x=0, village_y=0,
             in_house=0, house_id=None, house_x=0, house_y=0,
             in_combat=0,
         )
 
-        player.world_x = SPAWN_X
-        player.world_y = SPAWN_Y
+        player.world_x = sx
+        player.world_y = sy
         player.in_cave = False
         player.in_village = False
         player.in_house = False
         player.in_combat = False
 
-        grid = await load_viewport(SPAWN_X, SPAWN_Y, seed, db)
+        grid = await load_viewport(sx, sy, seed, db)
         content = render_grid(grid, player)
         view = GameView(guild_id, user_id)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)

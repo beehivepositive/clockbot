@@ -67,41 +67,64 @@ def _tile_move_cost(
     return 1.0
 
 
+def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
+    """Extra cost for direction changes.  Penalises turns sharper than ~80°."""
+    if ldx == 0 and ldy == 0:
+        return 0.0
+    dot = (ldx * ndx + ldy * ndy) / (math.hypot(ldx, ldy) * math.hypot(ndx, ndy))
+    # dot ≈ 1: straight  |  dot ≈ 0.17: 80° change  |  dot = 0: 90°  |  dot = -1: U-turn
+    if dot >= 0.17:     # ≤ 80° change — free
+        return 0.0
+    elif dot >= -0.17:  # 80–100°
+        return 5.0
+    elif dot >= -0.5:   # 100–120°
+        return 14.0
+    else:               # > 120° — near-reversal
+        return 28.0
+
+
 def _astar(
     start: tuple[int, int],
     goal: tuple[int, int],
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
+    start_dir: tuple[int, int] = (0, 0),
 ) -> list[tuple[int, int]] | None:
-    """8-directional A* from start to goal, treating water as near-impassable.
+    """Direction-aware A* from start to goal.
 
-    Returns the tile path, or None if no path was found.
+    State = (x, y, incoming_dx, incoming_dy).  Turn penalties discourage
+    sharp bends; start_dir lets callers pass in the approach direction so
+    successive segments stay smooth at waypoints.
     """
     if start == goal:
         return [start]
 
-    open_heap: list[tuple[float, float, int, int]] = []
-    heapq.heappush(open_heap, (0.0, 0.0, start[0], start[1]))
-    came_from: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
-    g_score: dict[tuple[int, int], float] = {start: 0.0}
-    max_iters = 60_000
+    init_state = (start[0], start[1], start_dir[0], start_dir[1])
+    open_heap: list[tuple[float, float, tuple]] = []
+    heapq.heappush(open_heap, (0.0, 0.0, init_state))
+    came_from: dict[tuple, tuple | None] = {init_state: None}
+    g_score: dict[tuple, float] = {init_state: 0.0}
+    max_iters = 250_000
 
     for _ in range(max_iters):
         if not open_heap:
             break
-        _, g, cx, cy = heapq.heappop(open_heap)
+        _, g, state = heapq.heappop(open_heap)
+        cx, cy, ldx, ldy = state
 
         if (cx, cy) == goal:
             path: list[tuple[int, int]] = []
-            node: tuple[int, int] | None = goal
-            while node is not None:
-                path.append(node)
-                node = came_from[node]
+            s: tuple | None = state
+            while s is not None:
+                path.append((s[0], s[1]))
+                s = came_from[s]
             path.reverse()
-            return path
+            # Remove consecutive duplicates
+            return [path[i] for i in range(len(path))
+                    if i == 0 or path[i] != path[i - 1]]
 
-        if g > g_score.get((cx, cy), float("inf")):
+        if g > g_score.get(state, float("inf")):
             continue
 
         for ddx in (-1, 0, 1):
@@ -113,12 +136,14 @@ def _astar(
                     continue
                 step_cost = _tile_move_cost(nx, ny, seed, river_tiles, bridge_all)
                 move_dist = math.sqrt(2.0) if (ddx != 0 and ddy != 0) else 1.0
-                new_g = g + step_cost * move_dist
-                if new_g < g_score.get((nx, ny), float("inf")):
-                    g_score[(nx, ny)] = new_g
-                    came_from[(nx, ny)] = (cx, cy)
+                tp = _turn_penalty(ldx, ldy, ddx, ddy)
+                new_g = g + step_cost * move_dist + tp
+                new_state = (nx, ny, ddx, ddy)
+                if new_g < g_score.get(new_state, float("inf")):
+                    g_score[new_state] = new_g
+                    came_from[new_state] = state
                     h = math.hypot(goal[0] - nx, goal[1] - ny)
-                    heapq.heappush(open_heap, (new_g + h, new_g, nx, ny))
+                    heapq.heappush(open_heap, (new_g + h, new_g, new_state))
 
     return None  # no path found
 
@@ -285,17 +310,42 @@ def _is_water(x: int, y: int, seed: int, river_tiles: set[tuple[int, int]]) -> b
     return (x, y) in river_tiles or get_biome(x, y, seed) in _WATER_BIOMES
 
 
+def _fill_diagonal_gaps(
+    path: list[tuple[int, int]],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Return corner tiles for diagonal steps to eliminate checkerboard gaps."""
+    fillers: list[tuple[int, int]] = []
+    for i in range(len(path) - 1):
+        x, y = path[i]
+        nx, ny = path[i + 1]
+        dx, dy = nx - x, ny - y
+        if dx != 0 and dy != 0:
+            for fx, fy in ((x + dx, y), (x, y + dy)):
+                if 0 <= fx < WORLD_SIZE and 0 <= fy < WORLD_SIZE:
+                    if (fx, fy) not in bridge_all and not _is_water(fx, fy, seed, river_tiles):
+                        fillers.append((fx, fy))
+    return fillers
+
+
 def _widen_path(
     centerline: list[tuple[int, int]],
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
-) -> set[tuple[int, int]]:
-    """Return extra tiles one step to the right of the path centerline direction."""
-    extra: set[tuple[int, int]] = set()
+) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    """Return (extra_tile, beyond_tile) pairs for 2-tile-wide path widening.
+
+    beyond_tile is one additional step in the same perpendicular direction —
+    callers use it to skip widening when that tile is already a road centerline,
+    which prevents two adjacent paths from merging into a 4-tile-wide strip.
+    """
+    result: list[tuple[tuple[int, int], tuple[int, int]]] = []
     n = len(centerline)
     if n < 2:
-        return extra
+        return result
     for i in range(n):
         if i == 0:
             dx = centerline[1][0] - centerline[0][0]
@@ -308,15 +358,16 @@ def _widen_path(
             dy = centerline[i + 1][1] - centerline[i - 1][1]
         if dx == 0 and dy == 0:
             continue
-        # Clockwise perpendicular: (dx, dy) → sign(dy, -dx)
+        # Clockwise perpendicular: (dx, dy) → (sign(dy), -sign(dx))
         pdx = (1 if dy > 0 else -1) if dy != 0 else 0
         pdy = (-1 if dx > 0 else 1) if dx != 0 else 0
         px, py = centerline[i]
         nx, ny = px + pdx, py + pdy
+        bx, by = nx + pdx, ny + pdy  # one step further — for 4-wide guard
         if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
             if (nx, ny) not in bridge_all and not _is_water(nx, ny, seed, river_tiles):
-                extra.add((nx, ny))
-    return extra
+                result.append(((nx, ny), (bx, by)))
+    return result
 
 
 def _generate_village_paths_sync(
@@ -383,11 +434,12 @@ def _generate_village_paths_sync(
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1
 
-    # ── 3. Render each edge with meandering A* + path widening ────────────────
-    def connect(a: tuple[int, int], b: tuple[int, int]) -> None:
+    # ── 3. Compute all centerlines first (two-pass avoids 4-wide merging) ────
+    def compute_centerline(
+        a: tuple[int, int], b: tuple[int, int]
+    ) -> list[tuple[int, int]] | None:
         dist = math.hypot(b[0] - a[0], b[1] - a[1])
 
-        # Waypoints: larger offsets = more meander
         waypoints: list[tuple[int, int]] = []
         if dist > 15:
             lo = max(10, int(dist * 0.28))
@@ -410,25 +462,47 @@ def _generate_village_paths_sync(
 
         stops = [a] + waypoints + [b]
         centerline: list[tuple[int, int]] = []
+        last_dir: tuple[int, int] = (0, 0)
         for i in range(len(stops) - 1):
-            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all)
+            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all,
+                         start_dir=last_dir)
             if seg is None:
-                return  # skip this edge silently
+                return None
             centerline.extend(seg if not centerline else seg[1:])
+            if len(seg) >= 2:
+                last_dir = (seg[-1][0] - seg[-2][0], seg[-1][1] - seg[-2][1])
+        return centerline
 
-        # Write centerline + widened tiles
-        extra = _widen_path(centerline, seed, river_tiles, bridge_all)
-        for px, py in centerline:
+    all_centerlines: list[list[tuple[int, int]]] = []
+    for a, b in edges:
+        cl = compute_centerline(a, b)
+        if cl:
+            all_centerlines.append(cl)
+
+    # Build the union of all raw centerline tiles for the 4-wide guard
+    all_cl_tiles: set[tuple[int, int]] = set()
+    for cl in all_centerlines:
+        all_cl_tiles.update(cl)
+
+    # Pass 1 — write centerline tiles + diagonal gap fillers
+    for cl in all_centerlines:
+        for px, py in cl:
             if not _is_water(px, py, seed, river_tiles) and (px, py) not in path_tiles:
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
-        for px, py in extra:
+        for px, py in _fill_diagonal_gaps(cl, seed, river_tiles, bridge_all):
             if (px, py) not in path_tiles:
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
 
-    for a, b in edges:
-        connect(a, b)
+    # Pass 2 — widen each centerline, skipping tiles whose beyond is a centerline
+    for cl in all_centerlines:
+        for (nx, ny), (bx, by) in _widen_path(cl, seed, river_tiles, bridge_all):
+            if (bx, by) in all_cl_tiles:
+                continue  # would merge two adjacent paths into 4-wide strip
+            if (nx, ny) not in path_tiles:
+                path_tiles.add((nx, ny))
+                overrides.append((nx, ny, "path"))
 
     return overrides
 
