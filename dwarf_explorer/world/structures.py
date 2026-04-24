@@ -6,6 +6,7 @@ import math
 import random
 
 from dwarf_explorer.world.terrain import get_biome
+from dwarf_explorer.world.noise import fbm
 from dwarf_explorer.config import WORLD_SIZE, WALKABLE_TILES
 
 _STRUCTURE_SEED_OFFSET = 2000
@@ -54,7 +55,11 @@ def _tile_move_cost(
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
 ) -> float:
-    """Base movement cost for A* — water is near-impassable, mountains expensive."""
+    """Base movement cost for A* — water is near-impassable, mountains expensive.
+
+    Normal terrain gets fbm-noise perturbation so A* naturally produces
+    meandering paths without needing explicit waypoints.
+    """
     if (x, y) in bridge_all:
         return 1.0
     if _is_water(x, y, seed, river_tiles):
@@ -63,8 +68,11 @@ def _tile_move_cost(
     if biome in ("mountain", "snow"):
         return 30.0
     if biome == "hills":
-        return 5.0
-    return 1.0
+        return 3.0
+    # Seeded noise gives each tile a unique cost (0.25 – 2.75) so A* meanders
+    # through "valleys" in the cost surface instead of going straight.
+    noise = fbm(x * 0.08, y * 0.08, seed ^ _PATH_SEED_OFFSET, octaves=3)
+    return 0.25 + noise * 2.5
 
 
 def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
@@ -76,11 +84,11 @@ def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
     if dot >= 0.17:     # ≤ 80° change — free
         return 0.0
     elif dot >= -0.17:  # 80–100°
-        return 10.0
-    elif dot >= -0.5:   # 100–120°
         return 30.0
+    elif dot >= -0.5:   # 100–120°
+        return 90.0
     else:               # > 120° — near-reversal
-        return 80.0
+        return 250.0
 
 
 def _astar(
@@ -400,6 +408,25 @@ def _generate_village_paths_sync(
     if len(all_nodes) < 2:
         return overrides
 
+    def _river_cross_weight(a: tuple[int, int], b: tuple[int, int]) -> float:
+        """Euclidean distance, multiplied if the straight line samples many river tiles.
+
+        Causes the MST to prefer paths that don't need to cross wide rivers —
+        bridge endpoints on the same bank as a village will be preferred instead.
+        """
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        steps = max(1, int(d / 4))
+        river_hits = 0
+        for t in range(steps + 1):
+            frac = t / steps
+            x = int(round(a[0] + (b[0] - a[0]) * frac))
+            y = int(round(a[1] + (b[1] - a[1]) * frac))
+            if (x, y) in river_tiles:
+                river_hits += 1
+        if river_hits >= 3:
+            d *= 8.0  # strongly discourage river-crossing MST edges
+        return d
+
     # ── 1. MST (Prim's) — guaranteed full connectivity ────────────────────────
     edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
     in_tree: set[tuple[int, int]] = {all_nodes[0]}
@@ -408,7 +435,7 @@ def _generate_village_paths_sync(
         best_d, best_a, best_b = float("inf"), None, None
         for a in in_tree:
             for b in remaining:
-                d = math.hypot(b[0] - a[0], b[1] - a[1])
+                d = _river_cross_weight(a, b)
                 if d < best_d:
                     best_d, best_a, best_b = d, a, b
         edges.append((best_a, best_b))  # type: ignore[arg-type]
@@ -420,7 +447,7 @@ def _generate_village_paths_sync(
     bonus_budget = max(2, len(all_nodes) // 3)
     candidates = sorted(
         [
-            (math.hypot(b[0] - a[0], b[1] - a[1]), a, b)
+            (_river_cross_weight(a, b), a, b)
             for i, a in enumerate(all_nodes)
             for b in all_nodes[i + 1:]
             if frozenset([a, b]) not in used_pairs
@@ -439,56 +466,24 @@ def _generate_village_paths_sync(
             bonus_added += 1
 
     # ── 3. Compute all centerlines first (two-pass avoids 4-wide merging) ────
+    # No explicit waypoints — fbm noise in _tile_move_cost produces natural meander,
+    # and the turn-penalty A* keeps bends gradual.  Paths longer than 3× the
+    # straight-line distance (river detours) or crossing too many river tiles are
+    # rejected so isolated dead-ends don't form.
     def compute_centerline(
         a: tuple[int, int], b: tuple[int, int]
     ) -> list[tuple[int, int]] | None:
-        dist = math.hypot(b[0] - a[0], b[1] - a[1])
-
-        waypoints: list[tuple[int, int]] = []
-        if dist > 15:
-            lo = max(10, int(dist * 0.28))
-            hi = max(lo + 6, int(dist * 0.50))
-            wp1 = _perpendicular_waypoint(a, b, rng, seed, river_tiles, bridge_all,
-                                          offset_range=(lo, hi))
-            waypoints.append(wp1)
-        if dist > 45:
-            lo2 = max(8, int(dist * 0.18))
-            hi2 = max(lo2 + 4, int(dist * 0.35))
-            wp2 = _perpendicular_waypoint(waypoints[-1], b, rng, seed, river_tiles, bridge_all,
-                                          offset_range=(lo2, hi2))
-            waypoints.append(wp2)
-        if dist > 90:
-            lo3 = max(6, int(dist * 0.10))
-            hi3 = max(lo3 + 4, int(dist * 0.22))
-            wp3 = _perpendicular_waypoint(waypoints[-1], b, rng, seed, river_tiles, bridge_all,
-                                          offset_range=(lo3, hi3))
-            waypoints.append(wp3)
-
-        stops = [a] + waypoints + [b]
-        centerline: list[tuple[int, int]] = []
-        last_dir: tuple[int, int] = (0, 0)
-        for i in range(len(stops) - 1):
-            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all,
-                         start_dir=last_dir)
-            if seg is None:
-                return None
-            centerline.extend(seg if not centerline else seg[1:])
-            if len(seg) >= 2:
-                last_dir = (seg[-1][0] - seg[-2][0], seg[-1][1] - seg[-2][1])
-
-        # Reject edge if it crosses a wide river (>3 consecutive river tiles)
-        max_run = 0
-        run = 0
-        for px, py in centerline:
-            if (px, py) in river_tiles:
-                run += 1
-                max_run = max(max_run, run)
-            else:
-                run = 0
-        if max_run > 3:
+        dist = max(1.0, math.hypot(b[0] - a[0], b[1] - a[1]))
+        seg = _astar(a, b, seed, river_tiles, bridge_all)
+        if seg is None:
             return None
-
-        return centerline
+        # Reject if the path is a huge river-avoidance detour
+        if len(seg) > 3.5 * dist:
+            return None
+        # Reject if it crosses more than 2 river tiles (small tribs ok; big rivers not)
+        if sum(1 for px, py in seg if (px, py) in river_tiles) > 2:
+            return None
+        return seg
 
     all_centerlines: list[list[tuple[int, int]]] = []
     for a, b in edges:

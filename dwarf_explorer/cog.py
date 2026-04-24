@@ -112,5 +112,49 @@ class DwarfExplorer(commands.Cog):
         await update_player_message(db, user_id, msg.id, interaction.channel_id)
 
 
+    @app_commands.command(name="newworld", description="Reset and regenerate the world (admin only).")
+    async def newworld(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:  # type: ignore[union-attr]
+            await interaction.response.send_message(
+                "You need Administrator permission to reset the world.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        db = await get_database(interaction.guild.id)
+
+        for table in [
+            "tile_overrides", "cave_tiles", "cave_entrances", "cave_deep_entrances",
+            "caves", "village_tiles", "village_entrances", "villages",
+            "house_tiles", "house_entrances", "houses",
+            "ground_items", "enemies", "chests", "chest_items",
+        ]:
+            try:
+                await db.execute(f"DELETE FROM {table}")
+            except Exception:
+                pass
+
+        await db.execute(
+            "UPDATE players SET world_x=112, world_y=112,"
+            " in_cave=0, cave_id=NULL, cave_x=0, cave_y=0,"
+            " in_village=0, village_id=NULL, village_x=0, village_y=0,"
+            " in_house=0, house_id=NULL, house_x=0, house_y=0, in_combat=0"
+        )
+        await db.execute("UPDATE world SET initialized=0")
+
+        seed = await get_or_create_world(db, interaction.guild.id)
+        await init_world(seed, db)
+        await mark_world_initialized(db, interaction.guild.id)
+
+        await interaction.followup.send(
+            "World has been regenerated! Use `/explore` to start playing.", ephemeral=True
+        )
+
+
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(DwarfExplorer(bot))

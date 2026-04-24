@@ -279,9 +279,19 @@ def _place_bridge_at(
             if 0 <= bx < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
                 connectors.append((bx, ay))
 
+    # First lane
     for nx, ny in bridge_line + connectors:
         river_tiles.discard((nx, ny))
         bridge_tiles.add((nx, ny))
+
+    # Second parallel lane (1 step in the flow direction) for 2-wide bridges
+    fdx_i = round(fdx)
+    fdy_i = round(fdy)
+    for nx, ny in bridge_line + connectors:
+        lx, ly = nx + fdx_i, ny + fdy_i
+        if 0 <= lx < WORLD_SIZE and 0 <= ly < WORLD_SIZE:
+            river_tiles.discard((lx, ly))
+            bridge_tiles.add((lx, ly))
 
 
 def _add_bridges(
