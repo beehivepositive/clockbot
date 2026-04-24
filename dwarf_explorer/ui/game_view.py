@@ -1085,11 +1085,23 @@ async def handle_interact(
 
         if tile.structure == "cave":
             cave_id, ex, ey = await get_or_create_cave(seed, wx, wy, db)
+            # Step 4 tiles inward from the entrance edge so the viewport
+            # shows cave interior instead of mostly-out-of-bounds walls.
+            cave_meta = await db.fetch_one(
+                "SELECT width, height FROM caves WHERE cave_id=?", (cave_id,)
+            )
+            cw = cave_meta["width"] if cave_meta else 40
+            ch = cave_meta["height"] if cave_meta else 40
+            INWARD = 4
+            if ey == 0:            sx, sy = ex, min(INWARD, ch - 1)
+            elif ey == ch - 1:     sx, sy = ex, max(ch - 1 - INWARD, 0)
+            elif ex == 0:          sx, sy = min(INWARD, cw - 1), ey
+            else:                  sx, sy = max(cw - 1 - INWARD, 0), ey
             player.in_cave = True
             player.cave_id = cave_id
-            player.cave_x, player.cave_y = ex, ey
-            await update_player_cave_state(db, user_id, True, cave_id, ex, ey)
-            grid = await load_cave_viewport(cave_id, ex, ey, db)
+            player.cave_x, player.cave_y = sx, sy
+            await update_player_cave_state(db, user_id, True, cave_id, sx, sy)
+            grid = await load_cave_viewport(cave_id, sx, sy, db)
             content = render_grid(grid, player, "You enter the cave...")
 
         elif tile.structure == "village":
