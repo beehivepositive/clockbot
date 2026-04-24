@@ -285,6 +285,40 @@ def _is_water(x: int, y: int, seed: int, river_tiles: set[tuple[int, int]]) -> b
     return (x, y) in river_tiles or get_biome(x, y, seed) in _WATER_BIOMES
 
 
+def _widen_path(
+    centerline: list[tuple[int, int]],
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_all: set[tuple[int, int]],
+) -> set[tuple[int, int]]:
+    """Return extra tiles one step to the right of the path centerline direction."""
+    extra: set[tuple[int, int]] = set()
+    n = len(centerline)
+    if n < 2:
+        return extra
+    for i in range(n):
+        if i == 0:
+            dx = centerline[1][0] - centerline[0][0]
+            dy = centerline[1][1] - centerline[0][1]
+        elif i == n - 1:
+            dx = centerline[-1][0] - centerline[-2][0]
+            dy = centerline[-1][1] - centerline[-2][1]
+        else:
+            dx = centerline[i + 1][0] - centerline[i - 1][0]
+            dy = centerline[i + 1][1] - centerline[i - 1][1]
+        if dx == 0 and dy == 0:
+            continue
+        # Clockwise perpendicular: (dx, dy) → sign(dy, -dx)
+        pdx = (1 if dy > 0 else -1) if dy != 0 else 0
+        pdy = (-1 if dx > 0 else 1) if dx != 0 else 0
+        px, py = centerline[i]
+        nx, ny = px + pdx, py + pdy
+        if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+            if (nx, ny) not in bridge_all and not _is_water(nx, ny, seed, river_tiles):
+                extra.add((nx, ny))
+    return extra
+
+
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -296,71 +330,105 @@ def _generate_village_paths_sync(
     """Connect villages and bridge endpoints into a road network.
 
     Algorithm:
-    - Combine all nodes (villages + bridge endpoints).
-    - For each node, try to A* connect to its 3 nearest neighbours.
-    - Each connection uses 1–2 random perpendicular waypoints for meander:
-        node → waypoint → target (each leg is a separate A* call).
-    - If A* returns None (no path), skip that pair silently.
-    - Track connected pairs to avoid duplicate roads.
+    1. Build an MST (Prim's) over all nodes — guarantees full connectivity,
+       each pair connected at most once, no redundant parallel routes.
+    2. Add a small number of bonus short-range cross-connections for loops.
+    3. Each edge is rendered via A* with 1–3 large perpendicular waypoints
+       for natural meander.
+    4. Each path is widened by one tile (2-tile-wide roads).
     """
     rng = random.Random(seed + _PATH_SEED_OFFSET)
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
-    connected_pairs: set[frozenset] = set()
-
-    def _astar_connect(a: tuple[int, int], b: tuple[int, int]) -> bool:
-        """A* from a to b; write path tiles. Returns True on success."""
-        pair = frozenset([a, b])
-        if pair in connected_pairs:
-            return True
-
-        # Build waypoint list: a → [wp1, optional wp2] → b
-        dist = math.hypot(b[0] - a[0], b[1] - a[1])
-        waypoints: list[tuple[int, int]] = []
-        if dist > 20:
-            wp1 = _perpendicular_waypoint(a, b, rng, seed, river_tiles, bridge_all,
-                                          offset_range=(8, max(9, int(dist * 0.2))))
-            waypoints.append(wp1)
-            if dist > 50 and rng.random() < 0.6:
-                # Second waypoint on the far third of the route
-                far_a = waypoints[-1]
-                far_b = b
-                wp2 = _perpendicular_waypoint(far_a, far_b, rng, seed, river_tiles, bridge_all,
-                                              offset_range=(6, max(7, int(dist * 0.15))))
-                waypoints.append(wp2)
-
-        stops = [a] + waypoints + [b]
-        full_path: list[tuple[int, int]] = []
-        for i in range(len(stops) - 1):
-            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all)
-            if seg is None:
-                return False
-            # Avoid duplicating the junction tile between segments
-            full_path.extend(seg if not full_path else seg[1:])
-
-        connected_pairs.add(pair)
-        for px, py in full_path:
-            if (px, py) not in path_tiles and not _is_water(px, py, seed, river_tiles):
-                path_tiles.add((px, py))
-                overrides.append((px, py, "path"))
-        return True
 
     all_nodes = village_positions + bridge_endpoints
     if len(all_nodes) < 2:
         return overrides
 
-    k = 3  # connect each node to up to k nearest neighbours
-    for node in all_nodes:
-        nearest = sorted(
-            [n for n in all_nodes if n != node],
-            key=lambda n: math.hypot(n[0] - node[0], n[1] - node[1]),
-        )
-        connected = 0
-        for target in nearest:
-            if _astar_connect(node, target):
-                connected += 1
-                if connected >= k:
-                    break
+    # ── 1. MST (Prim's) — guaranteed full connectivity ────────────────────────
+    edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    in_tree: set[tuple[int, int]] = {all_nodes[0]}
+    remaining: set[tuple[int, int]] = set(all_nodes[1:])
+    while remaining:
+        best_d, best_a, best_b = float("inf"), None, None
+        for a in in_tree:
+            for b in remaining:
+                d = math.hypot(b[0] - a[0], b[1] - a[1])
+                if d < best_d:
+                    best_d, best_a, best_b = d, a, b
+        edges.append((best_a, best_b))  # type: ignore[arg-type]
+        in_tree.add(best_b)             # type: ignore[arg-type]
+        remaining.discard(best_b)       # type: ignore[arg-type]
+
+    # ── 2. Bonus cross-connections (nearby non-MST pairs, creates loops) ──────
+    used_pairs: set[frozenset] = {frozenset(e) for e in edges}
+    bonus_budget = max(2, len(all_nodes) // 3)
+    candidates = sorted(
+        [
+            (math.hypot(b[0] - a[0], b[1] - a[1]), a, b)
+            for i, a in enumerate(all_nodes)
+            for b in all_nodes[i + 1:]
+            if frozenset([a, b]) not in used_pairs
+        ],
+        key=lambda x: x[0],
+    )
+    bonus_added = 0
+    for dist_ab, a, b in candidates:
+        if bonus_added >= bonus_budget:
+            break
+        if dist_ab > 65:
+            break
+        if rng.random() < 0.55:
+            edges.append((a, b))
+            used_pairs.add(frozenset([a, b]))
+            bonus_added += 1
+
+    # ── 3. Render each edge with meandering A* + path widening ────────────────
+    def connect(a: tuple[int, int], b: tuple[int, int]) -> None:
+        dist = math.hypot(b[0] - a[0], b[1] - a[1])
+
+        # Waypoints: larger offsets = more meander
+        waypoints: list[tuple[int, int]] = []
+        if dist > 15:
+            lo = max(10, int(dist * 0.28))
+            hi = max(lo + 6, int(dist * 0.50))
+            wp1 = _perpendicular_waypoint(a, b, rng, seed, river_tiles, bridge_all,
+                                          offset_range=(lo, hi))
+            waypoints.append(wp1)
+        if dist > 45:
+            lo2 = max(8, int(dist * 0.18))
+            hi2 = max(lo2 + 4, int(dist * 0.35))
+            wp2 = _perpendicular_waypoint(waypoints[-1], b, rng, seed, river_tiles, bridge_all,
+                                          offset_range=(lo2, hi2))
+            waypoints.append(wp2)
+        if dist > 90:
+            lo3 = max(6, int(dist * 0.10))
+            hi3 = max(lo3 + 4, int(dist * 0.22))
+            wp3 = _perpendicular_waypoint(waypoints[-1], b, rng, seed, river_tiles, bridge_all,
+                                          offset_range=(lo3, hi3))
+            waypoints.append(wp3)
+
+        stops = [a] + waypoints + [b]
+        centerline: list[tuple[int, int]] = []
+        for i in range(len(stops) - 1):
+            seg = _astar(stops[i], stops[i + 1], seed, river_tiles, bridge_all)
+            if seg is None:
+                return  # skip this edge silently
+            centerline.extend(seg if not centerline else seg[1:])
+
+        # Write centerline + widened tiles
+        extra = _widen_path(centerline, seed, river_tiles, bridge_all)
+        for px, py in centerline:
+            if not _is_water(px, py, seed, river_tiles) and (px, py) not in path_tiles:
+                path_tiles.add((px, py))
+                overrides.append((px, py, "path"))
+        for px, py in extra:
+            if (px, py) not in path_tiles:
+                path_tiles.add((px, py))
+                overrides.append((px, py, "path"))
+
+    for a, b in edges:
+        connect(a, b)
 
     return overrides
 
