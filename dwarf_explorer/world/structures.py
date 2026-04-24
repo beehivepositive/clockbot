@@ -6,7 +6,6 @@ import math
 import random
 
 from dwarf_explorer.world.terrain import get_biome
-from dwarf_explorer.world.noise import fbm
 from dwarf_explorer.config import WORLD_SIZE, WALKABLE_TILES
 
 _STRUCTURE_SEED_OFFSET = 2000
@@ -49,16 +48,41 @@ def _is_adjacent_to(x: int, y: int, seed: int, biome: str) -> bool:
 
 # ── A* pathfinder ─────────────────────────────────────────────────────────────
 
+def _meander_noise(x: int, y: int, seed: int) -> float:
+    """Fast spatially-coherent noise for path meander (no fbm overhead).
+
+    Bilinearly interpolates hashed values sampled every 8 tiles, giving
+    smooth 8-tile-scale cost variation without any expensive floating-point
+    noise functions.  Returns a value in [0, 1].
+    """
+    def _h(n: int) -> float:
+        n = (n ^ (n >> 16)) * 0x45D9F3B
+        n = (n ^ (n >> 16)) * 0x45D9F3B
+        n ^= (n >> 16)
+        return (n & 0xFFFFF) / 0xFFFFF
+
+    x8, y8 = x >> 3, y >> 3
+    fx = (x & 7) / 8.0
+    fy = (y & 7) / 8.0
+    s = seed & 0xFFFFFFFF
+    h00 = _h(x8 * 1664525   + y8 * 1013904223 + s)
+    h10 = _h((x8+1)*1664525  + y8 * 1013904223 + s)
+    h01 = _h(x8 * 1664525   + (y8+1)*1013904223 + s)
+    h11 = _h((x8+1)*1664525  + (y8+1)*1013904223 + s)
+    return (h00*(1-fx)*(1-fy) + h10*fx*(1-fy) +
+            h01*(1-fx)*fy    + h11*fx*fy)
+
+
 def _tile_move_cost(
     x: int, y: int,
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
 ) -> float:
-    """Base movement cost for A* — water is near-impassable, mountains expensive.
+    """Base movement cost for A* — water near-impassable, mountains expensive.
 
-    Normal terrain gets fbm-noise perturbation so A* naturally produces
-    meandering paths without needing explicit waypoints.
+    Normal terrain gets a fast bilinear-hash perturbation (0.5–2.5) so A*
+    naturally meanders through cost valleys without needing waypoints.
     """
     if (x, y) in bridge_all:
         return 1.0
@@ -69,10 +93,7 @@ def _tile_move_cost(
         return 30.0
     if biome == "hills":
         return 3.0
-    # Seeded noise gives each tile a unique cost (0.25 – 2.75) so A* meanders
-    # through "valleys" in the cost surface instead of going straight.
-    noise = fbm(x * 0.08, y * 0.08, seed ^ _PATH_SEED_OFFSET, octaves=3)
-    return 0.25 + noise * 2.5
+    return 0.5 + _meander_noise(x, y, seed ^ _PATH_SEED_OFFSET) * 2.0
 
 
 def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
@@ -84,11 +105,11 @@ def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
     if dot >= 0.17:     # ≤ 80° change — free
         return 0.0
     elif dot >= -0.17:  # 80–100°
-        return 30.0
+        return 12.0
     elif dot >= -0.5:   # 100–120°
-        return 90.0
+        return 40.0
     else:               # > 120° — near-reversal
-        return 250.0
+        return 100.0
 
 
 def _astar(
@@ -113,7 +134,7 @@ def _astar(
     heapq.heappush(open_heap, (0.0, 0.0, init_state))
     came_from: dict[tuple, tuple | None] = {init_state: None}
     g_score: dict[tuple, float] = {init_state: 0.0}
-    max_iters = 250_000
+    max_iters = 60_000
 
     for _ in range(max_iters):
         if not open_heap:
