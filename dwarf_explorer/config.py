@@ -159,7 +159,7 @@ CAVE_EMOJI = {
     "cave_rock":          "\U0001FAA8",            # 🪨
     "cave_bat":           "\U0001F987",            # 🦇
     "cave_spider":        "\U0001F577\uFE0F",      # 🕷️
-    "cave_golem":         "\U0001FAA8",            # 🪨 (looks like a rock creature)
+    "cave_golem":         "\U0001F5FF",            # 🗿 (moai — rock golem)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large"}
@@ -382,6 +382,16 @@ CAVE_ENCOUNTER_RATES = {
     "cave_golem":  0.04,
 }
 
+# Surface encounters: terrain → enemy_type (1% chance per step, short_grass excluded)
+SURFACE_ENCOUNTER_MOBS = {
+    "plains":       "wolf",
+    "grass":        "wolf",
+    "sand":         "wolf",
+    "hills":        "bear",
+    "forest":       "wolf",
+    "dense_forest": "bear",
+}
+
 # Sell prices at the shop (60% of buy price for shop items)
 ITEM_SELL_PRICES = {
     "knife":        15,
@@ -471,6 +481,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("shovel",      "shovel"),
         ("torch",       "torch"),
         ("fishing_net", "net"),
+        ("iron_ore",    "iron_ore"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:

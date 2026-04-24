@@ -72,6 +72,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_potion(interaction, gid, uid)
             elif act == "c_endturn":
                 await handle_combat_end_turn(interaction, gid, uid)
+            elif act == "c_inventory":
+                await handle_inventory(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
                 await handle_move(interaction, gid, uid, act)
             elif act == "interact":

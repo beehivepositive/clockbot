@@ -8,6 +8,7 @@ from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
     CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT, POUCH_SIZES,
+    SURFACE_ENCOUNTER_MOBS,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -278,19 +279,23 @@ class CombatView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=1,
             ))
 
-        # Row 2: ↙ ↓ ↘ (spacers fill rest)
+        # Row 2: ↙ ↓ ↘ 🎒 spacer
         for emoji, action in [("↙", "c_downleft"), ("⬇️", "c_down"), ("↘", "c_downright")]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary,
                 label=emoji, disabled=disabled,
                 custom_id=_custom_id(gid, uid, action), row=2,
             ))
-        for i in range(2):
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label="\u200b", disabled=True,
-                custom_id=_custom_id(gid, uid, f"csp{i}"), row=2,
-            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="🎒", disabled=False,
+            custom_id=_custom_id(gid, uid, "c_inventory"), row=2,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp0"), row=2,
+        ))
 
 
 # ── Equipment helpers ─────────────────────────────────────────────────────────
@@ -498,6 +503,29 @@ async def _move_steps(
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
+            # Random surface encounter (1%, biome-specific, skip short_grass)
+            enemy_type = SURFACE_ENCOUNTER_MOBS.get(target.terrain)
+            if enemy_type:
+                enc_rng = _random.Random(hash((user_id, nx, ny, seed, player.gold)))
+                if enc_rng.random() < 0.01:
+                    grid = await load_viewport(nx, ny, seed, db)
+                    arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
+                    arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+                    player.in_combat = True
+                    player.combat_enemy_type = enemy_type
+                    player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+                    player.combat_enemy_x = ex
+                    player.combat_enemy_y = ey
+                    player.combat_player_x = ARENA_SIZE // 2
+                    player.combat_player_y = ARENA_SIZE // 2
+                    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+                    _ui_state[user_id] = {"type": "combat", "arena": arena}
+                    await save_combat_state(db, user_id, player)
+                    content = render_arena(arena, player)
+                    view = CombatView(guild_id, user_id,
+                                      trapped=arena["player_trapped"],
+                                      moves_left=player.combat_moves_left)
+                    return content, view
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player)
 
@@ -693,8 +721,7 @@ async def handle_combat_flee(
     if result is None:
         return
     db, player, arena = result
-    rng = _random.Random(hash((user_id, player.combat_player_x, player.combat_player_y,
-                               player.combat_moves_left)))
+    rng = _random.Random()  # non-deterministic: flee shouldn't be predictable
     msg, success = action_flee(arena, player, rng)
     if success:
         arena["combat_log"].append(msg)
@@ -1104,7 +1131,8 @@ async def handle_inventory(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    _ui_state[user_id] = {"type": "inventory", "selected": 0}
+    prev_arena = _ui_state.get(user_id, {}).get("arena")
+    _ui_state[user_id] = {"type": "inventory", "selected": 0, "prev_arena": prev_arena}
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     label = _equip_label(items, 0, equipped)
@@ -1124,7 +1152,8 @@ async def handle_inv_nav(
     inv_rows, inv_cols = _inv_capacity(player)
     total_slots = inv_rows * inv_cols
     new_sel = (state["selected"] + delta) % max(1, total_slots)
-    _ui_state[user_id] = {"type": "inventory", "selected": new_sel}
+    _ui_state[user_id] = {"type": "inventory", "selected": new_sel,
+                          "prev_arena": state.get("prev_arena")}
     equipped = _equipped_dict(player)
     label = _equip_label(items, new_sel, equipped)
     content = render_inventory(items, new_sel, equipped, label, inv_rows, inv_cols)
@@ -1238,7 +1267,15 @@ async def handle_inv_close(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    prev_arena = _ui_state.get(user_id, {}).get("prev_arena")
     _ui_state.pop(user_id, None)
+    # If inventory was opened during combat, return to combat view
+    if player.in_combat and prev_arena is not None:
+        _ui_state[user_id] = {"type": "combat", "arena": prev_arena}
+        content = render_arena(prev_arena, player)
+        view = _combat_view(guild_id, user_id, prev_arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
     if player.in_house:
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     elif player.in_village:
