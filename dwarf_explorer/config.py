@@ -9,6 +9,9 @@ VIEWPORT_CENTER = 4  # 0-indexed center of 9x9 grid
 SPAWN_X = WORLD_SIZE // 2  # 112
 SPAWN_Y = WORLD_SIZE // 2
 
+# Fixed world seed — all servers share the same world layout
+WORLD_SEED = 902599462
+
 # Noise generation defaults
 NOISE_OCTAVES = 4
 NOISE_LACUNARITY = 2.0

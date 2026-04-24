@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT, WORLD_SEED
 from dwarf_explorer.database.connection import Database
 from dwarf_explorer.game.player import Player
 
@@ -12,13 +12,15 @@ from dwarf_explorer.game.player import Player
 async def get_or_create_world(db: Database, guild_id: int) -> int:
     row = await db.fetch_one("SELECT seed FROM world WHERE guild_id = ?", (guild_id,))
     if row:
-        return row["seed"]
-    seed = random.randint(0, 2**31)
+        if row["seed"] != WORLD_SEED:
+            # Migrate existing server to the shared seed
+            await db.execute("UPDATE world SET seed = ? WHERE guild_id = ?", (WORLD_SEED, guild_id))
+        return WORLD_SEED
     await db.execute(
         "INSERT INTO world (guild_id, seed, initialized) VALUES (?, ?, 0)",
-        (guild_id, seed),
+        (guild_id, WORLD_SEED),
     )
-    return seed
+    return WORLD_SEED
 
 
 async def is_world_initialized(db: Database, guild_id: int) -> bool:
