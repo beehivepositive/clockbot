@@ -112,12 +112,14 @@ DIRECTIONS = {
 
 # Enemy definitions: {type: (hp, attack, defense, xp_reward, gold_reward)}
 ENEMY_STATS = {
-    "wolf": (20, 5, 2, 10, 5),
-    "bear": (40, 10, 5, 25, 15),
-    "spider": (15, 8, 1, 15, 8),
-    "cave_bat": (10, 4, 1, 5, 3),
-    "cave_spider": (20, 8, 2, 15, 8),
-    "cave_golem": (60, 15, 10, 50, 25),
+    "wolf":        (20,  8,  1, 10,  5),
+    "bear":        (40, 16,  3, 25, 15),
+    "spider":      (15, 12,  1, 15,  8),
+    "cave_bat":    (12,  8,  0,  5,  3),
+    "cave_spider": (25, 14,  2, 15,  8),
+    "cave_golem":  (70, 22,  8, 50, 25),
+    "cave_troll":  (50, 18,  5, 35, 20),
+    "cave_wyvern": (80, 28,  6, 75, 40),
 }
 
 # Player defaults
@@ -131,12 +133,14 @@ COMBAT_MOVES_DEFAULT = 3
 
 # Special abilities per enemy type
 ENEMY_ABILITIES = {
-    "wolf":       {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
-    "bear":       {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": False},
-    "spider":     {"cobweb": True,  "poison": False, "hit_run": False, "roar": False, "slam": False},
-    "cave_bat":   {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
-    "cave_spider":{"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False},
-    "cave_golem": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+    "wolf":        {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
+    "bear":        {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": False},
+    "spider":      {"cobweb": True,  "poison": False, "hit_run": False, "roar": False, "slam": False},
+    "cave_bat":    {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "cave_spider": {"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False},
+    "cave_golem":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+    "cave_troll":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+    "cave_wyvern": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False},
 }
 
 ARENA_EMOJI = {
@@ -163,14 +167,18 @@ CAVE_EMOJI = {
     "cave_bat":           "\U0001F987",            # 🦇
     "cave_spider":        "\U0001F577\uFE0F",      # 🕷️
     "cave_golem":         "\U0001F5FF",            # 🗿 (moai — rock golem)
+    "cave_troll":         "\U0001F479",            # 👹 troll
+    "cave_wyvern":        "\U0001F409",            # 🐉 wyvern/dragon
+    "cave_stairdown":     "\U0001F53D",            # 🔽 descend deeper
+    "cave_stairup":       "\U0001F53C",            # 🔼 ascend
 }
 
-CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large"}
+CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
 
-CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem"}
+CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem", "cave_troll", "cave_wyvern"}
 
 # Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
 CHEST_LOOT = [
@@ -383,6 +391,13 @@ CAVE_ENCOUNTER_RATES = {
     "cave_bat":    0.07,
     "cave_spider": 0.07,
     "cave_golem":  0.04,
+}
+
+# Per-level cave encounter rates: {level: {enemy_type: chance}}
+CAVE_LEVEL_ENCOUNTER_RATES = {
+    1: {"cave_bat": 0.07, "cave_spider": 0.07},
+    2: {"cave_spider": 0.05, "cave_golem": 0.06, "cave_troll": 0.05},
+    3: {"cave_golem": 0.05, "cave_troll": 0.06, "cave_wyvern": 0.05},
 }
 
 # Surface encounters: terrain → enemy_type (1% chance per step, short_grass excluded)

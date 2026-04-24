@@ -125,11 +125,12 @@ def _inward_step(ex: int, ey: int, edge: str, width: int, height: int) -> tuple[
 def _generate_cave_interior(
     cave_id: int, seed: int, world_x: int, world_y: int,
     num_entrances: int = 1,
-) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]]]:
+    cave_level: int = 1,
+) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]], list[tuple[int, int]]]:
     """Generate a cave interior with `num_entrances` entrance holes.
 
     Entrance holes are spread across different edges and linked via corridors
-    so all reach the same main body.  Returns (width, height, tiles, entrances).
+    so all reach the same main body.  Returns (width, height, tiles, entrances, stairdown_positions).
     """
     rng = random.Random(seed + _CAVE_SEED_OFFSET + cave_id + world_x * 1000 + world_y)
     worm_seed = (seed ^ (cave_id * 0x9E37 + world_x * 31 + world_y * 97)) & 0xFFFFFFFF
@@ -249,12 +250,44 @@ def _generate_cave_interior(
         )[0]
         chest_types[pos] = chest_type
 
+    # --- Stairdown entrances (if not at max depth) ---
+    stairdown_positions: set[tuple[int, int]] = set()
+    if cave_level < 3 and floor_tiles:
+        num_stairs = rng.randint(1, 2)
+        far_tiles = [p for p in floor_tiles
+                     if p not in chest_positions
+                     and all(abs(p[0] - ex2) + abs(p[1] - ey2) > 10 for ex2, ey2 in entrances)
+                     and all(abs(p[0] - cx2) + abs(p[1] - cy2) > 8 for cx2, cy2 in chest_positions)]
+        rng.shuffle(far_tiles)
+        for pos in far_tiles:
+            if len(stairdown_positions) >= num_stairs:
+                break
+            if all(abs(pos[0] - sx) + abs(pos[1] - sy) > 10 for sx, sy in stairdown_positions):
+                stairdown_positions.add(pos)
+
+    # --- Stairup (for non-level-1 caves) ---
+    stairup_position: tuple[int, int] | None = None
+    if cave_level > 1:
+        # Place stairup near the center of the cave floor
+        cx_center, cy_center = width // 2, height // 2
+        center_tiles = sorted(
+            [p for p in carved if p not in entrance_set and p not in chest_positions
+             and p not in stairdown_positions],
+            key=lambda p: abs(p[0] - cx_center) + abs(p[1] - cy_center),
+        )
+        if center_tiles:
+            stairup_position = center_tiles[0]
+
     # --- Build tile list (enemies no longer placed as tiles — random encounters instead) ---
     tiles: list[tuple[int, int, str]] = []
     for y in range(height):
         for x in range(width):
             if (x, y) in entrance_set:
                 tiles.append((x, y, "cave_entrance"))
+            elif (x, y) == stairup_position:
+                tiles.append((x, y, "cave_stairup"))
+            elif (x, y) in stairdown_positions:
+                tiles.append((x, y, "cave_stairdown"))
             elif (x, y) in chest_positions:
                 tiles.append((x, y, chest_types[(x, y)]))
             elif (x, y) in rock_positions:
@@ -264,7 +297,72 @@ def _generate_cave_interior(
             else:
                 tiles.append((x, y, "stone_wall"))
 
-    return width, height, tiles, entrances
+    return width, height, tiles, entrances, list(stairdown_positions)
+
+
+async def _create_child_cave(
+    seed: int, parent_cave_id: int,
+    parent_local_x: int, parent_local_y: int,
+    level: int, db,
+) -> None:
+    """Create a child (deeper) cave linked to a stairdown in the parent cave."""
+    cursor = await db.execute(
+        "INSERT INTO caves (width, height, cave_level, parent_cave_id) VALUES (1, 1, ?, ?)",
+        (level, parent_cave_id),
+    )
+    child_cave_id = cursor.lastrowid
+
+    width, height, tiles, _entrances, child_stairdowns = await asyncio.to_thread(
+        _generate_cave_interior,
+        child_cave_id, seed, parent_cave_id * 100 + parent_local_x,
+        parent_local_y, 0, level,
+    )
+
+    await db.execute(
+        "UPDATE caves SET width = ?, height = ? WHERE cave_id = ?",
+        (width, height, child_cave_id),
+    )
+    await db.executemany(
+        "INSERT OR IGNORE INTO cave_tiles (cave_id, local_x, local_y, tile_type)"
+        " VALUES (?, ?, ?, ?)",
+        [(child_cave_id, lx, ly, tt) for lx, ly, tt in tiles],
+    )
+
+    # Find stairup position in the child cave
+    stairup_row = await db.fetch_one(
+        "SELECT local_x, local_y FROM cave_tiles WHERE cave_id = ? AND tile_type = 'cave_stairup'",
+        (child_cave_id,),
+    )
+    if stairup_row:
+        child_stairup_x = stairup_row["local_x"]
+        child_stairup_y = stairup_row["local_y"]
+    else:
+        # Fallback: center of cave
+        child_stairup_x = width // 2
+        child_stairup_y = height // 2
+
+    # Link stairdown in parent → stairup in child
+    await db.execute(
+        "INSERT OR IGNORE INTO cave_deep_entrances"
+        " (parent_cave_id, parent_local_x, parent_local_y,"
+        "  child_cave_id, child_local_x, child_local_y)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (parent_cave_id, parent_local_x, parent_local_y,
+         child_cave_id, child_stairup_x, child_stairup_y),
+    )
+
+    # Recursively create deeper caves
+    if level < 3:
+        await create_deep_caves(seed, child_cave_id, level, child_stairdowns, db)
+
+
+async def create_deep_caves(
+    seed: int, cave_id: int, cave_level: int,
+    stairdown_positions: list[tuple[int, int]], db,
+) -> None:
+    """Create child caves for each stairdown position."""
+    for sx, sy in stairdown_positions:
+        await _create_child_cave(seed, cave_id, sx, sy, cave_level + 1, db)
 
 
 async def create_cave_system(
@@ -284,12 +382,14 @@ async def create_cave_system(
             return   # already created (e.g. re-init)
 
     n = len(world_positions)
-    cursor = await db.execute("INSERT INTO caves (width, height) VALUES (1, 1)")
+    cursor = await db.execute(
+        "INSERT INTO caves (width, height, cave_level) VALUES (1, 1, 1)"
+    )
     cave_id = cursor.lastrowid
 
-    width, height, tiles, entrance_positions = await asyncio.to_thread(
+    width, height, tiles, entrance_positions, stairdown_positions = await asyncio.to_thread(
         _generate_cave_interior,
-        cave_id, seed, world_positions[0][0], world_positions[0][1], n,
+        cave_id, seed, world_positions[0][0], world_positions[0][1], n, 1,
     )
 
     await db.execute(
@@ -308,6 +408,9 @@ async def create_cave_system(
             " (cave_id, local_x, local_y, world_x, world_y) VALUES (?, ?, ?, ?, ?)",
             (cave_id, ex, ey, wx, wy),
         )
+
+    # Generate deeper cave levels
+    await create_deep_caves(seed, cave_id, 1, stairdown_positions, db)
 
 
 async def get_or_create_cave(

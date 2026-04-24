@@ -76,11 +76,11 @@ def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
     if dot >= 0.17:     # ≤ 80° change — free
         return 0.0
     elif dot >= -0.17:  # 80–100°
-        return 5.0
+        return 10.0
     elif dot >= -0.5:   # 100–120°
-        return 14.0
+        return 30.0
     else:               # > 120° — near-reversal
-        return 28.0
+        return 80.0
 
 
 def _astar(
@@ -316,7 +316,11 @@ def _fill_diagonal_gaps(
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
 ) -> list[tuple[int, int]]:
-    """Return corner tiles for diagonal steps to eliminate checkerboard gaps."""
+    """Return corner tiles for diagonal steps to eliminate checkerboard gaps.
+
+    Always adds both corners even if they're water — small tributary crossings
+    should become path.
+    """
     fillers: list[tuple[int, int]] = []
     for i in range(len(path) - 1):
         x, y = path[i]
@@ -325,7 +329,7 @@ def _fill_diagonal_gaps(
         if dx != 0 and dy != 0:
             for fx, fy in ((x + dx, y), (x, y + dy)):
                 if 0 <= fx < WORLD_SIZE and 0 <= fy < WORLD_SIZE:
-                    if (fx, fy) not in bridge_all and not _is_water(fx, fy, seed, river_tiles):
+                    if (fx, fy) not in bridge_all:
                         fillers.append((fx, fy))
     return fillers
 
@@ -471,6 +475,19 @@ def _generate_village_paths_sync(
             centerline.extend(seg if not centerline else seg[1:])
             if len(seg) >= 2:
                 last_dir = (seg[-1][0] - seg[-2][0], seg[-1][1] - seg[-2][1])
+
+        # Reject edge if it crosses a wide river (>3 consecutive river tiles)
+        max_run = 0
+        run = 0
+        for px, py in centerline:
+            if (px, py) in river_tiles:
+                run += 1
+                max_run = max(max_run, run)
+            else:
+                run = 0
+        if max_run > 3:
+            return None
+
         return centerline
 
     all_centerlines: list[list[tuple[int, int]]] = []
@@ -487,7 +504,7 @@ def _generate_village_paths_sync(
     # Pass 1 — write centerline tiles + diagonal gap fillers
     for cl in all_centerlines:
         for px, py in cl:
-            if not _is_water(px, py, seed, river_tiles) and (px, py) not in path_tiles:
+            if (px, py) not in bridge_all and (px, py) not in path_tiles:
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
         for px, py in _fill_diagonal_gaps(cl, seed, river_tiles, bridge_all):

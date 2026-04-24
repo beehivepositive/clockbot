@@ -127,6 +127,20 @@ class Database:
                     quantity INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (chest_id, item_id)
                 )""",
+                # Multi-level cave columns
+                "ALTER TABLE caves ADD COLUMN cave_level INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE caves ADD COLUMN parent_cave_id INTEGER",
+                # Deep cave entrances table
+                """CREATE TABLE IF NOT EXISTS cave_deep_entrances (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    parent_cave_id   INTEGER NOT NULL REFERENCES caves(cave_id),
+                    parent_local_x   INTEGER NOT NULL,
+                    parent_local_y   INTEGER NOT NULL,
+                    child_cave_id    INTEGER NOT NULL REFERENCES caves(cave_id),
+                    child_local_x    INTEGER NOT NULL,
+                    child_local_y    INTEGER NOT NULL,
+                    UNIQUE(parent_cave_id, parent_local_x, parent_local_y)
+                )""",
             ]
             for sql in migrations:
                 try:
@@ -147,15 +161,15 @@ class Database:
             self._conn = None
 
 
-_databases: dict[int, Database] = {}
+_databases: dict[str, Database] = {}
 
 
 async def get_database(guild_id: int) -> Database:
-    """Get or create a Database instance for a guild."""
-    if guild_id not in _databases:
+    """Get or create the single shared world Database (all guilds share one world)."""
+    if "shared" not in _databases:
         base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-        db_path = os.path.join(base_dir, f"{guild_id}.db")
+        db_path = os.path.join(base_dir, "shared.db")
         db = Database(db_path)
         await db.init_schema()
-        _databases[guild_id] = db
-    return _databases[guild_id]
+        _databases["shared"] = db
+    return _databases["shared"]

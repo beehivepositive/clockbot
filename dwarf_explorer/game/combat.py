@@ -237,7 +237,7 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random) -> str:
 
         # ── Attack if adjacent ──
         if _adjacent(new_ex, new_ey, px, py):
-            dmg = max(0, atk - player.defense)
+            dmg = max(1, atk - player.defense // 2)
             player.hp = max(0, player.hp - dmg)
 
             # Cave spider poison

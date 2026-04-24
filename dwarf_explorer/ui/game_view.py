@@ -7,8 +7,8 @@ import discord
 from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
-    CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT, POUCH_SIZES,
-    SURFACE_ENCOUNTER_MOBS,
+    CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
+    POUCH_SIZES, SURFACE_ENCOUNTER_MOBS,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -386,9 +386,11 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db) -> Ga
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs))
 
 
-def _roll_encounter(rng: _random.Random) -> str | None:
+def _roll_encounter(rng: _random.Random, rates: dict | None = None) -> str | None:
     """Roll for a random cave encounter. Returns enemy_type or None."""
-    for enemy_type, rate in CAVE_ENCOUNTER_RATES.items():
+    if rates is None:
+        rates = CAVE_ENCOUNTER_RATES
+    for enemy_type, rate in rates.items():
         if rng.random() < rate:
             return enemy_type
     return None
@@ -457,9 +459,63 @@ async def _move_steps(
         return render_grid(grid, player), _game_view(guild_id, user_id, player)
 
     elif player.in_cave:
+        # Determine cave level for encounter rate lookup
+        cave_level_row = await db.fetch_one(
+            "SELECT cave_level FROM caves WHERE cave_id = ?", (player.cave_id,)
+        )
+        cave_level = cave_level_row["cave_level"] if cave_level_row else 1
+        enc_rates = CAVE_LEVEL_ENCOUNTER_RATES.get(cave_level, CAVE_ENCOUNTER_RATES)
+
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
+
+            # Handle stairdown: descend to child cave
+            if target.terrain == "cave_stairdown":
+                deep_row = await db.fetch_one(
+                    "SELECT child_cave_id, child_local_x, child_local_y"
+                    " FROM cave_deep_entrances"
+                    " WHERE parent_cave_id = ? AND parent_local_x = ? AND parent_local_y = ?",
+                    (player.cave_id, nx, ny),
+                )
+                if deep_row:
+                    player.cave_id = deep_row["child_cave_id"]
+                    player.cave_x = deep_row["child_local_x"]
+                    player.cave_y = deep_row["child_local_y"]
+                    await update_player_cave_state(db, user_id, True, player.cave_id,
+                                                   player.cave_x, player.cave_y)
+                    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                    return render_grid(grid, player, "You descend deeper into the cave..."), \
+                           await _cave_game_view(guild_id, user_id, player, db)
+                # No child cave found — treat as normal floor
+                player.cave_x, player.cave_y = nx, ny
+                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
+
+            # Handle stairup: ascend to parent cave
+            if target.terrain == "cave_stairup":
+                up_row = await db.fetch_one(
+                    "SELECT parent_cave_id, parent_local_x, parent_local_y"
+                    " FROM cave_deep_entrances"
+                    " WHERE child_cave_id = ?",
+                    (player.cave_id,),
+                )
+                if up_row:
+                    player.cave_id = up_row["parent_cave_id"]
+                    player.cave_x = up_row["parent_local_x"]
+                    player.cave_y = up_row["parent_local_y"]
+                    await update_player_cave_state(db, user_id, True, player.cave_id,
+                                                   player.cave_x, player.cave_y)
+                    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                    return render_grid(grid, player, "You climb back up..."), \
+                           await _cave_game_view(guild_id, user_id, player, db)
+                # No parent cave — treat as normal floor
+                player.cave_x, player.cave_y = nx, ny
+                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
+
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -470,7 +526,7 @@ async def _move_steps(
             if target.terrain == "stone_floor":
                 enc_rng = _random.Random(hash((user_id, nx, ny,
                                               player.cave_id, player.gold)))
-                enemy_type = _roll_encounter(enc_rng)
+                enemy_type = _roll_encounter(enc_rng, enc_rates)
                 if enemy_type:
                     grid = await load_cave_viewport(player.cave_id, nx, ny, db)
                     arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
