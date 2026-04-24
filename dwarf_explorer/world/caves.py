@@ -315,7 +315,7 @@ async def _create_child_cave(
     width, height, tiles, _entrances, child_stairdowns = await asyncio.to_thread(
         _generate_cave_interior,
         child_cave_id, seed, parent_cave_id * 100 + parent_local_x,
-        parent_local_y, 0, level,
+        parent_local_y, 1, level,
     )
 
     await db.execute(
@@ -409,8 +409,7 @@ async def create_cave_system(
             (cave_id, ex, ey, wx, wy),
         )
 
-    # Generate deeper cave levels
-    await create_deep_caves(seed, cave_id, 1, stairdown_positions, db)
+    # Deep caves are generated lazily on first descent (not during world init)
 
 
 async def get_or_create_cave(

@@ -470,7 +470,7 @@ async def _move_steps(
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
 
-            # Handle stairdown: descend to child cave
+            # Handle stairdown: descend to child cave (generated lazily on first visit)
             if target.terrain == "cave_stairdown":
                 deep_row = await db.fetch_one(
                     "SELECT child_cave_id, child_local_x, child_local_y"
@@ -478,6 +478,15 @@ async def _move_steps(
                     " WHERE parent_cave_id = ? AND parent_local_x = ? AND parent_local_y = ?",
                     (player.cave_id, nx, ny),
                 )
+                if not deep_row:
+                    from dwarf_explorer.world.caves import _create_child_cave
+                    await _create_child_cave(seed, player.cave_id, nx, ny, cave_level + 1, db)
+                    deep_row = await db.fetch_one(
+                        "SELECT child_cave_id, child_local_x, child_local_y"
+                        " FROM cave_deep_entrances"
+                        " WHERE parent_cave_id = ? AND parent_local_x = ? AND parent_local_y = ?",
+                        (player.cave_id, nx, ny),
+                    )
                 if deep_row:
                     player.cave_id = deep_row["child_cave_id"]
                     player.cave_x = deep_row["child_local_x"]
@@ -487,11 +496,6 @@ async def _move_steps(
                     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                     return render_grid(grid, player, "You descend deeper into the cave..."), \
                            await _cave_game_view(guild_id, user_id, player, db)
-                # No child cave found — treat as normal floor
-                player.cave_x, player.cave_y = nx, ny
-                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
-                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
 
             # Handle stairup: ascend to parent cave
             if target.terrain == "cave_stairup":
