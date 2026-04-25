@@ -19,6 +19,9 @@ from dwarf_explorer.ui.game_view import (
     handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
     handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
+    handle_action,
+    handle_forge_iron, handle_forge_close,
+    handle_anvil_dagger, handle_anvil_sword, handle_anvil_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -102,6 +105,20 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_end_turn(interaction, gid, uid)
             elif act == "c_inventory":
                 await handle_inventory(interaction, gid, uid)
+            elif act == "action":
+                await handle_action(interaction, gid, uid)
+            # Forge
+            elif act == "forge_iron":
+                await handle_forge_iron(interaction, gid, uid)
+            elif act == "forge_close":
+                await handle_forge_close(interaction, gid, uid)
+            # Anvil
+            elif act == "anvil_dagger":
+                await handle_anvil_dagger(interaction, gid, uid)
+            elif act == "anvil_sword":
+                await handle_anvil_sword(interaction, gid, uid)
+            elif act == "anvil_close":
+                await handle_anvil_close(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
                 await handle_move(interaction, gid, uid, act)
             elif act == "interact":

@@ -98,6 +98,7 @@ ITEM_EMOJI = {
     "fishing_rod": "\U0001F3A3",     # 🎣
     "cooked_fish": "\U0001F956",     # 🍖
     "treasure_map": "\U0001F4DC",    # 📜
+    "dagger":      "\U0001F5E1\uFE0F", # 🗡️
 }
 
 WALKABLE_TILES = {
@@ -378,6 +379,8 @@ ITEM_EQUIP_SLOTS = {
     "fishing_rod":  "hand",
     "fish":         "hand",
     "cooked_fish":  "hand",
+    "dagger":       "hand",
+    "sword":        "hand",
     "hiking_boots": "boots",
     "small_pouch":  "pouch",
     "medium_pouch": "pouch",
@@ -405,6 +408,8 @@ EQUIP_BONUSES = {
     "fishing_rod":  {},
     "fish":         {},
     "cooked_fish":  {},
+    "dagger":       {"attack": 8},
+    "sword":        {"attack": 12},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 2×5 when no pouch equipped
@@ -472,6 +477,7 @@ ITEM_SELL_PRICES = {
     "treasure_map": 0,
     "rock":         2,
     "poison_sac":   20,
+    "dagger":       30,
     "small_pouch":  48,
     "medium_pouch": 108,
     "large_pouch":  210,
@@ -516,16 +522,19 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     cache = {e.name: f"<:{e.name}:{e.id}>" for e in guild_emojis}
 
     _replace = [
-        (TERRAIN_EMOJI,  "sand",         "sand"),
-        (TERRAIN_EMOJI,  "grass",        "grass"),
-        (TERRAIN_EMOJI,  "plains",       "dry_grass"),
-        (CAVE_EMOJI,     "cave_chest",   "chest"),
-        (CAVE_EMOJI,     "stone_floor",  "grey_square"),
-        (BUILDING_EMOJI, "b_stove",      "hearth"),
-        (BUILDING_EMOJI, "b_table",      "table"),
-        (BUILDING_EMOJI, "b_floor",      "grey_square"),
-        (BUILDING_EMOJI, "b_shelf",      "chest"),
-        (VILLAGE_EMOJI,  "vil_grass",    "grass"),
+        (TERRAIN_EMOJI,  "sand",              "sand"),
+        (TERRAIN_EMOJI,  "grass",             "grass"),
+        (TERRAIN_EMOJI,  "plains",            "dry_grass"),
+        (CAVE_EMOJI,     "cave_chest",        "chest"),
+        (CAVE_EMOJI,     "cave_chest_medium", "chest"),
+        (CAVE_EMOJI,     "cave_chest_large",  "chest"),
+        (CAVE_EMOJI,     "stone_floor",       "grey_square"),
+        (BUILDING_EMOJI, "b_stove",           "hearth"),
+        (BUILDING_EMOJI, "b_table",           "table"),
+        (BUILDING_EMOJI, "b_floor",           "grey_square"),
+        (BUILDING_EMOJI, "b_shelf",           "chest"),
+        (BUILDING_EMOJI, "b_forge",           "forge"),
+        (VILLAGE_EMOJI,  "vil_grass",         "grass"),
     ]
 
     for d, tile_key, emoji_name in _replace:
@@ -538,6 +547,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("torch",       "torch"),
         ("fishing_net", "net"),
         ("iron_ore",    "iron_ore"),
+        ("fishing_rod", "fishing_pole"),
+        ("poison_sac",  "poison_sac"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:

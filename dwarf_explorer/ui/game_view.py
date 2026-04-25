@@ -74,14 +74,26 @@ def _custom_id(guild_id: int, user_id: int, action: str) -> str:
 
 
 class GameView(discord.ui.View):
-    """Main game view.  Shows sprint button when boots are equipped."""
+    """Main game view.
+
+    Layout:
+      Row 0: [Sprint/🥾] [⬆️] [⬇️] [Action] [🗺️ Map]
+      Row 1: [⬅️] [Center/Interact] [➡️] [🎒 Inv] [❓ Help]
+
+    center_label / center_enabled — on-tile contextual button (Enter cave, Chop, Harvest…)
+    action_label / action_enabled — adjacent-tile contextual button (Forge, Smith, Fish…)
+    """
 
     def __init__(self, guild_id: int, user_id: int, boots_equipped: bool = False,
-                 sprinting: bool = False, mine_dirs: frozenset[str] = frozenset()):
+                 sprinting: bool = False, mine_dirs: frozenset[str] = frozenset(),
+                 center_label: str = "", center_enabled: bool = False,
+                 action_label: str = "", action_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
-        self._build_buttons(boots_equipped, sprinting, mine_dirs)
+        self._build_buttons(boots_equipped, sprinting, mine_dirs,
+                            center_label, center_enabled,
+                            action_label, action_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -100,10 +112,13 @@ class GameView(discord.ui.View):
         )
 
     def _build_buttons(self, boots_equipped: bool, sprinting: bool,
-                       mine_dirs: frozenset[str]):
+                       mine_dirs: frozenset[str],
+                       center_label: str, center_enabled: bool,
+                       action_label: str, action_enabled: bool) -> None:
         sprint_label = "\U0001F97E"  # 🥾
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
+        # ── Row 0: Sprint | ⬆️ | ⬇️ | Action | Map ──────────────────────────
         if boots_equipped:
             sprint_btn = discord.ui.Button(
                 style=sprint_style,
@@ -119,20 +134,24 @@ class GameView(discord.ui.View):
                 row=0,
             )
 
-        up_btn   = self._dir_btn("up",    "\u2B06\uFE0F", 0, "up"    in mine_dirs)
-        spacer2  = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(self.guild_id, self.user_id, "sp2"),
-            row=0,
-        )
-        interact_btn = discord.ui.Button(
-            style=discord.ButtonStyle.success,
-            label="Interact",
-            emoji="\U0001F91A",
-            custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
-            row=0,
-        )
+        up_btn   = self._dir_btn("up",   "\u2B06\uFE0F", 0, "up"   in mine_dirs)
+        down_btn = self._dir_btn("down", "\u2B07\uFE0F", 0, "down" in mine_dirs)
+
+        if action_enabled and action_label:
+            action_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=action_label,
+                custom_id=_custom_id(self.guild_id, self.user_id, "action"),
+                row=0,
+            )
+        else:
+            action_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sp2"),
+                row=0,
+            )
+
         map_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Map",
@@ -140,9 +159,26 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "map"),
             row=0,
         )
+
+        # ── Row 1: ⬅️ | Center | ➡️ | Inventory | Help ──────────────────────
         left_btn  = self._dir_btn("left",  "\u2B05\uFE0F", 1, "left"  in mine_dirs)
-        down_btn  = self._dir_btn("down",  "\u2B07\uFE0F", 1, "down"  in mine_dirs)
         right_btn = self._dir_btn("right", "\u27A1\uFE0F", 1, "right" in mine_dirs)
+
+        if center_enabled and center_label:
+            center_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=center_label,
+                custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
+                row=1,
+            )
+        else:
+            center_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
+                row=1,
+            )
+
         inventory_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Inventory",
@@ -157,8 +193,9 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "help"),
             row=1,
         )
-        for btn in [sprint_btn, up_btn, spacer2, interact_btn, map_btn,
-                    left_btn, down_btn, right_btn, inventory_btn, help_btn]:
+
+        for btn in [sprint_btn, up_btn, down_btn, action_btn, map_btn,
+                    left_btn, center_btn, right_btn, inventory_btn, help_btn]:
             self.add_item(btn)
 
 
@@ -418,6 +455,37 @@ class MerchantView(discord.ui.View):
             ))
 
 
+class ForgeView(discord.ui.View):
+    """Forge interaction menu: smelt iron ore into ingots."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        for label, act, style in [
+            ("🧱 Smelt (3 ore → 1 ingot)", "forge_iron",  discord.ButtonStyle.primary),
+            ("❌ Close",                   "forge_close", discord.ButtonStyle.danger),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=style, label=label,
+                custom_id=_custom_id(guild_id, user_id, act), row=0,
+            ))
+
+
+class AnvilView(discord.ui.View):
+    """Anvil interaction menu: craft weapons from iron ingots."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        for label, act, style in [
+            ("🗡️ Dagger (1 ingot)", "anvil_dagger", discord.ButtonStyle.primary),
+            ("⚔️ Sword (2 ingots)", "anvil_sword",  discord.ButtonStyle.primary),
+            ("❌ Close",            "anvil_close",  discord.ButtonStyle.danger),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=style, label=label,
+                custom_id=_custom_id(guild_id, user_id, act), row=0,
+            ))
+
+
 # ── Equipment helpers ─────────────────────────────────────────────────────────
 
 def _equipped_dict(player: Player) -> dict:
@@ -485,17 +553,151 @@ async def _resolve_cave_combat(
 
 # ── Movement ──────────────────────────────────────────────────────────────────
 
+def _compute_context_labels(
+    grid: list[list],
+    player: Player,
+    hand_items: set[str],
+) -> tuple[str, bool, str, bool]:
+    """Return (center_label, center_enabled, action_label, action_enabled).
+
+    center = on-tile interaction (interact button at row-1 center)
+    action = adjacent-tile interaction (action button at row-0 right)
+    """
+    vc = 4  # VIEWPORT_CENTER
+
+    center_label, center_enabled = "", False
+    action_label, action_enabled = "", False
+
+    if not grid or len(grid) <= vc:
+        return center_label, center_enabled, action_label, action_enabled
+
+    center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
+    if center_tile:
+        t = center_tile.terrain
+        s = center_tile.structure
+
+        # Structural overrides (cave/village on overworld)
+        if s == "cave":
+            center_label, center_enabled = "🕳️ Enter", True
+        elif s == "village":
+            center_label, center_enabled = "🏘️ Enter", True
+        # Canoe launch
+        elif t == "river_landing":
+            center_label, center_enabled = "⛵ Launch", True
+        # Cave chest
+        elif t in CAVE_CHEST_TYPES:
+            center_label, center_enabled = "📦 Open", True
+        # Cave exit
+        elif t == "cave_entrance":
+            center_label, center_enabled = "🚪 Exit Cave", True
+        # Building door
+        elif t == "b_door":
+            center_label, center_enabled = "🚪 Exit", True
+        # Building NPCs (on-tile)
+        elif t == "b_bank_npc":
+            center_label, center_enabled = "🏦 Bank", True
+        elif t == "b_shop_npc":
+            center_label, center_enabled = "🛒 Shop", True
+        elif t == "b_stove":
+            center_label, center_enabled = "🔥 Cook", True
+        elif t == "b_blacksmith_npc":
+            center_label, center_enabled = "⚒️ Craft", True
+        elif t == "b_priest":
+            center_label, center_enabled = "💬 Talk", True
+        elif t == "b_altar":
+            center_label, center_enabled = "⛩️ Pray", True
+        elif t == "b_safe":
+            center_label, center_enabled = "🔒 Vault", True
+        # Village buildings (enter)
+        elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
+            center_label, center_enabled = "🚪 Enter", True
+        elif t == "vil_well":
+            center_label, center_enabled = "⛲ Well", True
+        # Tool × terrain interactions
+        elif t in ("forest", "dense_forest") and "axe" in hand_items:
+            center_label, center_enabled = "🪓 Chop", True
+        elif t == "crop_ripe":
+            center_label, center_enabled = "🌻 Harvest", True
+        elif t in ("crop_planted", "crop_sprout") and "watering_can" in hand_items:
+            center_label, center_enabled = "💧 Water", True
+        elif t in ("sapling", "short_grass", "seedling") and "watering_can" in hand_items:
+            center_label, center_enabled = "💧 Water", True
+        elif t == "farmland" and "seed" in hand_items:
+            center_label, center_enabled = "🌱 Plant", True
+        elif t in ("path", "farmland") and "sapling" in hand_items:
+            center_label, center_enabled = "🌱 Plant", True
+        elif t == "path" and "seed" in hand_items:
+            center_label, center_enabled = "🌱 Plant", True
+        elif t == "sapling" and "shovel" in hand_items:
+            center_label, center_enabled = "⛏️ Dig", True
+        elif t in ("grass", "plains", "sand") and "shovel" in hand_items:
+            center_label, center_enabled = "⛏️ Till", True
+        elif t in ("grass", "plains") and "knife" in hand_items:
+            center_label, center_enabled = "✂️ Cut", True
+        # Item-based interactions (lower priority)
+        elif "cooked_fish" in hand_items or "fish" in hand_items:
+            center_label, center_enabled = "🍗 Eat", True
+        elif "map_fragment" in hand_items:
+            center_label, center_enabled = "🗺️ Assemble", True
+        elif "shovel" in hand_items:
+            # Could be digging a treasure; handler checks coordinates
+            center_label, center_enabled = "⛏️ Dig", True
+
+    # ── Action label: adjacent-tile interactions ──────────────────────────────
+    adj_terrains: set[str] = set()
+    for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        r, c = vc + ro, vc + co
+        if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+            adj = grid[r][c]
+            if adj.terrain:
+                adj_terrains.add(adj.terrain)
+            if adj.structure:
+                adj_terrains.add(adj.structure)
+
+    if "b_forge" in adj_terrains:
+        action_label, action_enabled = "🔥 Forge", True
+    elif "b_anvil" in adj_terrains:
+        action_label, action_enabled = "⚒️ Smith", True
+    elif "b_shop_npc" in adj_terrains:
+        action_label, action_enabled = "🛒 Shop", True
+    elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
+        action_label, action_enabled = "🎣 Fish", True
+
+    return center_label, center_enabled, action_label, action_enabled
+
+
 def _game_view(guild_id: int, user_id: int, player: Player,
-               mine_dirs: frozenset[str] = frozenset()) -> discord.ui.View:
+               mine_dirs: frozenset[str] = frozenset(),
+               grid: list[list] | None = None) -> discord.ui.View:
+    """Build the appropriate game view, computing context labels if grid is provided."""
     if player.in_canoe:
         return CanoeView(guild_id, user_id, dock_available=False)
+
+    center_label, center_enabled = "", False
+    action_label, action_enabled = "", False
+
+    if grid is not None:
+        hand_items: set[str] = set()
+        if player.hand_1:
+            hand_items.add(player.hand_1)
+        if player.hand_2:
+            hand_items.add(player.hand_2)
+        center_label, center_enabled, action_label, action_enabled = _compute_context_labels(
+            grid, player, hand_items
+        )
+
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots is not None),
                     sprinting=player.sprinting,
-                    mine_dirs=mine_dirs)
+                    mine_dirs=mine_dirs,
+                    center_label=center_label,
+                    center_enabled=center_enabled,
+                    action_label=action_label,
+                    action_enabled=action_enabled)
 
 
-async def _cave_game_view(guild_id: int, user_id: int, player: Player, db) -> GameView:
+async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
+                           grid: list[list] | None = None) -> GameView:
     """Build a GameView with mine buttons for any adjacent cave_rock tiles."""
     mine_dirs: set[str] = set()
     if player.in_cave:
@@ -505,7 +707,7 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db) -> Ga
             )
             if tile.terrain == "cave_rock":
                 mine_dirs.add(direction)
-    return _game_view(guild_id, user_id, player, frozenset(mine_dirs))
+    return _game_view(guild_id, user_id, player, frozenset(mine_dirs), grid=grid)
 
 
 _CANOE_DIRS: dict[str, tuple[int, int]] = {
@@ -705,18 +907,18 @@ async def _move_steps(
                     vx, vy, player.village_wx, player.village_wy,
                 )
                 grid = await load_village_viewport(player.village_id, vx, vy, db)
-                return render_grid(grid, player, "You step outside."), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, "You step outside."), _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_building(target)
             if not allowed:
                 grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
             player.house_x, player.house_y = nx, ny
             await update_player_house_state(
                 db, user_id, True, player.house_id,
                 nx, ny, player.house_vx, player.house_vy, player.house_type,
             )
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_village:
         for _ in range(steps):
@@ -730,18 +932,18 @@ async def _move_steps(
                 await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
                 await update_player_position(db, user_id, wx, wy)
                 grid = await load_viewport(wx, wy, seed, db)
-                return render_grid(grid, player, "You leave the village."), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, "You leave the village."), _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_village(target)
             if not allowed:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
             player.village_x, player.village_y = nx, ny
             await update_player_village_state(
                 db, user_id, True, player.village_id,
                 nx, ny, player.village_wx, player.village_wy,
             )
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_cave:
         # Determine cave level for encounter rate lookup
@@ -780,7 +982,7 @@ async def _move_steps(
                                                    player.cave_x, player.cave_y)
                     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                     return render_grid(grid, player, "You descend deeper into the cave..."), \
-                           await _cave_game_view(guild_id, user_id, player, db)
+                           await _cave_game_view(guild_id, user_id, player, db, grid=grid)
 
             # Handle stairup: ascend to parent cave
             if target.terrain == "cave_stairup":
@@ -798,17 +1000,17 @@ async def _move_steps(
                                                    player.cave_x, player.cave_y)
                     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                     return render_grid(grid, player, "You climb back up..."), \
-                           await _cave_game_view(guild_id, user_id, player, db)
+                           await _cave_game_view(guild_id, user_id, player, db, grid=grid)
                 # No parent cave — treat as normal floor
                 player.cave_x, player.cave_y = nx, ny
                 await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
+                return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
 
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                return render_grid(grid, player, reason), await _cave_game_view(guild_id, user_id, player, db)
+                return render_grid(grid, player, reason), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
             player.cave_x, player.cave_y = nx, ny
             await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
             # Random encounter on stone_floor tiles
@@ -836,7 +1038,7 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left)
                     return content, view
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db)
+        return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
 
     else:
         for _ in range(steps):
@@ -845,7 +1047,7 @@ async def _move_steps(
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
             # 0.2% travelling merchant encounter
@@ -881,7 +1083,7 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left)
                     return content, view
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def handle_move(
@@ -931,15 +1133,15 @@ async def _finish_combat(
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_position(db, user_id, player.world_x, player.world_y)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player)
+        return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player, grid=grid)
 
     await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
     # Return to the appropriate location view
     if player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db)
+        return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player)
+    return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def _after_player_action(
@@ -1147,7 +1349,7 @@ async def handle_mine(
     if "pickaxe" not in hand_items:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "You need a pickaxe to mine that rock.")
-        view = await _cave_game_view(guild_id, user_id, player, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -1155,7 +1357,7 @@ async def handle_mine(
     if tile.terrain != "cave_rock":
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "That rock has already been mined.")
-        view = await _cave_game_view(guild_id, user_id, player, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -1178,7 +1380,7 @@ async def handle_mine(
 
     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
-    view = await _cave_game_view(guild_id, user_id, player, db)
+    view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -1469,7 +1671,7 @@ async def handle_merchant_close(
     content = render_grid(grid, player, "The merchant waves farewell and continues on their way.")
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player),
+        view=_game_view(guild_id, user_id, player, grid=grid),
     )
 
 
@@ -1538,18 +1740,7 @@ async def handle_interact(
             content = render_grid(grid, player, "A locked vault. Speak with the banker.")
 
         elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
-            craft_msgs = []
-            # Smelt iron: 3 ore → 1 ingot
-            ore_row = await db.fetch_one(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
-            )
-            ore_count = ore_row["quantity"] if ore_row else 0
-            ingot_batches = ore_count // 3
-            if ingot_batches > 0:
-                await remove_from_inventory(db, user_id, "iron_ore", ingot_batches * 3)
-                await add_to_inventory(db, user_id, "iron_ingot", ingot_batches)
-                craft_msgs.append(f"Smelted {ingot_batches * 3} ore → {ingot_batches} ingot{'s' if ingot_batches > 1 else ''}")
-            # Torch recipe: 1 stick + 1 resin → 1 torch
+            # Torch recipe: 1 stick + 1 resin → 1 torch  (ingot smelting is now at the forge)
             stick_row = await db.fetch_one(
                 "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
             )
@@ -1559,26 +1750,24 @@ async def handle_interact(
             stick_count = stick_row["quantity"] if stick_row else 0
             resin_count = resin_row["quantity"] if resin_row else 0
             torch_batches = min(stick_count, resin_count)
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             if torch_batches > 0:
                 await remove_from_inventory(db, user_id, "stick", torch_batches)
                 await remove_from_inventory(db, user_id, "resin", torch_batches)
                 await add_to_inventory(db, user_id, "torch", torch_batches)
-                craft_msgs.append(f"Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin")
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            if craft_msgs:
-                content = render_grid(grid, player, "⚒️ " + " | ".join(craft_msgs) + ".")
+                content = render_grid(grid, player, f"⚒️ Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin.")
             else:
-                content = render_grid(grid, player, "\"3 iron ore = 1 ingot. 1 stick + 1 resin = 1 torch.\"")
+                content = render_grid(grid, player, "\"1 stick + 1 resin = 1 torch. Use the 🔥 Forge to smelt ore, ⚒️ Anvil to craft weapons.\"")
 
         elif htile.terrain == "b_anvil":
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "A sturdy anvil. Speak with the blacksmith to smelt ore.")
+            content = render_grid(grid, player, "An anvil. Stand adjacent to it and use the ⚒️ Smith button.")
 
         else:
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
-        view = _game_view(guild_id, user_id, player)
+        view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_village:
@@ -1614,7 +1803,7 @@ async def handle_interact(
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
-        view = _game_view(guild_id, user_id, player)
+        view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_cave:
@@ -1657,7 +1846,7 @@ async def handle_interact(
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
-        view = await _cave_game_view(guild_id, user_id, player, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     else:
@@ -1882,23 +2071,6 @@ async def handle_interact(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "🟤 You dig up the soil and create farmland.")
 
-        elif "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
-            fish_rng = _random.Random(hash((user_id, wx, wy, player.xp, "fish")))
-            roll = fish_rng.random()
-            if roll < 0.65:
-                await add_to_inventory(db, user_id, "fish", 1)
-                msg = "🎣 You cast your line... and reel in a **fish**!"
-            elif roll < 0.95:
-                msg = "🎣 You cast your line... the fish got away."
-            else:
-                # Rare catch
-                specials = ["gem", "iron_ore", "key"]
-                special = fish_rng.choice(specials)
-                await add_to_inventory(db, user_id, special, 1)
-                msg = f"🎣 You reel in something unusual — a **{special.replace('_', ' ')}**!"
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, msg)
-
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             food_id = "cooked_fish" if "cooked_fish" in hand_items else "fish"
             food_row = await db.fetch_one(
@@ -1938,8 +2110,190 @@ async def handle_interact(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
-        view = _game_view(guild_id, user_id, player)
+        view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Action button handlers (adjacent-tile interactions) ───────────────────────
+
+async def handle_action(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Handle the context-sensitive Action button (adjacent-tile interactions)."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    hand_items: set[str] = set()
+    if player.hand_1:
+        hand_items.add(player.hand_1)
+    if player.hand_2:
+        hand_items.add(player.hand_2)
+
+    # ── Forge: adjacent b_forge ───────────────────────────────────────────────
+    if player.in_house:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        vc = 4
+        adj_terrains = set()
+        for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            r, c = vc + ro, vc + co
+            if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                t = grid[r][c].terrain
+                if t:
+                    adj_terrains.add(t)
+
+        if "b_forge" in adj_terrains:
+            await interaction.response.edit_message(
+                embed=_embed("🔥 **Forge** — What would you like to smelt?"),
+                content=None,
+                view=ForgeView(guild_id, user_id),
+            )
+            return
+
+        if "b_anvil" in adj_terrains:
+            await interaction.response.edit_message(
+                embed=_embed("⚒️ **Anvil** — What would you like to craft?"),
+                content=None,
+                view=AnvilView(guild_id, user_id),
+            )
+            return
+
+        if "b_shop_npc" in adj_terrains:
+            return await _open_shop(interaction, guild_id, user_id, player)
+
+        content = render_grid(grid, player, "Nothing to interact with nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Overworld / village: fishing ──────────────────────────────────────────
+    if not player.in_cave and not player.in_village:
+        wx, wy = player.world_x, player.world_y
+        if "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
+            fish_rng = _random.Random(hash((user_id, wx, wy, player.xp, "fish")))
+            roll = fish_rng.random()
+            if roll < 0.50:
+                await add_to_inventory(db, user_id, "fish", 1)
+                msg = "🎣 You cast your line... and reel in a **fish**!"
+            elif roll < 0.51:
+                # 1% chance: map fragment
+                await add_to_inventory(db, user_id, "map_fragment", 1)
+                msg = "🎣 You reel in something unusual — a **map fragment**!"
+            else:
+                msg = "🎣 You cast your line... the fish got away."
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, msg)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, "Nothing to interact with nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Fallback
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, "Nothing to interact with nearby.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_forge_iron(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Smelt iron ore into ingots at the forge (3 ore → 1 ingot)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ore_row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
+    )
+    ore_count = ore_row["quantity"] if ore_row else 0
+    ingot_batches = ore_count // 3
+
+    if ingot_batches > 0:
+        await remove_from_inventory(db, user_id, "iron_ore", ingot_batches * 3)
+        await add_to_inventory(db, user_id, "iron_ingot", ingot_batches)
+        msg = (f"🔥 Smelted {ingot_batches * 3} iron ore → "
+               f"**{ingot_batches} iron ingot{'s' if ingot_batches > 1 else ''}**!")
+    else:
+        msg = "🔥 You need at least 3 iron ore to smelt an ingot."
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+    )
+
+
+async def handle_forge_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "You step away from the forge.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_anvil_dagger(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft a dagger at the anvil (1 iron ingot)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ingot_row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ingot'", (user_id,)
+    )
+    ingot_count = ingot_row["quantity"] if ingot_row else 0
+
+    if ingot_count >= 1:
+        await remove_from_inventory(db, user_id, "iron_ingot", 1)
+        await add_to_inventory(db, user_id, "dagger", 1)
+        msg = "⚒️ You craft a **dagger**! (+8 attack, equip to hand)"
+    else:
+        msg = "⚒️ You need 1 iron ingot to craft a dagger."
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+    )
+
+
+async def handle_anvil_sword(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft a sword at the anvil (2 iron ingots)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ingot_row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ingot'", (user_id,)
+    )
+    ingot_count = ingot_row["quantity"] if ingot_row else 0
+
+    if ingot_count >= 2:
+        await remove_from_inventory(db, user_id, "iron_ingot", 2)
+        await add_to_inventory(db, user_id, "sword", 1)
+        msg = "⚒️ You forge a **sword**! (+12 attack, equip to hand)"
+    else:
+        msg = "⚒️ You need 2 iron ingots to forge a sword."
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+    )
+
+
+async def handle_anvil_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "You step away from the anvil.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Inventory handlers ────────────────────────────────────────────────────────

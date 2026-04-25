@@ -345,10 +345,10 @@ def _generate_landings_sync(
     # Deduplicate candidates
     candidates = list(dict.fromkeys(candidates))
 
-    # Greedy spacing filter: keep a landing only if it's ≥12 tiles from any kept landing.
-    # Use a coarse grid (cell size = MIN_DIST/2) to avoid O(n²) comparisons.
-    _MIN_DIST = 12
-    _CELL = _MIN_DIST // 2  # 6
+    # Greedy spacing filter: keep a landing only if it's ≥35 tiles from any kept landing.
+    # Hard cap of 15 landings total. Use a coarse grid to avoid O(n²) comparisons.
+    _MIN_DIST = 35
+    _CELL = _MIN_DIST // 2  # 17
     occupied: dict[tuple[int, int], tuple[int, int]] = {}  # cell → kept pos
     kept: list[tuple[int, int]] = []
 
@@ -367,6 +367,8 @@ def _generate_landings_sync(
         if not too_close:
             occupied[(cell_x, cell_y)] = (cx, cy)
             kept.append((cx, cy))
+            if len(kept) >= 15:
+                break
 
     return kept
 
