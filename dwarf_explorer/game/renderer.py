@@ -28,7 +28,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
     return TERRAIN_EMOJI.get(tile.terrain, _BLACK)
 
 
-def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "") -> str:
+def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "",
+                other_players: list[tuple[int, int, str]] | None = None) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -38,6 +39,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     - Torch equipped: tiles within _FOV_RADIUS tiles of player are lit; rest = ⬛
     - No torch, on entrance: player icon visible, rest = ⬛
     - No torch, elsewhere: everything = ⬛ (player cannot see themselves)
+
+    other_players: list of (world_x, world_y, display_name) for nearby players.
+    Only rendered in overworld view.
     """
     if player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
@@ -50,6 +54,15 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 
     vp_size   = len(grid)
     vp_center = vp_size // 2
+
+    # Build other-player viewport positions (overworld only)
+    _other_pos: set[tuple[int, int]] = set()
+    if other_players and location == "wilderness":
+        for ox, oy, _ in other_players:
+            col = ox - player.world_x + vp_center
+            row = oy - player.world_y + vp_center
+            if 0 <= col < vp_size and 0 <= row < vp_size:
+                _other_pos.add((col, row))
 
     # Cave visibility pre-computation
     torch_on   = False
@@ -80,6 +93,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
             else:
                 if is_center:
                     row_emojis.append(ENTITY_EMOJI["player"])
+                elif (col_x, row_y) in _other_pos:
+                    row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
                 else:
                     row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
 
@@ -214,6 +229,7 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
 def render_bank(
     player_items: list[dict], bank_items: list[dict],
     selected: int, view: str, equipped: dict,
+    inv_rows: int = 2, inv_cols: int = 5,
 ) -> str:
     """Render bank UI. view = 'player' or 'bank'."""
     COLS = 9
@@ -221,10 +237,10 @@ def render_bank(
     TOTAL = COLS * ROWS
 
     if view == "player":
-        title = "\U0001F3E6 **Bank** — Your Inventory (5×2)"
+        title = f"\U0001F3E6 **Bank** — Your Inventory ({inv_rows}×{inv_cols})"
         source = player_items
         action_label = "⬇ Deposit"
-        COLS_disp, TOTAL_disp = 5, 10
+        COLS_disp, TOTAL_disp = inv_cols, inv_rows * inv_cols
     else:
         title = "\U0001F3E6 **Bank** — Vault (9×4)"
         source = bank_items
@@ -328,6 +344,7 @@ def render_shop(catalog: list[dict], selected: int, player_gold: int,
                 mode: str = "buy", sell_items: list[dict] | None = None,
                 sell_prices: dict | None = None) -> str:
     """Render shop menu. mode='buy' shows catalog; mode='sell' shows inventory."""
+    from dwarf_explorer.config import ITEM_EMOJI as _IE
     if mode == "sell":
         lines = ["\U0001F3EA **Shop — Sell Items**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
         items = sell_items or []
@@ -353,7 +370,9 @@ def render_shop(catalog: list[dict], selected: int, player_gold: int,
             prefix = "▶ " if i == selected else "  "
             bracket_open  = "[" if i == selected else ""
             bracket_close = "]" if i == selected else ""
-            lines.append(f"{prefix}{bracket_open}{item['emoji']} {item['name']} — {item['price']} gold{bracket_close}")
+            # Use live ITEM_EMOJI so custom server emojis display correctly
+            item_emoji = _IE.get(item["id"], item.get("emoji", "\U0001F4E6"))
+            lines.append(f"{prefix}{bracket_open}{item_emoji} {item['name']} — {item['price']} gold{bracket_close}")
             lines.append(f"   *{item['description']}*")
         lines.append("")
         lines.append("◀▶ navigate  |  💰 Buy  |  💲 Sell Mode  |  ❌ Close")

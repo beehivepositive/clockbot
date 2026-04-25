@@ -35,7 +35,7 @@ _CANOE_MOVE_ACTIONS = {
     "canoe_upleft", "canoe_upright", "canoe_downleft", "canoe_downright",
 }
 _IGNORED_ACTIONS = {
-    "sp1", "sp2", "c_wait", "csp0", "csp1", "c_free",
+    "sp1", "sp2", "sp3", "sp4", "sp5", "c_wait", "csp0", "csp1", "c_free",
     "csp_a", "csp_b", "csp_c", "csp_d",
     "csp_5", "csp_6", "csp_7", "csp_8", "csp_9",
     "c_potion",

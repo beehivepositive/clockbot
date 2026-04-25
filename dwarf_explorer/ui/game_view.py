@@ -40,6 +40,8 @@ from dwarf_explorer.database.repositories import (
     get_treasure_map,
     set_treasure_map,
     mark_treasure_found,
+    get_nearby_players,
+    get_all_overworld_players,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -115,14 +117,14 @@ class GameView(discord.ui.View):
                        mine_dirs: frozenset[str],
                        center_label: str, center_enabled: bool,
                        action_label: str, action_enabled: bool) -> None:
-        sprint_label = "\U0001F97E"  # 🥾
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
-        # ── Row 0: Sprint | ⬆️ | ⬇️ | Action | Map ──────────────────────────
+        # ── Row 0: Sprint | ⬆️ | Action | Map | spacer ───────────────────────
+        #   Col:    0        1     2         3     4
         if boots_equipped:
             sprint_btn = discord.ui.Button(
                 style=sprint_style,
-                label=sprint_label,
+                label="\U0001F97E",  # 🥾
                 custom_id=_custom_id(self.guild_id, self.user_id, "sprint"),
                 row=0,
             )
@@ -134,8 +136,7 @@ class GameView(discord.ui.View):
                 row=0,
             )
 
-        up_btn   = self._dir_btn("up",   "\u2B06\uFE0F", 0, "up"   in mine_dirs)
-        down_btn = self._dir_btn("down", "\u2B07\uFE0F", 0, "down" in mine_dirs)
+        up_btn = self._dir_btn("up", "\u2B06\uFE0F", 0, "up" in mine_dirs)
 
         if action_enabled and action_label:
             action_btn = discord.ui.Button(
@@ -159,15 +160,22 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "map"),
             row=0,
         )
+        sp4_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="\u200b", disabled=True,
+            custom_id=_custom_id(self.guild_id, self.user_id, "sp4"),
+            row=0,
+        )
 
         # ── Row 1: ⬅️ | Center | ➡️ | Inventory | Help ──────────────────────
+        #   Col:   0     1         2     3             4
         left_btn  = self._dir_btn("left",  "\u2B05\uFE0F", 1, "left"  in mine_dirs)
         right_btn = self._dir_btn("right", "\u27A1\uFE0F", 1, "right" in mine_dirs)
 
         if center_enabled and center_label:
             center_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
-                label=center_label,
+                label=center_label,  # single emoji only
                 custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
                 row=1,
             )
@@ -194,8 +202,28 @@ class GameView(discord.ui.View):
             row=1,
         )
 
-        for btn in [sprint_btn, up_btn, down_btn, action_btn, map_btn,
-                    left_btn, center_btn, right_btn, inventory_btn, help_btn]:
+        # ── Row 2: spacer | ⬇️ | spacer ──────────────────────────────────────
+        #   Col:   0         1     2
+        #   ⬇️ sits directly below Center (col 1), ⬆️ above it (col 1) → clean cross
+        sp3_btn  = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="\u200b", disabled=True,
+            custom_id=_custom_id(self.guild_id, self.user_id, "sp3"),
+            row=2,
+        )
+        down_btn = self._dir_btn("down", "\u2B07\uFE0F", 2, "down" in mine_dirs)
+        sp5_btn  = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="\u200b", disabled=True,
+            custom_id=_custom_id(self.guild_id, self.user_id, "sp5"),
+            row=2,
+        )
+
+        for btn in [
+            sprint_btn, up_btn, action_btn, map_btn, sp4_btn,   # row 0
+            left_btn, center_btn, right_btn, inventory_btn, help_btn,  # row 1
+            sp3_btn, down_btn, sp5_btn,                          # row 2
+        ]:
             self.add_item(btn)
 
 
@@ -578,70 +606,66 @@ def _compute_context_labels(
 
         # Structural overrides (cave/village on overworld)
         if s == "cave":
-            center_label, center_enabled = "🕳️ Enter", True
+            center_label, center_enabled = "🕳️", True
         elif s == "village":
-            center_label, center_enabled = "🏘️ Enter", True
+            center_label, center_enabled = "🏘️", True
         # Canoe launch
         elif t == "river_landing":
-            center_label, center_enabled = "⛵ Launch", True
+            center_label, center_enabled = "⛵", True
         # Cave chest
         elif t in CAVE_CHEST_TYPES:
-            center_label, center_enabled = "📦 Open", True
-        # Cave exit
-        elif t == "cave_entrance":
-            center_label, center_enabled = "🚪 Exit Cave", True
-        # Building door
-        elif t == "b_door":
-            center_label, center_enabled = "🚪 Exit", True
+            center_label, center_enabled = "📦", True
+        # Cave exit / building door / village buildings (enter)
+        elif t in ("cave_entrance", "b_door"):
+            center_label, center_enabled = "🚪", True
+        elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
+            center_label, center_enabled = "🚪", True
         # Building NPCs (on-tile)
         elif t == "b_bank_npc":
-            center_label, center_enabled = "🏦 Bank", True
+            center_label, center_enabled = "🏦", True
         elif t == "b_shop_npc":
-            center_label, center_enabled = "🛒 Shop", True
+            center_label, center_enabled = "🛒", True
         elif t == "b_stove":
-            center_label, center_enabled = "🔥 Cook", True
+            center_label, center_enabled = "🔥", True
         elif t == "b_blacksmith_npc":
-            center_label, center_enabled = "⚒️ Craft", True
+            center_label, center_enabled = "⚒️", True
         elif t == "b_priest":
-            center_label, center_enabled = "💬 Talk", True
+            center_label, center_enabled = "💬", True
         elif t == "b_altar":
-            center_label, center_enabled = "⛩️ Pray", True
+            center_label, center_enabled = "⛩️", True
         elif t == "b_safe":
-            center_label, center_enabled = "🔒 Vault", True
-        # Village buildings (enter)
-        elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
-            center_label, center_enabled = "🚪 Enter", True
+            center_label, center_enabled = "🔒", True
         elif t == "vil_well":
-            center_label, center_enabled = "⛲ Well", True
+            center_label, center_enabled = "⛲", True
         # Tool × terrain interactions
         elif t in ("forest", "dense_forest") and "axe" in hand_items:
-            center_label, center_enabled = "🪓 Chop", True
+            center_label, center_enabled = "🪓", True
         elif t == "crop_ripe":
-            center_label, center_enabled = "🌻 Harvest", True
+            center_label, center_enabled = "🌻", True
         elif t in ("crop_planted", "crop_sprout") and "watering_can" in hand_items:
-            center_label, center_enabled = "💧 Water", True
+            center_label, center_enabled = "💧", True
         elif t in ("sapling", "short_grass", "seedling") and "watering_can" in hand_items:
-            center_label, center_enabled = "💧 Water", True
+            center_label, center_enabled = "💧", True
         elif t == "farmland" and "seed" in hand_items:
-            center_label, center_enabled = "🌱 Plant", True
+            center_label, center_enabled = "🌱", True
         elif t in ("path", "farmland") and "sapling" in hand_items:
-            center_label, center_enabled = "🌱 Plant", True
+            center_label, center_enabled = "🌱", True
         elif t == "path" and "seed" in hand_items:
-            center_label, center_enabled = "🌱 Plant", True
+            center_label, center_enabled = "🌱", True
         elif t == "sapling" and "shovel" in hand_items:
-            center_label, center_enabled = "⛏️ Dig", True
+            center_label, center_enabled = "⛏️", True
         elif t in ("grass", "plains", "sand") and "shovel" in hand_items:
-            center_label, center_enabled = "⛏️ Till", True
+            center_label, center_enabled = "⛏️", True
         elif t in ("grass", "plains") and "knife" in hand_items:
-            center_label, center_enabled = "✂️ Cut", True
+            center_label, center_enabled = "✂️", True
         # Item-based interactions (lower priority)
         elif "cooked_fish" in hand_items or "fish" in hand_items:
-            center_label, center_enabled = "🍗 Eat", True
+            center_label, center_enabled = "🍗", True
         elif "map_fragment" in hand_items:
-            center_label, center_enabled = "🗺️ Assemble", True
+            center_label, center_enabled = "🗺️", True
         elif "shovel" in hand_items:
             # Could be digging a treasure; handler checks coordinates
-            center_label, center_enabled = "⛏️ Dig", True
+            center_label, center_enabled = "⛏️", True
 
     # ── Action label: adjacent-tile interactions ──────────────────────────────
     adj_terrains: set[str] = set()
@@ -660,6 +684,8 @@ def _compute_context_labels(
         action_label, action_enabled = "⚒️ Smith", True
     elif "b_shop_npc" in adj_terrains:
         action_label, action_enabled = "🛒 Shop", True
+    elif "b_bank_npc" in adj_terrains:
+        action_label, action_enabled = "🏦 Bank", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
 
@@ -1047,7 +1073,8 @@ async def _move_steps(
             allowed, reason = can_move(player, direction, target)
             if not allowed:
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
+                nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
+                return render_grid(grid, player, reason, other_players=nearby), _game_view(guild_id, user_id, player, grid=grid)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
             # 0.2% travelling merchant encounter
@@ -1083,7 +1110,8 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left)
                     return content, view
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+        nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
+        return render_grid(grid, player, other_players=nearby), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def handle_move(
@@ -1403,14 +1431,17 @@ async def handle_sprint(
     status = "Sprint ON \U0001F3C3" if player.sprinting else "Sprint OFF"
     if player.in_house:
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player, status)
-    view = _game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2161,6 +2192,9 @@ async def handle_action(
         if "b_shop_npc" in adj_terrains:
             return await _open_shop(interaction, guild_id, user_id, player)
 
+        if "b_bank_npc" in adj_terrains:
+            return await _open_bank(interaction, guild_id, user_id, player, db)
+
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -2450,14 +2484,17 @@ async def handle_inv_close(
         return
     if player.in_house:
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
-    view = _game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2587,7 +2624,8 @@ async def _open_bank(
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    content = render_bank(player_items, bank_items, 0, "player", equipped)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_bank(player_items, bank_items, 0, "player", equipped, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
 
@@ -2599,13 +2637,14 @@ async def handle_bank_nav(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
     bv = state.get("bank_view", "player")
-    total = max(1, (10 if bv == "player" else 36))
+    inv_rows, inv_cols = _inv_capacity(player)
+    total = max(1, (inv_rows * inv_cols if bv == "player" else 36))
     new_sel = (state["selected"] + delta) % total
     _ui_state[user_id] = {"type": "bank", "selected": new_sel, "bank_view": bv}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    content = render_bank(player_items, bank_items, new_sel, bv, equipped)
+    content = render_bank(player_items, bank_items, new_sel, bv, equipped, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
@@ -2621,7 +2660,8 @@ async def handle_bank_switch(
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    content = render_bank(player_items, bank_items, 0, new_view, equipped)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content = render_bank(player_items, bank_items, 0, new_view, equipped, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, new_view))
 
@@ -2634,11 +2674,12 @@ async def handle_bank_deposit(
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
     sel = state.get("selected", 0)
     items = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
     if sel >= len(items):
         player_items = items
         bank_items = await get_bank_items(db, user_id)
         equipped = _equipped_dict(player)
-        content = render_bank(player_items, bank_items, sel, "player", equipped) + "\n*(Empty slot)*"
+        content = render_bank(player_items, bank_items, sel, "player", equipped, inv_rows, inv_cols) + "\n*(Empty slot)*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "player"))
         return
@@ -2650,7 +2691,7 @@ async def handle_bank_deposit(
     new_sel = min(sel, max(0, len(player_items) - 1))
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
-    content = render_bank(player_items, bank_items, new_sel, "player", equipped) + suffix
+    content = render_bank(player_items, bank_items, new_sel, "player", equipped, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
 
@@ -2663,11 +2704,12 @@ async def handle_bank_withdraw(
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "bank"})
     sel = state.get("selected", 0)
     items = await get_bank_items(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
     if sel >= len(items):
         player_items = await get_inventory(db, user_id)
         bank_items = items
         equipped = _equipped_dict(player)
-        content = render_bank(player_items, bank_items, sel, "bank", equipped) + "\n*(Empty slot)*"
+        content = render_bank(player_items, bank_items, sel, "bank", equipped, inv_rows, inv_cols) + "\n*(Empty slot)*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "bank"))
         return
@@ -2679,7 +2721,7 @@ async def handle_bank_withdraw(
     new_sel = min(sel, max(0, len(bank_items_new) - 1))
     _ui_state[user_id]["selected"] = new_sel
     suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
-    content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped) + suffix
+    content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "bank"))
 
@@ -2935,8 +2977,9 @@ async def handle_map(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    other_players = await get_all_overworld_players(db, user_id)
     from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(seed, db, player.world_x, player.world_y)
+    buf = await generate_world_map(seed, db, player.world_x, player.world_y, other_players)
     file = discord.File(buf, filename="world_map.png")
     await interaction.followup.send(file=file, ephemeral=True)
 
@@ -2980,12 +3023,15 @@ async def handle_help_back(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     if player.in_house:
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
-    view = _game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)

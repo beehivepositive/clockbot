@@ -543,12 +543,16 @@ def apply_custom_emojis(guild_emojis: list) -> None:
 
     # Item emoji overrides — update both ITEM_EMOJI (ground) and renderer's inventory dict
     _item_overrides = [
-        ("shovel",      "shovel"),
-        ("torch",       "torch"),
-        ("fishing_net", "net"),
-        ("iron_ore",    "iron_ore"),
-        ("fishing_rod", "fishing_pole"),
-        ("poison_sac",  "poison_sac"),
+        ("shovel",       "shovel"),
+        ("torch",        "torch"),
+        ("fishing_net",  "net"),
+        ("iron_ore",     "iron_ore"),
+        ("fishing_rod",  "fishing_pole"),
+        ("poison_sac",   "poison_sac"),
+        ("cooked_fish",  "cooked_fish"),
+        ("small_pouch",  "small_pouch"),
+        ("medium_pouch", "medium_pouch"),
+        ("large_pouch",  "large_pouch"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:

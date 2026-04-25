@@ -171,6 +171,31 @@ async def update_player_sprint(db: Database, user_id: int, sprinting: bool) -> N
     )
 
 
+async def get_nearby_players(
+    db: Database, exclude_user_id: int, wx: int, wy: int, radius: int = 4
+) -> list[tuple[int, int, str]]:
+    """Return [(world_x, world_y, display_name)] for overworld players within radius tiles."""
+    rows = await db.fetch_all(
+        "SELECT world_x, world_y, display_name FROM players"
+        " WHERE user_id != ? AND in_cave = 0 AND in_village = 0 AND in_house = 0"
+        " AND world_x BETWEEN ? AND ? AND world_y BETWEEN ? AND ?",
+        (exclude_user_id, wx - radius, wx + radius, wy - radius, wy + radius),
+    )
+    return [(r["world_x"], r["world_y"], r["display_name"]) for r in rows]
+
+
+async def get_all_overworld_players(
+    db: Database, exclude_user_id: int
+) -> list[tuple[int, int, str]]:
+    """Return [(world_x, world_y, display_name)] for all overworld players."""
+    rows = await db.fetch_all(
+        "SELECT world_x, world_y, display_name FROM players"
+        " WHERE user_id != ? AND in_cave = 0 AND in_village = 0 AND in_house = 0",
+        (exclude_user_id,),
+    )
+    return [(r["world_x"], r["world_y"], r["display_name"]) for r in rows]
+
+
 # --- Caves ---
 
 async def update_player_cave_state(

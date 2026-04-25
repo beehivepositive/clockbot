@@ -61,7 +61,8 @@ def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
         draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color, outline=white)
 
 
-def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int) -> io.BytesIO:
+def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
+                       other_players: list | None = None) -> io.BytesIO:
     from PIL import Image, ImageDraw, ImageFont
 
     scale = MAP_PIXEL_SCALE
@@ -105,7 +106,15 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
             cy = wy * scale + scale // 2
             _draw_icon(draw, cx, cy, style, color)
 
-    # ── Player marker ─────────────────────────────────────────────────────────
+    # ── Other player markers (blue) ───────────────────────────────────────────
+    if other_players:
+        for ox, oy, _ in other_players:
+            cx_o = ox * scale + scale // 2
+            cy_o = oy * scale + scale // 2
+            draw.ellipse([cx_o - 3, cy_o - 3, cx_o + 3, cy_o + 3],
+                         fill=(60, 120, 255), outline=(255, 255, 255))
+
+    # ── Player marker (red) ───────────────────────────────────────────────────
     cx_p = player_x * scale + scale // 2
     cy_p = player_y * scale + scale // 2
     draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3], fill=(255, 0, 0), outline=(255, 255, 255))
@@ -124,6 +133,7 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
     for tile_key, label, color, style in [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]:
         all_legend.append((tile_key, label, color, style))
     all_legend.append(("__player__", "You", (255, 0, 0), "dot_red"))
+    all_legend.append(("__other__", "Other Player", (60, 120, 255), "dot_blue"))
 
     for i, (tile_key, label, color, style) in enumerate(all_legend):
         col = i % _LEGEND_COLS
@@ -136,7 +146,7 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
         if style == "square":
             draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1],
                            fill=color, outline=(180, 180, 180))
-        elif style == "dot_red":
+        elif style in ("dot_red", "dot_blue"):
             draw.ellipse([x0 + 1, y0 + 1, x0 + _LEGEND_SWATCH - 2, y0 + _LEGEND_SWATCH - 2],
                          fill=color, outline=(255, 255, 255))
         else:
@@ -152,7 +162,10 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int)
     return buf
 
 
-async def generate_world_map(seed: int, db, player_x: int, player_y: int) -> io.BytesIO:
+async def generate_world_map(seed: int, db, player_x: int, player_y: int,
+                             other_players: list | None = None) -> io.BytesIO:
     rows = await db.fetch_all("SELECT world_x, world_y, tile_type FROM tile_overrides")
     overrides = [(r["world_x"], r["world_y"], r["tile_type"]) for r in rows]
-    return await asyncio.to_thread(_generate_map_sync, seed, overrides, player_x, player_y)
+    return await asyncio.to_thread(
+        _generate_map_sync, seed, overrides, player_x, player_y, other_players or []
+    )
