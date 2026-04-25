@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random as _random
+from datetime import datetime, timedelta
 
 import discord
 
@@ -8,7 +9,7 @@ from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
-    POUCH_SIZES, SURFACE_ENCOUNTER_MOBS,
+    POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -34,6 +35,11 @@ from dwarf_explorer.database.repositories import (
     get_chest_items,
     add_to_chest,
     remove_from_chest,
+    get_farm_last_watered,
+    set_farm_watered,
+    get_treasure_map,
+    set_treasure_map,
+    mark_treasure_found,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -265,12 +271,12 @@ class CombatView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=0,
             ))
 
-        # Row 1: ← · → 🧪 🏃  (center is always a spacer — cobweb escape via arrows)
+        # Row 1: ← · → 🍗 🏃  (center is always a spacer — cobweb escape via arrows)
         for label, action, dis in [
             ("⬅️", "c_left",  disabled),
             ("·",  "c_wait",  True),
             ("➡️", "c_right", disabled),
-            ("🧪", "c_potion", disabled),
+            ("🍗", "c_eat",   disabled),
             ("🏃", "c_flee",  disabled),
         ]:
             self.add_item(discord.ui.Button(
@@ -296,6 +302,120 @@ class CombatView(discord.ui.View):
             label="\u200b", disabled=True,
             custom_id=_custom_id(gid, uid, "csp0"), row=2,
         ))
+
+
+# ── Canoe views ──────────────────────────────────────────────────────────────
+
+class CanoeView(discord.ui.View):
+    """8-directional canoe movement + Dock + Sail-to-destination."""
+
+    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label: str, action: str, row: int,
+                 style=discord.ButtonStyle.primary, disabled: bool = False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # Row 0: ↖ ↑ ↗ | 🏝️ Dock
+        self.add_item(_btn("↖", "canoe_upleft",   0))
+        self.add_item(_btn("⬆️", "canoe_up",       0))
+        self.add_item(_btn("↗", "canoe_upright",  0))
+        self.add_item(_btn("🏝️ Dock", "canoe_dock", 0,
+                           style=discord.ButtonStyle.success,
+                           disabled=not dock_available))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp_a"), row=0,
+        ))
+
+        # Row 1: ← ⛵ → | 🗺️ Sail
+        self.add_item(_btn("⬅️", "canoe_left",   1))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="⛵", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp_b"), row=1,
+        ))
+        self.add_item(_btn("➡️", "canoe_right",  1))
+        self.add_item(_btn("🗺️ Sail", "canoe_sail", 1,
+                           style=discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp_c"), row=1,
+        ))
+
+        # Row 2: ↙ ↓ ↘ | 🎒 Inventory
+        self.add_item(_btn("↙", "canoe_downleft",  2))
+        self.add_item(_btn("⬇️", "canoe_down",      2))
+        self.add_item(_btn("↘", "canoe_downright", 2))
+        self.add_item(_btn("🎒", "inventory", 2,
+                           style=discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp_d"), row=2,
+        ))
+
+
+class CanoeDestView(discord.ui.View):
+    """Shows up to 5 reachable landing destinations per page."""
+
+    def __init__(self, guild_id: int, user_id: int, dests: list[tuple[int, int]],
+                 page: int = 0):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        per_page = 5
+        total_pages = max(1, (len(dests) + per_page - 1) // per_page)
+        page_dests = dests[page * per_page: page * per_page + per_page]
+
+        # Row 0: up to 5 destination buttons
+        for i, (dx, dy) in enumerate(page_dests):
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=f"🏝️ ({dx},{dy})",
+                custom_id=_custom_id(gid, uid, f"csail_{i}"),
+                row=0,
+            ))
+        # Pad row 0 if fewer than 5 dests
+        for i in range(len(page_dests), per_page):
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, f"csp_{5 + i}"), row=0,
+            ))
+
+        # Row 1: prev / next / cancel
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="◀",
+            disabled=(page == 0),
+            custom_id=_custom_id(gid, uid, "csail_prev"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="▶",
+            disabled=(page >= total_pages - 1),
+            custom_id=_custom_id(gid, uid, "csail_next"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "csail_cancel"), row=1,
+        ))
+
+
+class MerchantView(discord.ui.View):
+    """Travelling merchant trade view."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        for label, act, style in [
+            ("◀",       "merch_prev",  discord.ButtonStyle.secondary),
+            ("▶",       "merch_next",  discord.ButtonStyle.secondary),
+            ("💰 Buy",  "merch_buy",   discord.ButtonStyle.success),
+            ("👋 Leave", "merch_close", discord.ButtonStyle.danger),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=style, label=label,
+                custom_id=_custom_id(guild_id, user_id, act), row=0,
+            ))
 
 
 # ── Equipment helpers ─────────────────────────────────────────────────────────
@@ -366,7 +486,9 @@ async def _resolve_cave_combat(
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 def _game_view(guild_id: int, user_id: int, player: Player,
-               mine_dirs: frozenset[str] = frozenset()) -> GameView:
+               mine_dirs: frozenset[str] = frozenset()) -> discord.ui.View:
+    if player.in_canoe:
+        return CanoeView(guild_id, user_id, dock_available=False)
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots is not None),
                     sprinting=player.sprinting,
@@ -386,14 +508,158 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db) -> Ga
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs))
 
 
+_CANOE_DIRS: dict[str, tuple[int, int]] = {
+    "up":        (0, -1),
+    "down":      (0, 1),
+    "left":      (-1, 0),
+    "right":     (1, 0),
+    "upleft":    (-1, -1),
+    "upright":   (1, -1),
+    "downleft":  (-1, 1),
+    "downright": (1, 1),
+}
+
+
+async def _adjacent_landing(player, seed: int, db) -> tuple[int, int] | None:
+    """Return the first adjacent river_landing tile, or None."""
+    for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        ax, ay = player.world_x + ddx, player.world_y + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if t.terrain == "river_landing":
+                return (ax, ay)
+    return None
+
+
+async def _is_adjacent_to_water(player: Player, seed: int, db) -> bool:
+    """Return True if any of the 4 cardinal neighbours is a river/water tile."""
+    water_types = {"river", "bridge", "shallow_water", "deep_water"}
+    for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        ax, ay = player.world_x + ddx, player.world_y + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if (t.structure or t.terrain) in water_types:
+                return True
+    return False
+
+
+async def _find_treasure_location(user_id: int, world_seed: int, db) -> tuple[int, int]:
+    """Pick a deterministic random walkable overworld tile ≥40 tiles from spawn."""
+    from dwarf_explorer.config import WALKABLE_TILES as _WT
+    rng = _random.Random(hash((user_id, world_seed, "treasure_v1")))
+    cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
+    for _ in range(300):
+        tx = rng.randint(10, WORLD_SIZE - 11)
+        ty = rng.randint(10, WORLD_SIZE - 11)
+        if abs(tx - cx) + abs(ty - cy) < 40:
+            continue
+        t = await load_single_tile(tx, ty, world_seed, db)
+        if t.terrain in _WT and t.terrain not in ("river_landing", "cave") and not t.structure:
+            return tx, ty
+    return cx + 45, cy + 45
+
+
+async def _find_canoe_destinations(
+    player, db
+) -> list[tuple[int, int]]:
+    """BFS through connected river/bridge tiles; return reachable landing positions."""
+    # Load river/bridge tile set from DB
+    water_rows = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides"
+        " WHERE tile_type IN ('river', 'bridge')"
+    )
+    water_set: set[tuple[int, int]] = {(r["world_x"], r["world_y"]) for r in water_rows}
+
+    start = (player.world_x, player.world_y)
+    if start not in water_set:
+        return []
+
+    # Load all river_landing positions
+    land_rows = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river_landing'"
+    )
+    all_landings: set[tuple[int, int]] = {(r["world_x"], r["world_y"]) for r in land_rows}
+
+    # BFS (8-directional, limited to 10 000 tiles)
+    visited: set[tuple[int, int]] = {start}
+    queue = [start]
+    head = 0
+    while head < len(queue) and len(visited) < 10_000:
+        x, y = queue[head]; head += 1
+        for ddx, ddy in ((0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)):
+            nb = (x + ddx, y + ddy)
+            if nb not in visited and nb in water_set:
+                visited.add(nb)
+                queue.append(nb)
+
+    # Collect landings adjacent to reachable water (cardinal only for embark)
+    found: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for lx, ly in all_landings:
+        if (lx, ly) in seen:
+            continue
+        for ddx, ddy in ((0,1),(0,-1),(1,0),(-1,0)):
+            if (lx + ddx, ly + ddy) in visited:
+                found.append((lx, ly))
+                seen.add((lx, ly))
+                break
+
+    # Sort by distance from player, skip current player position's adjacent landing
+    px, py = player.world_x, player.world_y
+    found.sort(key=lambda p: (p[0] - px) ** 2 + (p[1] - py) ** 2)
+    # Remove the landing the player is right next to (distance 1) to avoid "sail to here"
+    found = [(lx, ly) for lx, ly in found
+             if abs(lx - px) + abs(ly - py) > 1]
+    return found
+
+
+def _generate_merchant_catalog(rng: _random.Random) -> list[dict]:
+    """Pick 5 random shop items at 130% price for a travelling merchant."""
+    items = rng.sample(SHOP_CATALOG, min(5, len(SHOP_CATALOG)))
+    return [
+        {
+            "id": item["id"],
+            "name": item["name"],
+            "emoji": item.get("emoji", "📦"),
+            "price": int(item["price"] * 1.3 + 0.5),
+            "description": item.get("description", ""),
+        }
+        for item in items
+    ]
+
+
+def _render_merchant(catalog: list[dict], selected: int, player) -> str:
+    lines = ["🧑‍💼 **A travelling merchant stops you!**\n"]
+    for i, item in enumerate(catalog):
+        prefix = "▶ " if i == selected else "  "
+        lines.append(f"{prefix}{item.get('emoji','📦')} **{item['name']}** — {item['price']}g")
+    lines.append(f"\n💰 You have **{player.gold}g**")
+    if 0 <= selected < len(catalog):
+        desc = catalog[selected].get("description", "")
+        if desc:
+            lines.append(f"*{desc}*")
+    return "\n".join(lines)
+
+
 def _roll_encounter(rng: _random.Random, rates: dict | None = None) -> str | None:
-    """Roll for a random cave encounter. Returns enemy_type or None."""
+    """Roll for a random cave encounter. Returns enemy_type or None.
+
+    Rolls once for a 7% encounter chance, then picks a mob by relative weight
+    (values in `rates` are used as weights, not independent probabilities).
+    """
     if rates is None:
         rates = CAVE_ENCOUNTER_RATES
-    for enemy_type, rate in rates.items():
-        if rng.random() < rate:
+    if rng.random() >= 0.07:
+        return None
+    total = sum(rates.values())
+    if total <= 0:
+        return None
+    roll = rng.random() * total
+    for enemy_type, weight in rates.items():
+        roll -= weight
+        if roll <= 0:
             return enemy_type
-    return None
+    return list(rates.keys())[-1]
 
 
 async def _move_steps(
@@ -401,7 +667,26 @@ async def _move_steps(
     guild_id: int, user_id: int,
 ) -> tuple[str, discord.ui.View]:
     """Move player 1 or 2 tiles, returning (content, view)."""
-    dx, dy = DIRECTIONS[direction]
+    vec = _CANOE_DIRS.get(direction, DIRECTIONS.get(direction, (0, 0)))
+    dx, dy = vec
+
+    if player.in_canoe:
+        nx, ny = player.world_x + dx, player.world_y + dy
+        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            return render_grid(grid, player, "You've reached the edge of the world!"), \
+                   CanoeView(guild_id, user_id, dock_available=False)
+        target = await load_single_tile(nx, ny, seed, db)
+        t = target.structure or target.terrain
+        if t not in CANOE_PASSABLE:
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            return render_grid(grid, player, "You can't paddle onto land. Dock at a 🏝️ landing first."), \
+                   CanoeView(guild_id, user_id, dock_available=await _adjacent_landing(player, seed, db) is not None)
+        player.world_x, player.world_y = nx, ny
+        await update_player_position(db, user_id, nx, ny)
+        landing = await _adjacent_landing(player, seed, db)
+        grid = await load_viewport(nx, ny, seed, db)
+        return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=(landing is not None))
 
     if player.in_house:
         for _ in range(steps):
@@ -563,6 +848,15 @@ async def _move_steps(
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
+            # 0.2% travelling merchant encounter
+            merch_rng = _random.Random(hash((user_id, nx, ny, player.xp // 20, "merchant")))
+            if merch_rng.random() < 0.002 and not player.in_combat:
+                catalog = _generate_merchant_catalog(merch_rng)
+                _ui_state[user_id] = {"type": "merchant", "catalog": catalog, "selected": 0}
+                grid = await load_viewport(nx, ny, seed, db)
+                content = _render_merchant(catalog, 0, player)
+                view = MerchantView(guild_id, user_id)
+                return content, view
             # Random surface encounter (1%, biome-specific, skip short_grass)
             enemy_type = SURFACE_ENCOUNTER_MOBS.get(target.terrain)
             if enemy_type:
@@ -630,7 +924,8 @@ async def _finish_combat(
 
     if player.hp <= 0:
         msg = apply_death_reset(player)
-        await update_player_stats(db, user_id, hp=player.hp)
+        player.in_canoe = False
+        await update_player_stats(db, user_id, hp=player.hp, in_canoe=0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
@@ -792,26 +1087,31 @@ async def handle_combat_flee(
         await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
 
-async def handle_combat_potion(
+async def handle_combat_eat(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     result = await _load_combat(interaction, guild_id, user_id)
     if result is None:
         return
     db, player, arena = result
-    # Check inventory for potion
-    has_potion = await db.fetch_one(
-        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='potion'", (user_id,)
-    )
-    if not has_potion:
-        arena["combat_log"].append("You have no potions!")
-        content = render_arena(arena, player)
-        view = _combat_view(guild_id, user_id, arena, player)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
-    await remove_from_inventory(db, user_id, "potion", 1)
-    msg = action_use_potion(arena, player)
-    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+    # Prefer cooked_fish, then fish
+    for food_id in ("cooked_fish", "fish"):
+        row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, food_id)
+        )
+        if row:
+            await remove_from_inventory(db, user_id, food_id, 1)
+            heal_amt = FOOD_HP_RESTORE.get(food_id, 15)
+            heal = min(heal_amt, player.max_hp - player.hp)
+            player.hp += heal
+            player.combat_moves_left -= 1
+            msg = f"🍗 You eat {food_id.replace('_', ' ')}! Restored **{heal}** HP. ({player.hp}/{player.max_hp})"
+            await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+            return
+    arena["combat_log"].append("You have no food! Fish and cook at a hearth for HP recovery.")
+    content = render_arena(arena, player)
+    view = _combat_view(guild_id, user_id, arena, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 
@@ -912,6 +1212,267 @@ async def handle_sprint(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+# ── Canoe handlers ───────────────────────────────────────────────────────────
+
+async def handle_canoe_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not player.in_canoe:
+        # Fallback: player got off canoe somehow
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        await interaction.response.edit_message(
+            embed=_embed(render_grid(grid, player)), content=None,
+            view=_game_view(guild_id, user_id, player),
+        )
+        return
+    content, view = await _move_steps(player, direction, 1, seed, db, guild_id, user_id)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_canoe_dock(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_canoe:
+        await interaction.response.defer()
+        return
+
+    landing = await _adjacent_landing(player, seed, db)
+    if not landing:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "No landing nearby to dock at.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=CanoeView(guild_id, user_id, dock_available=False),
+        )
+        return
+
+    lx, ly = landing
+    player.world_x, player.world_y = lx, ly
+    player.in_canoe = False
+    await update_player_stats(db, user_id, world_x=lx, world_y=ly, in_canoe=0)
+    grid = await load_viewport(lx, ly, seed, db)
+    content = render_grid(grid, player, "You dock the canoe at the landing.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player),
+    )
+
+
+async def handle_canoe_sail(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open destination picker for canoe fast-travel."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_canoe:
+        await interaction.response.defer()
+        return
+
+    dests = await _find_canoe_destinations(player, db)
+    if not dests:
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "No reachable landings found on this waterway.")
+        landing = await _adjacent_landing(player, seed, db)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
+        )
+        return
+
+    _ui_state[user_id] = {"type": "canoe_dest", "dests": dests, "page": 0}
+    dest_lines = "\n".join(
+        f"**{i+1}.** 🏝️ ({lx}, {ly})"
+        for i, (lx, ly) in enumerate(dests[:5])
+    )
+    total = len(dests)
+    page_count = max(1, (total + 4) // 5)
+    content = (
+        f"🗺️ **Choose a destination** (Page 1/{page_count})\n"
+        f"{dest_lines}\n\n"
+        f"*{total} landing{'s' if total != 1 else ''} reachable on this waterway.*"
+    )
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=CanoeDestView(guild_id, user_id, dests, page=0),
+    )
+
+
+async def handle_canoe_dest(
+    interaction: discord.Interaction, guild_id: int, user_id: int, idx: int
+) -> None:
+    """Teleport canoe to selected landing's adjacent water tile."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    dests = state.get("dests", [])
+    page = state.get("page", 0)
+    abs_idx = page * 5 + idx
+    if abs_idx >= len(dests):
+        await interaction.response.defer()
+        return
+
+    lx, ly = dests[abs_idx]
+    # Find a water tile adjacent to the landing for the canoe to sit at
+    water_tile: tuple[int, int] | None = None
+    for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        ax, ay = lx + ddx, ly + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if (t.structure or t.terrain) in CANOE_PASSABLE:
+                water_tile = (ax, ay)
+                break
+
+    if not water_tile:
+        # Landing has no adjacent water — place on landing itself (rare edge case)
+        player.world_x, player.world_y = lx, ly
+        player.in_canoe = False
+        await update_player_stats(db, user_id, world_x=lx, world_y=ly, in_canoe=0)
+        _ui_state.pop(user_id, None)
+        grid = await load_viewport(lx, ly, seed, db)
+        content = render_grid(grid, player, f"You sail to the landing at ({lx},{ly}).")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player),
+        )
+        return
+
+    wx, wy = water_tile
+    player.world_x, player.world_y = wx, wy
+    await update_player_position(db, user_id, wx, wy)
+    _ui_state.pop(user_id, None)
+    grid = await load_viewport(wx, wy, seed, db)
+    content = render_grid(grid, player, f"You sail to the landing at ({lx},{ly}). Dock to go ashore.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=CanoeView(guild_id, user_id, dock_available=True),
+    )
+
+
+async def handle_canoe_dest_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    dests = state.get("dests", [])
+    page = state.get("page", 0)
+    total_pages = max(1, (len(dests) + 4) // 5)
+    new_page = max(0, min(total_pages - 1, page + delta))
+    _ui_state[user_id] = {"type": "canoe_dest", "dests": dests, "page": new_page}
+    page_dests = dests[new_page * 5: new_page * 5 + 5]
+    dest_lines = "\n".join(
+        f"**{new_page*5+i+1}.** 🏝️ ({lx}, {ly})"
+        for i, (lx, ly) in enumerate(page_dests)
+    )
+    content = (
+        f"🗺️ **Choose a destination** (Page {new_page+1}/{total_pages})\n"
+        f"{dest_lines}\n\n"
+        f"*{len(dests)} landing{'s' if len(dests) != 1 else ''} reachable.*"
+    )
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=CanoeDestView(guild_id, user_id, dests, page=new_page),
+    )
+
+
+async def handle_canoe_dest_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state.pop(user_id, None)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    landing = await _adjacent_landing(player, seed, db)
+    content = render_grid(grid, player)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
+    )
+
+
+# ── Merchant handlers ────────────────────────────────────────────────────────
+
+async def handle_merchant_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "merchant":
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        await interaction.response.edit_message(
+            embed=_embed(render_grid(grid, player)), content=None,
+            view=_game_view(guild_id, user_id, player),
+        )
+        return
+    catalog = state["catalog"]
+    new_sel = (state["selected"] + delta) % max(1, len(catalog))
+    _ui_state[user_id]["selected"] = new_sel
+    content = _render_merchant(catalog, new_sel, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=MerchantView(guild_id, user_id))
+
+
+async def handle_merchant_buy(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "merchant":
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        await interaction.response.edit_message(
+            embed=_embed(render_grid(grid, player)), content=None,
+            view=_game_view(guild_id, user_id, player),
+        )
+        return
+    catalog = state["catalog"]
+    sel = state.get("selected", 0)
+    if sel >= len(catalog):
+        await interaction.response.defer()
+        return
+    item = catalog[sel]
+    if player.gold < item["price"]:
+        content = _render_merchant(catalog, sel, player) + f"\n\n*Not enough gold!*"
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=MerchantView(guild_id, user_id))
+        return
+    player.gold -= item["price"]
+    await update_player_stats(db, user_id, gold=player.gold)
+    await add_to_inventory(db, user_id, item["id"], 1)
+    content = _render_merchant(catalog, sel, player) + f"\n\n*Bought {item['name']}!*"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=MerchantView(guild_id, user_id))
+
+
+async def handle_merchant_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state.pop(user_id, None)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, "The merchant waves farewell and continues on their way.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player),
+    )
+
+
 # ── Interact ──────────────────────────────────────────────────────────────────
 
 async def handle_interact(
@@ -942,10 +1503,22 @@ async def handle_interact(
         elif htile.terrain == "b_shop_npc" and player.house_type == "shop":
             return await _open_shop(interaction, guild_id, user_id, player)
 
-        elif htile.terrain in ("b_bed", "b_stove", "b_table", "b_bookshelf"):
+        elif htile.terrain == "b_stove":
+            fish_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='fish'", (user_id,)
+            )
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            if fish_row and fish_row["quantity"] > 0:
+                count = fish_row["quantity"]
+                await remove_from_inventory(db, user_id, "fish", count)
+                await add_to_inventory(db, user_id, "cooked_fish", count)
+                content = render_grid(grid, player, f"🔥 You cook {count} fish at the hearth. Got {count} cooked fish!")
+            else:
+                content = render_grid(grid, player, "A warm hearth. Bring raw fish to cook here.")
+
+        elif htile.terrain in ("b_bed", "b_table", "b_bookshelf"):
             msgs = {
                 "b_bed": "A cozy bed. You feel rested.",
-                "b_stove": "A warm hearth. Something smells delicious.",
                 "b_table": "A sturdy wooden table.",
                 "b_bookshelf": "Rows of dusty books.",
             }
@@ -965,19 +1538,37 @@ async def handle_interact(
             content = render_grid(grid, player, "A locked vault. Speak with the banker.")
 
         elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
-            # Smelt iron ore → iron ingot
+            craft_msgs = []
+            # Smelt iron: 3 ore → 1 ingot
             ore_row = await db.fetch_one(
                 "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
             )
-            if not ore_row or ore_row["quantity"] < 1:
-                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-                content = render_grid(grid, player, "\"Bring me iron ore and I'll smelt it into ingots.\"")
+            ore_count = ore_row["quantity"] if ore_row else 0
+            ingot_batches = ore_count // 3
+            if ingot_batches > 0:
+                await remove_from_inventory(db, user_id, "iron_ore", ingot_batches * 3)
+                await add_to_inventory(db, user_id, "iron_ingot", ingot_batches)
+                craft_msgs.append(f"Smelted {ingot_batches * 3} ore → {ingot_batches} ingot{'s' if ingot_batches > 1 else ''}")
+            # Torch recipe: 1 stick + 1 resin → 1 torch
+            stick_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
+            )
+            resin_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='resin'", (user_id,)
+            )
+            stick_count = stick_row["quantity"] if stick_row else 0
+            resin_count = resin_row["quantity"] if resin_row else 0
+            torch_batches = min(stick_count, resin_count)
+            if torch_batches > 0:
+                await remove_from_inventory(db, user_id, "stick", torch_batches)
+                await remove_from_inventory(db, user_id, "resin", torch_batches)
+                await add_to_inventory(db, user_id, "torch", torch_batches)
+                craft_msgs.append(f"Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin")
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            if craft_msgs:
+                content = render_grid(grid, player, "⚒️ " + " | ".join(craft_msgs) + ".")
             else:
-                count = ore_row["quantity"]
-                await remove_from_inventory(db, user_id, "iron_ore", count)
-                await add_to_inventory(db, user_id, "iron_ingot", count)
-                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-                content = render_grid(grid, player, f"The blacksmith smelts {count} iron ore into {count} iron ingots!")
+                content = render_grid(grid, player, "\"3 iron ore = 1 ingot. 1 stick + 1 resin = 1 torch.\"")
 
         elif htile.terrain == "b_anvil":
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
@@ -1083,7 +1674,83 @@ async def handle_interact(
 
         terrain = tile.terrain
 
-        if tile.structure == "cave":
+        # Treasure map: dig at location if shovel equipped
+        if "shovel" in hand_items:
+            tmap = await get_treasure_map(db, user_id)
+            if tmap:
+                tx, ty = tmap
+                if wx == tx and wy == ty:
+                    await mark_treasure_found(db, user_id)
+                    await remove_from_inventory(db, user_id, "treasure_map", 1)
+                    # Treasure reward
+                    t_rng = _random.Random(hash((user_id, seed, tx, ty, "reward")))
+                    gold_found = t_rng.randint(150, 400)
+                    player.gold += gold_found
+                    await update_player_stats(db, user_id, gold=player.gold)
+                    reward_item = t_rng.choice(["gem", "iron_ingot", "sword"])
+                    await add_to_inventory(db, user_id, reward_item, 1)
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player,
+                        f"💰 Your shovel strikes something! You dig up **{gold_found}g** and a **{reward_item.replace('_', ' ')}**!")
+                    view = _game_view(guild_id, user_id, player)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+
+        # Map fragment assembly: equip map_fragment + have 5+ in inventory
+        if "map_fragment" in hand_items:
+            frag_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='map_fragment'", (user_id,)
+            )
+            if frag_row and frag_row["quantity"] >= 5:
+                existing = await get_treasure_map(db, user_id)
+                if existing:
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player,
+                        f"🗺️ You already have an active treasure map! The X is near ({existing[0]}, {existing[1]}).")
+                    view = _game_view(guild_id, user_id, player)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+                await remove_from_inventory(db, user_id, "map_fragment", 5)
+                await _auto_unequip_depleted(db, user_id, "map_fragment", player)
+                tx, ty = await _find_treasure_location(user_id, seed, db)
+                await set_treasure_map(db, user_id, tx, ty)
+                await add_to_inventory(db, user_id, "treasure_map", 1)
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player,
+                    f"🗺️ You assemble the fragments into a **treasure map**! "
+                    f"The X is marked near coordinates **({tx}, {ty})**. "
+                    f"Dig there with your shovel to claim the treasure!")
+                view = _game_view(guild_id, user_id, player)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+
+        if terrain == "river_landing":
+            # Embark canoe: find adjacent water tile
+            water_pos: tuple[int, int] | None = None
+            for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                ax, ay = wx + ddx, wy + ddy
+                if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+                    adj = await load_single_tile(ax, ay, seed, db)
+                    if (adj.structure or adj.terrain) in CANOE_PASSABLE:
+                        water_pos = (ax, ay)
+                        break
+            if water_pos:
+                player.world_x, player.world_y = water_pos
+                player.in_canoe = True
+                await update_player_stats(db, user_id,
+                                          world_x=water_pos[0], world_y=water_pos[1],
+                                          in_canoe=1)
+                grid = await load_viewport(water_pos[0], water_pos[1], seed, db)
+                content = render_grid(grid, player, "You launch the canoe! Dock at a 🏝️ landing to go ashore.")
+                view: discord.ui.View = CanoeView(guild_id, user_id, dock_available=True)
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "There's no water here to launch a canoe.")
+                view = _game_view(guild_id, user_id, player)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif tile.structure == "cave":
             cave_id, ex, ey = await get_or_create_cave(seed, wx, wy, db)
             # Step 4 tiles inward from the entrance edge so the viewport
             # shows cave interior instead of mostly-out-of-bounds walls.
@@ -1170,6 +1837,85 @@ async def handle_interact(
             await set_tile_override(db, wx, wy, "grass")
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "You water the seedling. It grows into grass!")
+
+        elif terrain == "crop_ripe":
+            # Harvest ripe crop
+            await set_tile_override(db, wx, wy, "farmland")
+            seed_yield = _random.randint(2, 3)
+            await add_to_inventory(db, user_id, "seed", seed_yield)
+            await add_to_inventory(db, user_id, "dry_grass", 1)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, f"🌻 You harvest the crop! Got {seed_yield} seeds and some dry grass.")
+
+        elif terrain in ("crop_planted", "crop_sprout") and "watering_can" in hand_items:
+            # Water the crop — 5-minute cooldown between stages
+            last_str = await get_farm_last_watered(db, wx, wy)
+            can_water = True
+            if last_str:
+                try:
+                    last_dt = datetime.fromisoformat(last_str)
+                    can_water = (datetime.utcnow() - last_dt) >= timedelta(minutes=5)
+                except ValueError:
+                    can_water = True
+            if can_water:
+                next_stage = "crop_sprout" if terrain == "crop_planted" else "crop_ripe"
+                stage_name = "a sprout" if next_stage == "crop_sprout" else "a ripe crop"
+                await set_tile_override(db, wx, wy, next_stage)
+                await set_farm_watered(db, wx, wy)
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, f"💧 You water the crop. It grows into {stage_name}!")
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "💧 The crop needs more time before the next watering (5 min cooldown).")
+
+        elif terrain == "farmland" and "seed" in hand_items:
+            # Plant seed on farmland
+            await set_tile_override(db, wx, wy, "crop_planted")
+            await remove_from_inventory(db, user_id, "seed", 1)
+            await _auto_unequip_depleted(db, user_id, "seed", player)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🌱 You plant a seed in the farmland.")
+
+        elif terrain in ("grass", "plains", "sand") and "shovel" in hand_items and terrain != "sapling":
+            # Create farmland from soft terrain
+            await set_tile_override(db, wx, wy, "farmland")
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🟤 You dig up the soil and create farmland.")
+
+        elif "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
+            fish_rng = _random.Random(hash((user_id, wx, wy, player.xp, "fish")))
+            roll = fish_rng.random()
+            if roll < 0.65:
+                await add_to_inventory(db, user_id, "fish", 1)
+                msg = "🎣 You cast your line... and reel in a **fish**!"
+            elif roll < 0.95:
+                msg = "🎣 You cast your line... the fish got away."
+            else:
+                # Rare catch
+                specials = ["gem", "iron_ore", "key"]
+                special = fish_rng.choice(specials)
+                await add_to_inventory(db, user_id, special, 1)
+                msg = f"🎣 You reel in something unusual — a **{special.replace('_', ' ')}**!"
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, msg)
+
+        elif "cooked_fish" in hand_items or "fish" in hand_items:
+            food_id = "cooked_fish" if "cooked_fish" in hand_items else "fish"
+            food_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, food_id)
+            )
+            if food_row:
+                await remove_from_inventory(db, user_id, food_id, 1)
+                await _auto_unequip_depleted(db, user_id, food_id, player)
+                heal_amt = FOOD_HP_RESTORE.get(food_id, 15)
+                heal = min(heal_amt, player.max_hp - player.hp)
+                player.hp += heal
+                await update_player_stats(db, user_id, hp=player.hp)
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, f"🍗 You eat the {food_id.replace('_', ' ')}. Restored **{heal}** HP. ({player.hp}/{player.max_hp})")
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "Nothing to eat here.")
 
         elif terrain == "grass" and "knife" in hand_items:
             # Cut grass → short_grass + plant_fiber

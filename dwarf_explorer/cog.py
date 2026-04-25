@@ -62,6 +62,12 @@ class DwarfExplorer(commands.Cog):
             await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
+            # Relocate player if they're stuck on a non-walkable tile (e.g. river at default spawn)
+            if not player.in_cave and not player.in_village and not player.in_house:
+                sx, sy = await find_walkable_spawn(seed, db)
+                if (player.world_x, player.world_y) == (SPAWN_X, SPAWN_Y) and (sx, sy) != (SPAWN_X, SPAWN_Y):
+                    await update_player_stats(db, user_id, world_x=sx, world_y=sy)
+                    player.world_x, player.world_y = sx, sy
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
@@ -94,7 +100,7 @@ class DwarfExplorer(commands.Cog):
             in_cave=0, cave_id=None, cave_x=0, cave_y=0,
             in_village=0, village_id=None, village_x=0, village_y=0,
             in_house=0, house_id=None, house_x=0, house_y=0,
-            in_combat=0,
+            in_combat=0, in_canoe=0,
         )
 
         player.world_x = sx
@@ -103,6 +109,7 @@ class DwarfExplorer(commands.Cog):
         player.in_village = False
         player.in_house = False
         player.in_combat = False
+        player.in_canoe = False
 
         grid = await load_viewport(sx, sy, seed, db)
         content = render_grid(grid, player)
@@ -143,7 +150,8 @@ class DwarfExplorer(commands.Cog):
             "UPDATE players SET world_x=112, world_y=112,"
             " in_cave=0, cave_id=NULL, cave_x=0, cave_y=0,"
             " in_village=0, village_id=NULL, village_x=0, village_y=0,"
-            " in_house=0, house_id=NULL, house_x=0, house_y=0, in_combat=0"
+            " in_house=0, house_id=NULL, house_x=0, house_y=0,"
+            " in_combat=0, in_canoe=0"
         )
         await db.execute("UPDATE world SET initialized=0")
 

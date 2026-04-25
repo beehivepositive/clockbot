@@ -108,6 +108,8 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             house_vx=row["house_vx"] or 0,
             house_vy=row["house_vy"] or 0,
             house_type=row["house_type"] or "house",
+            # Canoe state
+            in_canoe=bool(row["in_canoe"]) if "in_canoe" in cols else False,
             # Combat state
             in_combat=bool(row["in_combat"]) if "in_combat" in cols else False,
             combat_enemy_type=row["combat_enemy_type"] if "combat_enemy_type" in cols else None,
@@ -335,11 +337,11 @@ async def save_combat_state(db: Database, user_id: int, player) -> None:
     await db.execute(
         "UPDATE players SET in_combat=?, combat_enemy_type=?, combat_enemy_hp=?,"
         " combat_enemy_x=?, combat_enemy_y=?, combat_player_x=?, combat_player_y=?,"
-        " combat_moves_left=? WHERE user_id=?",
+        " combat_moves_left=?, hp=? WHERE user_id=?",
         (int(player.in_combat), player.combat_enemy_type, player.combat_enemy_hp,
          player.combat_enemy_x, player.combat_enemy_y,
          player.combat_player_x, player.combat_player_y,
-         player.combat_moves_left, user_id),
+         player.combat_moves_left, player.hp, user_id),
     )
 
 
@@ -415,3 +417,46 @@ async def remove_from_chest(db: Database, chest_id: int, item_id: str, quantity:
             (new_qty, chest_id, item_id),
         )
     return True
+
+
+# --- Farming ---
+
+async def get_farm_last_watered(db: Database, world_x: int, world_y: int) -> str | None:
+    row = await db.fetch_one(
+        "SELECT last_watered FROM farm_watered_at WHERE world_x=? AND world_y=?",
+        (world_x, world_y),
+    )
+    return row["last_watered"] if row else None
+
+
+async def set_farm_watered(db: Database, world_x: int, world_y: int) -> None:
+    await db.execute(
+        "INSERT INTO farm_watered_at (world_x, world_y, last_watered) VALUES (?, ?, datetime('now'))"
+        " ON CONFLICT(world_x, world_y) DO UPDATE SET last_watered=datetime('now')",
+        (world_x, world_y),
+    )
+
+
+# --- Treasure maps ---
+
+async def get_treasure_map(db: Database, user_id: int) -> tuple[int, int] | None:
+    row = await db.fetch_one(
+        "SELECT treasure_x, treasure_y FROM treasure_maps WHERE user_id=? AND found=0",
+        (user_id,),
+    )
+    return (row["treasure_x"], row["treasure_y"]) if row else None
+
+
+async def set_treasure_map(db: Database, user_id: int, treasure_x: int, treasure_y: int) -> None:
+    await db.execute(
+        "INSERT INTO treasure_maps (user_id, treasure_x, treasure_y) VALUES (?, ?, ?)"
+        " ON CONFLICT(user_id) DO UPDATE SET treasure_x=excluded.treasure_x,"
+        " treasure_y=excluded.treasure_y, found=0",
+        (user_id, treasure_x, treasure_y),
+    )
+
+
+async def mark_treasure_found(db: Database, user_id: int) -> None:
+    await db.execute(
+        "UPDATE treasure_maps SET found=1 WHERE user_id=?", (user_id,)
+    )

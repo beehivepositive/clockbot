@@ -210,3 +210,19 @@ CREATE INDEX IF NOT EXISTS idx_enemies_pos ON enemies(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_tile_overrides_pos ON tile_overrides(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id);
 CREATE INDEX IF NOT EXISTS idx_player_quests_user ON player_quests(user_id);
+
+-- Farm watered timestamps (5-minute cooldown between watering stages)
+CREATE TABLE IF NOT EXISTS farm_watered_at (
+    world_x      INTEGER NOT NULL,
+    world_y      INTEGER NOT NULL,
+    last_watered TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (world_x, world_y)
+);
+
+-- Treasure map locations (one active treasure per player)
+CREATE TABLE IF NOT EXISTS treasure_maps (
+    user_id     INTEGER PRIMARY KEY REFERENCES players(user_id),
+    treasure_x  INTEGER NOT NULL,
+    treasure_y  INTEGER NOT NULL,
+    found       INTEGER NOT NULL DEFAULT 0
+);

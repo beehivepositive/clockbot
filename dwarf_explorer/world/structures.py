@@ -582,6 +582,12 @@ async def place_structures(seed: int, db) -> None:
         (bx, by) for bx, by in bridge_all_list
         if _is_bridge_endpoint(bx, by, seed, river_tiles | bridge_all_set)
     ]
+    # Deduplicate: 2-wide bridges produce ~2 endpoints per bank; collapse to 1 per cluster
+    _deduped_eps: list[tuple[int, int]] = []
+    for ep in bridge_endpoints:
+        if not any(abs(ep[0] - k[0]) + abs(ep[1] - k[1]) < 4 for k in _deduped_eps):
+            _deduped_eps.append(ep)
+    bridge_endpoints = _deduped_eps
 
     # 7. Generate inter-village/bridge paths
     if village_positions or bridge_endpoints:

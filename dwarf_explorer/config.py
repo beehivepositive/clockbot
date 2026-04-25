@@ -34,6 +34,11 @@ TERRAIN_EMOJI = {
     "snow": "\u2744\uFE0F\U0001F3D4\uFE0F",  # ❄️🏔️ snowy mountains — impassable
     "path": "\U0001F7EB",           # 🟫
     "void": "\u2B1B",               # ⬛
+    "river_landing": "\u26F5",      # ⛵ canoe launch point
+    "farmland":     "\U0001F7E4",    # 🟤 bare soil
+    "crop_planted": "\U0001F331",    # 🌱 seedling
+    "crop_sprout":  "\U0001F33F",    # 🌿 herb
+    "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
     "sapling":     "\U0001F331",    # 🌱
     "short_grass": "\U0001F7E9",    # 🟩
@@ -90,14 +95,22 @@ ITEM_EMOJI = {
     "medium_pouch": "\U0001F45C",    # 👜
     "large_pouch": "\U0001F45C",     # 👜
     "fishing_net": "\U0001F3A3",     # 🎣
+    "fishing_rod": "\U0001F3A3",     # 🎣
+    "cooked_fish": "\U0001F956",     # 🍖
+    "treasure_map": "\U0001F4DC",    # 📜
 }
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "shrine", "cave", "bridge",
     "sapling", "short_grass", "seedling",
+    "river_landing",
+    "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
+
+# Tile types passable by canoe (water + bridges)
+CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
 STRUCTURE_TILES = {"village", "ruins", "shrine", "cave", "bridge"}
@@ -147,6 +160,8 @@ ARENA_EMOJI = {
     "cobweb": "\U0001F578\uFE0F",   # 🕸️
 }
 
+FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
+
 # Terrain that blocks movement inside the combat arena
 ARENA_IMPASSABLE = {
     "mountain", "snow", "deep_water", "shallow_water", "dense_forest",
@@ -183,7 +198,7 @@ CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem", "cave_troll", "cave
 # Chest loot tiers: (weight, gold_min, gold_max, xp_min, xp_max, item_or_none)
 CHEST_LOOT = [
     (50, 10,  40,  5,  20, None),
-    (30, 30,  80,  15, 40, "potion"),
+    (30, 30,  80,  15, 40, "cooked_fish"),
     (15, 60,  130, 30, 60, "gem"),
     (5,  100, 250, 50, 100, "sword"),
 ]
@@ -313,6 +328,14 @@ SHOP_CATALOG = [
         "description": "Ranged weapon. Uses 1 rock per attack. Mine rocks in caves.",
     },
     {
+        "id": "fishing_rod",
+        "name": "Fishing Rod",
+        "emoji": "\U0001F3A3",
+        "price": 30,
+        "equip_slot": "hand",
+        "description": "Fish at riverbanks. Equip and Interact near water to cast.",
+    },
+    {
         "id": "small_pouch",
         "name": "Small Pouch",
         "emoji": "\U0001F45C",
@@ -352,6 +375,9 @@ ITEM_EQUIP_SLOTS = {
     "shovel":       "hand",
     "pickaxe":      "hand",
     "slingshot":    "hand",
+    "fishing_rod":  "hand",
+    "fish":         "hand",
+    "cooked_fish":  "hand",
     "hiking_boots": "boots",
     "small_pouch":  "pouch",
     "medium_pouch": "pouch",
@@ -376,6 +402,9 @@ EQUIP_BONUSES = {
     "small_pouch":  {},
     "medium_pouch": {},
     "large_pouch":  {},
+    "fishing_rod":  {},
+    "fish":         {},
+    "cooked_fish":  {},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 2×5 when no pouch equipped
@@ -437,6 +466,10 @@ ITEM_SELL_PRICES = {
     "iron_ore":     12,
     "iron_ingot":   25,
     "slingshot":    27,
+    "fishing_rod":  18,
+    "fish":         5,
+    "cooked_fish":  8,
+    "treasure_map": 0,
     "rock":         2,
     "poison_sac":   20,
     "small_pouch":  48,
@@ -466,9 +499,14 @@ TILE_COLORS = {
     "cave": (60, 40, 30),
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),
+    "river_landing": (200, 140, 60),
     "sapling": (100, 200, 80),
     "short_grass": (120, 200, 60),
     "seedling": (130, 210, 70),
+    "farmland": (120, 80, 40),
+    "crop_planted": (100, 140, 40),
+    "crop_sprout": (60, 160, 40),
+    "crop_ripe": (200, 180, 20),
 }
 
 

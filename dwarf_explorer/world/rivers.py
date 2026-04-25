@@ -315,6 +315,62 @@ def _add_bridges(
 
 # ── World generation ──────────────────────────────────────────────────────────
 
+def _generate_landings_sync(
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+    bridge_tiles: set[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Generate river landing tiles on walkable land adjacent to river/bridge tiles.
+
+    Landings are spaced at least 12 tiles apart and placed only on non-water,
+    non-mountain biome land tiles.  Returns a list of (world_x, world_y) positions.
+    """
+    water = river_tiles | bridge_tiles
+    _HIGH = {"mountain", "snow", "deep_water", "shallow_water"}
+    candidates: list[tuple[int, int]] = []
+
+    # Cardinal neighbours only — diagonal access from land is confusing
+    for wx, wy in sorted(water):
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            lx, ly = wx + dx, wy + dy
+            if not (0 <= lx < WORLD_SIZE and 0 <= ly < WORLD_SIZE):
+                continue
+            if (lx, ly) in water:
+                continue
+            biome = get_biome(lx, ly, seed)
+            if biome in _HIGH:
+                continue
+            candidates.append((lx, ly))
+
+    # Deduplicate candidates
+    candidates = list(dict.fromkeys(candidates))
+
+    # Greedy spacing filter: keep a landing only if it's ≥12 tiles from any kept landing.
+    # Use a coarse grid (cell size = MIN_DIST/2) to avoid O(n²) comparisons.
+    _MIN_DIST = 12
+    _CELL = _MIN_DIST // 2  # 6
+    occupied: dict[tuple[int, int], tuple[int, int]] = {}  # cell → kept pos
+    kept: list[tuple[int, int]] = []
+
+    for cx, cy in candidates:
+        cell_x, cell_y = cx // _CELL, cy // _CELL
+        too_close = False
+        # Check the 5×5 neighbourhood of cells
+        for dcx in range(-2, 3):
+            for dcy in range(-2, 3):
+                nb = occupied.get((cell_x + dcx, cell_y + dcy))
+                if nb and abs(cx - nb[0]) + abs(cy - nb[1]) < _MIN_DIST:
+                    too_close = True
+                    break
+            if too_close:
+                break
+        if not too_close:
+            occupied[(cell_x, cell_y)] = (cx, cy)
+            kept.append((cx, cy))
+
+    return kept
+
+
 def _generate_rivers_sync(
     seed: int,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
@@ -406,12 +462,15 @@ def _generate_rivers_sync(
     river_tiles = {(x, y) for x, y in river_tiles
                    if get_biome(x, y, seed) not in _WATER_BIOMES}
 
-    return list(river_tiles), list(bridge_tiles), []
+    # ── 6. Generate river landings ────────────────────────────────────────────
+    landing_tiles = _generate_landings_sync(seed, river_tiles, bridge_tiles)
+
+    return list(river_tiles), list(bridge_tiles), landing_tiles
 
 
 async def generate_rivers(seed: int, db) -> None:
-    """Generate rivers and bridges; write to tile_overrides."""
-    river_tiles, bridge_tiles, _ = await asyncio.to_thread(
+    """Generate rivers, bridges, and landings; write to tile_overrides."""
+    river_tiles, bridge_tiles, landing_tiles = await asyncio.to_thread(
         _generate_rivers_sync, seed
     )
     if river_tiles:
@@ -425,4 +484,10 @@ async def generate_rivers(seed: int, db) -> None:
             "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
             " VALUES (?, ?, 'bridge')",
             [(x, y) for x, y in bridge_tiles],
+        )
+    if landing_tiles:
+        await db.executemany(
+            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
+            " VALUES (?, ?, 'river_landing')",
+            [(x, y) for x, y in landing_tiles],
         )

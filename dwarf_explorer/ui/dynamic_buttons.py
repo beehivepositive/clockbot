@@ -12,10 +12,13 @@ from dwarf_explorer.ui.game_view import (
     handle_bank_nav, handle_bank_switch,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
     handle_combat_move, handle_combat_attack, handle_combat_flee,
-    handle_combat_potion, handle_combat_end_turn,
+    handle_combat_eat, handle_combat_end_turn,
     handle_chest_nav, handle_chest_switch, handle_chest_take,
     handle_chest_give, handle_chest_lootall, handle_chest_close,
     handle_mine,
+    handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
+    handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
+    handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -24,7 +27,16 @@ _COMBAT_MOVE_ACTIONS = {
     "c_up", "c_down", "c_left", "c_right",
     "c_upleft", "c_upright", "c_downleft", "c_downright",
 }
-_IGNORED_ACTIONS = {"sp1", "sp2", "c_wait", "csp0", "csp1", "c_free"}
+_CANOE_MOVE_ACTIONS = {
+    "canoe_up", "canoe_down", "canoe_left", "canoe_right",
+    "canoe_upleft", "canoe_upright", "canoe_downleft", "canoe_downright",
+}
+_IGNORED_ACTIONS = {
+    "sp1", "sp2", "c_wait", "csp0", "csp1", "c_free",
+    "csp_a", "csp_b", "csp_c", "csp_d",
+    "csp_5", "csp_6", "csp_7", "csp_8", "csp_9",
+    "c_potion",
+}
 
 
 class GameButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -53,12 +65,28 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if self.action in _IGNORED_ACTIONS:
+            await interaction.response.defer()
             return
 
         gid, uid, act = self.guild_id, self.user_id, self.action
 
         try:
-            if act in _MINE_ACTIONS:
+            if act in _CANOE_MOVE_ACTIONS:
+                direction = act[6:]  # strip "canoe_" prefix
+                await handle_canoe_move(interaction, gid, uid, direction)
+            elif act == "canoe_dock":
+                await handle_canoe_dock(interaction, gid, uid)
+            elif act == "canoe_sail":
+                await handle_canoe_sail(interaction, gid, uid)
+            elif act.startswith("csail_") and act[6:].isdigit():
+                await handle_canoe_dest(interaction, gid, uid, int(act[6:]))
+            elif act == "csail_prev":
+                await handle_canoe_dest_nav(interaction, gid, uid, -1)
+            elif act == "csail_next":
+                await handle_canoe_dest_nav(interaction, gid, uid, +1)
+            elif act == "csail_cancel":
+                await handle_canoe_dest_cancel(interaction, gid, uid)
+            elif act in _MINE_ACTIONS:
                 direction = act[5:]  # strip "mine_" prefix
                 await handle_mine(interaction, gid, uid, direction)
             elif act in _COMBAT_MOVE_ACTIONS:
@@ -68,8 +96,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_attack(interaction, gid, uid)
             elif act == "c_flee":
                 await handle_combat_flee(interaction, gid, uid)
-            elif act == "c_potion":
-                await handle_combat_potion(interaction, gid, uid)
+            elif act == "c_eat":
+                await handle_combat_eat(interaction, gid, uid)
             elif act == "c_endturn":
                 await handle_combat_end_turn(interaction, gid, uid)
             elif act == "c_inventory":
@@ -138,6 +166,15 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_chest_switch(interaction, gid, uid)
             elif act == "chest_close":
                 await handle_chest_close(interaction, gid, uid)
+            # Merchant
+            elif act == "merch_prev":
+                await handle_merchant_nav(interaction, gid, uid, -1)
+            elif act == "merch_next":
+                await handle_merchant_nav(interaction, gid, uid, +1)
+            elif act == "merch_buy":
+                await handle_merchant_buy(interaction, gid, uid)
+            elif act == "merch_close":
+                await handle_merchant_close(interaction, gid, uid)
 
         except discord.NotFound:
             await interaction.followup.send(

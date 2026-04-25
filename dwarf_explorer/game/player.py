@@ -5,7 +5,7 @@ from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE,
-    COMBAT_MOVES_DEFAULT,
+    COMBAT_MOVES_DEFAULT, CANOE_PASSABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -45,6 +45,8 @@ class Player:
     house_vx: int = 0
     house_vy: int = 0
     house_type: str = "house"   # "house" | "church" | "bank" | "shop"
+    # Canoe state
+    in_canoe: bool = False
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
@@ -93,7 +95,23 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
     if player.in_cave:
         return _can_move_cave(target_tile)
 
-    dx, dy = DIRECTIONS[direction]
+    terrain = target_tile.structure or target_tile.terrain
+
+    # Canoe movement: only water and bridge tiles
+    if player.in_canoe:
+        if terrain not in CANOE_PASSABLE:
+            return False, "You can't paddle onto land. Dock at a 🚩 landing first."
+        return True, ""
+
+    # Eight directional vectors (cardinal + diagonal) for canoe mode;
+    # cardinal-only for overworld walking
+    _DIRS_8 = {
+        "up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0),
+        "upleft": (-1, -1), "upright": (1, -1),
+        "downleft": (-1, 1), "downright": (1, 1),
+    }
+    vec = _DIRS_8.get(direction, DIRECTIONS.get(direction, (0, 0)))
+    dx, dy = vec
     nx = player.world_x + dx
     ny = player.world_y + dy
 
@@ -101,7 +119,6 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return False, "You've reached the edge of the world!"
 
     if not target_tile.walkable:
-        terrain = target_tile.structure or target_tile.terrain
         messages = {
             "mountain": "A mountain blocks your path.",
             "snow": "The snowy mountains are impassable.",

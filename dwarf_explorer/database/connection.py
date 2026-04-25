@@ -127,6 +127,8 @@ class Database:
                     quantity INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (chest_id, item_id)
                 )""",
+                # Canoe state
+                "ALTER TABLE players ADD COLUMN in_canoe INTEGER NOT NULL DEFAULT 0",
                 # Multi-level cave columns
                 "ALTER TABLE caves ADD COLUMN cave_level INTEGER NOT NULL DEFAULT 1",
                 "ALTER TABLE caves ADD COLUMN parent_cave_id INTEGER",
@@ -141,6 +143,17 @@ class Database:
                     child_local_y    INTEGER NOT NULL,
                     UNIQUE(parent_cave_id, parent_local_x, parent_local_y)
                 )""",
+                """CREATE TABLE IF NOT EXISTS farm_watered_at (
+    world_x INTEGER NOT NULL, world_y INTEGER NOT NULL,
+    last_watered TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (world_x, world_y)
+)""",
+                """CREATE TABLE IF NOT EXISTS treasure_maps (
+    user_id INTEGER PRIMARY KEY REFERENCES players(user_id),
+    treasure_x INTEGER NOT NULL,
+    treasure_y INTEGER NOT NULL,
+    found INTEGER NOT NULL DEFAULT 0
+)""",
             ]
             for sql in migrations:
                 try:
