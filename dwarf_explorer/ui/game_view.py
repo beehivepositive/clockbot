@@ -11,7 +11,7 @@ from dwarf_explorer.config import (
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
-    CAVE_EMOJI, CRAFT_RECIPES,
+    CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
 )
 from dwarf_explorer.database.connection import get_database
@@ -918,9 +918,7 @@ def _compute_context_labels(
 
     # ── Player-house chest override (highest priority for center label) ────────
     if _in_ph and center_tile and center_tile.terrain in PH_CHEST_TYPES:
-        _chest_emoji = {"ph_chest_small": "📦", "ph_chest_medium": "🗄️",
-                        "ph_chest_large": "🧳"}.get(center_tile.terrain, "📦")
-        center_label, center_enabled = _chest_emoji, True
+        center_label, center_enabled = BUILDING_EMOJI.get(center_tile.terrain, "📦"), True
 
     return center_label, center_enabled, action_label, action_enabled
 
@@ -3904,7 +3902,10 @@ async def handle_chest_nav(
         chest_inv = await get_chest_items(db, chest_id)
         source_len = len(chest_inv)
         from dwarf_explorer.game.renderer import render_chest as _rc
-        chest_sizes = {"cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9)}
+        chest_sizes = {
+            "cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9),
+            "ph_chest_small": (2,9), "ph_chest_medium": (3,9), "ph_chest_large": (4,9),
+        }
         c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
         total = c_rows * c_cols
     else:
@@ -4010,7 +4011,10 @@ async def handle_chest_give(
         item_id = player_inv[sel]["item_id"]
         chest_inv = await get_chest_items(db, chest_id)
         # Check chest capacity
-        chest_sizes = {"cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9)}
+        chest_sizes = {
+            "cave_chest": (2,9), "cave_chest_medium": (3,9), "cave_chest_large": (4,9),
+            "ph_chest_small": (2,9), "ph_chest_medium": (3,9), "ph_chest_large": (4,9),
+        }
         c_rows, c_cols = chest_sizes.get(chest_type, (2,9))
         c_capacity = c_rows * c_cols
         existing_chest_ids = {it["item_id"] for it in chest_inv}
