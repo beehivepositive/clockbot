@@ -389,21 +389,25 @@ class ShopView(discord.ui.View):
 
 
 class ChestView(discord.ui.View):
-    """Chest inventory view — chest side shows Take + LootAll, player side shows Give + Switch."""
+    """Chest inventory view.
+
+    Row 0 (always): ◀  ▶  Take/Give  🔄 Switch  ❌ Close
+    Row 1 (chest only): 📦 Loot All
+    """
 
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "chest"):
         super().__init__(timeout=None)
         if view_mode == "chest":
             action_label, action_id = "📤 Take", "chest_take"
-            extra_label, extra_id = "📦 Loot All", "chest_lootall"
         else:
             action_label, action_id = "📥 Give", "chest_give"
-            extra_label, extra_id = "🔄 Switch", "chest_switch"
+
+        # Row 0: always present
         for label, act in [
             ("◀", "chest_prev"),
             ("▶", "chest_next"),
             (action_label, action_id),
-            (extra_label, extra_id),
+            ("🔄 Switch", "chest_switch"),
             ("❌ Close", "chest_close"),
         ]:
             self.add_item(discord.ui.Button(
@@ -411,6 +415,15 @@ class ChestView(discord.ui.View):
                 label=label,
                 custom_id=_custom_id(guild_id, user_id, act),
                 row=0,
+            ))
+
+        # Row 1: Loot All only on chest side
+        if view_mode == "chest":
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="📦 Loot All",
+                custom_id=_custom_id(guild_id, user_id, "chest_lootall"),
+                row=1,
             ))
 
 
