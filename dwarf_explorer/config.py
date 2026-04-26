@@ -302,10 +302,10 @@ VILLAGE_WALKABLE = {
 }
 
 BUILDING_WALKABLE = {
-    "b_floor", "b_door",
+    "b_floor", "b_floor_wood", "b_door",
     "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
     "b_pew", "b_table", "b_stove", "b_bed",
-    "b_anvil", "b_chair",
+    "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 
