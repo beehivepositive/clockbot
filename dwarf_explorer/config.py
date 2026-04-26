@@ -178,9 +178,9 @@ HOUSE_DECORATION_CATALOG = [
     {"id": "b_stove",          "name": "Hearth",       "cost": {"rock": 3}},
     {"id": "b_bookshelf",      "name": "Bookshelf",    "cost": {"log": 2}},
     {"id": "b_candle",         "name": "Candle",       "cost": {"torch": 1}},
-    {"id": "ph_chest_small",   "name": "Small Chest",  "cost": {"ph_chest_small": 1}},
-    {"id": "ph_chest_medium",  "name": "Medium Chest", "cost": {"ph_chest_medium": 1}},
-    {"id": "ph_chest_large",   "name": "Large Chest",  "cost": {"ph_chest_large": 1}},
+    {"id": "ph_chest_small",   "name": "Small Chest",  "cost": {"log": 2}},
+    {"id": "ph_chest_medium",  "name": "Medium Chest", "cost": {"log": 4}},
+    {"id": "ph_chest_large",   "name": "Large Chest",  "cost": {"log": 6}},
 ]
 
 # Tiles that count as movable decorations (can be placed/removed by owner)
@@ -194,9 +194,6 @@ PH_CHEST_TYPES = {"ph_chest_small", "ph_chest_medium", "ph_chest_large"}
 CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("stick", 1), ("resin", 1)}):           {"result": "torch",         "qty": 1, "label": "🔦 Craft Torch"},
     frozenset({("log", 8), ("rock", 4)}):               {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
-    frozenset({("log", 2)}):                            {"result": "ph_chest_small","qty": 1, "label": "📦 Craft Small Chest"},
-    frozenset({("log", 4)}):                            {"result": "ph_chest_medium","qty": 1,"label": "🗄️ Craft Medium Chest"},
-    frozenset({("log", 6)}):                            {"result": "ph_chest_large","qty": 1, "label": "🧳 Craft Large Chest"},
 }
 
 # Terrain that blocks movement inside the combat arena
