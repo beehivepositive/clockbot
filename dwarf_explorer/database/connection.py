@@ -56,13 +56,18 @@ class Database:
         return await asyncio.to_thread(_run)
 
     async def init_schema(self) -> None:
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
         with open(schema_path, "r") as f:
-            sql = f.read()
-        await self.execute_script(sql)
-        # Migrations for existing DBs
+            schema_sql = f.read()
+
+        # Run schema creation + all migrations in ONE thread so the same
+        # sqlite3 connection is used throughout (avoids cross-thread state issues).
         def _migrate():
             conn = self._get_conn()
+            # Base schema (CREATE TABLE IF NOT EXISTS … for all core tables)
+            conn.executescript(schema_sql)
             migrations = [
                 "ALTER TABLE world ADD COLUMN initialized INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN in_cave INTEGER NOT NULL DEFAULT 0",
@@ -183,15 +188,23 @@ class Database:
     PRIMARY KEY (cave_id, local_x, local_y)
 )""",
             ]
-            for sql in migrations:
+            for mig_sql in migrations:
                 try:
-                    conn.execute(sql)
+                    conn.execute(mig_sql)
                     conn.commit()
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                except sqlite3.OperationalError as e:
+                    msg = str(e).lower()
+                    # Expected: column already exists, table already exists
+                    if "duplicate column" not in msg and "already exists" not in msg:
+                        _log.warning("Migration warning (%s): %.120s", e, mig_sql)
+                except Exception as e:
+                    _log.error("Migration error (%s): %.120s", e, mig_sql)
             # Clean up quest_board overrides from old worlds
-            conn.execute("DELETE FROM tile_overrides WHERE tile_type = 'quest_board'")
-            conn.commit()
+            try:
+                conn.execute("DELETE FROM tile_overrides WHERE tile_type = 'quest_board'")
+                conn.commit()
+            except Exception:
+                pass
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:
