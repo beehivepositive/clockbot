@@ -176,6 +176,10 @@ _ITEM_SLOT_EMOJI = {
     "iron_helmet":     "\U0001FA96",
     "iron_chestplate": "\U0001F6E1\uFE0F",
     "iron_leggings":   "\U0001F455",
+    "house_kit":       "\U0001F3E0",       # 🏠
+    "ph_chest_small":  "\U0001F4E6",       # 📦
+    "ph_chest_medium": "\U0001F5C4\uFE0F", # 🗄️
+    "ph_chest_large":  "\U0001F9F3",       # 🧳
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 

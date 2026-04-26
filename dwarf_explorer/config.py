@@ -168,14 +168,14 @@ ARENA_EMOJI = {
 FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
 
 # Player-built house: materials needed to construct one
-HOUSE_BUILD_COST = {"log": 8, "stone": 4}
+HOUSE_BUILD_COST = {"log": 8, "rock": 4}
 
 # Interior decoration catalog: id → {name, cost dict, tile placed}
 HOUSE_DECORATION_CATALOG = [
     {"id": "b_table",          "name": "Table",        "cost": {"log": 2}},
     {"id": "b_chair",          "name": "Chair",        "cost": {"log": 1}},
     {"id": "b_bed",            "name": "Bed",          "cost": {"log": 3}},
-    {"id": "b_stove",          "name": "Hearth",       "cost": {"stone": 3}},
+    {"id": "b_stove",          "name": "Hearth",       "cost": {"rock": 3}},
     {"id": "b_bookshelf",      "name": "Bookshelf",    "cost": {"log": 2}},
     {"id": "b_candle",         "name": "Candle",       "cost": {"torch": 1}},
     {"id": "ph_chest_small",   "name": "Small Chest",  "cost": {"ph_chest_small": 1}},
@@ -193,7 +193,7 @@ PH_CHEST_TYPES = {"ph_chest_small", "ph_chest_medium", "ph_chest_large"}
 # Selections must match EXACTLY — no extra items, no other quantities
 CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("stick", 1), ("resin", 1)}):           {"result": "torch",         "qty": 1, "label": "🔦 Craft Torch"},
-    frozenset({("log", 8), ("stone", 4)}):              {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
+    frozenset({("log", 8), ("rock", 4)}):               {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
     frozenset({("log", 2)}):                            {"result": "ph_chest_small","qty": 1, "label": "📦 Craft Small Chest"},
     frozenset({("log", 4), ("iron_ingot", 1)}):         {"result": "ph_chest_medium","qty": 1,"label": "🗄️ Craft Medium Chest"},
     frozenset({("log", 6), ("iron_ingot", 2)}):         {"result": "ph_chest_large","qty": 1, "label": "🧳 Craft Large Chest"},
@@ -433,7 +433,7 @@ ITEM_EQUIP_SLOTS = {
 }
 
 # Items that occupy both hand slots
-TWO_HANDED_ITEMS = {"shovel", "axe"}
+TWO_HANDED_ITEMS = {"shovel"}
 
 # Equipment stat bonuses: {item_id: {stat: bonus}}
 EQUIP_BONUSES = {

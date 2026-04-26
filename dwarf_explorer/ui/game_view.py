@@ -281,13 +281,24 @@ class InventoryView(discord.ui.View):
         sel_items = list(selections.items())  # [(item_id, qty), ...]
         for idx, (item_id, qty) in enumerate(sel_items[:5]):
             emoji_s = _ise.get(item_id, "📦")
-            label = f"{emoji_s}×{qty}" if not emoji_s.startswith("<") else f"×{qty}"
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label=label,
-                custom_id=_custom_id(guild_id, user_id, f"inv_item_{idx}"),
-                row=1,
-            ))
+            parsed_emoji = _parse_emoji(emoji_s)
+            if parsed_emoji:
+                # Custom Discord emoji: use emoji= param so it actually renders
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.secondary,
+                    emoji=parsed_emoji,
+                    label=f"×{qty}",
+                    custom_id=_custom_id(guild_id, user_id, f"inv_item_{idx}"),
+                    row=1,
+                ))
+            else:
+                # Unicode emoji: safe to embed directly in label
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.secondary,
+                    label=f"{emoji_s}×{qty}",
+                    custom_id=_custom_id(guild_id, user_id, f"inv_item_{idx}"),
+                    row=1,
+                ))
 
         # Row 2: Unselect All + mode toggle + Craft if recipe matches
         if selections:
