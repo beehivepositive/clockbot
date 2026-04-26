@@ -2,34 +2,54 @@ from __future__ import annotations
 
 import random
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT, WORLD_SEED
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT
 from dwarf_explorer.database.connection import Database
 from dwarf_explorer.game.player import Player
 
 
 # --- World ---
+# All servers share one world stored under guild_id = 0 (global key).
+_GLOBAL_WORLD_KEY = 0
+
 
 async def get_or_create_world(db: Database, guild_id: int) -> int:
-    row = await db.fetch_one("SELECT seed FROM world WHERE guild_id = ?", (guild_id,))
+    """Return the current world seed. All guilds share one world (guild_id ignored)."""
+    row = await db.fetch_one("SELECT seed FROM world WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
     if row:
-        if row["seed"] != WORLD_SEED:
-            # Migrate existing server to the shared seed
-            await db.execute("UPDATE world SET seed = ? WHERE guild_id = ?", (WORLD_SEED, guild_id))
-        return WORLD_SEED
+        return row["seed"]
+    # First run ever — pick a random seed and store it
+    new_seed = random.randint(1, 2**31 - 1)
     await db.execute(
         "INSERT INTO world (guild_id, seed, initialized) VALUES (?, ?, 0)",
-        (guild_id, WORLD_SEED),
+        (_GLOBAL_WORLD_KEY, new_seed),
     )
-    return WORLD_SEED
+    return new_seed
 
 
 async def is_world_initialized(db: Database, guild_id: int) -> bool:
-    row = await db.fetch_one("SELECT initialized FROM world WHERE guild_id = ?", (guild_id,))
+    row = await db.fetch_one("SELECT initialized FROM world WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
     return bool(row and row["initialized"])
 
 
 async def mark_world_initialized(db: Database, guild_id: int) -> None:
-    await db.execute("UPDATE world SET initialized = 1 WHERE guild_id = ?", (guild_id,))
+    await db.execute("UPDATE world SET initialized = 1 WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
+
+
+async def reset_world_seed(db: Database) -> int:
+    """Generate a fresh random seed, clear initialized flag, return the new seed."""
+    new_seed = random.randint(1, 2**31 - 1)
+    row = await db.fetch_one("SELECT guild_id FROM world WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
+    if row:
+        await db.execute(
+            "UPDATE world SET seed = ?, initialized = 0 WHERE guild_id = ?",
+            (new_seed, _GLOBAL_WORLD_KEY),
+        )
+    else:
+        await db.execute(
+            "INSERT INTO world (guild_id, seed, initialized) VALUES (?, ?, 0)",
+            (_GLOBAL_WORLD_KEY, new_seed),
+        )
+    return new_seed
 
 
 # --- Players ---

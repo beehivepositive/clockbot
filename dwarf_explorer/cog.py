@@ -10,6 +10,7 @@ from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world, update_player_message,
     update_player_stats,
     is_world_initialized, mark_world_initialized,
+    reset_world_seed,
 )
 from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn
 from dwarf_explorer.game.renderer import render_grid
@@ -153,14 +154,13 @@ class DwarfExplorer(commands.Cog):
             " in_house=0, house_id=NULL, house_x=0, house_y=0,"
             " in_combat=0, in_canoe=0"
         )
-        await db.execute("UPDATE world SET initialized=0")
-
-        seed = await get_or_create_world(db, interaction.guild.id)
+        # Generate a fresh random seed for the new world
+        seed = await reset_world_seed(db)
         await init_world(seed, db)
         await mark_world_initialized(db, interaction.guild.id)
 
         await interaction.followup.send(
-            "World has been regenerated! Use `/explore` to start playing.", ephemeral=True
+            f"New world generated (seed `{seed}`)! Use `/explore` to start playing.", ephemeral=True
         )
 
 

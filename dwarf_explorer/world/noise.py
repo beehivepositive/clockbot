@@ -1,5 +1,3 @@
-import hashlib
-
 from dwarf_explorer.config import NOISE_OCTAVES, NOISE_LACUNARITY, NOISE_GAIN, NOISE_BASE_SCALE
 
 
@@ -8,10 +6,16 @@ def _smoothstep(t: float) -> float:
 
 
 def hash_coord(x: int, y: int, seed: int) -> float:
-    """Deterministic hash of a 2D coordinate to a float in [0, 1]."""
-    h = hashlib.sha256(f"{seed}:{x}:{y}".encode()).digest()
-    value = int.from_bytes(h[:4], "big")
-    return value / 0xFFFFFFFF
+    """Fast deterministic hash of a 2D coordinate to a float in [0, 1].
+
+    Uses a multiplicative integer hash — ~100× faster than SHA-256 and
+    provides adequate spatial randomness for terrain generation.
+    """
+    n = (x * 1664525 + y * 1013904223 + (seed & 0xFFFFFFFF)) & 0xFFFFFFFF
+    n = ((n ^ (n >> 16)) * 0x45D9F3B) & 0xFFFFFFFF
+    n = ((n ^ (n >> 16)) * 0x45D9F3B) & 0xFFFFFFFF
+    n ^= (n >> 16)
+    return (n & 0xFFFFFFFF) / 0xFFFFFFFF
 
 
 def value_noise_2d(x: float, y: float, seed: int, scale: float) -> float:

@@ -112,50 +112,74 @@ def _turn_penalty(ldx: int, ldy: int, ndx: int, ndy: int) -> float:
         return 100.0
 
 
-def _astar(
-    start: tuple[int, int],
-    goal: tuple[int, int],
+def _precompute_costs(
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
-    start_dir: tuple[int, int] = (0, 0),
-) -> list[tuple[int, int]] | None:
-    """Direction-aware A* from start to goal.
+) -> list[list[float]]:
+    """Build a WORLD_SIZE×WORLD_SIZE cost grid for A*.
 
-    State = (x, y, incoming_dx, incoming_dy).  Turn penalties discourage
-    sharp bends; start_dir lets callers pass in the approach direction so
-    successive segments stay smooth at waypoints.
+    Calling get_biome once per tile upfront (instead of on every A* step)
+    gives a large speedup when the same world is path-searched many times.
+    Indexed as grid[y][x].
+    """
+    grid: list[list[float]] = []
+    for y in range(WORLD_SIZE):
+        row: list[float] = []
+        for x in range(WORLD_SIZE):
+            if (x, y) in bridge_all:
+                row.append(1.0)
+            elif (x, y) in river_tiles:
+                row.append(9_999.0)
+            else:
+                biome = get_biome(x, y, seed)
+                if biome in _WATER_BIOMES:
+                    row.append(9_999.0)
+                elif biome in ("mountain", "snow"):
+                    row.append(30.0)
+                elif biome == "hills":
+                    row.append(3.0)
+                else:
+                    row.append(0.5 + _meander_noise(x, y, seed ^ _PATH_SEED_OFFSET) * 2.0)
+        grid.append(row)
+    return grid
+
+
+def _astar(
+    start: tuple[int, int],
+    goal: tuple[int, int],
+    cost_grid: list[list[float]],
+) -> list[tuple[int, int]] | None:
+    """Simple (x,y) A* using a pre-built cost grid.
+
+    Replacing direction-aware state (x,y,dx,dy) with plain (x,y) shrinks the
+    state space by 8× and removes turn-penalty overhead. Natural path meander
+    comes from the spatially-varying cost values in cost_grid.
     """
     if start == goal:
         return [start]
 
-    init_state = (start[0], start[1], start_dir[0], start_dir[1])
-    open_heap: list[tuple[float, float, tuple]] = []
-    heapq.heappush(open_heap, (0.0, 0.0, init_state))
-    came_from: dict[tuple, tuple | None] = {init_state: None}
-    g_score: dict[tuple, float] = {init_state: 0.0}
-    max_iters = 60_000
+    INF = float("inf")
+    # heap: (f, g, node)
+    open_heap: list[tuple[float, float, tuple[int, int]]] = [
+        (0.0, 0.0, start)
+    ]
+    came_from: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+    g_score: dict[tuple[int, int], float] = {start: 0.0}
 
-    for _ in range(max_iters):
-        if not open_heap:
-            break
-        _, g, state = heapq.heappop(open_heap)
-        cx, cy, ldx, ldy = state
-
-        if (cx, cy) == goal:
+    while open_heap:
+        _, g, cur = heapq.heappop(open_heap)
+        if g > g_score.get(cur, INF):
+            continue  # stale entry
+        if cur == goal:
             path: list[tuple[int, int]] = []
-            s: tuple | None = state
+            s: tuple[int, int] | None = cur
             while s is not None:
-                path.append((s[0], s[1]))
+                path.append(s)
                 s = came_from[s]
             path.reverse()
-            # Remove consecutive duplicates
-            return [path[i] for i in range(len(path))
-                    if i == 0 or path[i] != path[i - 1]]
-
-        if g > g_score.get(state, float("inf")):
-            continue
-
+            return path
+        cx, cy = cur
         for ddx in (-1, 0, 1):
             for ddy in (-1, 0, 1):
                 if ddx == 0 and ddy == 0:
@@ -163,16 +187,15 @@ def _astar(
                 nx, ny = cx + ddx, cy + ddy
                 if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
                     continue
-                step_cost = _tile_move_cost(nx, ny, seed, river_tiles, bridge_all)
-                move_dist = math.sqrt(2.0) if (ddx != 0 and ddy != 0) else 1.0
-                tp = _turn_penalty(ldx, ldy, ddx, ddy)
-                new_g = g + step_cost * move_dist + tp
-                new_state = (nx, ny, ddx, ddy)
-                if new_g < g_score.get(new_state, float("inf")):
-                    g_score[new_state] = new_g
-                    came_from[new_state] = state
+                step = cost_grid[ny][nx]
+                move_dist = 1.4142135 if (ddx and ddy) else 1.0
+                new_g = g + step * move_dist
+                nb = (nx, ny)
+                if new_g < g_score.get(nb, INF):
+                    g_score[nb] = new_g
+                    came_from[nb] = cur
                     h = math.hypot(goal[0] - nx, goal[1] - ny)
-                    heapq.heappush(open_heap, (new_g + h, new_g, new_state))
+                    heapq.heappush(open_heap, (new_g + h, new_g, nb))
 
     return None  # no path found
 
@@ -429,6 +452,9 @@ def _generate_village_paths_sync(
     if len(all_nodes) < 2:
         return overrides
 
+    # Pre-build cost grid once — avoids calling get_biome on every A* step
+    cost_grid = _precompute_costs(seed, river_tiles, bridge_all)
+
     def _river_cross_weight(a: tuple[int, int], b: tuple[int, int]) -> float:
         """Euclidean distance, multiplied if the straight line samples many river tiles.
 
@@ -495,7 +521,7 @@ def _generate_village_paths_sync(
         a: tuple[int, int], b: tuple[int, int]
     ) -> list[tuple[int, int]] | None:
         dist = max(1.0, math.hypot(b[0] - a[0], b[1] - a[1]))
-        seg = _astar(a, b, seed, river_tiles, bridge_all)
+        seg = _astar(a, b, cost_grid)
         if seg is None:
             return None
         # Reject if the path is a huge river-avoidance detour
