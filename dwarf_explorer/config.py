@@ -51,6 +51,7 @@ STRUCTURE_EMOJI = {
     "shrine": "\u26E9\uFE0F",       # ⛩️
     "cave": "\U0001F573\uFE0F",     # 🕳️
     "bridge": "\U0001F309",          # 🌉
+    "player_house": "\U0001F3E0",   # 🏠
 }
 
 ENTITY_EMOJI = {
@@ -109,6 +110,7 @@ WALKABLE_TILES = {
     "sapling", "short_grass", "seedling",
     "river_landing",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
+    "player_house",  # player-built house — walkable (enter on interact)
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
 
@@ -116,7 +118,7 @@ WALKABLE_TILES = {
 CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "shrine", "cave", "bridge"}
+STRUCTURE_TILES = {"village", "ruins", "shrine", "cave", "bridge", "player_house"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -165,6 +167,22 @@ ARENA_EMOJI = {
 
 FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
 
+# Player-built house: materials needed to construct one
+HOUSE_BUILD_COST = {"log": 8, "stone": 4}
+
+# Interior decoration catalog: id → {name, cost dict, tile placed}
+HOUSE_DECORATION_CATALOG = [
+    {"id": "b_table",     "name": "Table",     "cost": {"log": 2}},
+    {"id": "b_chair",     "name": "Chair",     "cost": {"log": 1}},
+    {"id": "b_bed",       "name": "Bed",       "cost": {"log": 3}},
+    {"id": "b_stove",     "name": "Hearth",    "cost": {"stone": 3}},
+    {"id": "b_bookshelf", "name": "Bookshelf", "cost": {"log": 2}},
+    {"id": "b_candle",    "name": "Candle",    "cost": {"torch": 1}},
+]
+
+# Tiles that count as movable decorations (can be placed/removed by owner)
+PLAYER_HOUSE_DECO_TILES = {d["id"] for d in HOUSE_DECORATION_CATALOG}
+
 # Crafting recipes: frozenset of (item_id, qty) tuples → result
 # Selections must match EXACTLY — no extra items, no other quantities
 CRAFT_RECIPES: dict[frozenset, dict] = {
@@ -195,9 +213,10 @@ CAVE_EMOJI = {
     "cave_wyvern":        "\U0001F409",            # 🐉 wyvern/dragon
     "cave_stairdown":     "\U0001F53D",            # 🔽 descend deeper
     "cave_stairup":       "\U0001F53C",            # 🔼 ascend
+    "player_house_cave":  "\U0001F3E0",            # 🏠 player-built house in cave
 }
 
-CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup"}
+CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
@@ -235,6 +254,7 @@ VILLAGE_EMOJI = {
 BUILDING_EMOJI = {
     # Shared floor/wall/door
     "b_floor":            "\U0001F7EB",       # 🟫  (overridable with :grey_square:)
+    "b_floor_wood":       "\U0001F7EB",       # 🟫  (overridable with :wood_floor:) — house/shop/bank/church
     "b_wall":             "\u2B1B",           # ⬛
     "b_door":             "\U0001F6AA",       # 🚪
     # House furniture
@@ -544,6 +564,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI, "b_stove",           "hearth"),
         (BUILDING_EMOJI, "b_table",           "table"),
         (BUILDING_EMOJI, "b_floor",           "grey_square"),
+        (BUILDING_EMOJI, "b_floor_wood",      "wood_floor"),
         (BUILDING_EMOJI, "b_shelf",           "chest"),
         (BUILDING_EMOJI, "b_forge",           "forge"),
         (VILLAGE_EMOJI,  "vil_grass",         "grass"),

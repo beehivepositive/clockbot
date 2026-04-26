@@ -16,7 +16,10 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return CAVE_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
-    if location in ("house", "church", "bank", "shop", "blacksmith"):
+    if location in ("house", "church", "bank", "shop", "blacksmith", "player_house"):
+        # Wood floors for cozy buildings; stone/grey for blacksmith
+        if tile.terrain == "b_floor" and location != "blacksmith":
+            return BUILDING_EMOJI.get("b_floor_wood", BUILDING_EMOJI.get("b_floor", _BLACK))
         return BUILDING_EMOJI.get(tile.terrain, _BLACK)
     # Wilderness: structure > enemy > item > terrain
     if tile.structure and tile.structure in STRUCTURE_EMOJI:
@@ -29,7 +32,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
 
 
 def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "",
-                other_players: list[tuple[int, int, str]] | None = None) -> str:
+                other_players: list[tuple[int, int, str]] | None = None,
+                cursor_pos: tuple[int, int] | None = None) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -95,6 +99,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                     row_emojis.append(ENTITY_EMOJI["player"])
                 elif (col_x, row_y) in _other_pos:
                     row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
+                elif (cursor_pos and not is_center
+                      and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
+                    row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
                 else:
                     row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
 
@@ -104,7 +111,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
     gold = f"\U0001FA99 {player.gold}"
     if player.in_house:
-        loc_labels = {"house": "House", "church": "Church", "bank": "Bank", "shop": "Shop", "blacksmith": "Blacksmith"}
+        loc_labels = {
+            "house": "House", "church": "Church", "bank": "Bank",
+            "shop": "Shop", "blacksmith": "Blacksmith",
+            "player_house": "My House",
+        }
         label = loc_labels.get(player.house_type, "Building")
         pos = f"\U0001F4CD {label} ({player.house_x},{player.house_y})"
     elif player.in_village:

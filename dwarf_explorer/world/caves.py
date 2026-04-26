@@ -461,9 +461,39 @@ async def populate_chest_loot(chest_id: int, chest_type: str, db) -> None:
         await add_to_chest(db, chest_id, "gem", 1)
 
 
+async def _restore_regenerated_rocks(cave_id: int, db) -> None:
+    """Restore cave_rock tiles broken 48+ hours ago, skipping spots with player houses."""
+    rows = await db.fetch_all(
+        "SELECT local_x, local_y FROM cave_rock_breaks"
+        " WHERE cave_id = ? AND broken_at <= datetime('now', '-48 hours')",
+        (cave_id,),
+    )
+    if not rows:
+        return
+    for row in rows:
+        lx, ly = row["local_x"], row["local_y"]
+        # Don't restore if a player-built house is standing here
+        ph = await db.fetch_one(
+            "SELECT house_id FROM player_houses"
+            " WHERE is_cave=1 AND loc_cave_id=? AND loc_x=? AND loc_y=?",
+            (cave_id, lx, ly),
+        )
+        if not ph:
+            await db.execute(
+                "UPDATE cave_tiles SET tile_type='cave_rock'"
+                " WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, lx, ly),
+            )
+        await db.execute(
+            "DELETE FROM cave_rock_breaks WHERE cave_id=? AND local_x=? AND local_y=?",
+            (cave_id, lx, ly),
+        )
+
+
 async def load_cave_viewport(
     cave_id: int, center_x: int, center_y: int, db
 ) -> list[list[TileData]]:
+    await _restore_regenerated_rocks(cave_id, db)
     half  = VIEWPORT_CENTER
     x_min = center_x - half
     y_min = center_y - half

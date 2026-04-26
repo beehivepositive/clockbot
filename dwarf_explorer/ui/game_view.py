@@ -12,6 +12,7 @@ from dwarf_explorer.config import (
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
     CAVE_EMOJI, CRAFT_RECIPES,
+    HOUSE_BUILD_COST, HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -53,6 +54,11 @@ from dwarf_explorer.game.combat import (
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, populate_chest_loot
+from dwarf_explorer.world.player_houses import (
+    create_player_house, get_player_house_at, get_player_house_owner,
+    delete_player_house, load_player_house_viewport, load_player_house_single_tile,
+    set_player_house_tile, HOUSE_SPAWN_X, HOUSE_SPAWN_Y,
+)
 from dwarf_explorer.world.villages import (
     get_or_create_village, get_building_at,
     load_village_viewport, load_village_single_tile,
@@ -247,7 +253,8 @@ class InventoryView(discord.ui.View):
                  equip_label: str = "⚔️ Equip",
                  equip_action: str = "inv_equip",
                  selections: dict | None = None,
-                 cursor_item_id: str | None = None):
+                 cursor_item_id: str | None = None,
+                 sel_mode: str = "add"):
         super().__init__(timeout=None)
         selections = selections or {}
         cursor_selected = cursor_item_id is not None and cursor_item_id in selections
@@ -269,7 +276,6 @@ class InventoryView(discord.ui.View):
             ))
 
         # Row 1: selected item buttons (up to 5)
-        from dwarf_explorer.game.renderer import _item_emoji as _ie
         from dwarf_explorer.game.renderer import _ITEM_SLOT_EMOJI as _ise
         sel_items = list(selections.items())  # [(item_id, qty), ...]
         for idx, (item_id, qty) in enumerate(sel_items[:5]):
@@ -282,12 +288,20 @@ class InventoryView(discord.ui.View):
                 row=1,
             ))
 
-        # Row 2: Unselect All + Craft if recipe matches
+        # Row 2: Unselect All + mode toggle + Craft if recipe matches
         if selections:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger,
                 label="🗑 Unselect All",
                 custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"),
+                row=2,
+            ))
+            mode_label = "➖ Sub" if sel_mode == "sub" else "➕ Add"
+            mode_style = discord.ButtonStyle.danger if sel_mode == "sub" else discord.ButtonStyle.secondary
+            self.add_item(discord.ui.Button(
+                style=mode_style,
+                label=mode_label,
+                custom_id=_custom_id(guild_id, user_id, "inv_toggle_mode"),
                 row=2,
             ))
             # Check if selections match any recipe
@@ -591,6 +605,98 @@ class AnvilView(discord.ui.View):
             ))
 
 
+class PlayerHouseEditView(discord.ui.View):
+    """Edit mode for player-built houses: navigate + add decoration + remove + delete + close."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _sp(tag: str) -> discord.ui.Button:
+            return discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, tag),
+            )
+
+        # Row 0: [spacer] [⬆️] [spacer] [➕ Add] [🗑 Delete]
+        sp1 = _sp("hesp1"); sp1.row = 0
+        up_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="⬆️",
+                                   custom_id=_custom_id(gid, uid, "hedit_up"), row=0)
+        sp2 = _sp("hesp2"); sp2.row = 0
+        add_btn = discord.ui.Button(style=discord.ButtonStyle.success, label="➕ Add",
+                                    custom_id=_custom_id(gid, uid, "hedit_add"), row=0)
+        del_btn = discord.ui.Button(style=discord.ButtonStyle.danger, label="🗑 Delete House",
+                                    custom_id=_custom_id(gid, uid, "hedit_delete"), row=0)
+
+        # Row 1: [⬅️] [✖ Remove] [➡️] [❌ Close]
+        left_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="⬅️",
+                                     custom_id=_custom_id(gid, uid, "hedit_left"), row=1)
+        rem_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="✖ Remove",
+                                    custom_id=_custom_id(gid, uid, "hedit_remove"), row=1)
+        right_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="➡️",
+                                      custom_id=_custom_id(gid, uid, "hedit_right"), row=1)
+        close_btn = discord.ui.Button(style=discord.ButtonStyle.danger, label="❌ Close Edit",
+                                      custom_id=_custom_id(gid, uid, "hedit_close"), row=1)
+
+        # Row 2: [spacer] [⬇️]
+        sp3 = _sp("hesp3"); sp3.row = 2
+        down_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="⬇️",
+                                     custom_id=_custom_id(gid, uid, "hedit_down"), row=2)
+
+        for btn in [sp1, up_btn, sp2, add_btn, del_btn,
+                    left_btn, rem_btn, right_btn, close_btn,
+                    sp3, down_btn]:
+            self.add_item(btn)
+
+
+class HouseDecorationView(discord.ui.View):
+    """Select a decoration to place in a player house."""
+
+    def __init__(self, guild_id: int, user_id: int, page: int = 0, selected: int = 0):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        catalog = HOUSE_DECORATION_CATALOG
+        per_page = 5
+        total_pages = max(1, (len(catalog) + per_page - 1) // per_page)
+        page_items = catalog[page * per_page: page * per_page + per_page]
+
+        # Row 0: up to 5 decoration item buttons
+        for i, item in enumerate(page_items):
+            abs_idx = page * per_page + i
+            cost_str = "+".join(f"{v}{k}" for k, v in item["cost"].items())
+            lbl = f"{item['name']} ({cost_str})"
+            style = discord.ButtonStyle.success if abs_idx == selected else discord.ButtonStyle.secondary
+            self.add_item(discord.ui.Button(
+                style=style, label=lbl,
+                custom_id=_custom_id(gid, uid, f"hdeco_sel_{abs_idx}"),
+                row=0,
+            ))
+        # Pad row 0 to 5 buttons
+        for i in range(len(page_items), per_page):
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, f"hdsp_{i}"), row=0,
+            ))
+
+        # Row 1: ◀ ▶ Place Cancel
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="◀", disabled=(page == 0),
+            custom_id=_custom_id(gid, uid, "hdeco_prev"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="▶", disabled=(page >= total_pages - 1),
+            custom_id=_custom_id(gid, uid, "hdeco_next"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success, label="🏗️ Place",
+            custom_id=_custom_id(gid, uid, "hdeco_place"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "hdeco_cancel"), row=1,
+        ))
+
+
 # ── Equipment helpers ─────────────────────────────────────────────────────────
 
 def _equipped_dict(player: Player) -> dict:
@@ -685,13 +791,23 @@ def _compute_context_labels(
     if not grid or len(grid) <= vc:
         return center_label, center_enabled, action_label, action_enabled
 
+    # ── Owner edit button when inside a player house ──────────────────────────
+    if player.in_house and player.house_type == "player_house":
+        if _ui_state.get(player.user_id, {}).get("is_house_owner", False):
+            action_label, action_enabled = "⚒️ Edit", True
+        return center_label, center_enabled, action_label, action_enabled
+
     center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
     if center_tile:
         t = center_tile.terrain
         s = center_tile.structure
 
         # Structural overrides (cave/village on overworld)
-        if s == "cave":
+        if s == "player_house":
+            center_label, center_enabled = "🏠", True
+        elif t == "player_house_cave":
+            center_label, center_enabled = "🏠", True
+        elif s == "cave":
             center_label, center_enabled = "🕳️", True
         elif s == "village":
             center_label, center_enabled = "🏘️", True
@@ -774,6 +890,17 @@ def _compute_context_labels(
         action_label, action_enabled = "🏦 Bank", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
+    elif not action_enabled and center_tile and not player.in_house:
+        # Offer to build a house on the current tile if it's buildable
+        _bt = center_tile.terrain
+        _build_ok = (
+            not center_tile.structure
+            and center_tile.walkable
+            and _bt not in {"void", "deep_water", "shallow_water", "river", "river_landing",
+                            "mountain", "snow", "player_house_cave"}
+        )
+        if _build_ok:
+            action_label, action_enabled = "🏠 Build", True
 
     return center_label, center_enabled, action_label, action_enabled
 
@@ -1003,33 +1130,67 @@ async def _move_steps(
         return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=(landing is not None))
 
     if player.in_house:
+        _is_ph = (player.house_type == "player_house")
         for _ in range(steps):
             nx, ny = player.house_x + dx, player.house_y + dy
-            target = await load_building_single_tile(player.house_id, nx, ny, db)
+            if _is_ph:
+                target = await load_player_house_single_tile(player.house_id, nx, ny, db)
+            else:
+                target = await load_building_single_tile(player.house_id, nx, ny, db)
             if target.terrain == "b_door":
                 # Auto-exit house on walking into door
                 vx, vy = player.house_vx, player.house_vy
                 player.in_house = False
                 player.house_id = None
-                player.village_x = vx
-                player.village_y = vy
                 await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
-                await update_player_village_state(
-                    db, user_id, True, player.village_id,
-                    vx, vy, player.village_wx, player.village_wy,
-                )
-                grid = await load_village_viewport(player.village_id, vx, vy, db)
-                return render_grid(grid, player, "You step outside."), _game_view(guild_id, user_id, player, grid=grid)
+                if _is_ph:
+                    if player.ph_cave_id is not None:
+                        # Return to cave
+                        cid = player.ph_cave_id
+                        player.cave_id = cid
+                        player.cave_x, player.cave_y = vx, vy
+                        player.in_cave = True
+                        player.ph_cave_id = None
+                        await update_player_cave_state(db, user_id, True, cid, vx, vy)
+                        grid = await load_cave_viewport(cid, vx, vy, db)
+                        return render_grid(grid, player, "You step outside."), \
+                               await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+                    else:
+                        # Return to overworld
+                        player.world_x, player.world_y = vx, vy
+                        await update_player_position(db, user_id, vx, vy)
+                        grid = await load_viewport(vx, vy, seed, db)
+                        return render_grid(grid, player, "You step outside."), \
+                               _game_view(guild_id, user_id, player, grid=grid)
+                else:
+                    # Return to village
+                    player.village_x, player.village_y = vx, vy
+                    await update_player_village_state(
+                        db, user_id, True, player.village_id,
+                        vx, vy, player.village_wx, player.village_wy,
+                    )
+                    grid = await load_village_viewport(player.village_id, vx, vy, db)
+                    return render_grid(grid, player, "You step outside."), \
+                           _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_building(target)
             if not allowed:
-                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+                if _is_ph:
+                    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+                else:
+                    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
             player.house_x, player.house_y = nx, ny
             await update_player_house_state(
                 db, user_id, True, player.house_id,
                 nx, ny, player.house_vx, player.house_vy, player.house_type,
             )
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        if _is_ph:
+            grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+        else:
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        # If in edit mode, return edit view
+        if _ui_state.get(user_id, {}).get("type") == "house_edit":
+            return render_grid(grid, player), PlayerHouseEditView(guild_id, user_id)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_village:
@@ -1481,6 +1642,12 @@ async def handle_mine(
         " WHERE cave_id=? AND local_x=? AND local_y=?",
         (player.cave_id, nx, ny),
     )
+    # Record break time for 48h regeneration
+    await db.execute(
+        "INSERT OR REPLACE INTO cave_rock_breaks (cave_id, local_x, local_y, broken_at)"
+        " VALUES (?, ?, ?, datetime('now'))",
+        (player.cave_id, nx, ny),
+    )
     loot = []
     rock_count = rng.randint(1, 3)
     await add_to_inventory(db, user_id, "rock", rock_count)
@@ -1802,12 +1969,37 @@ async def handle_interact(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if player.in_house:
-        htile = await load_building_single_tile(player.house_id, player.house_x, player.house_y, db)
+        _is_ph = (player.house_type == "player_house")
+        if _is_ph:
+            htile = await load_player_house_single_tile(player.house_id, player.house_x, player.house_y, db)
+        else:
+            htile = await load_building_single_tile(player.house_id, player.house_x, player.house_y, db)
 
         if htile.terrain == "b_door":
             vx, vy = player.house_vx, player.house_vy
             player.in_house = False
             await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+            if _is_ph:
+                if player.ph_cave_id is not None:
+                    cid = player.ph_cave_id
+                    player.cave_id = cid
+                    player.cave_x, player.cave_y = vx, vy
+                    player.in_cave = True
+                    player.ph_cave_id = None
+                    await update_player_cave_state(db, user_id, True, cid, vx, vy)
+                    grid = await load_cave_viewport(cid, vx, vy, db)
+                    content = render_grid(grid, player, "You step outside.")
+                    view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+                else:
+                    player.world_x, player.world_y = vx, vy
+                    await update_player_position(db, user_id, vx, vy)
+                    grid = await load_viewport(vx, vy, seed, db)
+                    content = render_grid(grid, player, "You step outside.")
+                    view = _game_view(guild_id, user_id, player, grid=grid)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
             player.village_x, player.village_y = vx, vy
             await update_player_village_state(
                 db, user_id, True, player.village_id,
@@ -1822,67 +2014,77 @@ async def handle_interact(
         elif htile.terrain == "b_shop_npc" and player.house_type == "shop":
             return await _open_shop(interaction, guild_id, user_id, player)
 
-        elif htile.terrain == "b_stove":
-            fish_row = await db.fetch_one(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='fish'", (user_id,)
-            )
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            if fish_row and fish_row["quantity"] > 0:
-                count = fish_row["quantity"]
-                await remove_from_inventory(db, user_id, "fish", count)
-                await add_to_inventory(db, user_id, "cooked_fish", count)
-                content = render_grid(grid, player, f"🔥 You cook {count} fish at the hearth. Got {count} cooked fish!")
-            else:
-                content = render_grid(grid, player, "A warm hearth. Bring raw fish to cook here.")
-
-        elif htile.terrain in ("b_bed", "b_table", "b_bookshelf"):
-            msgs = {
-                "b_bed": "A cozy bed. You feel rested.",
-                "b_table": "A sturdy wooden table.",
-                "b_bookshelf": "Rows of dusty books.",
-            }
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, msgs.get(htile.terrain, "..."))
-
-        elif htile.terrain == "b_altar" and player.house_type == "church":
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "You kneel before the altar. You feel at peace.")
-
-        elif htile.terrain == "b_priest":
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "\"May the light guide your path, traveller.\"")
-
-        elif htile.terrain == "b_safe":
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "A locked vault. Speak with the banker.")
-
-        elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
-            # Torch recipe: 1 stick + 1 resin → 1 torch  (ingot smelting is now at the forge)
-            stick_row = await db.fetch_one(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
-            )
-            resin_row = await db.fetch_one(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='resin'", (user_id,)
-            )
-            stick_count = stick_row["quantity"] if stick_row else 0
-            resin_count = resin_row["quantity"] if resin_row else 0
-            torch_batches = min(stick_count, resin_count)
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            if torch_batches > 0:
-                await remove_from_inventory(db, user_id, "stick", torch_batches)
-                await remove_from_inventory(db, user_id, "resin", torch_batches)
-                await add_to_inventory(db, user_id, "torch", torch_batches)
-                content = render_grid(grid, player, f"⚒️ Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin.")
-            else:
-                content = render_grid(grid, player, "\"1 stick + 1 resin = 1 torch. Use the 🔥 Forge to smelt ore, ⚒️ Anvil to craft weapons.\"")
-
-        elif htile.terrain == "b_anvil":
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "An anvil. Stand adjacent to it and use the ⚒️ Smith button.")
-
         else:
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "Nothing to interact with here.")
+            # Generic tile interactions (same for village buildings and player houses)
+            async def _load_house_grid():
+                if _is_ph:
+                    return await load_player_house_viewport(
+                        player.house_id, player.house_x, player.house_y, db)
+                return await load_building_viewport(
+                    player.house_id, player.house_x, player.house_y, db)
+
+            if htile.terrain == "b_stove":
+                fish_row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='fish'", (user_id,)
+                )
+                grid = await _load_house_grid()
+                if fish_row and fish_row["quantity"] > 0:
+                    count = fish_row["quantity"]
+                    await remove_from_inventory(db, user_id, "fish", count)
+                    await add_to_inventory(db, user_id, "cooked_fish", count)
+                    content = render_grid(grid, player, f"🔥 You cook {count} fish at the hearth. Got {count} cooked fish!")
+                else:
+                    content = render_grid(grid, player, "A warm hearth. Bring raw fish to cook here.")
+
+            elif htile.terrain in ("b_bed", "b_table", "b_bookshelf", "b_chair", "b_candle"):
+                msgs = {
+                    "b_bed": "A cozy bed. You feel rested.",
+                    "b_table": "A sturdy wooden table.",
+                    "b_bookshelf": "Rows of dusty books.",
+                    "b_chair": "A simple chair.",
+                    "b_candle": "A flickering candle.",
+                }
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, msgs.get(htile.terrain, "..."))
+
+            elif htile.terrain == "b_altar" and player.house_type == "church":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "You kneel before the altar. You feel at peace.")
+
+            elif htile.terrain == "b_priest":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "\"May the light guide your path, traveller.\"")
+
+            elif htile.terrain == "b_safe":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A locked vault. Speak with the banker.")
+
+            elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
+                stick_row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
+                )
+                resin_row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='resin'", (user_id,)
+                )
+                stick_count = stick_row["quantity"] if stick_row else 0
+                resin_count = resin_row["quantity"] if resin_row else 0
+                torch_batches = min(stick_count, resin_count)
+                grid = await _load_house_grid()
+                if torch_batches > 0:
+                    await remove_from_inventory(db, user_id, "stick", torch_batches)
+                    await remove_from_inventory(db, user_id, "resin", torch_batches)
+                    await add_to_inventory(db, user_id, "torch", torch_batches)
+                    content = render_grid(grid, player, f"⚒️ Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin.")
+                else:
+                    content = render_grid(grid, player, "\"1 stick + 1 resin = 1 torch. Use the 🔥 Forge to smelt ore, ⚒️ Anvil to craft weapons.\"")
+
+            elif htile.terrain == "b_anvil":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "An anvil. Stand adjacent to it and use the ⚒️ Smith button.")
+
+            else:
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -1940,6 +2142,37 @@ async def handle_interact(
             else:
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 content = render_grid(grid, player, "Nothing to interact with here.")
+
+        elif cave_tile.terrain == "player_house_cave":
+            house_id = await get_player_house_at(
+                db, player.cave_x, player.cave_y, True, player.cave_id
+            )
+            if house_id:
+                owner_id = await get_player_house_owner(db, house_id)
+                is_owner = (owner_id == user_id)
+                player.in_house = True
+                player.house_id = house_id
+                player.house_x = HOUSE_SPAWN_X
+                player.house_y = HOUSE_SPAWN_Y
+                player.house_vx = player.cave_x
+                player.house_vy = player.cave_y
+                player.house_type = "player_house"
+                player.ph_cave_id = player.cave_id
+                await update_player_house_state(
+                    db, user_id, True, house_id,
+                    HOUSE_SPAWN_X, HOUSE_SPAWN_Y,
+                    player.cave_x, player.cave_y, "player_house",
+                )
+                await update_player_stats(db, user_id, ph_cave_id=player.cave_id)
+                _ui_state.setdefault(user_id, {})["is_house_owner"] = is_owner
+                grid = await load_player_house_viewport(house_id, HOUSE_SPAWN_X, HOUSE_SPAWN_Y, db)
+                content = render_grid(grid, player, "You enter the house.")
+            else:
+                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                content = render_grid(grid, player, "Nothing to interact with here.")
+            view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         elif cave_tile.terrain in CAVE_CHEST_TYPES:
             chest_id, is_new = await get_or_create_chest(
@@ -2055,6 +2288,32 @@ async def handle_interact(
                 view = _game_view(guild_id, user_id, player)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
+
+        elif tile.structure == "player_house":
+            house_id = await get_player_house_at(db, wx, wy, False, None)
+            if house_id:
+                owner_id = await get_player_house_owner(db, house_id)
+                is_owner = (owner_id == user_id)
+                player.in_house = True
+                player.house_id = house_id
+                player.house_x = HOUSE_SPAWN_X
+                player.house_y = HOUSE_SPAWN_Y
+                player.house_vx = wx
+                player.house_vy = wy
+                player.house_type = "player_house"
+                player.ph_cave_id = None
+                await update_player_house_state(
+                    db, user_id, True, house_id,
+                    HOUSE_SPAWN_X, HOUSE_SPAWN_Y,
+                    wx, wy, "player_house",
+                )
+                await update_player_stats(db, user_id, ph_cave_id=None)
+                _ui_state.setdefault(user_id, {})["is_house_owner"] = is_owner
+                grid = await load_player_house_viewport(house_id, HOUSE_SPAWN_X, HOUSE_SPAWN_Y, db)
+                content = render_grid(grid, player, "You enter your house.")
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif tile.structure == "cave":
             cave_id, ex, ey = await get_or_create_cave(seed, wx, wy, db)
@@ -2247,6 +2506,27 @@ async def handle_action(
     if player.hand_2:
         hand_items.add(player.hand_2)
 
+    # ── Player house: enter edit mode ────────────────────────────────────────
+    if player.in_house and player.house_type == "player_house":
+        _is_owner = _ui_state.get(user_id, {}).get("is_house_owner", False)
+        if not _is_owner:
+            grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "Only the house owner can edit this house.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+        state = _ui_state.get(user_id, {})
+        _ui_state[user_id] = {**state, "type": "house_edit"}
+        grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+        cursor = (player.house_x, player.house_y)
+        content = render_grid(grid, player, "✏️ **Edit mode** — Move around and use ➕ Add / ✖ Remove to decorate tiles.",
+                              cursor_pos=cursor)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=PlayerHouseEditView(guild_id, user_id),
+        )
+        return
+
     # ── Forge: adjacent b_forge ───────────────────────────────────────────────
     if player.in_house:
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
@@ -2286,9 +2566,57 @@ async def handle_action(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # ── Overworld / village: fishing ──────────────────────────────────────────
+    # ── Build a player house ──────────────────────────────────────────────────
+    wx, wy = player.world_x, player.world_y
     if not player.in_cave and not player.in_village:
-        wx, wy = player.world_x, player.world_y
+        # Check whether we're on a buildable tile
+        tile = await load_single_tile(wx, wy, seed, db)
+        _build_ok = (
+            not tile.structure
+            and tile.walkable
+            and tile.terrain not in {"void", "deep_water", "shallow_water", "river",
+                                     "river_landing", "mountain", "snow", "player_house_cave"}
+        )
+        if _build_ok:
+            # Check materials
+            missing = []
+            for mat, qty in HOUSE_BUILD_COST.items():
+                row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?",
+                    (user_id, mat),
+                )
+                have = row["quantity"] if row else 0
+                if have < qty:
+                    missing.append(f"{qty - have}× {mat}")
+            if missing:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player,
+                                      f"🏠 Need more materials: {', '.join(missing)}")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            # Check if a house already exists here
+            existing = await get_player_house_at(db, wx, wy, is_cave=False, loc_cave_id=None)
+            if existing is not None:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🏠 A house already exists here.")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            # Consume materials
+            for mat, qty in HOUSE_BUILD_COST.items():
+                await remove_from_inventory(db, user_id, mat, qty)
+            # Place overworld tile structure override
+            await set_tile_override(db, wx, wy, "player_house")
+            # Create house record
+            await create_player_house(db, user_id, wx, wy, is_cave=False, loc_cave_id=None)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        # Fishing (overworld)
         if "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
             fish_rng = _random.Random(hash((user_id, wx, wy, player.xp, "fish")))
             roll = fish_rng.random()
@@ -2313,11 +2641,354 @@ async def handle_action(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
+    # ── Cave: build a player house ────────────────────────────────────────────
+    if player.in_cave and not player.in_village:
+        cx, cy = player.cave_x, player.cave_y
+        cave_tile = await load_cave_single_tile(player.cave_id, cx, cy, db)
+        _build_ok_cave = (
+            cave_tile.terrain not in {"void", "cave_rock", "cave_wall", "cave_water",
+                                      "player_house_cave"}
+            and cave_tile.walkable
+        )
+        if _build_ok_cave:
+            missing = []
+            for mat, qty in HOUSE_BUILD_COST.items():
+                row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?",
+                    (user_id, mat),
+                )
+                have = row["quantity"] if row else 0
+                if have < qty:
+                    missing.append(f"{qty - have}× {mat}")
+            if missing:
+                grid = await load_cave_viewport(player.cave_id, cx, cy, db)
+                content = render_grid(grid, player,
+                                      f"🏠 Need more materials: {', '.join(missing)}")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            existing = await get_player_house_at(db, cx, cy, is_cave=True,
+                                                 loc_cave_id=player.cave_id)
+            if existing is not None:
+                grid = await load_cave_viewport(player.cave_id, cx, cy, db)
+                content = render_grid(grid, player, "🏠 A house already exists here.")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            for mat, qty in HOUSE_BUILD_COST.items():
+                await remove_from_inventory(db, user_id, mat, qty)
+            # Update cave tile to player_house_cave
+            await db.execute(
+                "UPDATE cave_tiles SET tile_type='player_house_cave'"
+                " WHERE cave_id=? AND local_x=? AND local_y=?",
+                (player.cave_id, cx, cy),
+            )
+            await create_player_house(db, user_id, cx, cy, is_cave=True,
+                                      loc_cave_id=player.cave_id)
+            grid = await load_cave_viewport(player.cave_id, cx, cy, db)
+            content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
     # Fallback
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, "Nothing to interact with nearby.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Player-house edit handlers ────────────────────────────────────────────────
+
+async def _ph_edit_response(
+    interaction: discord.Interaction,
+    guild_id: int,
+    user_id: int,
+    player,
+    db,
+    msg: str,
+) -> None:
+    """Helper: render house grid in edit mode and respond."""
+    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    cursor = (player.house_x, player.house_y)
+    content = render_grid(grid, player, msg, cursor_pos=cursor)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=PlayerHouseEditView(guild_id, user_id),
+    )
+
+
+async def handle_house_edit_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    """Move the player within their house while in edit mode."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[direction]
+    nx, ny = player.house_x + dx, player.house_y + dy
+
+    # Load target tile
+    target_tile = await load_player_house_single_tile(player.house_id, nx, ny, db)
+    # Passability: walls and void are impassable inside the house
+    _impassable = {"b_wall", "void"}
+    if target_tile.terrain in _impassable:
+        await _ph_edit_response(interaction, guild_id, user_id, player, db, "🚧 Can't move there.")
+        return
+
+    await update_player_house_state(
+        db, user_id, True, player.house_id, nx, ny,
+        player.house_vx, player.house_vy, "player_house",
+    )
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                            "✏️ Edit mode — use ➕ Add / ✖ Remove on the blue-highlighted tile.")
+
+
+async def handle_house_add(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open decoration picker for the current tile (must be b_floor_wood)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    tile = await load_player_house_single_tile(player.house_id, player.house_x, player.house_y, db)
+    if tile.terrain != "b_floor_wood":
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                "➕ Can only add decorations to bare wood-floor tiles.")
+        return
+
+    state = _ui_state.get(user_id, {})
+    _ui_state[user_id] = {**state, "type": "house_deco", "deco_page": 0, "deco_selected": 0}
+    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    cursor = (player.house_x, player.house_y)
+    content = render_grid(grid, player, "🪑 Choose a decoration to place on the blue tile:",
+                          cursor_pos=cursor)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HouseDecorationView(guild_id, user_id, page=0, selected=0),
+    )
+
+
+async def handle_house_remove(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Remove a decoration from the current tile, restoring it to b_floor_wood."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    tile = await load_player_house_single_tile(player.house_id, player.house_x, player.house_y, db)
+    if tile.terrain not in PLAYER_HOUSE_DECO_TILES:
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                "✖ No decoration here to remove.")
+        return
+
+    await set_player_house_tile(player.house_id, player.house_x, player.house_y, "b_floor_wood", db)
+    await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                            f"✖ Removed **{tile.terrain}** — tile restored to wood floor.")
+
+
+async def handle_house_delete(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Delete the current player house and eject the player."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    # Only owner may delete
+    owner_id = await get_player_house_owner(db, player.house_id)
+    if owner_id != user_id:
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                "🚫 Only the house owner can delete it.")
+        return
+
+    loc_x, loc_y, is_cave, loc_cave_id = await delete_player_house(db, player.house_id)
+
+    if is_cave and loc_cave_id is not None:
+        # Restore cave tile to cave_floor
+        await db.execute(
+            "UPDATE cave_tiles SET tile_type='cave_floor'"
+            " WHERE cave_id=? AND local_x=? AND local_y=?",
+            (loc_cave_id, loc_x, loc_y),
+        )
+        # Eject player back into cave at the house location, clear house state
+        await update_player_cave_state(db, user_id, True, loc_cave_id, loc_x, loc_y)
+        await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        grid = await load_cave_viewport(loc_cave_id, loc_x, loc_y, db)
+        content = render_grid(grid, player, "🗑️ House demolished.")
+    else:
+        # Restore overworld tile structure override (remove player_house)
+        await db.execute(
+            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='player_house'",
+            (loc_x, loc_y),
+        )
+        # Eject player back to overworld, clear house + cave state
+        await update_player_position(db, user_id, loc_x, loc_y)
+        await update_player_cave_state(db, user_id, False, None, 0, 0)
+        await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        grid = await load_viewport(loc_x, loc_y, seed, db)
+        content = render_grid(grid, player, "🗑️ House demolished.")
+
+    _ui_state[user_id] = {}
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_house_edit_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Exit edit mode, return to normal house view."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    state = _ui_state.get(user_id, {})
+    _ui_state[user_id] = {k: v for k, v in state.items() if k not in ("type",)}
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "✅ Exited edit mode.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_house_deco_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    """Navigate decoration pages (prev/next)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    state = _ui_state.get(user_id, {})
+    per_page = 5
+    total_pages = max(1, (len(HOUSE_DECORATION_CATALOG) + per_page - 1) // per_page)
+    page = state.get("deco_page", 0)
+    if direction == "prev":
+        page = max(0, page - 1)
+    else:
+        page = min(total_pages - 1, page + 1)
+    _ui_state[user_id] = {**state, "deco_page": page}
+
+    selected = state.get("deco_selected", 0)
+    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    cursor = (player.house_x, player.house_y)
+    content = render_grid(grid, player, "🪑 Choose a decoration:", cursor_pos=cursor)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HouseDecorationView(guild_id, user_id, page=page, selected=selected),
+    )
+
+
+async def handle_house_deco_sel(
+    interaction: discord.Interaction, guild_id: int, user_id: int, idx: int
+) -> None:
+    """Select a decoration item from the catalog."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    state = _ui_state.get(user_id, {})
+    page = state.get("deco_page", 0)
+    _ui_state[user_id] = {**state, "deco_selected": idx}
+
+    grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    cursor = (player.house_x, player.house_y)
+    item = HOUSE_DECORATION_CATALOG[idx] if idx < len(HOUSE_DECORATION_CATALOG) else None
+    msg = f"🪑 Selected **{item['name']}** — press 🏗️ Place to confirm." if item else "🪑 Choose a decoration:"
+    content = render_grid(grid, player, msg, cursor_pos=cursor)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HouseDecorationView(guild_id, user_id, page=page, selected=idx),
+    )
+
+
+async def handle_house_deco_place(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Place the selected decoration on the current tile (consumes materials)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house or player.house_type != "player_house":
+        await interaction.response.defer()
+        return
+
+    state = _ui_state.get(user_id, {})
+    idx = state.get("deco_selected", 0)
+    if idx >= len(HOUSE_DECORATION_CATALOG):
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                "❌ Invalid selection.")
+        return
+
+    deco = HOUSE_DECORATION_CATALOG[idx]
+    tile_id = deco["id"]
+    cost = deco["cost"]
+
+    # Verify current tile is b_floor_wood
+    tile = await load_player_house_single_tile(player.house_id, player.house_x, player.house_y, db)
+    if tile.terrain != "b_floor_wood":
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                "➕ Can only place decorations on bare wood-floor tiles.")
+        return
+
+    # Check materials
+    missing = []
+    for mat, qty in cost.items():
+        row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?",
+            (user_id, mat),
+        )
+        have = row["quantity"] if row else 0
+        if have < qty:
+            missing.append(f"{qty - have}× {mat}")
+    if missing:
+        await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                                f"❌ Need more: {', '.join(missing)}")
+        return
+
+    # Consume materials and place tile
+    for mat, qty in cost.items():
+        await remove_from_inventory(db, user_id, mat, qty)
+    await set_player_house_tile(player.house_id, player.house_x, player.house_y, tile_id, db)
+
+    # Return to edit mode
+    _ui_state[user_id] = {**state, "type": "house_edit"}
+    await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                            f"🏗️ Placed **{deco['name']}**!")
+
+
+async def handle_house_deco_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel decoration selection and return to edit mode."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    state = _ui_state.get(user_id, {})
+    _ui_state[user_id] = {**state, "type": "house_edit"}
+
+    await _ph_edit_response(interaction, guild_id, user_id, player, db,
+                            "❌ Cancelled.")
 
 
 async def handle_forge_iron(
@@ -2454,17 +3125,17 @@ async def handle_inventory(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    prev_arena = _ui_state.get(user_id, {}).get("arena")
-    prev_selections = _ui_state.get(user_id, {}).get("selections", {})
+    prev_state = _ui_state.get(user_id, {})
+    prev_arena = prev_state.get("arena")
+    prev_selections = prev_state.get("selections", {})
+    prev_mode = prev_state.get("sel_mode", "add")
     _ui_state[user_id] = {"type": "inventory", "selected": 0, "prev_arena": prev_arena,
-                          "selections": prev_selections}
+                          "selections": prev_selections, "sel_mode": prev_mode}
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
-    label, action = _inv_action_btn(items, 0, equipped)
     inv_rows, inv_cols = _inv_capacity(player)
-    cursor_id = items[0]["item_id"] if items else None
-    content = render_inventory(items, 0, equipped, label, inv_rows, inv_cols, prev_selections)
-    view = InventoryView(guild_id, user_id, label, action, prev_selections, cursor_id)
+    content, view = _inv_view(guild_id, user_id, items, 0, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id])
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2478,29 +3149,24 @@ async def handle_inv_nav(
     inv_rows, inv_cols = _inv_capacity(player)
     total_slots = inv_rows * inv_cols
     new_sel = (state["selected"] + delta) % max(1, total_slots)
-    selections = state.get("selections", {})
-    _ui_state[user_id] = {"type": "inventory", "selected": new_sel,
-                          "prev_arena": state.get("prev_arena"),
-                          "selections": selections}
+    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     equipped = _equipped_dict(player)
-    label, action = _inv_action_btn(items, new_sel, equipped)
-    cursor_id = items[new_sel]["item_id"] if new_sel < len(items) else None
-    content = render_inventory(items, new_sel, equipped, label, inv_rows, inv_cols, selections)
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=InventoryView(guild_id, user_id, label, action,
-                                                               selections, cursor_id))
+    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id])
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict,
               inv_rows: int, inv_cols: int, state: dict, msg_suffix: str = "") -> tuple[str, "InventoryView"]:
     """Helper: build inventory content + view with consistent state."""
     selections = state.get("selections", {})
+    sel_mode = state.get("sel_mode", "add")
     label, action = _inv_action_btn(items, sel, equipped)
     cursor_id = items[sel]["item_id"] if sel < len(items) else None
     content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols, selections)
     if msg_suffix:
         content += msg_suffix
-    view = InventoryView(guild_id, user_id, label, action, selections, cursor_id)
+    view = InventoryView(guild_id, user_id, label, action, selections, cursor_id, sel_mode)
     return content, view
 
 
@@ -2644,6 +3310,19 @@ async def handle_inv_eat(
     await update_player_stats(db, user_id, hp=new_hp)
     await remove_from_inventory(db, user_id, item_id, 1)
     await _auto_unequip_depleted(db, user_id, item_id, player)
+    # Auto-deselect if selection qty now exceeds remaining stack (or stack is gone)
+    selections = dict(state.get("selections", {}))
+    if item_id in selections:
+        remain_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
+        )
+        remain = remain_row["quantity"] if remain_row else 0
+        if remain <= 0:
+            del selections[item_id]
+        else:
+            selections[item_id] = min(selections[item_id], remain)
+        state = {**state, "selections": selections}
+        _ui_state[user_id] = state
     items = await get_inventory(db, user_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     equipped = _equipped_dict(player)
@@ -2705,24 +3384,58 @@ async def handle_inv_unselect_all(
 async def handle_inv_item_btn(
     interaction: discord.Interaction, guild_id: int, user_id: int, idx: int
 ) -> None:
-    """Open sub-menu for the Nth selected item."""
+    """Add or subtract 1 from the Nth selected item based on current sel_mode."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
-    selections = state.get("selections", {})
+    selections = dict(state.get("selections", {}))
+    sel_mode = state.get("sel_mode", "add")
     sel_list = list(selections.items())
     if idx >= len(sel_list):
         await interaction.response.defer()
         return
     item_id, qty = sel_list[idx]
-    _ui_state[user_id] = {**state, "item_view": item_id}
-    content = (f"🎒 **Item Detail: {item_id.replace('_', ' ').title()}**\n"
-               f"Selected quantity: **×{qty}**\n"
-               f"Use + More / − Less to adjust, or Unselect to remove.")
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=InventoryItemView(guild_id, user_id, qty)
-    )
+    items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    sel = state.get("selected", 0)
+    if sel_mode == "add":
+        have = next((it["quantity"] for it in items if it["item_id"] == item_id), 0)
+        new_qty = min(have, qty + 1)
+        selections[item_id] = new_qty
+        msg = f"\n*➕ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    else:
+        new_qty = qty - 1
+        if new_qty <= 0:
+            del selections[item_id]
+            msg = f"\n*➖ Removed {item_id.replace('_', ' ').title()} from selection.*"
+        else:
+            selections[item_id] = new_qty
+            msg = f"\n*➖ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    _ui_state[user_id] = {**state, "selections": selections}
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id], msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_toggle_mode(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Toggle selection mode between Add (➕) and Subtract (➖)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    new_mode = "sub" if state.get("sel_mode", "add") == "add" else "add"
+    _ui_state[user_id] = {**state, "sel_mode": new_mode}
+    items = await get_inventory(db, user_id)
+    sel = state.get("selected", 0)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    mode_name = "➖ Subtract" if new_mode == "sub" else "➕ Add"
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              f"\n*Mode switched to {mode_name}*")
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_item_inc(

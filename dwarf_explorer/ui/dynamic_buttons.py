@@ -27,6 +27,11 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_select, handle_inv_unselect_all,
     handle_inv_item_btn, handle_inv_item_inc, handle_inv_item_dec,
     handle_inv_item_unsel, handle_inv_item_back, handle_inv_craft,
+    handle_inv_toggle_mode,
+    handle_house_edit_move, handle_house_add, handle_house_remove,
+    handle_house_delete, handle_house_edit_close,
+    handle_house_deco_nav, handle_house_deco_sel, handle_house_deco_place,
+    handle_house_deco_cancel,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -44,7 +49,10 @@ _IGNORED_ACTIONS = {
     "csp_a", "csp_b", "csp_c", "csp_d",
     "csp_5", "csp_6", "csp_7", "csp_8", "csp_9",
     "c_potion",
+    # House edit spacers
+    "hesp1", "hesp2", "hesp3",
 }
+_HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
 
 class GameButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -221,6 +229,34 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_merchant_buy(interaction, gid, uid)
             elif act == "merch_close":
                 await handle_merchant_close(interaction, gid, uid)
+            # Inventory mode toggle
+            elif act == "inv_toggle_mode":
+                await handle_inv_toggle_mode(interaction, gid, uid)
+            # Player house edit
+            elif act in _HEDIT_MOVE_ACTIONS:
+                direction = act[6:]  # strip "hedit_"
+                await handle_house_edit_move(interaction, gid, uid, direction)
+            elif act == "hedit_add":
+                await handle_house_add(interaction, gid, uid)
+            elif act == "hedit_remove":
+                await handle_house_remove(interaction, gid, uid)
+            elif act == "hedit_delete":
+                await handle_house_delete(interaction, gid, uid)
+            elif act == "hedit_close":
+                await handle_house_edit_close(interaction, gid, uid)
+            # House decoration
+            elif act == "hdeco_prev":
+                await handle_house_deco_nav(interaction, gid, uid, "prev")
+            elif act == "hdeco_next":
+                await handle_house_deco_nav(interaction, gid, uid, "next")
+            elif act == "hdeco_place":
+                await handle_house_deco_place(interaction, gid, uid)
+            elif act == "hdeco_cancel":
+                await handle_house_deco_cancel(interaction, gid, uid)
+            elif act.startswith("hdeco_sel_") and act[10:].isdigit():
+                await handle_house_deco_sel(interaction, gid, uid, int(act[10:]))
+            elif act.startswith("hdsp_") and act[5:].isdigit():
+                await interaction.response.defer()  # decoration page padding spacer
 
         except discord.NotFound:
             await interaction.followup.send(
