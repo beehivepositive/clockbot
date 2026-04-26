@@ -195,8 +195,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("stick", 1), ("resin", 1)}):           {"result": "torch",         "qty": 1, "label": "🔦 Craft Torch"},
     frozenset({("log", 8), ("rock", 4)}):               {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
     frozenset({("log", 2)}):                            {"result": "ph_chest_small","qty": 1, "label": "📦 Craft Small Chest"},
-    frozenset({("log", 4), ("iron_ingot", 1)}):         {"result": "ph_chest_medium","qty": 1,"label": "🗄️ Craft Medium Chest"},
-    frozenset({("log", 6), ("iron_ingot", 2)}):         {"result": "ph_chest_large","qty": 1, "label": "🧳 Craft Large Chest"},
+    frozenset({("log", 4)}):                            {"result": "ph_chest_medium","qty": 1,"label": "🗄️ Craft Medium Chest"},
+    frozenset({("log", 6)}):                            {"result": "ph_chest_large","qty": 1, "label": "🧳 Craft Large Chest"},
 }
 
 # Terrain that blocks movement inside the combat arena
