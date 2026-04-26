@@ -172,21 +172,31 @@ HOUSE_BUILD_COST = {"log": 8, "stone": 4}
 
 # Interior decoration catalog: id → {name, cost dict, tile placed}
 HOUSE_DECORATION_CATALOG = [
-    {"id": "b_table",     "name": "Table",     "cost": {"log": 2}},
-    {"id": "b_chair",     "name": "Chair",     "cost": {"log": 1}},
-    {"id": "b_bed",       "name": "Bed",       "cost": {"log": 3}},
-    {"id": "b_stove",     "name": "Hearth",    "cost": {"stone": 3}},
-    {"id": "b_bookshelf", "name": "Bookshelf", "cost": {"log": 2}},
-    {"id": "b_candle",    "name": "Candle",    "cost": {"torch": 1}},
+    {"id": "b_table",          "name": "Table",        "cost": {"log": 2}},
+    {"id": "b_chair",          "name": "Chair",        "cost": {"log": 1}},
+    {"id": "b_bed",            "name": "Bed",          "cost": {"log": 3}},
+    {"id": "b_stove",          "name": "Hearth",       "cost": {"stone": 3}},
+    {"id": "b_bookshelf",      "name": "Bookshelf",    "cost": {"log": 2}},
+    {"id": "b_candle",         "name": "Candle",       "cost": {"torch": 1}},
+    {"id": "ph_chest_small",   "name": "Small Chest",  "cost": {"ph_chest_small": 1}},
+    {"id": "ph_chest_medium",  "name": "Medium Chest", "cost": {"ph_chest_medium": 1}},
+    {"id": "ph_chest_large",   "name": "Large Chest",  "cost": {"ph_chest_large": 1}},
 ]
 
 # Tiles that count as movable decorations (can be placed/removed by owner)
 PLAYER_HOUSE_DECO_TILES = {d["id"] for d in HOUSE_DECORATION_CATALOG}
 
+# Player-house chest tile types
+PH_CHEST_TYPES = {"ph_chest_small", "ph_chest_medium", "ph_chest_large"}
+
 # Crafting recipes: frozenset of (item_id, qty) tuples → result
 # Selections must match EXACTLY — no extra items, no other quantities
 CRAFT_RECIPES: dict[frozenset, dict] = {
-    frozenset({("stick", 1), ("resin", 1)}): {"result": "torch", "qty": 1, "label": "🔦 Craft Torch"},
+    frozenset({("stick", 1), ("resin", 1)}):           {"result": "torch",         "qty": 1, "label": "🔦 Craft Torch"},
+    frozenset({("log", 8), ("stone", 4)}):              {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
+    frozenset({("log", 2)}):                            {"result": "ph_chest_small","qty": 1, "label": "📦 Craft Small Chest"},
+    frozenset({("log", 4), ("iron_ingot", 1)}):         {"result": "ph_chest_medium","qty": 1,"label": "🗄️ Craft Medium Chest"},
+    frozenset({("log", 6), ("iron_ingot", 2)}):         {"result": "ph_chest_large","qty": 1, "label": "🧳 Craft Large Chest"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -280,6 +290,10 @@ BUILDING_EMOJI = {
     "b_anvil":            "\U0001F528",       # 🔨
     "b_blacksmith_npc":   "\U0001F9D1",       # 🧑
     "b_forge":            "\U0001F525",       # 🔥
+    # Player-house chests
+    "ph_chest_small":     "\U0001F4E6",       # 📦
+    "ph_chest_medium":    "\U0001F5C4\uFE0F", # 🗄️
+    "ph_chest_large":     "\U0001F9F3",       # 🧳
 }
 
 VILLAGE_WALKABLE = {
@@ -292,6 +306,7 @@ BUILDING_WALKABLE = {
     "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
     "b_pew", "b_table", "b_stove", "b_bed",
     "b_anvil", "b_chair",
+    "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 
 VILLAGE_MIN_SIZE = 16
@@ -414,6 +429,7 @@ ITEM_EQUIP_SLOTS = {
     "small_pouch":  "pouch",
     "medium_pouch": "pouch",
     "large_pouch":  "pouch",
+    "house_kit":    "hand",
 }
 
 # Items that occupy both hand slots

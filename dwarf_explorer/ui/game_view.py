@@ -12,7 +12,7 @@ from dwarf_explorer.config import (
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
     CAVE_EMOJI, CRAFT_RECIPES,
-    HOUSE_BUILD_COST, HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES,
+    HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -35,6 +35,7 @@ from dwarf_explorer.database.repositories import (
     bank_withdraw,
     set_tile_override,
     get_or_create_chest,
+    get_or_create_ph_chest,
     get_chest_items,
     add_to_chest,
     remove_from_chest,
@@ -791,10 +792,17 @@ def _compute_context_labels(
     if not grid or len(grid) <= vc:
         return center_label, center_enabled, action_label, action_enabled
 
-    # ── Owner edit button when inside a player house ──────────────────────────
+    # ── Inside a player house ─────────────────────────────────────────────────
     if player.in_house and player.house_type == "player_house":
         if _ui_state.get(player.user_id, {}).get("is_house_owner", False):
             action_label, action_enabled = "⚒️ Edit", True
+        # Chest on current tile → show open button
+        if grid and len(grid) > vc and len(grid[vc]) > vc:
+            ph_tile = grid[vc][vc]
+            if ph_tile and ph_tile.terrain in PH_CHEST_TYPES:
+                _chest_emoji = {"ph_chest_small": "📦", "ph_chest_medium": "🗄️",
+                                "ph_chest_large": "🧳"}.get(ph_tile.terrain, "📦")
+                center_label, center_enabled = _chest_emoji, True
         return center_label, center_enabled, action_label, action_enabled
 
     center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
@@ -890,8 +898,8 @@ def _compute_context_labels(
         action_label, action_enabled = "🏦 Bank", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
-    elif not action_enabled and center_tile and not player.in_house:
-        # Offer to build a house on the current tile if it's buildable
+    elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
+        # Offer to build a house on the current tile if house_kit is equipped and tile is buildable
         _bt = center_tile.terrain
         _build_ok = (
             not center_tile.structure
@@ -2014,6 +2022,29 @@ async def handle_interact(
         elif htile.terrain == "b_shop_npc" and player.house_type == "shop":
             return await _open_shop(interaction, guild_id, user_id, player)
 
+        elif htile.terrain in PH_CHEST_TYPES and _is_ph:
+            chest_id = await get_or_create_ph_chest(
+                db, player.house_id, player.house_x, player.house_y, htile.terrain
+            )
+            chest_inv = await get_chest_items(db, chest_id)
+            player_inv = await get_inventory(db, user_id)
+            inv_rows, inv_cols = _inv_capacity(player)
+            _ui_state[user_id] = {
+                **_ui_state.get(user_id, {}),
+                "type": "chest",
+                "chest_id": chest_id,
+                "chest_type": htile.terrain,
+                "selected": 0,
+                "chest_view": "chest",
+            }
+            content = render_chest(chest_inv, player_inv, 0, "chest",
+                                   htile.terrain, inv_rows, inv_cols)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=ChestView(guild_id, user_id, "chest"),
+            )
+            return
+
         else:
             # Generic tile interactions (same for village buildings and player houses)
             async def _load_house_grid():
@@ -2566,55 +2597,42 @@ async def handle_action(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # ── Build a player house ──────────────────────────────────────────────────
+    # ── Build a player house (requires house_kit equipped) ───────────────────
     wx, wy = player.world_x, player.world_y
     if not player.in_cave and not player.in_village:
-        # Check whether we're on a buildable tile
-        tile = await load_single_tile(wx, wy, seed, db)
-        _build_ok = (
-            not tile.structure
-            and tile.walkable
-            and tile.terrain not in {"void", "deep_water", "shallow_water", "river",
-                                     "river_landing", "mountain", "snow", "player_house_cave"}
-        )
-        if _build_ok:
-            # Check materials
-            missing = []
-            for mat, qty in HOUSE_BUILD_COST.items():
-                row = await db.fetch_one(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?",
-                    (user_id, mat),
-                )
-                have = row["quantity"] if row else 0
-                if have < qty:
-                    missing.append(f"{qty - have}× {mat}")
-            if missing:
+        # Only proceed if house_kit is in hand
+        if "house_kit" in hand_items:
+            tile = await load_single_tile(wx, wy, seed, db)
+            _build_ok = (
+                not tile.structure
+                and tile.walkable
+                and tile.terrain not in {"void", "deep_water", "shallow_water", "river",
+                                         "river_landing", "mountain", "snow", "player_house_cave"}
+            )
+            if _build_ok:
+                # Check no house already here
+                existing = await get_player_house_at(db, wx, wy, is_cave=False, loc_cave_id=None)
+                if existing is not None:
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, "🏠 A house already exists here.")
+                    view = _game_view(guild_id, user_id, player, grid=grid)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+                # Consume house_kit: unequip from whichever hand, remove from inventory
+                if player.hand_1 == "house_kit":
+                    await unequip_item(db, user_id, "hand_1")
+                elif player.hand_2 == "house_kit":
+                    await unequip_item(db, user_id, "hand_2")
+                await remove_from_inventory(db, user_id, "house_kit", 1)
+                # Place overworld structure tile
+                await set_tile_override(db, wx, wy, "player_house")
+                # Create house record
+                await create_player_house(db, user_id, wx, wy, is_cave=False, loc_cave_id=None)
                 grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player,
-                                      f"🏠 Need more materials: {', '.join(missing)}")
+                content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
                 view = _game_view(guild_id, user_id, player, grid=grid)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
-            # Check if a house already exists here
-            existing = await get_player_house_at(db, wx, wy, is_cave=False, loc_cave_id=None)
-            if existing is not None:
-                grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, "🏠 A house already exists here.")
-                view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                return
-            # Consume materials
-            for mat, qty in HOUSE_BUILD_COST.items():
-                await remove_from_inventory(db, user_id, mat, qty)
-            # Place overworld tile structure override
-            await set_tile_override(db, wx, wy, "player_house")
-            # Create house record
-            await create_player_house(db, user_id, wx, wy, is_cave=False, loc_cave_id=None)
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
-            view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-            return
 
         # Fishing (overworld)
         if "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
@@ -2641,8 +2659,8 @@ async def handle_action(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # ── Cave: build a player house ────────────────────────────────────────────
-    if player.in_cave and not player.in_village:
+    # ── Cave: build a player house (requires house_kit equipped) ─────────────
+    if player.in_cave and not player.in_village and "house_kit" in hand_items:
         cx, cy = player.cave_x, player.cave_y
         cave_tile = await load_cave_single_tile(player.cave_id, cx, cy, db)
         _build_ok_cave = (
@@ -2651,22 +2669,6 @@ async def handle_action(
             and cave_tile.walkable
         )
         if _build_ok_cave:
-            missing = []
-            for mat, qty in HOUSE_BUILD_COST.items():
-                row = await db.fetch_one(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?",
-                    (user_id, mat),
-                )
-                have = row["quantity"] if row else 0
-                if have < qty:
-                    missing.append(f"{qty - have}× {mat}")
-            if missing:
-                grid = await load_cave_viewport(player.cave_id, cx, cy, db)
-                content = render_grid(grid, player,
-                                      f"🏠 Need more materials: {', '.join(missing)}")
-                view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                return
             existing = await get_player_house_at(db, cx, cy, is_cave=True,
                                                  loc_cave_id=player.cave_id)
             if existing is not None:
@@ -2675,8 +2677,12 @@ async def handle_action(
                 view = _game_view(guild_id, user_id, player, grid=grid)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
-            for mat, qty in HOUSE_BUILD_COST.items():
-                await remove_from_inventory(db, user_id, mat, qty)
+            # Consume house_kit
+            if player.hand_1 == "house_kit":
+                await unequip_item(db, user_id, "hand_1")
+            elif player.hand_2 == "house_kit":
+                await unequip_item(db, user_id, "hand_2")
+            await remove_from_inventory(db, user_id, "house_kit", 1)
             # Update cave tile to player_house_cave
             await db.execute(
                 "UPDATE cave_tiles SET tile_type='player_house_cave'"

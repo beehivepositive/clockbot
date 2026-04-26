@@ -156,6 +156,32 @@ class Database:
 )""",
                 # Chest replenishment timestamp
                 "ALTER TABLE chests ADD COLUMN last_reset TEXT DEFAULT NULL",
+                # Player-built houses tables
+                """CREATE TABLE IF NOT EXISTS player_houses (
+    house_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id     INTEGER NOT NULL,
+    is_cave      INTEGER NOT NULL DEFAULT 0,
+    loc_cave_id  INTEGER,
+    loc_x        INTEGER NOT NULL,
+    loc_y        INTEGER NOT NULL
+)""",
+                """CREATE TABLE IF NOT EXISTS player_house_tiles (
+    house_id     INTEGER NOT NULL,
+    local_x      INTEGER NOT NULL,
+    local_y      INTEGER NOT NULL,
+    tile_type    TEXT NOT NULL DEFAULT 'b_floor',
+    PRIMARY KEY (house_id, local_x, local_y)
+)""",
+                # Player house return context (which cave to return to on exit)
+                "ALTER TABLE players ADD COLUMN ph_cave_id INTEGER DEFAULT NULL",
+                # Cave rock regeneration: tracks mined rocks for 48h regen
+                """CREATE TABLE IF NOT EXISTS cave_rock_breaks (
+    cave_id      INTEGER NOT NULL,
+    local_x      INTEGER NOT NULL,
+    local_y      INTEGER NOT NULL,
+    broken_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (cave_id, local_x, local_y)
+)""",
             ]
             for sql in migrations:
                 try:

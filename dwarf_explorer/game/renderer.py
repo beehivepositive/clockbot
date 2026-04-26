@@ -306,11 +306,17 @@ def render_chest(
         "cave_chest":        (2, 9),
         "cave_chest_medium": (3, 9),
         "cave_chest_large":  (4, 9),
+        "ph_chest_small":    (2, 9),
+        "ph_chest_medium":   (3, 9),
+        "ph_chest_large":    (4, 9),
     }
     chest_labels = {
         "cave_chest":        "Small Chest",
         "cave_chest_medium": "Medium Chest",
         "cave_chest_large":  "Large Chest",
+        "ph_chest_small":    "Small Chest",
+        "ph_chest_medium":   "Medium Chest",
+        "ph_chest_large":    "Large Chest",
     }
     c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
     c_total = c_rows * c_cols

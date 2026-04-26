@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
-    CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE,
+    CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
     COMBAT_MOVES_DEFAULT, CANOE_PASSABLE,
 )
 from dwarf_explorer.world.generator import TileData
@@ -44,7 +44,8 @@ class Player:
     house_y: int = 0
     house_vx: int = 0
     house_vy: int = 0
-    house_type: str = "house"   # "house" | "church" | "bank" | "shop"
+    house_type: str = "house"   # "house" | "church" | "bank" | "shop" | "player_house"
+    ph_cave_id: int | None = None  # if set, exiting player_house returns to this cave
     # Canoe state
     in_canoe: bool = False
     # Combat state

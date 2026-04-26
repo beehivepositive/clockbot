@@ -140,6 +140,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             combat_player_y=row["combat_player_y"] if "combat_player_y" in cols else 4,
             combat_moves_left=row["combat_moves_left"] if "combat_moves_left" in cols else COMBAT_MOVES_DEFAULT,
             sprinting=bool(row["sprinting"]),
+            ph_cave_id=row["ph_cave_id"] if "ph_cave_id" in cols else None,
             hand_1=equipped.get("hand_1"),
             hand_2=equipped.get("hand_2"),
             head=equipped.get("head"),
@@ -455,6 +456,28 @@ async def get_or_create_chest(
         (cave_id, local_x, local_y, chest_type),
     )
     return cursor.lastrowid, True
+
+
+async def get_or_create_ph_chest(
+    db: Database, house_id: int, local_x: int, local_y: int, chest_type: str
+) -> int:
+    """Return chest_id for a player-house chest (never auto-replenishes).
+
+    Uses cave_id = -house_id to distinguish from regular cave chests in the
+    shared 'chests' table.
+    """
+    row = await db.fetch_one(
+        "SELECT chest_id FROM chests WHERE cave_id=? AND local_x=? AND local_y=?",
+        (-house_id, local_x, local_y),
+    )
+    if row:
+        return row["chest_id"]
+    cursor = await db.execute(
+        "INSERT INTO chests (cave_id, local_x, local_y, chest_type, last_reset)"
+        " VALUES (?, ?, ?, ?, datetime('now'))",
+        (-house_id, local_x, local_y, chest_type),
+    )
+    return cursor.lastrowid
 
 
 async def get_chest_items(db: Database, chest_id: int) -> list[dict]:
