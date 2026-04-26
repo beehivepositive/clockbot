@@ -22,6 +22,11 @@ from dwarf_explorer.ui.game_view import (
     handle_action,
     handle_forge_iron, handle_forge_close,
     handle_anvil_dagger, handle_anvil_sword, handle_anvil_close,
+    handle_anvil_helmet, handle_anvil_chestplate, handle_anvil_leggings,
+    handle_inv_eat,
+    handle_inv_select, handle_inv_unselect_all,
+    handle_inv_item_btn, handle_inv_item_inc, handle_inv_item_dec,
+    handle_inv_item_unsel, handle_inv_item_back, handle_inv_craft,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -117,6 +122,12 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_anvil_dagger(interaction, gid, uid)
             elif act == "anvil_sword":
                 await handle_anvil_sword(interaction, gid, uid)
+            elif act == "anvil_helmet":
+                await handle_anvil_helmet(interaction, gid, uid)
+            elif act == "anvil_chestplate":
+                await handle_anvil_chestplate(interaction, gid, uid)
+            elif act == "anvil_leggings":
+                await handle_anvil_leggings(interaction, gid, uid)
             elif act == "anvil_close":
                 await handle_anvil_close(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
@@ -140,6 +151,24 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_inv_nav(interaction, gid, uid, +1)
             elif act == "inv_equip":
                 await handle_inv_equip(interaction, gid, uid)
+            elif act == "inv_eat":
+                await handle_inv_eat(interaction, gid, uid)
+            elif act == "inv_select":
+                await handle_inv_select(interaction, gid, uid)
+            elif act == "inv_unselect_all":
+                await handle_inv_unselect_all(interaction, gid, uid)
+            elif act == "inv_craft":
+                await handle_inv_craft(interaction, gid, uid)
+            elif act == "inv_item_inc":
+                await handle_inv_item_inc(interaction, gid, uid)
+            elif act == "inv_item_dec":
+                await handle_inv_item_dec(interaction, gid, uid)
+            elif act == "inv_item_unsel":
+                await handle_inv_item_unsel(interaction, gid, uid)
+            elif act == "inv_item_back":
+                await handle_inv_item_back(interaction, gid, uid)
+            elif act.startswith("inv_item_") and act[9:].isdigit():
+                await handle_inv_item_btn(interaction, gid, uid, int(act[9:]))
             elif act == "inv_close":
                 await handle_inv_close(interaction, gid, uid)
             # Shop

@@ -67,7 +67,6 @@ ITEM_EMOJI = {
     "gem": "\U0001F48E",             # 💎
     "sword": "\U0001F5E1\uFE0F",    # 🗡️
     "shield": "\U0001F6E1\uFE0F",   # 🛡️
-    "potion": "\U0001F9EA",          # 🧪
     "key": "\U0001F511",             # 🔑
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
@@ -99,6 +98,9 @@ ITEM_EMOJI = {
     "cooked_fish": "\U0001F956",     # 🍖
     "treasure_map": "\U0001F4DC",    # 📜
     "dagger":      "\U0001F5E1\uFE0F", # 🗡️
+    "iron_helmet":     "\U0001FA96",    # 🪖
+    "iron_chestplate": "\U0001F6E1\uFE0F",  # 🛡️
+    "iron_leggings":   "\U0001F455",    # 👕 (closest available)
 }
 
 WALKABLE_TILES = {
@@ -162,6 +164,12 @@ ARENA_EMOJI = {
 }
 
 FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
+
+# Crafting recipes: frozenset of (item_id, qty) tuples → result
+# Selections must match EXACTLY — no extra items, no other quantities
+CRAFT_RECIPES: dict[frozenset, dict] = {
+    frozenset({("stick", 1), ("resin", 1)}): {"result": "torch", "qty": 1, "label": "🔦 Craft Torch"},
+}
 
 # Terrain that blocks movement inside the combat arena
 ARENA_IMPASSABLE = {
@@ -377,9 +385,10 @@ ITEM_EQUIP_SLOTS = {
     "pickaxe":      "hand",
     "slingshot":    "hand",
     "fishing_rod":  "hand",
-    "fish":         "hand",
-    "cooked_fish":  "hand",
     "dagger":       "hand",
+    "iron_helmet":     "head",
+    "iron_chestplate": "chest",
+    "iron_leggings":   "legs",
     "sword":        "hand",
     "hiking_boots": "boots",
     "small_pouch":  "pouch",
@@ -406,9 +415,10 @@ EQUIP_BONUSES = {
     "medium_pouch": {},
     "large_pouch":  {},
     "fishing_rod":  {},
-    "fish":         {},
-    "cooked_fish":  {},
     "dagger":       {"attack": 8},
+    "iron_helmet":     {"defense": 3},
+    "iron_chestplate": {"defense": 5},
+    "iron_leggings":   {"defense": 4},
     "sword":        {"attack": 12},
 }
 
@@ -453,7 +463,6 @@ ITEM_SELL_PRICES = {
     "watering_can": 21,
     "pickaxe":      33,
     "gem":          30,
-    "potion":       15,
     "sword":        50,
     "log":          5,
     "stick":        2,
@@ -478,6 +487,9 @@ ITEM_SELL_PRICES = {
     "rock":         2,
     "poison_sac":   20,
     "dagger":       30,
+    "iron_helmet":     40,
+    "iron_chestplate": 60,
+    "iron_leggings":   50,
     "small_pouch":  48,
     "medium_pouch": 108,
     "large_pouch":  210,
@@ -550,9 +562,13 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("fishing_rod",  "fishing_pole"),
         ("poison_sac",   "poison_sac"),
         ("cooked_fish",  "cooked_fish"),
+        # Pouches — try specific names first, fallback to generic "pouch"
         ("small_pouch",  "small_pouch"),
         ("medium_pouch", "medium_pouch"),
         ("large_pouch",  "large_pouch"),
+        ("small_pouch",  "pouch"),
+        ("medium_pouch", "pouch"),
+        ("large_pouch",  "pouch"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:

@@ -154,6 +154,8 @@ class Database:
     treasure_y INTEGER NOT NULL,
     found INTEGER NOT NULL DEFAULT 0
 )""",
+                # Chest replenishment timestamp
+                "ALTER TABLE chests ADD COLUMN last_reset TEXT DEFAULT NULL",
             ]
             for sql in migrations:
                 try:

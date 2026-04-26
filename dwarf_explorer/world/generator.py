@@ -191,24 +191,34 @@ async def load_single_tile(wx: int, wy: int, seed: int, db=None) -> TileData:
     return tile
 
 
+_SPAWN_IMPASSABLE = {"mountain", "snow", "deep_water", "shallow_water", "river", "void"}
+
+
 async def find_walkable_spawn(seed: int, db) -> tuple[int, int]:
     """Find the nearest walkable tile to (SPAWN_X, SPAWN_Y).
 
     Searches outward in expanding rings so the player always lands on dry,
-    passable ground even if a river flows through the default spawn point.
+    passable ground even if a river or mountain occupies the default spawn point.
+    Explicitly rejects mountain/snow/water biomes even if tile.walkable passes.
     """
-    # Quick check: is default spawn already walkable?
+    def _is_good(tile: TileData) -> bool:
+        effective = tile.structure if tile.structure else tile.terrain
+        if effective in _SPAWN_IMPASSABLE:
+            return False
+        return tile.walkable
+
+    # Quick check: is default spawn already good?
     default = await load_single_tile(SPAWN_X, SPAWN_Y, seed, db)
-    if default.walkable:
+    if _is_good(default):
         return (SPAWN_X, SPAWN_Y)
 
-    for radius in range(1, 30):
+    for radius in range(1, 60):
         for dx in range(-radius, radius + 1):
             for dy in ((-radius, radius) if abs(dx) < radius else range(-radius, radius + 1)):
                 wx, wy = SPAWN_X + dx, SPAWN_Y + dy
                 if 0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE:
                     tile = await load_single_tile(wx, wy, seed, db)
-                    if tile.walkable:
+                    if _is_good(tile):
                         return (wx, wy)
     return (SPAWN_X, SPAWN_Y)
 

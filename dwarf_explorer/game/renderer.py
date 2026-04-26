@@ -102,7 +102,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 
     lines.append("")
     hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
-    gold = f"\U0001F4B0 {player.gold}"
+    gold = f"\U0001FA99 {player.gold}"
     if player.in_house:
         loc_labels = {"house": "House", "church": "Church", "bank": "Bank", "shop": "Shop", "blacksmith": "Blacksmith"}
         label = loc_labels.get(player.house_type, "Building")
@@ -131,7 +131,6 @@ _ITEM_SLOT_EMOJI = {
     "torch":        "\U0001F526",
     "sword":        "\U0001F5E1\uFE0F",
     "shield":       "\U0001F6E1\uFE0F",
-    "potion":       "\U0001F9EA",
     "gem":          "\U0001F48E",
     "wood":         "\U0001FAB5",
     "stone":        "\U0001FAA8",
@@ -163,6 +162,9 @@ _ITEM_SLOT_EMOJI = {
     "cooked_fish":  "\U0001F956",
     "treasure_map": "\U0001F4DC",
     "dagger":       "\U0001F5E1\uFE0F",
+    "iron_helmet":     "\U0001FA96",
+    "iron_chestplate": "\U0001F6E1\uFE0F",
+    "iron_leggings":   "\U0001F455",
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
@@ -173,9 +175,11 @@ def _item_emoji(item_id: str) -> str:
 
 def render_inventory(items: list[dict], selected: int, equipped: dict,
                      equip_label: str = "⚔️ Equip",
-                     inv_rows: int = 2, inv_cols: int = 5) -> str:
+                     inv_rows: int = 2, inv_cols: int = 5,
+                     selections: dict | None = None) -> str:
     """Render equipped row + inventory grid as text. Grid size from pouch."""
     total_slots = inv_rows * inv_cols
+    selections = selections or {}
     lines = [f"\U0001F392 **Inventory** ({inv_rows}×{inv_cols})"]
 
     # --- Equipped bar ---
@@ -218,11 +222,16 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
     lines.append("")
     if selected < len(items):
         item = items[selected]
-        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
+        sel_marker = " ✚" if item["item_id"] in selections else ""
+        lines.append(f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}{sel_marker}")
     else:
-        lines.append("Selected: *(empty slot)*")
+        lines.append("Cursor: *(empty slot)*")
 
-    lines.append(f"◀▶ navigate  |  {equip_label}  |  ❌ Close")
+    if selections:
+        sel_parts = [f"{k.replace('_',' ').title()} ×{v}" for k, v in selections.items()]
+        lines.append(f"Selected: {', '.join(sel_parts)}")
+
+    lines.append(f"◀▶ navigate  |  {equip_label}  |  ✚ Select  |  ❌ Close")
     return "\n".join(lines)
 
 
@@ -346,7 +355,7 @@ def render_shop(catalog: list[dict], selected: int, player_gold: int,
     """Render shop menu. mode='buy' shows catalog; mode='sell' shows inventory."""
     from dwarf_explorer.config import ITEM_EMOJI as _IE
     if mode == "sell":
-        lines = ["\U0001F3EA **Shop — Sell Items**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
+        lines = ["\U0001F3EA **Shop — Sell Items**", f"\U0001FA99 You have: **{player_gold} gold**", ""]
         items = sell_items or []
         if not items:
             lines.append("*(Your inventory is empty)*")
@@ -363,9 +372,9 @@ def render_shop(catalog: list[dict], selected: int, player_gold: int,
                     f"{item['item_id'].replace('_', ' ').title()}{qty_str} — {price_str}{brk_c}"
                 )
         lines.append("")
-        lines.append("◀▶ navigate  |  💰 Sell  |  🛒 Buy Mode  |  ❌ Close")
+        lines.append("◀▶ navigate  |  🪙 Sell  |  🛒 Buy Mode  |  ❌ Close")
     else:
-        lines = ["\U0001F3EA **Shop**", f"\U0001F4B0 You have: **{player_gold} gold**", ""]
+        lines = ["\U0001F3EA **Shop**", f"\U0001FA99 You have: **{player_gold} gold**", ""]
         for i, item in enumerate(catalog):
             prefix = "▶ " if i == selected else "  "
             bracket_open  = "[" if i == selected else ""
@@ -375,5 +384,5 @@ def render_shop(catalog: list[dict], selected: int, player_gold: int,
             lines.append(f"{prefix}{bracket_open}{item_emoji} {item['name']} — {item['price']} gold{bracket_close}")
             lines.append(f"   *{item['description']}*")
         lines.append("")
-        lines.append("◀▶ navigate  |  💰 Buy  |  💲 Sell Mode  |  ❌ Close")
+        lines.append("◀▶ navigate  |  🪙 Buy  |  💲 Sell Mode  |  ❌ Close")
     return "\n".join(lines)

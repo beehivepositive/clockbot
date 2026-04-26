@@ -414,15 +414,44 @@ async def set_tile_override(db: Database, world_x: int, world_y: int, tile_type:
 async def get_or_create_chest(
     db: Database, cave_id: int, local_x: int, local_y: int, chest_type: str
 ) -> tuple[int, bool]:
-    """Return (chest_id, is_new). Creates chest record if first access."""
+    """Return (chest_id, is_new). Creates chest record if first access.
+
+    For non-death chests, also triggers replenishment if 48h have elapsed
+    since last_reset (items cleared and re-populated). Returns is_new=True
+    when the chest should be populated (either brand new or replenished).
+    """
+    REPLENISH_HOURS = 48
+    # Death chests never replenish (cave_id == -1 by convention, but we check chest_type)
+    is_death_chest = (chest_type == "death_chest")
+
     row = await db.fetch_one(
-        "SELECT chest_id FROM chests WHERE cave_id=? AND local_x=? AND local_y=?",
+        "SELECT chest_id, last_reset FROM chests WHERE cave_id=? AND local_x=? AND local_y=?",
         (cave_id, local_x, local_y),
     )
     if row:
-        return row["chest_id"], False
+        chest_id = row["chest_id"]
+        if not is_death_chest:
+            last_reset = row["last_reset"]
+            needs_replenish = False
+            if last_reset is None:
+                needs_replenish = True
+            else:
+                import datetime as _dt
+                try:
+                    reset_time = _dt.datetime.fromisoformat(last_reset)
+                    if _dt.datetime.utcnow() - reset_time >= _dt.timedelta(hours=REPLENISH_HOURS):
+                        needs_replenish = True
+                except (ValueError, TypeError):
+                    needs_replenish = True
+            if needs_replenish:
+                await db.execute("DELETE FROM chest_items WHERE chest_id=?", (chest_id,))
+                await db.execute(
+                    "UPDATE chests SET last_reset=datetime('now') WHERE chest_id=?", (chest_id,)
+                )
+                return chest_id, True  # signal to populate
+        return chest_id, False
     cursor = await db.execute(
-        "INSERT INTO chests (cave_id, local_x, local_y, chest_type) VALUES (?, ?, ?, ?)",
+        "INSERT INTO chests (cave_id, local_x, local_y, chest_type, last_reset) VALUES (?, ?, ?, ?, datetime('now'))",
         (cave_id, local_x, local_y, chest_type),
     )
     return cursor.lastrowid, True

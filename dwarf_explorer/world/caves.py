@@ -455,7 +455,6 @@ async def populate_chest_loot(chest_id: int, chest_type: str, db) -> None:
         if item:
             await add_to_chest(db, chest_id, item, 1)
     # Always add some base items
-    await add_to_chest(db, chest_id, "potion", rng.randint(0, 1) or 1)
     if chest_type in ("cave_chest_medium", "cave_chest_large"):
         await add_to_chest(db, chest_id, "flint", rng.randint(1, 3))
     if chest_type == "cave_chest_large":
