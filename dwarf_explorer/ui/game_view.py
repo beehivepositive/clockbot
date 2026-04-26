@@ -804,17 +804,12 @@ def _compute_context_labels(
         return center_label, center_enabled, action_label, action_enabled
 
     # ── Inside a player house ─────────────────────────────────────────────────
-    if player.in_house and player.house_type == "player_house":
+    _in_ph = player.in_house and player.house_type == "player_house"
+    if _in_ph:
         if _ui_state.get(player.user_id, {}).get("is_house_owner", False):
             action_label, action_enabled = "⚒️ Edit", True
-        # Chest on current tile → show open button
-        if grid and len(grid) > vc and len(grid[vc]) > vc:
-            ph_tile = grid[vc][vc]
-            if ph_tile and ph_tile.terrain in PH_CHEST_TYPES:
-                _chest_emoji = {"ph_chest_small": "📦", "ph_chest_medium": "🗄️",
-                                "ph_chest_large": "🧳"}.get(ph_tile.terrain, "📦")
-                center_label, center_enabled = _chest_emoji, True
-        return center_label, center_enabled, action_label, action_enabled
+        # Fall through to center_tile checks so b_stove etc. still work.
+        # PH chests are handled after the main block below.
 
     center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
     if center_tile:
@@ -920,6 +915,12 @@ def _compute_context_labels(
         )
         if _build_ok:
             action_label, action_enabled = "🏠 Build", True
+
+    # ── Player-house chest override (highest priority for center label) ────────
+    if _in_ph and center_tile and center_tile.terrain in PH_CHEST_TYPES:
+        _chest_emoji = {"ph_chest_small": "📦", "ph_chest_medium": "🗄️",
+                        "ph_chest_large": "🧳"}.get(center_tile.terrain, "📦")
+        center_label, center_enabled = _chest_emoji, True
 
     return center_label, center_enabled, action_label, action_enabled
 
