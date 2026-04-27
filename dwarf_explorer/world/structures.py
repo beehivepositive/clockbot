@@ -339,8 +339,8 @@ def _generate_structures_sync(
             cave_positions.append((x, y))
             found += 1
 
-    # --- Ruins: density ~1 per 2500 tiles of area ---
-    ruins_count = rng.randint(_area_units, _area_units * 2)
+    # --- Ruins: fixed count similar to shrines ---
+    ruins_count = rng.randint(10, 16)
     found = 0
     for _ in range(ruins_count * 100):
         if found >= ruins_count:
