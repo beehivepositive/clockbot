@@ -18,6 +18,7 @@ from dwarf_explorer.ui.game_view import (
     handle_mine,
     handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
     handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
+    handle_ocean_move, handle_ocean_dock,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
     handle_forge_iron, handle_forge_close,
@@ -44,6 +45,10 @@ _CANOE_MOVE_ACTIONS = {
     "canoe_up", "canoe_down", "canoe_left", "canoe_right",
     "canoe_upleft", "canoe_upright", "canoe_downleft", "canoe_downright",
 }
+_OCEAN_MOVE_ACTIONS = {
+    "ocean_up", "ocean_down", "ocean_left", "ocean_right",
+    "ocean_upleft", "ocean_upright", "ocean_downleft", "ocean_downright",
+}
 _IGNORED_ACTIONS = {
     "sp1", "sp2", "sp3", "sp4", "sp5", "c_wait", "csp0", "csp1", "c_free",
     "csp_a", "csp_b", "csp_c", "csp_d",
@@ -51,6 +56,8 @@ _IGNORED_ACTIONS = {
     "c_potion",
     # House edit spacers
     "hesp1", "hesp2", "hesp3",
+    # Ocean spacers
+    "ocsp1", "ocsp2", "ocsp3", "ocsp4",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
@@ -87,7 +94,12 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
         gid, uid, act = self.guild_id, self.user_id, self.action
 
         try:
-            if act in _CANOE_MOVE_ACTIONS:
+            if act in _OCEAN_MOVE_ACTIONS:
+                direction = act[6:]  # strip "ocean_" prefix
+                await handle_ocean_move(interaction, gid, uid, direction)
+            elif act == "ocean_dock":
+                await handle_ocean_dock(interaction, gid, uid)
+            elif act in _CANOE_MOVE_ACTIONS:
                 direction = act[6:]  # strip "canoe_" prefix
                 await handle_canoe_move(interaction, gid, uid, direction)
             elif act == "canoe_dock":

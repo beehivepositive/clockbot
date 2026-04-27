@@ -48,6 +48,12 @@ class Player:
     ph_cave_id: int | None = None  # if set, exiting player_house returns to this cave
     # Canoe state
     in_canoe: bool = False
+    # Ocean state
+    in_ocean: bool = False
+    ocean_x: int = 0
+    ocean_y: int = 0
+    ocean_harbor_wx: int = 0   # overworld x of harbor used to enter
+    ocean_harbor_wy: int = 0   # overworld y of harbor used to enter
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None

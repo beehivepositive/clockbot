@@ -13,6 +13,7 @@ from dwarf_explorer.config import (
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
+    OCEAN_SIZE, OCEAN_ENCOUNTER_RATES,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -23,6 +24,7 @@ from dwarf_explorer.database.repositories import (
     update_player_house_state,
     update_player_sprint,
     update_player_stats,
+    update_player_ocean_state,
     save_combat_state,
     clear_combat_state,
     get_cave_entrance_exit,
@@ -54,6 +56,7 @@ from dwarf_explorer.game.combat import (
     render_arena, ARENA_SIZE,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
+from dwarf_explorer.world.ocean import load_ocean_viewport, load_ocean_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, populate_chest_loot
 from dwarf_explorer.world.player_houses import (
     create_player_house, get_player_house_at, get_player_house_owner,
@@ -593,6 +596,61 @@ class CanoeDestView(discord.ui.View):
         ))
 
 
+# ── Ocean view ────────────────────────────────────────────────────────────────
+
+class OceanView(discord.ui.View):
+    """8-directional ocean navigation + Dock button."""
+
+    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label: str, action: str, row: int,
+                 style=discord.ButtonStyle.primary, disabled: bool = False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # Row 0: ↖ ↑ ↗ | ⚓ Dock
+        self.add_item(_btn("↖", "ocean_upleft",   0))
+        self.add_item(_btn("⬆️", "ocean_up",       0))
+        self.add_item(_btn("↗", "ocean_upright",  0))
+        self.add_item(_btn("⚓ Dock", "ocean_dock", 0,
+                           style=discord.ButtonStyle.success if dock_available
+                           else discord.ButtonStyle.secondary,
+                           disabled=not dock_available))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "ocsp1"), row=0,
+        ))
+
+        # Row 1: ← 🚢 → | 🎒 Inv
+        self.add_item(_btn("⬅️", "ocean_left",   1))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="🌊", disabled=True,
+            custom_id=_custom_id(gid, uid, "ocsp2"), row=1,
+        ))
+        self.add_item(_btn("➡️", "ocean_right",  1))
+        self.add_item(_btn("🎒 Inv", "inventory", 1,
+                           style=discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "ocsp3"), row=1,
+        ))
+
+        # Row 2: ↙ ↓ ↘ | ❓ Help
+        self.add_item(_btn("↙", "ocean_downleft",  2))
+        self.add_item(_btn("⬇️", "ocean_down",      2))
+        self.add_item(_btn("↘", "ocean_downright", 2))
+        self.add_item(_btn("❓ Help", "help", 2,
+                           style=discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "ocsp4"), row=2,
+        ))
+
+
 class MerchantView(discord.ui.View):
     """Travelling merchant trade view."""
 
@@ -858,6 +916,8 @@ def _compute_context_labels(
             center_label, center_enabled = "⛩️", True
         elif s in ("ruins", "ruins_looted"):
             center_label, center_enabled = "🏚️", True
+        elif s == "harbor":
+            center_label, center_enabled = "🚢 Board", True
         # Canoe launch
         elif t == "river_landing":
             center_label, center_enabled = "⛵", True
@@ -967,6 +1027,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                mine_dirs: frozenset[str] = frozenset(),
                grid: list[list] | None = None) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
+    if player.in_ocean:
+        return OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
     if player.in_canoe:
         return CanoeView(guild_id, user_id, dock_available=False)
 
@@ -1461,7 +1523,9 @@ async def _finish_combat(
     if player.hp <= 0:
         msg = apply_death_reset(player)
         player.in_canoe = False
-        await update_player_stats(db, user_id, hp=player.hp, in_canoe=0)
+        player.in_ocean = False
+        await update_player_stats(db, user_id, hp=player.hp, in_canoe=0, in_ocean=0)
+        await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
@@ -1474,6 +1538,10 @@ async def _finish_combat(
     if player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    if player.in_ocean:
+        grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        return render_grid(grid, player, extra_msg), OceanView(guild_id, user_id,
+                                                               dock_available=(player.ocean_y == 0))
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player, grid=grid)
 
@@ -1943,6 +2011,129 @@ async def handle_canoe_dest_cancel(
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
+    )
+
+
+# ── Ocean handlers ────────────────────────────────────────────────────────────
+
+_OCEAN_DIRS: dict[str, tuple[int, int]] = {
+    "up":        (0, -1),
+    "down":      (0,  1),
+    "left":      (-1,  0),
+    "right":     (1,  0),
+    "upleft":    (-1, -1),
+    "upright":   (1, -1),
+    "downleft":  (-1,  1),
+    "downright": (1,  1),
+}
+
+
+async def handle_ocean_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ocean:
+        await interaction.response.defer()
+        return
+
+    dx, dy = _OCEAN_DIRS.get(direction, (0, 0))
+    nx, ny = player.ocean_x + dx, player.ocean_y + dy
+
+    # Moving north past shore → auto-dock
+    if ny < 0:
+        player.in_ocean = False
+        hwx, hwy = player.ocean_harbor_wx, player.ocean_harbor_wy
+        player.world_x, player.world_y = hwx, hwy
+        await update_player_ocean_state(db, user_id, False, 0, 0)
+        await update_player_position(db, user_id, hwx, hwy)
+        grid = await load_viewport(hwx, hwy, seed, db)
+        content = render_grid(grid, player, "⚓ You sail back into the harbour.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
+
+    # Check bounds
+    if not (0 <= nx < OCEAN_SIZE and 0 <= ny < OCEAN_SIZE):
+        grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        content = render_grid(grid, player, "The vast ocean stretches endlessly in that direction.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0)),
+        )
+        return
+
+    # Move
+    player.ocean_x, player.ocean_y = nx, ny
+    await update_player_ocean_state(db, user_id, True, nx, ny)
+
+    # Check for ocean encounter
+    enc_rng = _random.Random(hash((user_id, nx, ny, seed, "ocean")))
+    enemy_type = _roll_encounter(enc_rng, OCEAN_ENCOUNTER_RATES)
+    if enemy_type:
+        grid = load_ocean_viewport(nx, ny, seed)
+        arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type, "ocean")))
+        arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+        player.in_combat = True
+        player.combat_enemy_type = enemy_type
+        player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+        player.combat_enemy_x = ex
+        player.combat_enemy_y = ey
+        player.combat_player_x = ARENA_SIZE // 2
+        player.combat_player_y = ARENA_SIZE // 2
+        player.combat_moves_left = COMBAT_MOVES_DEFAULT
+        _ui_state[user_id] = {"type": "combat", "arena": arena}
+        await save_combat_state(db, user_id, player)
+        content = render_arena(arena, player)
+        view = CombatView(guild_id, user_id,
+                          trapped=arena["player_trapped"],
+                          moves_left=player.combat_moves_left)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    grid = load_ocean_viewport(nx, ny, seed)
+    content = render_grid(grid, player)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=OceanView(guild_id, user_id, dock_available=(ny == 0)),
+    )
+
+
+async def handle_ocean_dock(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Dock from ocean back to the overworld harbour."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ocean:
+        await interaction.response.defer()
+        return
+
+    if player.ocean_y != 0:
+        grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        content = render_grid(grid, player, "You must sail back to the shoreline (row 0) to dock.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=OceanView(guild_id, user_id, dock_available=False),
+        )
+        return
+
+    hwx, hwy = player.ocean_harbor_wx, player.ocean_harbor_wy
+    player.in_ocean = False
+    player.world_x, player.world_y = hwx, hwy
+    await update_player_ocean_state(db, user_id, False, 0, 0)
+    await update_player_position(db, user_id, hwx, hwy)
+    grid = await load_viewport(hwx, hwy, seed, db)
+    content = render_grid(grid, player, "⚓ You dock at the harbour and step ashore.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
     )
 
 
@@ -2487,6 +2678,24 @@ async def handle_interact(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player,
                 f"🏚️ You sift through the rubble and find **{gold_found}g**.{extra_str}")
+
+        elif tile.structure == "harbor":
+            # ── Harbor: board boat and enter the ocean ────────────────────────
+            player.in_ocean = True
+            player.ocean_x = OCEAN_SIZE // 2
+            player.ocean_y = 0
+            player.ocean_harbor_wx = wx
+            player.ocean_harbor_wy = wy
+            await update_player_ocean_state(db, user_id, True,
+                                            player.ocean_x, player.ocean_y,
+                                            wx, wy)
+            seed = await get_or_create_world(db, guild_id)
+            grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+            content = render_grid(grid, player,
+                "⚓ You board the boat and sail out to sea! Use ⚓ Dock to return to shore.")
+            view = OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         elif terrain in ("forest", "dense_forest") and "axe" in hand_items:
             # Chop tree

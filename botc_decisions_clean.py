@@ -16,7 +16,7 @@ Input kinds:
 """
 import botc_logic as BL
 
-# ── Input kind constants ──────────────────────────────────────────────────────
+# â”€â”€ Input kind constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 PLAYER_SELECT      = "player_select"
 PLAYER_MULTISELECT = "player_multiselect"
 CHARACTER_SELECT   = "character_select"
@@ -25,7 +25,7 @@ BOOLEAN            = "boolean"
 TEXT               = "text"
 PLAYER_CHAR_PAIRS  = "player_char_pairs"
 
-# ── Pool helpers ──────────────────────────────────────────────────────────────
+# â”€â”€ Pool helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _pp(g, spec):
     """Resolve a player pool spec to a list of player dicts."""
@@ -64,7 +64,7 @@ def _cp(g, spec):
     }
     return pools.get(spec, script)
 
-# ── Decision node factory ─────────────────────────────────────────────────────
+# â”€â”€ Decision node factory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def make_decision(dtype, g, **extra):
     """Instantiate a decision node with pools resolved from current game state."""
@@ -88,7 +88,7 @@ def resolve_decision(dtype, choices, g):
         raise KeyError(f"No resolver for: {dtype!r}")
     return fn(choices, g)
 
-# ── Shorthand builders (used in DECISION_DEFS) ───────────────────────────────
+# â”€â”€ Shorthand builders (used in DECISION_DEFS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _p1(prompt, pool="alive", optional=False):
     return {"prompt": prompt, "inputs": {
@@ -107,12 +107,12 @@ def _p1c1(prompt, pool="alive", char_pool="script"):
         "character": {"kind": CHARACTER_SELECT, "char_pool": char_pool},
     }}
 
-# ── Decision definitions ──────────────────────────────────────────────────────
+# â”€â”€ Decision definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Keys match the resolver keys in RESOLVERS at the bottom of this file.
 
 DECISION_DEFS = {
 
-    # ── NIGHT META ───────────────────────────────────────────────────────────
+    # â”€â”€ NIGHT META â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "minion_info": {
         "prompt": "Deliver minion info. Confirm minions have been shown their demon and each other.",
         "inputs": {"confirmed": {"kind": BOOLEAN}},
@@ -126,19 +126,19 @@ DECISION_DEFS = {
         },
     },
 
-    # ── BARISTA ───────────────────────────────────────────────────────────────
+    # â”€â”€ BARISTA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "barista_nightly": {
         "prompt": "Barista: choose which player is affected and which ability applies tonight.",
         "inputs": {
             "target": {"kind": PLAYER_SELECT, "pool": "alive"},
             "ability_num": {"kind": CHOICE, "options": [
-                {"value": 1, "label": "1 — Sober, healthy & guaranteed true info"},
-                {"value": 2, "label": "2 — Use ability twice tonight"},
+                {"value": 1, "label": "1 â€” Sober, healthy & guaranteed true info"},
+                {"value": 2, "label": "2 â€” Use ability twice tonight"},
             ]},
         },
     },
 
-    # ── PROTECTION / EFFECT ROLES ────────────────────────────────────────────
+    # â”€â”€ PROTECTION / EFFECT ROLES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "monk_night":        _p1("Monk wakes. Pick 1 player to protect from the Demon tonight."),
     "sailor_night":      _p1("Sailor wakes. Pick 1 player to drink with tonight."),
     "innkeeper_night": {
@@ -157,7 +157,7 @@ DECISION_DEFS = {
     "devils_advocate_night": _p1("Devil's Advocate wakes. Pick 1 alive player to protect from execution today."),
     "butler_night":      _p1("Butler wakes. Pick your master for tonight (you may only vote if they vote)."),
     "preacher_night":    _p1("Preacher wakes. Pick 1 player to preach to (Minion loses ability if chosen)."),
-    "exorcist_night":    _p1("Exorcist wakes. Pick 1 player — the Demon cannot act if they pick that player."),
+    "exorcist_night":    _p1("Exorcist wakes. Pick 1 player â€” the Demon cannot act if they pick that player."),
     "courtier_night": {
         "prompt": "Courtier wakes. Name 1 character to make drunk for 3 nights (once per game), or pass.",
         "inputs": {
@@ -165,8 +165,8 @@ DECISION_DEFS = {
             "pass":      {"kind": BOOLEAN},
         },
     },
-    "fearmonger_night":  _p1("Fearmonger wakes. Pick 1 player — if nominated and executed today, evil wins."),
-    "harpy_night":       _p2("Harpy wakes. Pick 2 players — the second must stay mad or die (once per game)."),
+    "fearmonger_night":  _p1("Fearmonger wakes. Pick 1 player â€” if nominated and executed today, evil wins."),
+    "harpy_night":       _p2("Harpy wakes. Pick 2 players â€” the second must stay mad or die (once per game)."),
     "mezepheles_night":  _p1("Mezepheles wakes. Pick 1 player to whisper the secret word to."),
     "cerenovus_night":   _p1c1("Cerenovus wakes. Pick 1 player and a character for them to claim madness about."),
     "godfather_night": {
@@ -197,7 +197,7 @@ DECISION_DEFS = {
             "pass":        {"kind": BOOLEAN},
         },
     },
-    "pit_hag_night":     _p1c1("Pit-Hag wakes. Pick 1 player and a character — they become it now."),
+    "pit_hag_night":     _p1c1("Pit-Hag wakes. Pick 1 player and a character â€” they become it now."),
     "summoner_night":    _p1c1("Summoner (night 3). Pick 1 player to become the Demon and which Demon.", char_pool="demon_script"),
     "wizard_night":      _p1("Wizard wakes. Pick 1 player whose ability does not work tonight."),
     "wraith_night": {
@@ -208,7 +208,7 @@ DECISION_DEFS = {
         },
     },
 
-    # ── INFORMATION ROLES ────────────────────────────────────────────────────
+    # â”€â”€ INFORMATION ROLES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "washerwoman_info": {
         "prompt": "Washerwoman: show 2 players, one of whom is a specific Townsfolk.",
         "inputs": {
@@ -247,7 +247,7 @@ DECISION_DEFS = {
         },
     },
     "empath_night": {
-        "prompt": "Empath: how many of their 2 alive neighbours are evil? (auto-computed — confirm or override)",
+        "prompt": "Empath: how many of their 2 alive neighbours are evil? (auto-computed â€” confirm or override)",
         "inputs": {"evil_count": {"kind": CHOICE, "options": [
             {"value": 0, "label": "0"}, {"value": 1, "label": "1"}, {"value": 2, "label": "2"},
         ]}},
@@ -297,7 +297,7 @@ DECISION_DEFS = {
     },
     "pixie_setup":         {"prompt": "Pixie: which Townsfolk character does the Pixie know is in play?",
                             "inputs": {"character": {"kind": CHARACTER_SELECT, "char_pool": "tf_script"}}},
-    "ogre_night":          _p1("Ogre wakes. Pick 1 player — Ogre becomes their alignment."),
+    "ogre_night":          _p1("Ogre wakes. Pick 1 player â€” Ogre becomes their alignment."),
     "balloonist_night":    _p1("Balloonist: show 1 player of the next character type in rotation."),
     "village_idiot_night": _p1("Village Idiot wakes. Pick 1 player to learn their alignment (may be drunk and wrong)."),
     "flowergirl_night": {
@@ -331,7 +331,7 @@ DECISION_DEFS = {
     "gambler_night":       _p1c1("Gambler wakes. Pick 1 player and guess their character (dies if wrong)."),
     "high_priestess_night":_p1("High Priestess: pick 1 player you think this player should talk to today."),
     "chambermaid_night": {
-        "prompt": "Chambermaid wakes. Pick 2 players to observe — how many woke for an ability last night?",
+        "prompt": "Chambermaid wakes. Pick 2 players to observe â€” how many woke for an ability last night?",
         "inputs": {
             "t1":    {"kind": PLAYER_SELECT, "pool": "alive"},
             "t2":    {"kind": PLAYER_SELECT, "pool": "alive"},
@@ -360,13 +360,13 @@ DECISION_DEFS = {
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive", "optional": True}},
     },
 
-    # ── SNAKE CHARMER ────────────────────────────────────────────────────────
+    # â”€â”€ SNAKE CHARMER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "snake_charmer_night": {
         "prompt": "Snake Charmer wakes. Pick 1 player to attempt to charm.",
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive"}},
     },
 
-    # ── HARLOT ───────────────────────────────────────────────────────────────
+    # â”€â”€ HARLOT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "harlot_night": {
         "prompt": "Harlot wakes. Pick 1 player to spend the night with (may learn their character; may die).",
         "inputs": {
@@ -375,13 +375,13 @@ DECISION_DEFS = {
         },
     },
 
-    # ── ACROBAT ──────────────────────────────────────────────────────────────
-    "acrobat_night": _p1("Acrobat wakes. Pick 1 player — if they are or become drunk/poisoned tonight, you die."),
+    # â”€â”€ ACROBAT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    "acrobat_night": _p1("Acrobat wakes. Pick 1 player â€” if they are or become drunk/poisoned tonight, you die."),
 
-    # ── LYCANTHROPE ──────────────────────────────────────────────────────────
+    # â”€â”€ LYCANTHROPE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "lycanthrope_night": _p1("Lycanthrope wakes. Pick 1 alive player to kill tonight (only kill this night)."),
 
-    # ── DEMONS ───────────────────────────────────────────────────────────────
+    # â”€â”€ DEMONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "imp_night":       _p1("Imp wakes. Pick 1 player to kill tonight (pick yourself to pass Imp to a Minion)."),
     "no_dashii_night": _p1("No Dashii wakes. Pick 1 player to kill tonight."),
     "vortox_night":    _p1("Vortox wakes. Pick 1 player to kill tonight (all Townsfolk info is false)."),
@@ -411,11 +411,11 @@ DECISION_DEFS = {
         },
     },
     "ojo_night": {
-        "prompt": "Ojo wakes. Name a character — that player dies (or a random player if not in play).",
+        "prompt": "Ojo wakes. Name a character â€” that player dies (or a random player if not in play).",
         "inputs": {"character": {"kind": CHARACTER_SELECT, "char_pool": "script"}},
     },
     "al_hadikhia_night": {
-        "prompt": "Al-Hadikhia wakes. Pick 3 players — each secretly chooses to live or die.",
+        "prompt": "Al-Hadikhia wakes. Pick 3 players â€” each secretly chooses to live or die.",
         "inputs": {
             "t1": {"kind": PLAYER_SELECT, "pool": "alive"},
             "t2": {"kind": PLAYER_SELECT, "pool": "alive"},
@@ -446,7 +446,7 @@ DECISION_DEFS = {
     },
     "lot_night":           _p1("Lord of Typhon wakes. Pick 1 player to kill tonight."),
 
-    # ── TRIGGER-BASED END-OF-NIGHT DECISIONS ─────────────────────────────────
+    # â”€â”€ TRIGGER-BASED END-OF-NIGHT DECISIONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "sweetheart_drunk": {
         "prompt": "Sweetheart died. Pick 1 player to be drunk for the rest of the game.",
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive"}},
@@ -464,7 +464,7 @@ DECISION_DEFS = {
         "inputs": {"assignments": {"kind": PLAYER_CHAR_PAIRS}},
     },
     "imp_starpass": {
-        "prompt": "Imp killed themselves — choose which Minion becomes the new Imp.",
+        "prompt": "Imp killed themselves â€” choose which Minion becomes the new Imp.",
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive_min"}},
     },
     "mayor_bounce": {
@@ -479,7 +479,7 @@ DECISION_DEFS = {
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive_tf"}},
     },
     "klutz_choice": {
-        "prompt": "Klutz died and must immediately pick a player. Pick 1 player — if good, that player dies.",
+        "prompt": "Klutz died and must immediately pick a player. Pick 1 player â€” if good, that player dies.",
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive"}},
     },
     "moonchild_kill": {
@@ -498,8 +498,8 @@ DECISION_DEFS = {
         "inputs": {"dies": {"kind": BOOLEAN}},
     },
 
-    # ── DAY ACTIONS ──────────────────────────────────────────────────────────
-    "slayer_claim":  _p1("Slayer claims to slay — pick the target (once per game)."),
+    # â”€â”€ DAY ACTIONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    "slayer_claim":  _p1("Slayer claims to slay â€” pick the target (once per game)."),
     "gossip_night": {
         "prompt": "Gossip made a public statement today. Was it true? If so, pick 1 player to die tonight.",
         "inputs": {
@@ -517,7 +517,7 @@ DECISION_DEFS = {
         },
     },
     "golem_nominate": {
-        "prompt": "Golem nominates — pick the target. The Golem cannot kill if drunk/poisoned.",
+        "prompt": "Golem nominates â€” pick the target. The Golem cannot kill if drunk/poisoned.",
         "inputs": {"target": {"kind": PLAYER_SELECT, "pool": "alive"}},
     },
     "vizier_execute": {
@@ -538,7 +538,7 @@ DECISION_DEFS = {
 
 }  # end DECISION_DEFS
 
-# ── Resolver functions ────────────────────────────────────────────────────────
+# â”€â”€ Resolver functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Each takes (choices: dict, g: dict) and calls into botc_logic.
 
 def _gp(g, pid): return BL.get_player(g, pid)
@@ -954,7 +954,7 @@ def _res_pixie(ch, g):
     p = _gc(g, "Pixie")
     if p: BL.resolve_pixie_setup(p, ch.get("character"), g)
 
-# ── RESOLVERS dispatch table ──────────────────────────────────────────────────
+# â”€â”€ RESOLVERS dispatch table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 RESOLVERS = {
     "minion_info":           lambda ch, g: None,  # info delivery only, no state change
@@ -1067,7 +1067,7 @@ RESOLVERS = {
     "pixie_setup":           _res_pixie,
 }
 
-# ── Pending decision detector ─────────────────────────────────────────────────
+# â”€â”€ Pending decision detector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def get_pending_decisions(g):
     """

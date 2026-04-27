@@ -352,6 +352,32 @@ def _generate_structures_sync(
             overrides.append((x, y, 'ruins'))
             found += 1
 
+    # --- Harbor: 1 dock on south coast, just above the ocean biome ---
+    # Ocean starts at y ≈ 0.88 × WORLD_SIZE; harbor sits at y ≈ 0.84–0.87
+    _harbor_y_min = int(WORLD_SIZE * 0.84)
+    _harbor_y_max = int(WORLD_SIZE * 0.87)
+    harbor_placed = False
+    for _ in range(1200):
+        hx = rng.randint(8, WORLD_SIZE - 9)
+        hy = rng.randint(_harbor_y_min, _harbor_y_max)
+        biome = get_biome(hx, hy, seed)
+        if biome in ('sand', 'plains', 'grass'):
+            overrides.append((hx, hy, 'harbor'))
+            harbor_placed = True
+            break
+    if not harbor_placed:
+        # Force-place near centre of south coast on any walkable biome
+        for hy in range(_harbor_y_max, _harbor_y_min - 1, -1):
+            for hx in range(WORLD_SIZE // 2 - 30, WORLD_SIZE // 2 + 31):
+                if 0 <= hx < WORLD_SIZE:
+                    biome = get_biome(hx, hy, seed)
+                    if biome not in ('mountain', 'snow', 'deep_water', 'shallow_water'):
+                        overrides.append((hx, hy, 'harbor'))
+                        harbor_placed = True
+                        break
+            if harbor_placed:
+                break
+
     cave_groups = _group_caves(cave_positions, rng)
     return overrides, cave_groups
 

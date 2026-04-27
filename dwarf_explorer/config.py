@@ -53,6 +53,8 @@ STRUCTURE_EMOJI = {
     "cave": "\U0001F573\uFE0F",     # 🕳️
     "bridge": "\U0001F309",          # 🌉
     "player_house": "\U0001F3E0",   # 🏠
+    "harbor": "\U0001F6A2",         # 🚢 harbor/dock
+    "shipwreck": "\u2693",          # ⚓ shipwreck
 }
 
 ENTITY_EMOJI = {
@@ -61,6 +63,10 @@ ENTITY_EMOJI = {
     "bear": "\U0001F43B",            # 🐻
     "spider": "\U0001F577\uFE0F",   # 🕷️
     "npc": "\U0001F9D1",             # 🧑
+    # Ocean creatures
+    "shark": "\U0001F988",           # 🦈
+    "crab": "\U0001F980",            # 🦀
+    "sea_serpent": "\U0001F40D",     # 🐍
 }
 
 ITEM_EMOJI = {
@@ -112,6 +118,7 @@ WALKABLE_TILES = {
     "river_landing",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
+    "harbor",        # harbor dock — walkable
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
 
@@ -119,7 +126,7 @@ WALKABLE_TILES = {
 CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -139,6 +146,10 @@ ENEMY_STATS = {
     "cave_golem":  (70, 22,  8, 50, 25),
     "cave_troll":  (50, 18,  5, 35, 20),
     "cave_wyvern": (80, 28,  6, 75, 40),
+    # Ocean creatures
+    "shark":       (35, 15,  1, 20, 12),
+    "crab":        (20,  8,  4, 12,  8),
+    "sea_serpent": (60, 22,  4, 50, 30),
 }
 
 # Player defaults
@@ -160,6 +171,10 @@ ENEMY_ABILITIES = {
     "cave_golem":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
     "cave_troll":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
     "cave_wyvern": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False},
+    # Ocean creatures
+    "shark":       {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "crab":        {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
+    "sea_serpent": {"cobweb": False, "poison": True,  "hit_run": False, "roar": False, "slam": True},
 }
 
 ARENA_EMOJI = {
@@ -199,9 +214,20 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
 
 # Terrain that blocks movement inside the combat arena
 ARENA_IMPASSABLE = {
-    "mountain", "snow", "deep_water", "shallow_water", "dense_forest",
+    "mountain", "snow", "dense_forest",
     "stone_wall", "b_wall", "void", "cave_rock",
     "river",
+    # Note: deep_water and shallow_water are passable for ocean combat
+}
+
+# Ocean world size
+OCEAN_SIZE = 200
+
+# Ocean random encounter rates (relative weights, 7% total gate in _roll_encounter)
+OCEAN_ENCOUNTER_RATES = {
+    "shark":       0.05,
+    "crab":        0.03,
+    "sea_serpent": 0.02,
 }
 
 # --- Cave System ---
@@ -559,6 +585,8 @@ TILE_COLORS = {
     "crop_planted": (100, 140, 40),
     "crop_sprout": (60, 160, 40),
     "crop_ripe": (200, 180, 20),
+    "harbor": (40, 80, 200),
+    "ruins_looted": (100, 85, 70),
 }
 
 
