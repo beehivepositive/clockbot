@@ -48,6 +48,7 @@ TERRAIN_EMOJI = {
 STRUCTURE_EMOJI = {
     "village": "\U0001F3D8\uFE0F",  # 🏘️
     "ruins": "\U0001F3DA\uFE0F",    # 🏚️
+    "ruins_looted": "\U0001F3DA\uFE0F",  # 🏚️ (already looted)
     "shrine": "\u26E9\uFE0F",       # ⛩️
     "cave": "\U0001F573\uFE0F",     # 🕳️
     "bridge": "\U0001F309",          # 🌉
@@ -106,7 +107,7 @@ ITEM_EMOJI = {
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
-    "village", "ruins", "shrine", "cave", "bridge",
+    "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
     "sapling", "short_grass", "seedling",
     "river_landing",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
@@ -118,7 +119,7 @@ WALKABLE_TILES = {
 CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "shrine", "cave", "bridge", "player_house"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {

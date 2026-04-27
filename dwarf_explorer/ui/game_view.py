@@ -854,6 +854,10 @@ def _compute_context_labels(
             center_label, center_enabled = "🕳️", True
         elif s == "village":
             center_label, center_enabled = "🏘️", True
+        elif s == "shrine":
+            center_label, center_enabled = "⛩️", True
+        elif s in ("ruins", "ruins_looted"):
+            center_label, center_enabled = "🏚️", True
         # Canoe launch
         elif t == "river_landing":
             center_label, center_enabled = "⛵", True
@@ -2423,6 +2427,66 @@ async def handle_interact(
             await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
             grid = await load_village_viewport(vid, vx, vy, db)
             content = render_grid(grid, player, "You enter the village.")
+
+        elif tile.structure == "shrine":
+            # ── Shrine: sacrifice a held item for a stat boost ─────────────────
+            sacrificed = player.hand_1 or player.hand_2
+            if not sacrificed:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player,
+                    "⛩️ An ancient shrine. Equip an item to hand and interact to make an offering.")
+            else:
+                slot = "hand_1" if player.hand_1 == sacrificed else "hand_2"
+                await unequip_item(db, user_id, slot)
+                await remove_from_inventory(db, user_id, sacrificed, 1)
+                if sacrificed == "gem":
+                    player.attack += 1
+                    await update_player_stats(db, user_id, attack=player.attack)
+                    msg = f"⛩️ You offer the gem. The shrine glows — **Attack +1**! ({player.attack} ATK)"
+                elif sacrificed == "iron_ingot":
+                    player.defense += 1
+                    await update_player_stats(db, user_id, defense=player.defense)
+                    msg = f"⛩️ You offer the iron ingot. The shrine hums — **Defense +1**! ({player.defense} DEF)"
+                elif sacrificed in ("cooked_fish", "fish"):
+                    player.max_hp += 10
+                    player.hp = min(player.max_hp, player.hp + 10)
+                    await update_player_stats(db, user_id, max_hp=player.max_hp, hp=player.hp)
+                    msg = f"⛩️ You offer the food. Warmth fills your body — **Max HP +10**! ({player.max_hp} HP)"
+                else:
+                    xp_gain = 15
+                    player.xp += xp_gain
+                    await update_player_stats(db, user_id, xp=player.xp)
+                    item_name = sacrificed.replace("_", " ")
+                    msg = f"⛩️ You offer the {item_name}. The shrine accepts your gift — **+{xp_gain} XP**."
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, msg)
+
+        elif tile.structure == "ruins_looted":
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player,
+                "🏚️ These ruins have already been picked clean.")
+
+        elif tile.structure == "ruins":
+            # ── Ruins: one-time buried loot ────────────────────────────────────
+            rng_r = _random.Random(hash((user_id, wx, wy, seed, "ruins")))
+            gold_found = rng_r.randint(15, 60)
+            player.gold += gold_found
+            await update_player_stats(db, user_id, gold=player.gold)
+            await set_tile_override(db, wx, wy, "ruins_looted")
+            extras: list[str] = []
+            if rng_r.random() < 0.45:
+                await add_to_inventory(db, user_id, "map_fragment", 1)
+                extras.append("a map fragment")
+            if rng_r.random() < 0.20:
+                await add_to_inventory(db, user_id, "gem", 1)
+                extras.append("a gem")
+            elif rng_r.random() < 0.35:
+                await add_to_inventory(db, user_id, "iron_ingot", 1)
+                extras.append("an iron ingot")
+            extra_str = (" You also find " + ", ".join(extras) + "!") if extras else ""
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player,
+                f"🏚️ You sift through the rubble and find **{gold_found}g**.{extra_str}")
 
         elif terrain in ("forest", "dense_forest") and "axe" in hand_items:
             # Chop tree

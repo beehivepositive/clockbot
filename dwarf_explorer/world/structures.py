@@ -306,10 +306,11 @@ def _generate_structures_sync(
                     overrides.append((rx, ry, 'path'))
         found += 1
 
-    # --- Shrines (6-10): on hills tiles ---
-    shrine_count = rng.randint(6, 10)
+    # --- Shrines: density ~1 per 500 tiles of area ---
+    _area_units = max(1, (WORLD_SIZE * WORLD_SIZE) // 5000)
+    shrine_count = rng.randint(_area_units * 3, _area_units * 5)
     found = 0
-    for _ in range(600):
+    for _ in range(shrine_count * 80):
         if found >= shrine_count:
             break
         x = rng.randint(1, WORLD_SIZE - 2)
@@ -337,10 +338,10 @@ def _generate_structures_sync(
             cave_positions.append((x, y))
             found += 1
 
-    # --- Ruins (3-5): single tile on walkable terrain ---
-    ruins_count = rng.randint(3, 5)
+    # --- Ruins: density ~1 per 2500 tiles of area ---
+    ruins_count = rng.randint(_area_units, _area_units * 2)
     found = 0
-    for _ in range(500):
+    for _ in range(ruins_count * 100):
         if found >= ruins_count:
             break
         x = rng.randint(1, WORLD_SIZE - 2)
