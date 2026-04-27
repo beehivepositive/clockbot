@@ -99,23 +99,26 @@ class GameView(discord.ui.View):
     """Main game view.
 
     Layout:
-      Row 0: [Sprint/🥾] [⬆️] [⬇️] [Action] [🗺️ Map]
+      Row 0: [Sprint/🥾] [⬆️] [Action] [🗺️ Map] [Edit (owner only)]
       Row 1: [⬅️] [Center/Interact] [➡️] [🎒 Inv] [❓ Help]
 
     center_label / center_enabled — on-tile contextual button (Enter cave, Chop, Harvest…)
     action_label / action_enabled — adjacent-tile contextual button (Forge, Smith, Fish…)
+    edit_enabled                  — show ⚒️ Edit at row-0 col-4 (player house owners only)
     """
 
     def __init__(self, guild_id: int, user_id: int, boots_equipped: bool = False,
                  sprinting: bool = False, mine_dirs: frozenset[str] = frozenset(),
                  center_label: str = "", center_enabled: bool = False,
-                 action_label: str = "", action_enabled: bool = False):
+                 action_label: str = "", action_enabled: bool = False,
+                 edit_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
         self._build_buttons(boots_equipped, sprinting, mine_dirs,
                             center_label, center_enabled,
-                            action_label, action_enabled)
+                            action_label, action_enabled,
+                            edit_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -136,10 +139,11 @@ class GameView(discord.ui.View):
     def _build_buttons(self, boots_equipped: bool, sprinting: bool,
                        mine_dirs: frozenset[str],
                        center_label: str, center_enabled: bool,
-                       action_label: str, action_enabled: bool) -> None:
+                       action_label: str, action_enabled: bool,
+                       edit_enabled: bool) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
-        # ── Row 0: Sprint | ⬆️ | Action | Map | spacer ───────────────────────
+        # ── Row 0: Sprint | ⬆️ | Action | Map | Edit/spacer ─────────────────
         #   Col:    0        1     2         3     4
         if boots_equipped:
             sprint_btn = discord.ui.Button(
@@ -180,12 +184,22 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "map"),
             row=0,
         )
-        sp4_btn = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(self.guild_id, self.user_id, "sp4"),
-            row=0,
-        )
+
+        # Col 4: Edit button for player-house owners, spacer otherwise
+        if edit_enabled:
+            edit_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u26CF\uFE0F Edit",
+                custom_id=_custom_id(self.guild_id, self.user_id, "action"),
+                row=0,
+            )
+        else:
+            edit_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sp4"),
+                row=0,
+            )
 
         # ── Row 1: ⬅️ | Center | ➡️ | Inventory | Help ──────────────────────
         #   Col:   0     1         2     3             4
@@ -242,7 +256,7 @@ class GameView(discord.ui.View):
         )
 
         for btn in [
-            sprint_btn, up_btn, action_btn, map_btn, sp4_btn,   # row 0
+            sprint_btn, up_btn, action_btn, map_btn, edit_btn,  # row 0
             left_btn, center_btn, right_btn, inventory_btn, help_btn,  # row 1
             sp3_btn, down_btn, sp5_btn,                          # row 2
         ]:
@@ -802,25 +816,27 @@ def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
-) -> tuple[str, bool, str, bool]:
-    """Return (center_label, center_enabled, action_label, action_enabled).
+) -> tuple[str, bool, str, bool, bool]:
+    """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled).
 
     center = on-tile interaction (interact button at row-1 center)
-    action = adjacent-tile interaction (action button at row-0 right)
+    action = adjacent-tile interaction (action button at row-0 col-2)
+    edit   = ⚒️ Edit button at row-0 col-4 (player-house owners only)
     """
     vc = 4  # VIEWPORT_CENTER
 
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
+    edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
     if _in_ph:
         if _ui_state.get(player.user_id, {}).get("is_house_owner", False):
-            action_label, action_enabled = "⚒️ Edit", True
+            edit_enabled = True
         # Fall through to center_tile checks so b_stove etc. still work.
         # PH chests are handled after the main block below.
 
@@ -933,7 +949,7 @@ def _compute_context_labels(
     if _in_ph and center_tile and center_tile.terrain in PH_CHEST_TYPES:
         center_label, center_enabled = BUILDING_EMOJI.get(center_tile.terrain, "📦"), True
 
-    return center_label, center_enabled, action_label, action_enabled
+    return center_label, center_enabled, action_label, action_enabled, edit_enabled
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -952,6 +968,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
 
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
+    edit_enabled = False
 
     if grid is not None:
         hand_items: set[str] = set()
@@ -959,9 +976,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             hand_items.add(player.hand_1)
         if player.hand_2:
             hand_items.add(player.hand_2)
-        center_label, center_enabled, action_label, action_enabled = _compute_context_labels(
-            grid, player, hand_items
-        )
+        center_label, center_enabled, action_label, action_enabled, edit_enabled = \
+            _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots is not None),
@@ -970,7 +986,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     center_label=center_label,
                     center_enabled=center_enabled,
                     action_label=action_label,
-                    action_enabled=action_enabled)
+                    action_enabled=action_enabled,
+                    edit_enabled=edit_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -3619,7 +3636,11 @@ async def handle_inv_close(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     prev_arena = _ui_state.get(user_id, {}).get("prev_arena")
+    is_house_owner = _ui_state.get(user_id, {}).get("is_house_owner", False)
     _ui_state.pop(user_id, None)
+    # Restore player-house owner flag so Edit button re-appears after close
+    if player.in_house and player.house_type == "player_house" and is_house_owner:
+        _ui_state.setdefault(user_id, {})["is_house_owner"] = True
     # If inventory was opened during combat, return to combat view
     if player.in_combat and prev_arena is not None:
         _ui_state[user_id] = {"type": "combat", "arena": prev_arena}
