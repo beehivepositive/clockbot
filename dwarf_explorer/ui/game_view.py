@@ -936,6 +936,13 @@ def _compute_context_labels(
     return center_label, center_enabled, action_label, action_enabled
 
 
+async def _load_house_grid(player: Player, db) -> list[list]:
+    """Load the correct viewport for whichever house type the player is in."""
+    if player.house_type == "player_house":
+        return await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
+    return await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+
 def _game_view(guild_id: int, user_id: int, player: Player,
                mine_dirs: frozenset[str] = frozenset(),
                grid: list[list] | None = None) -> discord.ui.View:
@@ -1714,7 +1721,7 @@ async def handle_sprint(
 
     status = "Sprint ON \U0001F3C3" if player.sprinting else "Sprint OFF"
     if player.in_house:
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        grid = await _load_house_grid(player, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
@@ -2583,7 +2590,7 @@ async def handle_action(
 
     # ── Forge: adjacent b_forge ───────────────────────────────────────────────
     if player.in_house:
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        grid = await _load_house_grid(player, db)
         vc = 4
         adj_terrains = set()
         for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -3621,7 +3628,7 @@ async def handle_inv_close(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     if player.in_house:
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        grid = await _load_house_grid(player, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
@@ -4166,7 +4173,7 @@ async def handle_help_back(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     if player.in_house:
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        grid = await _load_house_grid(player, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
