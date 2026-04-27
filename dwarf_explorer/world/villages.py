@@ -115,6 +115,111 @@ def _generate_village_interior(
     return W, H, tiles, (entry_x, entry_y), buildings
 
 
+def _generate_harbor_village_interior(
+    village_id: int, seed: int, world_x: int, world_y: int,
+) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
+           tuple[int, int], list[tuple[int, int, str]]]:
+    """Harbor village: water+dock at bottom edge, buildings+well above, entry at top.
+
+    Returns (width, height, tiles, entry_pos, dock_pos, buildings).
+    """
+    W, H = 16, 16
+    cx = W // 2   # centre column  = 8
+    cy = 7        # horizontal road row
+
+    rng = random.Random(seed + _VILLAGE_SEED_OFFSET + village_id + world_x * 997 + world_y * 1009 + 42)
+
+    grid: list[list[str]] = [["vil_grass"] * W for _ in range(H)]
+
+    # ── Water zone (bottom 2 rows) ─────────────────────────────────────────────
+    for y in range(H - 2, H):
+        for x in range(W):
+            grid[y][x] = "vil_water"
+
+    # ── Dock tile (walkable pier on water edge) ────────────────────────────────
+    dock_x, dock_y = cx, H - 2          # (8, 14)
+    grid[dock_y][dock_x] = "vil_dock"
+
+    # ── Shore path column leading to dock ─────────────────────────────────────
+    shore_y = H - 3                      # row 13 — last land row
+    grid[shore_y][cx] = "vil_path"
+
+    # ── Main vertical road (top → shore) ──────────────────────────────────────
+    for y in range(1, shore_y + 1):
+        grid[y][cx] = "vil_path"
+
+    # ── Horizontal road ───────────────────────────────────────────────────────
+    for x in range(1, W - 1):
+        grid[cy][x] = "vil_path"
+
+    # ── Well at road intersection ─────────────────────────────────────────────
+    grid[cy][cx] = "vil_well"
+
+    # ── Entry at top centre ───────────────────────────────────────────────────
+    entry_x, entry_y = cx, 1
+    grid[entry_y][entry_x] = "vil_path"
+
+    # ── Occupied tracking ─────────────────────────────────────────────────────
+    occupied: set[tuple[int, int]] = set()
+    for x in range(W):
+        occupied.add((x, 0)); occupied.add((x, H - 1)); occupied.add((x, H - 2))
+        occupied.add((x, shore_y))
+    for y in range(H):
+        occupied.add((0, y)); occupied.add((W - 1, y))
+    for x in range(W): occupied.add((x, cy))
+    for y in range(H): occupied.add((cx, y))
+    occupied.add((cx, cy))
+
+    buildings: list[tuple[int, int, str]] = []
+
+    # ── Required buildings ────────────────────────────────────────────────────
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith"]
+    rng.shuffle(required)
+    for btype in required:
+        for _ in range(200):
+            bx = rng.randint(2, W - 3)
+            by = rng.randint(2, shore_y - 2)   # land area only
+            if (bx, by) in occupied:
+                continue
+            adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+            if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
+                       for ax, ay in adj):
+                continue
+            grid[by][bx] = btype
+            occupied.add((bx, by))
+            buildings.append((bx, by, btype))
+            _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
+            break
+
+    # ── Houses ────────────────────────────────────────────────────────────────
+    house_count = rng.randint(2, 3)
+    for _ in range(200):
+        if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
+            break
+        bx = rng.randint(2, W - 3)
+        by = rng.randint(2, shore_y - 2)
+        if (bx, by) in occupied:
+            continue
+        adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+        if not any(0 <= ax < W and 0 <= ay < H
+                   and grid[ay][ax] in ("vil_path", "vil_grass")
+                   for ax, ay in adj):
+            continue
+        grid[by][bx] = "vil_house"
+        occupied.add((bx, by))
+        buildings.append((bx, by, "vil_house"))
+        _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
+
+    # ── Trees at upper corners ─────────────────────────────────────────────────
+    for tx, ty in [(1, 1), (W - 2, 1)]:
+        if (tx, ty) not in occupied:
+            grid[ty][tx] = "vil_tree"
+            occupied.add((tx, ty))
+
+    tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
+    return W, H, tiles, (entry_x, entry_y), (dock_x, dock_y), buildings
+
+
 def _connect_to_road(
     grid: list[list[str]], bx: int, by: int,
     cx: int, cy: int, W: int, H: int,
@@ -336,6 +441,71 @@ async def get_or_create_village(
         )
 
     return village_id, entry[0], entry[1]
+
+
+async def get_or_create_harbor_village(
+    seed: int, world_x: int, world_y: int, db,
+) -> tuple[int, int, int, int, int]:
+    """Return (village_id, entry_local_x, entry_local_y, dock_x, dock_y).
+
+    Dock is always at (W//2, H-2) = (8, 14) for harbor villages.
+    """
+    row = await db.fetch_one(
+        "SELECT village_id, entry_x, entry_y FROM village_entrances "
+        "WHERE world_x = ? AND world_y = ?",
+        (world_x, world_y),
+    )
+    if row:
+        return row["village_id"], row["entry_x"], row["entry_y"], 8, 14
+
+    cursor = await db.execute("INSERT INTO villages (width, height) VALUES (1, 1)")
+    village_id = cursor.lastrowid
+
+    W, H, tiles, entry, dock, buildings = await asyncio.to_thread(
+        _generate_harbor_village_interior, village_id, seed, world_x, world_y
+    )
+    await db.execute(
+        "UPDATE villages SET width = ?, height = ? WHERE village_id = ?",
+        (W, H, village_id),
+    )
+    await db.executemany(
+        "INSERT OR IGNORE INTO village_tiles (village_id, local_x, local_y, tile_type) VALUES (?, ?, ?, ?)",
+        [(village_id, lx, ly, tt) for lx, ly, tt in tiles],
+    )
+    await db.execute(
+        "INSERT OR IGNORE INTO village_entrances (village_id, entry_x, entry_y, world_x, world_y) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (village_id, entry[0], entry[1], world_x, world_y),
+    )
+
+    # Generate building interiors
+    for bx, by, btype in buildings:
+        canonical = {"vil_house": "house", "vil_church": "church",
+                     "vil_bank": "bank", "vil_shop": "shop",
+                     "vil_blacksmith": "blacksmith"}.get(btype, "house")
+        hcursor = await db.execute(
+            "INSERT INTO houses (village_id, building_type, width, height) VALUES (?, ?, 1, 1)",
+            (village_id, canonical),
+        )
+        house_id = hcursor.lastrowid
+        hW, hH, htiles, hentry = await asyncio.to_thread(
+            _generate_building_interior, house_id, seed, village_id, btype, bx, by
+        )
+        await db.execute(
+            "UPDATE houses SET width = ?, height = ? WHERE house_id = ?",
+            (hW, hH, house_id),
+        )
+        await db.executemany(
+            "INSERT OR IGNORE INTO house_tiles (house_id, local_x, local_y, tile_type) VALUES (?, ?, ?, ?)",
+            [(house_id, lx, ly, tt) for lx, ly, tt in htiles],
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO house_entrances "
+            "(house_id, entry_x, entry_y, village_id, village_x, village_y) VALUES (?, ?, ?, ?, ?, ?)",
+            (house_id, hentry[0], hentry[1], village_id, bx, by),
+        )
+
+    return village_id, entry[0], entry[1], dock[0], dock[1]
 
 
 async def get_building_at(

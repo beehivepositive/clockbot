@@ -306,9 +306,10 @@ def _generate_structures_sync(
                     overrides.append((rx, ry, 'path'))
         found += 1
 
-    # --- Shrines: density ~1 per 500 tiles of area ---
-    _area_units = max(1, (WORLD_SIZE * WORLD_SIZE) // 5000)
-    shrine_count = rng.randint(_area_units * 3, _area_units * 5)
+    # --- Shrines: fixed count regardless of world size ---
+    # Formula intentionally does NOT scale with area — too many shrines if
+    # world size doubles.  12–18 is the right feel for any size world.
+    shrine_count = rng.randint(12, 18)
     found = 0
     for _ in range(shrine_count * 80):
         if found >= shrine_count:

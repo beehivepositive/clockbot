@@ -4,18 +4,39 @@ from dwarf_explorer.config import WORLD_SIZE
 # Elevation seed offset for moisture layer
 _MOISTURE_OFFSET = 1000
 
-# South-edge ocean thresholds (computed once at import time)
-_SHALLOW_OCEAN_Y = int(WORLD_SIZE * 0.88)   # shallow water starts here
-_DEEP_OCEAN_Y    = int(WORLD_SIZE * 0.93)   # deep water starts here
+# South-edge ocean / beach thresholds
+_BEACH_START_Y   = int(WORLD_SIZE * 0.84)   # sand beach transition begins (~376)
+_SHALLOW_OCEAN_Y = int(WORLD_SIZE * 0.88)   # shallow water starts (~394)
+_DEEP_OCEAN_Y    = int(WORLD_SIZE * 0.93)   # deep water starts (~416)
+
+# How far (in tiles) the ocean boundary waves per column
+_OCEAN_WAVE_AMP  = 8
+
+
+def _ocean_wave(x: int, seed: int) -> int:
+    """Per-column y-offset for the ocean boundary.
+
+    Uses low-frequency (0.04 scale) fBm noise so the boundary curves
+    smoothly over tens of tiles rather than jittering tile-by-tile.
+    Returns an integer in [-_OCEAN_WAVE_AMP, +_OCEAN_WAVE_AMP].
+    """
+    # fbm(x*0.04, 0, …) varies slowly with x, giving ≈ 20-tile wavelength
+    return int((fbm(x * 0.04, 0, seed + 9877) - 0.5) * 2.0 * _OCEAN_WAVE_AMP)
 
 
 def get_biome(x: int, y: int, seed: int) -> str:
     """Return the terrain biome string for a world coordinate."""
-    # South-edge ocean always overrides noise-based biome
-    if y >= _DEEP_OCEAN_Y:
+    # Per-column wave offset so the coastline is organic rather than a
+    # perfectly straight horizontal line.
+    wave = _ocean_wave(x, seed)
+
+    if y >= _DEEP_OCEAN_Y + wave:
         return "deep_water"
-    if y >= _SHALLOW_OCEAN_Y:
+    if y >= _SHALLOW_OCEAN_Y + wave:
         return "shallow_water"
+    # Coastal beach — sand forced in the transition zone regardless of noise
+    if y >= _BEACH_START_Y + wave:
+        return "sand"
 
     e = fbm(x, y, seed)
     m = fbm(x, y, seed + _MOISTURE_OFFSET)

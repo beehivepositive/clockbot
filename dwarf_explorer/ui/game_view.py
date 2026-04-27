@@ -64,7 +64,7 @@ from dwarf_explorer.world.player_houses import (
     set_player_house_tile, HOUSE_SPAWN_X, HOUSE_SPAWN_Y,
 )
 from dwarf_explorer.world.villages import (
-    get_or_create_village, get_building_at,
+    get_or_create_village, get_or_create_harbor_village, get_building_at,
     load_village_viewport, load_village_single_tile,
     load_building_viewport, load_building_single_tile,
 )
@@ -917,7 +917,7 @@ def _compute_context_labels(
         elif s in ("ruins", "ruins_looted"):
             center_label, center_enabled = "🏚️", True
         elif s == "harbor":
-            center_label, center_enabled = "🚢 Board", True
+            center_label, center_enabled = "🚢 Harbor", True
         # Canoe launch
         elif t == "river_landing":
             center_label, center_enabled = "⛵", True
@@ -946,6 +946,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🔒", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
+        elif t == "vil_dock":
+            center_label, center_enabled = "⚓ Board", True
         # Tool × terrain interactions
         elif t in ("forest", "dense_forest") and "axe" in hand_items:
             center_label, center_enabled = "🪓", True
@@ -2042,14 +2044,18 @@ async def handle_ocean_move(
     dx, dy = _OCEAN_DIRS.get(direction, (0, 0))
     nx, ny = player.ocean_x + dx, player.ocean_y + dy
 
-    # Moving north past shore → auto-dock
+    # Moving north past shore → auto-dock back to harbour village
     if ny < 0:
-        player.in_ocean = False
         hwx, hwy = player.ocean_harbor_wx, player.ocean_harbor_wy
-        player.world_x, player.world_y = hwx, hwy
+        vid, _vx, _vy, dock_x, dock_y = await get_or_create_harbor_village(seed, hwx, hwy, db)
+        player.in_ocean = False
+        player.in_village = True
+        player.village_id = vid
+        player.village_x, player.village_y = dock_x, dock_y
+        player.village_wx, player.village_wy = hwx, hwy
         await update_player_ocean_state(db, user_id, False, 0, 0)
-        await update_player_position(db, user_id, hwx, hwy)
-        grid = await load_viewport(hwx, hwy, seed, db)
+        await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
+        grid = await load_village_viewport(vid, dock_x, dock_y, db)
         content = render_grid(grid, player, "⚓ You sail back into the harbour.")
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
@@ -2125,11 +2131,16 @@ async def handle_ocean_dock(
         return
 
     hwx, hwy = player.ocean_harbor_wx, player.ocean_harbor_wy
+    # Return player to the harbour village at the dock tile
+    vid, _vx, _vy, dock_x, dock_y = await get_or_create_harbor_village(seed, hwx, hwy, db)
     player.in_ocean = False
-    player.world_x, player.world_y = hwx, hwy
+    player.in_village = True
+    player.village_id = vid
+    player.village_x, player.village_y = dock_x, dock_y
+    player.village_wx, player.village_wy = hwx, hwy
     await update_player_ocean_state(db, user_id, False, 0, 0)
-    await update_player_position(db, user_id, hwx, hwy)
-    grid = await load_viewport(hwx, hwy, seed, db)
+    await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
+    grid = await load_village_viewport(vid, dock_x, dock_y, db)
     content = render_grid(grid, player, "⚓ You dock at the harbour and step ashore.")
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
@@ -2390,6 +2401,26 @@ async def handle_interact(
         elif vtile.terrain == "vil_well":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
             content = render_grid(grid, player, "A stone well. The water is cool and clear.")
+
+        elif vtile.terrain == "vil_dock":
+            # ── Board the boat from the harbour dock → enter ocean ────────────
+            hwx, hwy = player.village_wx, player.village_wy
+            player.in_village = False
+            player.in_ocean = True
+            player.ocean_x = OCEAN_SIZE // 2
+            player.ocean_y = 0
+            player.ocean_harbor_wx = hwx
+            player.ocean_harbor_wy = hwy
+            await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
+            await update_player_ocean_state(db, user_id, True,
+                                            player.ocean_x, player.ocean_y,
+                                            hwx, hwy)
+            grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+            content = render_grid(grid, player,
+                "⚓ You cast off from the dock and sail out to sea! Use ⚓ Dock to return.")
+            view = OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         else:
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
@@ -2680,20 +2711,17 @@ async def handle_interact(
                 f"🏚️ You sift through the rubble and find **{gold_found}g**.{extra_str}")
 
         elif tile.structure == "harbor":
-            # ── Harbor: board boat and enter the ocean ────────────────────────
-            player.in_ocean = True
-            player.ocean_x = OCEAN_SIZE // 2
-            player.ocean_y = 0
-            player.ocean_harbor_wx = wx
-            player.ocean_harbor_wy = wy
-            await update_player_ocean_state(db, user_id, True,
-                                            player.ocean_x, player.ocean_y,
-                                            wx, wy)
-            seed = await get_or_create_world(db, guild_id)
-            grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+            # ── Harbor village: enter the harbour village from the overworld ──
+            vid, vx, vy, _dk_x, _dk_y = await get_or_create_harbor_village(seed, wx, wy, db)
+            player.in_village = True
+            player.village_id = vid
+            player.village_x, player.village_y = vx, vy
+            player.village_wx, player.village_wy = wx, wy
+            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
+            grid = await load_village_viewport(vid, vx, vy, db)
             content = render_grid(grid, player,
-                "⚓ You board the boat and sail out to sea! Use ⚓ Dock to return to shore.")
-            view = OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
+                "🚢 You enter the harbour village. Head to the ⚓ dock to set sail.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 

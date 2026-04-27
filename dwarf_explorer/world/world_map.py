@@ -23,10 +23,11 @@ _LEGEND_ENTRIES = [
     ("river_landing", "River Landing"),
 ]
 _LEGEND_ICON_ENTRIES = [
-    ("village",   "Village",   (200, 160, 60),  "filled_diamond"),
-    ("cave",      "Cave",      (60,  40,  30),  "filled_circle"),
-    ("shrine",    "Shrine",    (200, 50,  50),  "cross"),
-    ("ruins",     "Ruins",     (120, 100, 80),  "outline_square"),
+    ("village",   "Village",        (200, 160, 60),  "filled_diamond"),
+    ("harbor",    "Harbor Village", (40,  80,  200), "filled_diamond"),
+    ("cave",      "Cave",           (60,  40,  30),  "filled_circle"),
+    ("shrine",    "Shrine",         (200, 50,  50),  "cross"),
+    ("ruins",     "Ruins",          (120, 100, 80),  "outline_square"),
 ]
 
 _LEGEND_SWATCH = 12

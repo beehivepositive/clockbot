@@ -282,6 +282,9 @@ VILLAGE_EMOJI = {
     "vil_bank":         "\U0001F3E6",        # 🏦
     "vil_shop":         "\U0001F3EA",        # 🏪
     "vil_blacksmith":   "\u2692\uFE0F",      # ⚒️
+    # Harbor-village specific tiles
+    "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
+    "vil_dock":         "\u2693",            # ⚓  dock / boarding point
 }
 
 # All building interior tiles use BUILDING_EMOJI
@@ -323,6 +326,8 @@ BUILDING_EMOJI = {
 VILLAGE_WALKABLE = {
     "vil_grass", "vil_path", "vil_garden",
     "vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
+    "vil_dock",  # harbor-village boarding point — walkable, triggers ocean
+    # Note: "vil_water" is intentionally absent — impassable harbour water
 }
 
 BUILDING_WALKABLE = {
