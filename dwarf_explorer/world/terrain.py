@@ -53,10 +53,16 @@ def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
     boundary: list[int] = []
     for _ in range(WORLD_SIZE):
         # Mean-reverting random walk — drift pulls back toward base
-        drift = (base - val) * 0.04
-        val  += rng.gauss(drift, 2.5)
+        drift = (base - val) * 0.10
+        val  += rng.gauss(drift, 1.0)
         val   = max(lo, min(hi, val))
         boundary.append(int(val))
+
+    # Smooth the walk with a 5-step moving average to reduce jaggedness
+    smoothed = list(boundary)
+    for i in range(2, len(boundary) - 2):
+        smoothed[i] = (boundary[i-2] + boundary[i-1] + boundary[i] + boundary[i+1] + boundary[i+2]) // 5
+    boundary = smoothed
 
     return edge, boundary
 

@@ -8,6 +8,7 @@ from dwarf_explorer.config import (
     VIEWPORT_SIZE, VIEWPORT_CENTER,
 )
 from dwarf_explorer.world.generator import TileData
+from dwarf_explorer.world.terrain import get_coast_boundary
 
 _VILLAGE_SEED_OFFSET  = 7000
 _BUILDING_SEED_OFFSET = 8000
@@ -116,7 +117,7 @@ def _generate_village_interior(
 
 
 def _generate_harbor_village_interior(
-    village_id: int, seed: int, world_x: int, world_y: int,
+    village_id: int, seed: int, world_x: int, world_y: int, ocean_edge: int = 0,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
            tuple[int, int], list[tuple[int, int, str]]]:
     """Harbor village: water+dock at bottom edge, buildings+well above, entry at top.
@@ -131,41 +132,63 @@ def _generate_harbor_village_interior(
 
     grid: list[list[str]] = [["vil_grass"] * W for _ in range(H)]
 
-    # ── Water zone (bottom 2 rows) ─────────────────────────────────────────────
-    for y in range(H - 2, H):
-        for x in range(W):
-            grid[y][x] = "vil_water"
+    # ── Water zone, dock, roads, well, and entry — oriented by ocean_edge ─────
+    cy = H // 2  # recalculate based on edge
 
-    # ── Dock tile (walkable pier on water edge) ────────────────────────────────
-    dock_x, dock_y = cx, H - 2          # (8, 14)
+    if ocean_edge == 0:   # south — water at bottom
+        water_rows = range(H - 2, H)
+        dock_x, dock_y = cx, H - 2
+        shore_inner = H - 3
+        road_range = range(1, shore_inner + 1)
+        entry_x, entry_y = cx, 1
+        for yr in water_rows:
+            for xr in range(W): grid[yr][xr] = "vil_water"
+        for yr in road_range: grid[yr][cx] = "vil_path"
+        for xr in range(1, W - 1): grid[cy][xr] = "vil_path"
+    elif ocean_edge == 1: # north — water at top
+        water_rows = range(0, 2)
+        dock_x, dock_y = cx, 1
+        shore_inner = 2
+        road_range = range(shore_inner, H - 1)
+        entry_x, entry_y = cx, H - 2
+        for yr in water_rows:
+            for xr in range(W): grid[yr][xr] = "vil_water"
+        for yr in road_range: grid[yr][cx] = "vil_path"
+        for xr in range(1, W - 1): grid[cy][xr] = "vil_path"
+    elif ocean_edge == 2: # west — water at left
+        for yr in range(H):
+            grid[yr][0] = "vil_water"
+            grid[yr][1] = "vil_water"
+        dock_x, dock_y = 1, H // 2
+        shore_inner = 2
+        for xr in range(shore_inner, W - 1): grid[H // 2][xr] = "vil_path"
+        for yr in range(1, H - 1): grid[yr][cx] = "vil_path"
+        entry_x, entry_y = W - 2, H // 2
+    else:                 # east — water at right
+        for yr in range(H):
+            grid[yr][W - 1] = "vil_water"
+            grid[yr][W - 2] = "vil_water"
+        dock_x, dock_y = W - 2, H // 2
+        shore_inner = W - 3
+        for xr in range(1, shore_inner + 1): grid[H // 2][xr] = "vil_path"
+        for yr in range(1, H - 1): grid[yr][cx] = "vil_path"
+        entry_x, entry_y = 1, H // 2
+
     grid[dock_y][dock_x] = "vil_dock"
-
-    # ── Shore path column leading to dock ─────────────────────────────────────
-    shore_y = H - 3                      # row 13 — last land row
-    grid[shore_y][cx] = "vil_path"
-
-    # ── Main vertical road (top → shore) ──────────────────────────────────────
-    for y in range(1, shore_y + 1):
-        grid[y][cx] = "vil_path"
-
-    # ── Horizontal road ───────────────────────────────────────────────────────
-    for x in range(1, W - 1):
-        grid[cy][x] = "vil_path"
-
-    # ── Well at road intersection ─────────────────────────────────────────────
     grid[cy][cx] = "vil_well"
-
-    # ── Entry at top centre ───────────────────────────────────────────────────
-    entry_x, entry_y = cx, 1
     grid[entry_y][entry_x] = "vil_path"
 
     # ── Occupied tracking ─────────────────────────────────────────────────────
     occupied: set[tuple[int, int]] = set()
-    for x in range(W):
-        occupied.add((x, 0)); occupied.add((x, H - 1)); occupied.add((x, H - 2))
-        occupied.add((x, shore_y))
-    for y in range(H):
-        occupied.add((0, y)); occupied.add((W - 1, y))
+    # Mark all vil_water tiles as occupied
+    for yr in range(H):
+        for xr in range(W):
+            if grid[yr][xr] == "vil_water":
+                occupied.add((xr, yr))
+    # Border
+    for x in range(W): occupied.add((x, 0)); occupied.add((x, H - 1))
+    for y in range(H): occupied.add((0, y)); occupied.add((W - 1, y))
+    # Roads
     for x in range(W): occupied.add((x, cy))
     for y in range(H): occupied.add((cx, y))
     occupied.add((cx, cy))
@@ -178,7 +201,7 @@ def _generate_harbor_village_interior(
     for btype in required:
         for _ in range(200):
             bx = rng.randint(2, W - 3)
-            by = rng.randint(2, shore_y - 2)   # land area only
+            by = rng.randint(2, H - 3)   # land area only
             if (bx, by) in occupied:
                 continue
             adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
@@ -197,7 +220,7 @@ def _generate_harbor_village_interior(
         if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
             break
         bx = rng.randint(2, W - 3)
-        by = rng.randint(2, shore_y - 2)
+        by = rng.randint(2, H - 3)
         if (bx, by) in occupied:
             continue
         adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
@@ -456,13 +479,20 @@ async def get_or_create_harbor_village(
         (world_x, world_y),
     )
     if row:
-        return row["village_id"], row["entry_x"], row["entry_y"], 8, 14
+        # Recompute dock position from the world seed (edge-aware, deterministic)
+        _edge, _ = get_coast_boundary(seed)
+        _W, _H, _cx = 16, 16, 8
+        _dock = {0: (_cx, _H - 2), 1: (_cx, 1), 2: (1, _H // 2), 3: (_W - 2, _H // 2)}
+        dk_x, dk_y = _dock.get(_edge, (_cx, _H - 2))
+        return row["village_id"], row["entry_x"], row["entry_y"], dk_x, dk_y
 
     cursor = await db.execute("INSERT INTO villages (width, height) VALUES (1, 1)")
     village_id = cursor.lastrowid
 
+    from dwarf_explorer.world.terrain import get_coast_boundary as _gcb
+    ocean_edge, _ = _gcb(seed)
     W, H, tiles, entry, dock, buildings = await asyncio.to_thread(
-        _generate_harbor_village_interior, village_id, seed, world_x, world_y
+        _generate_harbor_village_interior, village_id, seed, world_x, world_y, ocean_edge
     )
     await db.execute(
         "UPDATE villages SET width = ?, height = ? WHERE village_id = ?",

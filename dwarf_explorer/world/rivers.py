@@ -468,6 +468,9 @@ def _generate_rivers_sync(
     river_tiles = {(x, y) for x, y in river_tiles
                    if get_biome(x, y, seed) not in _WATER_BIOMES}
 
+    bridge_tiles = {(x, y) for x, y in bridge_tiles
+                    if get_biome(x, y, seed) not in _WATER_BIOMES}
+
     # ── 6. Generate river landings ────────────────────────────────────────────
     landing_tiles = _generate_landings_sync(seed, river_tiles, bridge_tiles)
 

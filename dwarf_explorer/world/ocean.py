@@ -28,32 +28,29 @@ _OCEAN_MOIST_OFFSET = 6000
 def get_ocean_tile(ox: int, oy: int, seed: int) -> str:
     """Return terrain tile for ocean coordinates.
 
-    Uses fBm elevation noise biased by depth so that islands become
-    less frequent further from shore and the far reaches are mostly
-    deep open ocean.
+    Uses elevation noise for shallow vs deep water only.
+    Islands are handled as structure overlays (see get_ocean_structure).
     """
+    import random as _rng
     e = fbm(ox, oy, seed + _OCEAN_ELEV_OFFSET)
-    # depth_bias: 0 at shore (oy=0), 0.45 at far edge (oy=OCEAN_SIZE-1)
-    depth_bias = (oy / OCEAN_SIZE) * 0.45
+    depth_bias = (oy / OCEAN_SIZE) * 0.40
     adjusted_e = e - depth_bias
-
-    if adjusted_e > 0.50:
-        return "island"        # small island — explored separately
-    elif adjusted_e > 0.35:
-        return "sand"      # island beach / shoal
-    elif adjusted_e > -0.05:
+    if adjusted_e > 0.10:
         return "shallow_water"
-    else:
-        return "deep_water"
+    return "deep_water"
 
 
 def get_ocean_structure(ox: int, oy: int, seed: int) -> str | None:
     """Return structure type for this ocean tile, or None.
 
-    Shipwrecks appear rarely (≈1 in 2500 deep-water tiles).
+    Islands: rare single-tile markers (~0.6% of tiles, rarer with depth).
+    Shipwrecks: ~0.04% of deep-water tiles.
     """
     import random as _rng
     rnd = _rng.Random(seed ^ (ox * 73_856_093) ^ (oy * 19_349_663))
+    depth_factor = 1.0 - (oy / OCEAN_SIZE) * 0.7
+    if rnd.random() < 0.006 * depth_factor:
+        return "island"
     if rnd.random() < 0.0004:
         if get_ocean_tile(ox, oy, seed) == "deep_water":
             return "shipwreck"

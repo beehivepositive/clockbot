@@ -111,6 +111,7 @@ ITEM_EMOJI = {
     "iron_helmet":     "\U0001FA96",    # 🪖
     "iron_chestplate": "\U0001F6E1\uFE0F",  # 🛡️
     "iron_leggings":   "\U0001F455",    # 👕 (closest available)
+    "seaweed":         "\U0001F33F",    # 🌿
 }
 
 WALKABLE_TILES = {
