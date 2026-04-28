@@ -10,6 +10,10 @@ from dwarf_explorer.world.terrain import get_biome, get_coast_boundary
 
 _WATER_BIOMES = {"deep_water", "shallow_water"}
 _HIGH_COST_BIOMES = {"mountain", "snow"}
+# Biomes rivers should avoid entering (ocean/beach zone)
+_COAST_BIOMES = _WATER_BIOMES | {"sand"}
+# All biomes to steer away from when tracing a path
+_AVOID_BIOMES = _HIGH_COST_BIOMES | _COAST_BIOMES
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -152,18 +156,19 @@ def _trib_path(
             gdy * grad_w + tdy * conv_weight + ndy * noise_weight,
         )
 
-        # Mountain/snow avoidance: try rotated alternatives before stepping uphill
+        # Avoidance: steer away from mountains, ocean, and beach (sand) zones.
+        # Try progressively larger rotations before accepting the step.
         nx_cand = int(round(x + dx))
         ny_cand = int(round(y + dy))
         if (0 <= nx_cand < WORLD_SIZE and 0 <= ny_cand < WORLD_SIZE and
-                get_biome(nx_cand, ny_cand, seed) in _HIGH_COST_BIOMES):
+                get_biome(nx_cand, ny_cand, seed) in _AVOID_BIOMES):
             for angle_deg in (30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180):
                 c, s = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
                 rdx, rdy = _norm2(c * dx - s * dy, s * dx + c * dy)
                 rnx = int(round(x + rdx))
                 rny = int(round(y + rdy))
                 if (0 <= rnx < WORLD_SIZE and 0 <= rny < WORLD_SIZE and
-                        get_biome(rnx, rny, seed) not in _HIGH_COST_BIOMES):
+                        get_biome(rnx, rny, seed) not in _AVOID_BIOMES):
                     dx, dy = rdx, rdy
                     break
             # If no clear alternative, keep original direction rather than getting stuck
@@ -386,6 +391,15 @@ def _generate_rivers_sync(
     bridge_tiles: set[tuple[int, int]] = set()
     paths_orders: list[tuple[list[tuple[int, int]], int]] = []
 
+    # Determine which world-edge map to the ocean so we can exclude it from
+    # tributary starts.  Coast edge indices → trib-edge codes:
+    #   coast 0=south → trib edge 1 (south world edge, y≈WORLD_SIZE)
+    #   coast 1=north → trib edge 0 (north world edge, y≈0)
+    #   coast 2=west  → trib edge 2 (west world edge,  x≈0)
+    #   coast 3=east  → trib edge 3 (east world edge,  x≈WORLD_SIZE)
+    ocean_edge, _ = get_coast_boundary(seed)
+    _skip_trib_edge = {0: 1, 1: 0, 2: 2, 3: 3}[ocean_edge]
+
     # ── 1. Main trunk ─────────────────────────────────────────────────────────
     trunk = _trunk_path(seed, rng)
     _paint(trunk, hw=1, tiles=river_tiles)
@@ -395,25 +409,43 @@ def _generate_rivers_sync(
 
     # ── 2. Major tributaries ──────────────────────────────────────────────────
     # Each starts from a random position and converges to the nearest trunk tile.
+    # Start positions are validated to be on land (not ocean/beach/sand zone).
     num_major = rng.randint(5, 8)
     all_river = set(river_tiles)
 
     for i in range(num_major):
-        # Random start anywhere on the map (or near an edge)
+        sx: float | None = None
+        sy: float | None = None
+
         edge_start = rng.random() < 0.6   # 60% start from map edge
         if edge_start:
-            edge = rng.randint(0, 3)
             m = 10
-            if edge == 0:   sx, sy = float(rng.randint(m, WORLD_SIZE-m)), 2.0
-            elif edge == 1: sx, sy = float(rng.randint(m, WORLD_SIZE-m)), float(WORLD_SIZE-3)
-            elif edge == 2: sx, sy = 2.0, float(rng.randint(m, WORLD_SIZE-m))
-            else:           sx, sy = float(WORLD_SIZE-3), float(rng.randint(m, WORLD_SIZE-m))
-        else:
-            sx = float(rng.randint(10, WORLD_SIZE-10))
-            sy = float(rng.randint(10, WORLD_SIZE-10))
+            for _ in range(20):
+                edge = rng.randint(0, 3)
+                if edge == _skip_trib_edge:
+                    continue   # never start from the ocean-facing world edge
+                if edge == 0:   csx, csy = float(rng.randint(m, WORLD_SIZE-m)), 2.0
+                elif edge == 1: csx, csy = float(rng.randint(m, WORLD_SIZE-m)), float(WORLD_SIZE-3)
+                elif edge == 2: csx, csy = 2.0, float(rng.randint(m, WORLD_SIZE-m))
+                else:           csx, csy = float(WORLD_SIZE-3), float(rng.randint(m, WORLD_SIZE-m))
+                if get_biome(int(csx), int(csy), seed) not in _COAST_BIOMES:
+                    sx, sy = csx, csy
+                    break
+
+        # Fallback (or non-edge start): pick interior land tile
+        if sx is None:
+            for _ in range(20):
+                csx = float(rng.randint(10, WORLD_SIZE - 10))
+                csy = float(rng.randint(10, WORLD_SIZE - 10))
+                if get_biome(int(csx), int(csy), seed) not in _COAST_BIOMES:
+                    sx, sy = csx, csy
+                    break
+
+        if sx is None:
+            continue   # couldn't find a valid land start
 
         # Convergence: nearest trunk tile to the start point
-        conv = min(trunk, key=lambda t: math.hypot(t[0]-sx, t[1]-sy))
+        conv = min(trunk, key=lambda t: math.hypot(t[0]-sx, t[1]-sy))  # type: ignore[arg-type]
 
         trib_seed = (seed ^ (0x1000 + i)) & 0xFFFFFFFF
         trib = _trib_path(
@@ -437,16 +469,24 @@ def _generate_rivers_sync(
     # ── 3. Sub-tributaries ────────────────────────────────────────────────────
     # Use finer-grained terrain (more octaves) for the gradient.
     for i in range(rng.randint(10, 16)):
-        sx = float(rng.randint(5, WORLD_SIZE-5))
-        sy = float(rng.randint(5, WORLD_SIZE-5))
+        sx2: float | None = None
+        sy2: float | None = None
+        for _ in range(20):
+            csx = float(rng.randint(5, WORLD_SIZE - 5))
+            csy = float(rng.randint(5, WORLD_SIZE - 5))
+            if get_biome(int(csx), int(csy), seed) not in _COAST_BIOMES:
+                sx2, sy2 = csx, csy
+                break
+        if sx2 is None:
+            continue
 
         # Nearest river tile as convergence target
         sample = rng.sample(list(all_river), min(200, len(all_river)))
-        conv_t = min(sample, key=lambda t: math.hypot(t[0]-sx, t[1]-sy))
+        conv_t = min(sample, key=lambda t: math.hypot(t[0]-sx2, t[1]-sy2))  # type: ignore[arg-type]
 
         sub_seed = (seed ^ (0x2000 + i)) & 0xFFFFFFFF
         sub = _trib_path(
-            start=(sx, sy),
+            start=(sx2, sy2),
             convergence=(float(conv_t[0]), float(conv_t[1])),
             max_steps=120,
             seed=sub_seed,
@@ -463,10 +503,12 @@ def _generate_rivers_sync(
     # ── 4. Bridges ────────────────────────────────────────────────────────────
     _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
 
-    # ── 5. Don't overwrite natural water biomes with river tiles ─────────────
-    # Bridge tiles are intentionally exempt — a bridge over a lake is still a bridge.
+    # ── 5. Strip river/bridge tiles from ocean, shallow-water, and sand zones ─
+    # Rivers stop at the land/sand boundary — they do not enter the beach.
+    # Bridge tiles are exempt (a bridge over a natural water body is valid).
+    _river_filter = _WATER_BIOMES | {"sand"}
     river_tiles = {(x, y) for x, y in river_tiles
-                   if get_biome(x, y, seed) not in _WATER_BIOMES}
+                   if get_biome(x, y, seed) not in _river_filter}
 
     bridge_tiles = {(x, y) for x, y in bridge_tiles
                     if get_biome(x, y, seed) not in _WATER_BIOMES}

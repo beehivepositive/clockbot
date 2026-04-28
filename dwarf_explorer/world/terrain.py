@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math as _math
 import random as _rng_module
 
 from dwarf_explorer.world.noise import fbm
@@ -15,7 +16,7 @@ _coast_cache: dict[int, tuple[int, list[int]]] = {}
 
 
 def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
-    """Generate a meandering coastline as a random walk for one edge.
+    """Generate a meandering coastline with large macro-scale curves.
 
     Returns (edge, boundary):
       edge 0 = south (ocean at y >= coast[x])
@@ -23,48 +24,57 @@ def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
       edge 2 = west  (ocean at x <= coast[y])
       edge 3 = east  (ocean at x >= coast[y])
 
-    boundary is a list of WORLD_SIZE integers, one per column (or row).
-    The walk meanders ±~30 tiles around a base value (≈80 or 20 % of
-    WORLD_SIZE), with gentle mean-reversion so it never drifts off entirely.
-    The map edge is always at least 2 tiles of open ocean (boundary stays
-    ≤ WORLD_SIZE-2 for S/E, ≥ 1 for N/W).
+    The ocean occupies ~11-22 tiles at the world edge (narrow strip).
+    Two random sine waves create large macro bends; fBm adds fine roughness.
     """
     rng = _rng_module.Random(seed ^ 0xC0A57A1E)
     edge = rng.randint(0, 3)
 
-    if edge == 0:   # south — ocean is at high y
-        base = int(WORLD_SIZE * 0.80)
-        lo   = int(WORLD_SIZE * 0.66)
-        hi   = WORLD_SIZE - 2
-    elif edge == 1: # north — ocean is at low y
-        base = int(WORLD_SIZE * 0.20)
-        lo   = 1
-        hi   = int(WORLD_SIZE * 0.34)
-    elif edge == 2: # west — ocean is at low x
-        base = int(WORLD_SIZE * 0.20)
-        lo   = 1
-        hi   = int(WORLD_SIZE * 0.34)
-    else:           # east — ocean is at high x
-        base = int(WORLD_SIZE * 0.80)
-        lo   = int(WORLD_SIZE * 0.66)
-        hi   = WORLD_SIZE - 2
+    # Place the coastline close to the world edge — ocean is ~14 tiles wide
+    # at the base position (3 sand + 4 shallow + 7 deep).
+    if edge == 0:   # south — ocean at high y
+        base = WORLD_SIZE - 11
+        lo   = WORLD_SIZE - 21
+        hi   = WORLD_SIZE - 8
+    elif edge == 1: # north — ocean at low y
+        base = 10
+        lo   = 7
+        hi   = 20
+    elif edge == 2: # west — ocean at low x
+        base = 10
+        lo   = 7
+        hi   = 20
+    else:           # east — ocean at high x
+        base = WORLD_SIZE - 11
+        lo   = WORLD_SIZE - 21
+        hi   = WORLD_SIZE - 8
 
-    val = float(base)
+    # Macro bend: two sine waves with randomised period / phase / amplitude.
+    # Primary: long meander (200-350 tile period) → ~1-2 full bends across map
+    p1  = rng.uniform(200.0, 350.0)
+    ph1 = rng.uniform(0.0, 2.0 * _math.pi)
+    a1  = rng.uniform(7.0, 11.0)     # ±7-11 tile amplitude
+    # Secondary: medium undulation (80-160 tile period) for added complexity
+    p2  = rng.uniform(80.0, 160.0)
+    ph2 = rng.uniform(0.0, 2.0 * _math.pi)
+    a2  = rng.uniform(2.5, 5.0)
+
     boundary: list[int] = []
-    for _ in range(WORLD_SIZE):
-        # Mean-reverting random walk — drift pulls back toward base
-        drift = (base - val) * 0.10
-        val  += rng.gauss(drift, 1.0)
-        val   = max(lo, min(hi, val))
-        boundary.append(int(val))
+    for i in range(WORLD_SIZE):
+        macro  = a1 * _math.sin(2.0 * _math.pi * i / p1 + ph1)
+        medium = a2 * _math.sin(2.0 * _math.pi * i / p2 + ph2)
+        # Fine roughness from fBm (freq=0.3 gives good variation → ±2 tiles)
+        fine   = (fbm(i * 0.3, 0.0, seed ^ 0xF1D37A, octaves=2) - 0.5) * 4.0
+        offset = macro + medium + fine
+        val    = int(round(max(float(lo), min(float(hi), float(base) + offset))))
+        boundary.append(val)
 
-    # Smooth the walk with a 5-step moving average to reduce jaggedness
+    # Light 3-point smoothing to soften 1-tile spikes without flattening curves
     smoothed = list(boundary)
-    for i in range(2, len(boundary) - 2):
-        smoothed[i] = (boundary[i-2] + boundary[i-1] + boundary[i] + boundary[i+1] + boundary[i+2]) // 5
-    boundary = smoothed
+    for i in range(1, len(boundary) - 1):
+        smoothed[i] = (boundary[i - 1] + boundary[i] + boundary[i + 1]) // 3
 
-    return edge, boundary
+    return edge, smoothed
 
 
 def get_coast_boundary(seed: int) -> tuple[int, list[int]]:
