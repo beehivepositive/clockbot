@@ -194,6 +194,47 @@ class Database:
                 "ALTER TABLE players ADD COLUMN ocean_y INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN ocean_harbor_wx INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN ocean_harbor_wy INTEGER NOT NULL DEFAULT 0",
+                # Ship interior state
+                "ALTER TABLE players ADD COLUMN in_ship INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN ship_room TEXT NOT NULL DEFAULT 'helm'",
+                "ALTER TABLE players ADD COLUMN ship_hp INTEGER NOT NULL DEFAULT 100",
+                "ALTER TABLE players ADD COLUMN ship_max_hp INTEGER NOT NULL DEFAULT 100",
+                # Island state
+                "ALTER TABLE players ADD COLUMN in_island INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN island_ox INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN island_oy INTEGER NOT NULL DEFAULT 0",
+                # Ship chest tables
+                """CREATE TABLE IF NOT EXISTS ship_personal_items (
+                    user_id  INTEGER NOT NULL,
+                    item_id  TEXT    NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (user_id, item_id)
+                )""",
+                """CREATE TABLE IF NOT EXISTS ship_cargo_items (
+                    user_id  INTEGER NOT NULL,
+                    item_id  TEXT    NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (user_id, item_id)
+                )""",
+                # Ocean island tiles
+                """CREATE TABLE IF NOT EXISTS ocean_islands (
+                    island_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ocean_x   INTEGER NOT NULL,
+                    ocean_y   INTEGER NOT NULL,
+                    UNIQUE(ocean_x, ocean_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS island_tiles (
+                    island_id INTEGER NOT NULL,
+                    local_x   INTEGER NOT NULL,
+                    local_y   INTEGER NOT NULL,
+                    tile_type TEXT    NOT NULL,
+                    PRIMARY KEY (island_id, local_x, local_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS island_loots (
+                    ocean_x INTEGER NOT NULL,
+                    ocean_y INTEGER NOT NULL,
+                    PRIMARY KEY (ocean_x, ocean_y)
+                )""",
             ]
             for mig_sql in migrations:
                 try:

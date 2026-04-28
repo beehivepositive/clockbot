@@ -27,6 +27,11 @@ from dwarf_explorer.database.repositories import (
     update_player_ocean_state,
     save_combat_state,
     clear_combat_state,
+    update_player_ship_state, update_player_ship_hp,
+    get_ship_personal_items, ship_personal_deposit, ship_personal_withdraw,
+    get_ship_cargo_items, ship_cargo_deposit, ship_cargo_withdraw,
+    update_player_island_state,
+    is_island_looted, mark_island_looted,
     get_cave_entrance_exit,
     equip_item, unequip_item,
     get_inventory,
@@ -71,6 +76,7 @@ from dwarf_explorer.world.villages import (
 from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
+    render_ship_room, render_ship_chest, render_island,
 )
 
 _CUSTOM_EMOJI_RE = _re.compile(r"^<a?:(\w+):(\d+)>$")
@@ -165,26 +171,11 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "help"),
             row=0,
         )
-        # Sprint placeholder in row 0 (sprint moves to row 1)
-        sprint_btn = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(self.guild_id, self.user_id, "sp1"),
+        edit_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u26CF\uFE0F Edit",
+            custom_id=_custom_id(self.guild_id, self.user_id, "action"),
             row=0,
-        )
-        if edit_enabled:
-            edit_btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary, label="\u26CF\uFE0F Edit",
-                custom_id=_custom_id(self.guild_id, self.user_id, "action"),
-                row=0,
-            )
-        else:
-            edit_btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label="\u200b", disabled=True,
-                custom_id=_custom_id(self.guild_id, self.user_id, "sp4"),
-                row=0,
-            )
+        ) if edit_enabled else None
 
         # ── Row 1: Sprint (or spacer) | ⬆️ | Action ─────────────────────────
         if boots_equipped:
@@ -245,11 +236,14 @@ class GameView(discord.ui.View):
         )
         down_btn = self._dir_btn("down", "\u2B07\uFE0F", 3, "down" in mine_dirs)
 
+        row0 = [map_btn, inventory_btn, help_btn]
+        if edit_btn is not None:
+            row0.append(edit_btn)
         for btn in [
-            map_btn, inventory_btn, help_btn, sprint_btn, edit_btn,  # row 0
-            sp1_btn, up_btn, action_btn,                              # row 1
-            left_btn, center_btn, right_btn,                          # row 2
-            sp5_btn, down_btn,                                        # row 3
+            *row0,                                   # row 0
+            sp1_btn, up_btn, action_btn,             # row 1
+            left_btn, center_btn, right_btn,         # row 2
+            sp5_btn, down_btn,                       # row 3
         ]:
             self.add_item(btn)
 
@@ -367,6 +361,113 @@ class BankView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, act),
                 row=0,
             ))
+
+
+class ShipChestView(discord.ui.View):
+    """Reusable view for ship personal and cargo chests."""
+    def __init__(self, guild_id: int, user_id: int,
+                 chest_type: str = "personal",   # "personal" | "cargo"
+                 view_mode: str = "player"):
+        super().__init__(timeout=None)
+        dep_act = f"ship_chest_{chest_type}_deposit"
+        wth_act = f"ship_chest_{chest_type}_withdraw"
+        action = wth_act if view_mode == "chest" else dep_act
+        action_label = "⬆ Withdraw" if view_mode == "chest" else "⬇ Deposit"
+        for label, act in [
+            ("◀", f"ship_chest_{chest_type}_prev"),
+            ("▶", f"ship_chest_{chest_type}_next"),
+            (action_label, action),
+            ("🔄 Switch", f"ship_chest_{chest_type}_switch"),
+            ("🔙 Back", "ship_chest_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, act),
+                row=0,
+            ))
+
+
+class ShipView(discord.ui.View):
+    """Scene-based ship interior navigation view."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 room: str = "helm",
+                 ship_hp: int = 100, ship_max_hp: int = 100,
+                 has_repair_logs: bool = False):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label, action, row, style=discord.ButtonStyle.secondary, disabled=False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # Row 0: Map | Inv | Help | HP status (disabled label)
+        self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
+        self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
+        self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label=f"🛳️ {ship_hp}/{ship_max_hp}", disabled=True,
+            custom_id=_custom_id(gid, uid, "ship_hp_sp"), row=0,
+        ))
+
+        if room == "helm":
+            # Row 1: → Captain's Quarters | → Lower Deck
+            self.add_item(_btn("🛏️ Quarters",   "ship_room_quarters",   1, discord.ButtonStyle.primary))
+            self.add_item(_btn("🪜 Lower Deck", "ship_room_lower_deck", 1, discord.ButtonStyle.primary))
+            # Row 2: ⚓ Back to Ocean
+            self.add_item(_btn("⚓ Back to Ocean", "ship_leave", 2, discord.ButtonStyle.danger))
+
+        elif room == "quarters":
+            # Row 1: Personal chest
+            self.add_item(_btn("📦 Personal Chest", "ship_chest_personal_open", 1, discord.ButtonStyle.primary))
+            # Row 2: Return to helm
+            self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
+
+        else:  # lower_deck
+            # Row 1: Cargo chest | Repair
+            self.add_item(_btn("📦 Cargo",  "ship_chest_cargo_open",  1, discord.ButtonStyle.primary))
+            repair_disabled = (ship_hp >= ship_max_hp) or not has_repair_logs
+            repair_label = "🔨 Repair (3 🪵)" if not repair_disabled else "🔨 Repair"
+            self.add_item(_btn(repair_label, "ship_repair", 1,
+                               discord.ButtonStyle.success, disabled=repair_disabled))
+            # Row 2: Return to helm
+            self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
+
+
+class IslandView(discord.ui.View):
+    """Movement + interaction view for island interiors."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 can_loot: bool = False, on_dock: bool = False):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label, action, row, style=discord.ButtonStyle.primary, disabled=False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # Row 0: Map | Inv | Help
+        self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
+        self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
+        self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
+
+        # Row 1: ↑  (+ interact if on dock/chest)
+        self.add_item(_btn("⬆️", "island_up", 1))
+        if can_loot:
+            self.add_item(_btn("📦 Loot", "island_loot", 1, discord.ButtonStyle.success))
+        elif on_dock:
+            self.add_item(_btn("⛵ Leave", "island_leave", 1, discord.ButtonStyle.danger))
+
+        # Row 2: ← | ↓ | →
+        self.add_item(_btn("⬅️", "island_left",  2))
+        self.add_item(_btn("⬇️", "island_down",  2))
+        self.add_item(_btn("➡️", "island_right", 2))
 
 
 class ShopView(discord.ui.View):
@@ -623,6 +724,8 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
+        # Row 4: Ship interior
+        self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
 
 
 # ── High-seas view (separate 200×200 open-ocean grid) ────────────────────────
@@ -1043,6 +1146,13 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                grid: list[list] | None = None,
                dock_available: bool = False) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
+    if player.in_ship:
+        from dwarf_explorer.database.repositories import get_inventory as _gi
+        # Note: can't await here so ship repair check is done in the handler
+        return ShipView(guild_id, user_id, room=player.ship_room,
+                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
+    if player.in_island:
+        return IslandView(guild_id, user_id)
     if player.in_high_seas:
         return OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
     if player.in_ocean:
@@ -1135,6 +1245,29 @@ async def _is_adjacent_to_water(player: Player, seed: int, db) -> bool:
             if (t.structure or t.terrain) in water_types:
                 return True
     return False
+
+
+async def _find_ocean_tile_near(wx: int, wy: int, seed: int, db) -> tuple[int, int]:
+    """Scan outward from (wx, wy) and return the nearest ocean tile coords.
+
+    Tries cardinal neighbours first, then diagonals, then 2-tile radius.
+    Falls back to (wx, wy) itself if nothing found within range.
+    """
+    ocean_types = {"deep_water", "shallow_water"}
+    search_offsets = [
+        (0, -1), (0, 1), (-1, 0), (1, 0),
+        (-1, -1), (1, -1), (-1, 1), (1, 1),
+        (0, -2), (0, 2), (-2, 0), (2, 0),
+        (-1, -2), (1, -2), (-1, 2), (1, 2),
+        (-2, -1), (2, -1), (-2, 1), (2, 1),
+    ]
+    for ddx, ddy in search_offsets:
+        ax, ay = wx + ddx, wy + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if (t.structure or t.terrain) in ocean_types:
+                return (ax, ay)
+    return (wx, wy)
 
 
 async def _find_treasure_location(user_id: int, world_seed: int, db) -> tuple[int, int]:
@@ -2113,12 +2246,7 @@ async def handle_ocean_move(
 
         target_ocean = load_ocean_single_tile(nx, ny, seed)
         if target_ocean.structure == "island":
-            grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
-            content = render_grid(grid, player, "🏝️ Your boat can't sail onto the island.")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0)),
-            )
+            await handle_island_arrive(interaction, guild_id, user_id, nx, ny)
             return
 
         player.ocean_x, player.ocean_y = nx, ny
@@ -2334,6 +2462,410 @@ async def handle_boat_grapple(
             embed=_embed(content), content=None,
             view=BoatView(guild_id, user_id, dock_available=(harbor_adj is not None)),
         )
+
+
+# ── Ship interior handlers ────────────────────────────────────────────────────
+
+async def handle_ship_enter(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Board the ship interior from boat mode."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ocean:
+        await interaction.response.defer()
+        return
+
+    player.in_ship = True
+    player.ship_room = "helm"
+    await update_player_ship_state(db, user_id, True, "helm")
+
+    inv = await get_inventory(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
+    content = render_ship_room(player)
+    view = ShipView(guild_id, user_id, room="helm",
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                    has_repair_logs=has_logs)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_leave(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Return from ship interior back to boat navigation."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ship:
+        await interaction.response.defer()
+        return
+
+    player.in_ship = False
+    player.ship_room = "helm"
+    await update_player_ship_state(db, user_id, False, "helm")
+
+    harbor_adj = await _adjacent_harbor(player, seed, db)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
+    view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_room(
+    interaction: discord.Interaction, guild_id: int, user_id: int, room: str
+) -> None:
+    """Navigate between ship rooms: helm / quarters / lower_deck."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ship:
+        await interaction.response.defer()
+        return
+
+    player.ship_room = room
+    await update_player_ship_state(db, user_id, True, room)
+
+    inv = await get_inventory(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
+    content = render_ship_room(player)
+    view = ShipView(guild_id, user_id, room=room,
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                    has_repair_logs=has_logs)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_repair(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Repair ship hull using 3 logs → +20 HP, max twice (ship full at 100)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ship:
+        await interaction.response.defer()
+        return
+
+    inv = await get_inventory(db, user_id)
+    log_row = next((it for it in inv if it["item_id"] == "log"), None)
+
+    if not log_row or log_row["quantity"] < 3:
+        content = render_ship_room(player)
+        view = ShipView(guild_id, user_id, room=player.ship_room,
+                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                        has_repair_logs=False)
+        # Append message manually since render_ship_room returns fixed text
+        content += "\n\n> ❌ You need at least 3 logs to repair."
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if player.ship_hp >= player.ship_max_hp:
+        content = render_ship_room(player)
+        view = ShipView(guild_id, user_id, room=player.ship_room,
+                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                        has_repair_logs=True)
+        content += "\n\n> ✅ Hull is already at full integrity."
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    await remove_from_inventory(db, user_id, "log", 3)
+    heal = min(20, player.ship_max_hp - player.ship_hp)
+    player.ship_hp = min(player.ship_max_hp, player.ship_hp + heal)
+    await update_player_ship_hp(db, user_id, player.ship_hp)
+
+    inv = await get_inventory(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
+    content = render_ship_room(player)
+    content += f"\n\n> 🔨 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})"
+    view = ShipView(guild_id, user_id, room=player.ship_room,
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                    has_repair_logs=has_logs)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def _open_ship_chest(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    chest_type: str,  # "personal" | "cargo"
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if chest_type == "personal":
+        chest_items = await get_ship_personal_items(db, user_id)
+        chest_name = "Personal Chest"
+    else:
+        chest_items = await get_ship_cargo_items(db, user_id)
+        chest_name = "Ship Cargo"
+
+    player_items = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {
+        "type": f"ship_chest_{chest_type}",
+        "selected": 0,
+        "chest_view": "player",
+    }
+    content = render_ship_chest(chest_items, player_items, 0, "player",
+                                chest_name, player, inv_rows, inv_cols)
+    view = ShipChestView(guild_id, user_id, chest_type, "player")
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_chest_open_personal(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _open_ship_chest(interaction, guild_id, user_id, "personal")
+
+
+async def handle_ship_chest_open_cargo(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _open_ship_chest(interaction, guild_id, user_id, "cargo")
+
+
+async def _ship_chest_action(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    chest_type: str, action: str,  # "prev" | "next" | "switch" | "deposit" | "withdraw"
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    state = _ui_state.get(user_id, {})
+    expected_type = f"ship_chest_{chest_type}"
+    if state.get("type") != expected_type:
+        await interaction.response.defer()
+        return
+
+    selected = state.get("selected", 0)
+    view_mode = state.get("chest_view", "player")
+    chest_name = "Personal Chest" if chest_type == "personal" else "Ship Cargo"
+
+    get_fn = get_ship_personal_items if chest_type == "personal" else get_ship_cargo_items
+    dep_fn = ship_personal_deposit if chest_type == "personal" else ship_cargo_deposit
+    wth_fn = ship_personal_withdraw if chest_type == "personal" else ship_cargo_withdraw
+
+    chest_items = await get_fn(db, user_id)
+    player_items = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    msg = ""
+    if action == "prev":
+        source = player_items if view_mode == "player" else chest_items
+        total = inv_rows * inv_cols if view_mode == "player" else 9 * 4
+        selected = (selected - 1) % max(1, min(len(source), total))
+    elif action == "next":
+        source = player_items if view_mode == "player" else chest_items
+        total = inv_rows * inv_cols if view_mode == "player" else 9 * 4
+        selected = (selected + 1) % max(1, min(len(source), total))
+    elif action == "switch":
+        view_mode = "chest" if view_mode == "player" else "player"
+        selected = 0
+    elif action == "deposit":
+        if selected < len(player_items):
+            item = player_items[selected]
+            ok = await dep_fn(db, user_id, item["item_id"], 1)
+            msg = f"⬇ Deposited {item['item_id'].replace('_',' ').title()}." if ok else "❌ Could not deposit."
+            chest_items = await get_fn(db, user_id)
+            player_items = await get_inventory(db, user_id)
+    elif action == "withdraw":
+        if selected < len(chest_items):
+            item = chest_items[selected]
+            ok = await wth_fn(db, user_id, item["item_id"], 1)
+            msg = f"⬆ Withdrew {item['item_id'].replace('_',' ').title()}." if ok else "❌ Inventory full."
+            chest_items = await get_fn(db, user_id)
+            player_items = await get_inventory(db, user_id)
+
+    _ui_state[user_id] = {"type": expected_type, "selected": selected, "chest_view": view_mode}
+    content = render_ship_chest(chest_items, player_items, selected, view_mode,
+                                chest_name, player, inv_rows, inv_cols)
+    if msg:
+        content += f"\n> {msg}"
+    view = ShipChestView(guild_id, user_id, chest_type, view_mode)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_chest_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Return from ship chest view back to the ship room."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state.pop(user_id, None)
+
+    inv = await get_inventory(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
+    content = render_ship_room(player)
+    view = ShipView(guild_id, user_id, room=player.ship_room,
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                    has_repair_logs=has_logs)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Island handlers ───────────────────────────────────────────────────────────
+
+async def handle_island_arrive(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    ox: int, oy: int,
+) -> None:
+    """Called when player sails onto an island tile in the high seas."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+    _island_id, tiles, (dock_x, dock_y) = await get_or_create_island_data(db, ox, oy, seed)
+
+    player.in_high_seas = False
+    player.in_island = True
+    player.island_ox = ox
+    player.island_oy = oy
+    # Place player at the dock
+    player.ocean_x = dock_x
+    player.ocean_y = dock_y
+    await update_player_ocean_state(db, user_id, False, 0, 0, in_high_seas=False)
+    await update_player_island_state(db, user_id, True, ox, oy)
+    # Reuse ocean_x/ocean_y as island_x/island_y for position
+    await update_player_ocean_state(db, user_id, False, dock_x, dock_y)
+
+    grid = load_island_viewport(tiles, dock_x, dock_y)
+    looted = await is_island_looted(db, ox, oy)
+    content = render_island(grid, dock_x, dock_y, player,
+                            "🏝️ You row ashore onto the island.")
+    view = IslandView(guild_id, user_id, can_loot=False, on_dock=True)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_island_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    """Move player within island interior."""
+    from dwarf_explorer.config import ISLAND_WALKABLE
+    from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport, ISLAND_SIZE
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_island:
+        await interaction.response.defer()
+        return
+
+    ox, oy = player.island_ox, player.island_oy
+    # player position stored in ocean_x/ocean_y while on island
+    px, py = player.ocean_x, player.ocean_y
+
+    _DIRS = {"up": (0,-1), "down": (0,1), "left": (-1,0), "right": (1,0)}
+    dx, dy = _DIRS.get(direction, (0, 0))
+    nx, ny = px + dx, py + dy
+
+    _island_id, tiles, (dock_x, dock_y) = await get_or_create_island_data(db, ox, oy, seed)
+    tile_map = {(lx, ly): tt for lx, ly, tt in tiles}
+    target_terrain = tile_map.get((nx, ny), "island_void")
+
+    if target_terrain not in ISLAND_WALKABLE:
+        grid = load_island_viewport(tiles, px, py)
+        on_dock = tile_map.get((px, py)) == "island_dock"
+        can_loot_here = tile_map.get((px, py)) == "island_chest"
+        looted = await is_island_looted(db, ox, oy)
+        content = render_island(grid, px, py, player, "You can't go that way.")
+        view = IslandView(guild_id, user_id,
+                          can_loot=(can_loot_here and not looted),
+                          on_dock=on_dock)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    player.ocean_x, player.ocean_y = nx, ny
+    await update_player_ocean_state(db, user_id, False, nx, ny)
+
+    grid = load_island_viewport(tiles, nx, ny)
+    on_dock = target_terrain == "island_dock"
+    can_loot_here = target_terrain == "island_chest"
+    looted = await is_island_looted(db, ox, oy)
+    content = render_island(grid, nx, ny, player)
+    view = IslandView(guild_id, user_id,
+                      can_loot=(can_loot_here and not looted),
+                      on_dock=on_dock)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_island_loot(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Loot the island chest (once per island)."""
+    from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_island:
+        await interaction.response.defer()
+        return
+
+    ox, oy = player.island_ox, player.island_oy
+    px, py = player.ocean_x, player.ocean_y
+
+    already = await is_island_looted(db, ox, oy)
+    if already:
+        _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+        grid = load_island_viewport(tiles, px, py)
+        content = render_island(grid, px, py, player, "📦 The chest has already been looted.")
+        view = IslandView(guild_id, user_id, can_loot=False, on_dock=False)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    await mark_island_looted(db, ox, oy)
+
+    import random as _irng
+    loot_rng = _random.Random(hash((ox, oy, seed, "island_loot")))
+    loot_table = [
+        ("gold_coin", loot_rng.randint(10, 50)),
+        ("gem", loot_rng.randint(1, 3)),
+        ("map_fragment", 1),
+        ("iron_ingot", loot_rng.randint(2, 5)),
+    ]
+    roll = loot_rng.random()
+    if roll < 0.4:
+        item_id, qty = "gold_coin", loot_rng.randint(10, 50)
+    elif roll < 0.65:
+        item_id, qty = "gem", loot_rng.randint(1, 3)
+    elif roll < 0.80:
+        item_id, qty = "map_fragment", 1
+    else:
+        item_id, qty = "iron_ingot", loot_rng.randint(2, 5)
+
+    await add_to_inventory(db, user_id, item_id, qty)
+    label = item_id.replace("_", " ").title()
+
+    _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+    grid = load_island_viewport(tiles, px, py)
+    content = render_island(grid, px, py, player,
+                            f"📦 You pry open the chest — **{label} ×{qty}**!")
+    view = IslandView(guild_id, user_id, can_loot=False, on_dock=False)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_island_leave(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Leave island, return to high seas at the island's ocean coordinates."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_island:
+        await interaction.response.defer()
+        return
+
+    ox, oy = player.island_ox, player.island_oy
+    player.in_island = False
+    player.in_high_seas = True
+    player.ocean_x, player.ocean_y = ox, oy
+    await update_player_island_state(db, user_id, False)
+    await update_player_ocean_state(db, user_id, False, ox, oy, in_high_seas=True)
+
+    grid = load_ocean_viewport(ox, oy, seed)
+    content = render_grid(grid, player, "⛵ You row back to your boat.")
+    view = OceanView(guild_id, user_id, dock_available=(oy == 0))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Merchant handlers ────────────────────────────────────────────────────────
@@ -2593,16 +3125,17 @@ async def handle_interact(
         elif vtile.terrain == "vil_dock":
             # ── Board the boat from the harbour dock → wilderness ocean ───────
             hwx, hwy = player.village_wx, player.village_wy
-            # Place player on the harbor world tile; from here they sail into ocean
+            # Find the nearest ocean tile adjacent to the harbor world position
+            ox, oy = await _find_ocean_tile_near(hwx, hwy, seed, db)
             player.in_village = False
             player.in_ocean = True
-            player.world_x, player.world_y = hwx, hwy
+            player.world_x, player.world_y = ox, oy
             player.ocean_harbor_wx = hwx
             player.ocean_harbor_wy = hwy
             await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
             await update_player_ocean_state(db, user_id, True, 0, 0, hwx, hwy)
-            await update_player_position(db, user_id, hwx, hwy)
-            grid = await load_viewport(hwx, hwy, seed, db)
+            await update_player_position(db, user_id, ox, oy)
+            grid = await load_viewport(ox, oy, seed, db)
             harbor_adj = await _adjacent_harbor(player, seed, db)
             content = render_grid(grid, player,
                 "⚓ You cast off from the dock! Sail into the ocean or use ⚓ Dock to return.")

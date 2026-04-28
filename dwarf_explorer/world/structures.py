@@ -362,12 +362,12 @@ def _generate_structures_sync(
         if ocean_edge in (0, 1):  # south / north — vary x, compute y from boundary
             hx = rng.randint(8, WORLD_SIZE - 9)
             c  = coast_boundary[hx]
-            offset = rng.randint(1, 4)
+            offset = 1
             hy = (c - offset) if ocean_edge == 0 else (c + offset)
         else:                     # west / east — vary y, compute x from boundary
             hy = rng.randint(8, WORLD_SIZE - 9)
             c  = coast_boundary[hy]
-            offset = rng.randint(1, 4)
+            offset = 1
             hx = (c + offset) if ocean_edge == 2 else (c - offset)
         hx = max(2, min(WORLD_SIZE - 3, hx))
         hy = max(2, min(WORLD_SIZE - 3, hy))
@@ -375,9 +375,7 @@ def _generate_structures_sync(
             # Confirm at least one adjacent tile is ocean
             adj_ocean = any(
                 get_biome(hx + ddx, hy + ddy, seed) in _ocean_biomes
-                for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0),
-                                 (0, 2), (0, -2), (2, 0), (-2, 0),
-                                 (0, 3), (0, -3), (3, 0), (-3, 0)]
+                for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
                 if 0 <= hx + ddx < WORLD_SIZE and 0 <= hy + ddy < WORLD_SIZE
             )
             if adj_ocean:

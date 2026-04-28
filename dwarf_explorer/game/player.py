@@ -59,6 +59,15 @@ class Player:
     ocean_y: int = 0
     ocean_harbor_wx: int = 0   # overworld x of harbor used to enter
     ocean_harbor_wy: int = 0   # overworld y of harbor used to enter
+    # Ship interior state
+    in_ship: bool = False
+    ship_room: str = "helm"    # "helm" | "quarters" | "lower_deck"
+    ship_hp: int = 100
+    ship_max_hp: int = 100
+    # Island interior state
+    in_island: bool = False
+    island_ox: int = 0         # ocean_x of the island tile entered
+    island_oy: int = 0         # ocean_y of the island tile entered
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None

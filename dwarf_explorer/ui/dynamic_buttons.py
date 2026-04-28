@@ -19,6 +19,12 @@ from dwarf_explorer.ui.game_view import (
     handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
     handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
     handle_ocean_move, handle_ocean_dock, handle_boat_grapple,
+    handle_ship_enter, handle_ship_leave, handle_ship_room,
+    handle_ship_repair,
+    handle_ship_chest_open_personal, handle_ship_chest_open_cargo,
+    handle_ship_chest_close,
+    handle_island_move, handle_island_loot, handle_island_leave,
+    _ship_chest_action,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
     handle_forge_iron, handle_forge_close,
@@ -50,6 +56,7 @@ _OCEAN_MOVE_ACTIONS = {
     "ocean_upleft", "ocean_upright", "ocean_downleft", "ocean_downright",
 }
 _IGNORED_ACTIONS = {
+    "ship_hp_sp",
     "sp1", "sp2", "sp3", "sp4", "sp5", "c_wait", "csp0", "csp1", "c_free",
     "csp_a", "csp_b", "csp_c", "csp_d",
     "csp_5", "csp_6", "csp_7", "csp_8", "csp_9",
@@ -101,6 +108,36 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_ocean_dock(interaction, gid, uid)
             elif act == "boat_grapple":
                 await handle_boat_grapple(interaction, gid, uid)
+            # Ship interior
+            elif act == "ship_enter":
+                await handle_ship_enter(interaction, gid, uid)
+            elif act == "ship_leave":
+                await handle_ship_leave(interaction, gid, uid)
+            elif act in ("ship_room_helm", "ship_room_quarters", "ship_room_lower_deck"):
+                room = act.removeprefix("ship_room_")
+                await handle_ship_room(interaction, gid, uid, room)
+            elif act == "ship_repair":
+                await handle_ship_repair(interaction, gid, uid)
+            elif act == "ship_chest_personal_open":
+                await handle_ship_chest_open_personal(interaction, gid, uid)
+            elif act == "ship_chest_cargo_open":
+                await handle_ship_chest_open_cargo(interaction, gid, uid)
+            elif act == "ship_chest_close":
+                await handle_ship_chest_close(interaction, gid, uid)
+            elif act.startswith("ship_chest_personal_"):
+                sub = act.removeprefix("ship_chest_personal_")
+                await _ship_chest_action(interaction, gid, uid, "personal", sub)
+            elif act.startswith("ship_chest_cargo_"):
+                sub = act.removeprefix("ship_chest_cargo_")
+                await _ship_chest_action(interaction, gid, uid, "cargo", sub)
+            # Island
+            elif act in ("island_up", "island_down", "island_left", "island_right"):
+                direction = act.removeprefix("island_")
+                await handle_island_move(interaction, gid, uid, direction)
+            elif act == "island_loot":
+                await handle_island_loot(interaction, gid, uid)
+            elif act == "island_leave":
+                await handle_island_leave(interaction, gid, uid)
             elif act in _CANOE_MOVE_ACTIONS:
                 direction = act[6:]  # strip "canoe_" prefix
                 await handle_canoe_move(interaction, gid, uid, direction)

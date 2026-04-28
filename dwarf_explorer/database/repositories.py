@@ -144,6 +144,13 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             # Ocean / boat state
             in_ocean=bool(row["in_ocean"]) if "in_ocean" in cols else False,
             in_high_seas=bool(row["in_high_seas"]) if "in_high_seas" in cols else False,
+            in_ship=bool(row["in_ship"]) if "in_ship" in cols else False,
+            ship_room=row["ship_room"] if "ship_room" in cols else "helm",
+            ship_hp=row["ship_hp"] if "ship_hp" in cols else 100,
+            ship_max_hp=row["ship_max_hp"] if "ship_max_hp" in cols else 100,
+            in_island=bool(row["in_island"]) if "in_island" in cols else False,
+            island_ox=row["island_ox"] if "island_ox" in cols else 0,
+            island_oy=row["island_oy"] if "island_oy" in cols else 0,
             ocean_x=row["ocean_x"] if "ocean_x" in cols else 0,
             ocean_y=row["ocean_y"] if "ocean_y" in cols else 0,
             ocean_harbor_wx=row["ocean_harbor_wx"] if "ocean_harbor_wx" in cols else 0,
@@ -435,6 +442,195 @@ async def update_player_ocean_state(
             " WHERE user_id=?",
             (int(in_ocean), int(in_high_seas), ocean_x, ocean_y, user_id),
         )
+
+
+# --- Ship state ---
+
+async def update_player_ship_state(
+    db: Database, user_id: int,
+    in_ship: bool, ship_room: str = "helm",
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_ship=?, ship_room=? WHERE user_id=?",
+        (int(in_ship), ship_room, user_id),
+    )
+
+
+async def update_player_ship_hp(
+    db: Database, user_id: int, hp: int, max_hp: int | None = None,
+) -> None:
+    if max_hp is not None:
+        await db.execute(
+            "UPDATE players SET ship_hp=?, ship_max_hp=? WHERE user_id=?",
+            (hp, max_hp, user_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE players SET ship_hp=? WHERE user_id=?",
+            (hp, user_id),
+        )
+
+
+async def get_ship_personal_items(db: Database, user_id: int) -> list[dict]:
+    rows = await db.fetch_all(
+        "SELECT item_id, quantity FROM ship_personal_items WHERE user_id=? ORDER BY rowid",
+        (user_id,),
+    )
+    return [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in rows]
+
+
+async def ship_personal_deposit(
+    db: Database, user_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    from dwarf_explorer.database.repositories import remove_from_inventory
+    removed = await remove_from_inventory(db, user_id, item_id, quantity)
+    if not removed:
+        return False
+    await db.execute(
+        "INSERT INTO ship_personal_items (user_id, item_id, quantity) VALUES (?, ?, ?)"
+        " ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity",
+        (user_id, item_id, quantity),
+    )
+    return True
+
+
+async def ship_personal_withdraw(
+    db: Database, user_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    row = await db.fetch_one(
+        "SELECT quantity FROM ship_personal_items WHERE user_id=? AND item_id=?",
+        (user_id, item_id),
+    )
+    if not row or row["quantity"] < quantity:
+        return False
+    new_qty = row["quantity"] - quantity
+    if new_qty <= 0:
+        await db.execute(
+            "DELETE FROM ship_personal_items WHERE user_id=? AND item_id=?",
+            (user_id, item_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE ship_personal_items SET quantity=? WHERE user_id=? AND item_id=?",
+            (new_qty, user_id, item_id),
+        )
+    from dwarf_explorer.database.repositories import add_to_inventory
+    await add_to_inventory(db, user_id, item_id, quantity)
+    return True
+
+
+async def get_ship_cargo_items(db: Database, user_id: int) -> list[dict]:
+    rows = await db.fetch_all(
+        "SELECT item_id, quantity FROM ship_cargo_items WHERE user_id=? ORDER BY rowid",
+        (user_id,),
+    )
+    return [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in rows]
+
+
+async def ship_cargo_deposit(
+    db: Database, user_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    from dwarf_explorer.database.repositories import remove_from_inventory
+    removed = await remove_from_inventory(db, user_id, item_id, quantity)
+    if not removed:
+        return False
+    await db.execute(
+        "INSERT INTO ship_cargo_items (user_id, item_id, quantity) VALUES (?, ?, ?)"
+        " ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity",
+        (user_id, item_id, quantity),
+    )
+    return True
+
+
+async def ship_cargo_withdraw(
+    db: Database, user_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    row = await db.fetch_one(
+        "SELECT quantity FROM ship_cargo_items WHERE user_id=? AND item_id=?",
+        (user_id, item_id),
+    )
+    if not row or row["quantity"] < quantity:
+        return False
+    new_qty = row["quantity"] - quantity
+    if new_qty <= 0:
+        await db.execute(
+            "DELETE FROM ship_cargo_items WHERE user_id=? AND item_id=?",
+            (user_id, item_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE ship_cargo_items SET quantity=? WHERE user_id=? AND item_id=?",
+            (new_qty, user_id, item_id),
+        )
+    from dwarf_explorer.database.repositories import add_to_inventory
+    await add_to_inventory(db, user_id, item_id, quantity)
+    return True
+
+
+# --- Island state ---
+
+async def update_player_island_state(
+    db: Database, user_id: int,
+    in_island: bool, ox: int = 0, oy: int = 0,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_island=?, island_ox=?, island_oy=? WHERE user_id=?",
+        (int(in_island), ox, oy, user_id),
+    )
+
+
+async def get_or_create_island(db: Database, ocean_x: int, ocean_y: int) -> int:
+    """Return island_id, creating a DB record if it doesn't exist yet."""
+    row = await db.fetch_one(
+        "SELECT island_id FROM ocean_islands WHERE ocean_x=? AND ocean_y=?",
+        (ocean_x, ocean_y),
+    )
+    if row:
+        return row["island_id"]
+    cur = await db.execute(
+        "INSERT OR IGNORE INTO ocean_islands (ocean_x, ocean_y) VALUES (?, ?)",
+        (ocean_x, ocean_y),
+    )
+    if cur.lastrowid:
+        return cur.lastrowid
+    row = await db.fetch_one(
+        "SELECT island_id FROM ocean_islands WHERE ocean_x=? AND ocean_y=?",
+        (ocean_x, ocean_y),
+    )
+    return row["island_id"]
+
+
+async def store_island_tiles(
+    db: Database, island_id: int, tiles: list[tuple[int, int, str]]
+) -> None:
+    await db.executemany(
+        "INSERT OR IGNORE INTO island_tiles (island_id, local_x, local_y, tile_type)"
+        " VALUES (?, ?, ?, ?)",
+        [(island_id, lx, ly, tt) for lx, ly, tt in tiles],
+    )
+
+
+async def get_island_tiles(db: Database, island_id: int) -> list[tuple]:
+    rows = await db.fetch_all(
+        "SELECT local_x, local_y, tile_type FROM island_tiles WHERE island_id=?",
+        (island_id,),
+    )
+    return [(r["local_x"], r["local_y"], r["tile_type"]) for r in rows]
+
+
+async def is_island_looted(db: Database, ocean_x: int, ocean_y: int) -> bool:
+    row = await db.fetch_one(
+        "SELECT 1 FROM island_loots WHERE ocean_x=? AND ocean_y=?",
+        (ocean_x, ocean_y),
+    )
+    return row is not None
+
+
+async def mark_island_looted(db: Database, ocean_x: int, ocean_y: int) -> None:
+    await db.execute(
+        "INSERT OR IGNORE INTO island_loots (ocean_x, ocean_y) VALUES (?, ?)",
+        (ocean_x, ocean_y),
+    )
 
 
 # --- Tile overrides ---

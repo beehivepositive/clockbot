@@ -302,6 +302,158 @@ def render_bank(
     return "\n".join(lines)
 
 
+# ── Ship interior rendering ────────────────────────────────────────────────────
+
+_SHIP_ROOMS: dict[str, list[str]] = {
+    "helm": [
+        "🟫🟫🟫🟫🟫🟫🟫",
+        "🟫🔭⬛⬛⬛🪝🟫",
+        "🟫⬛⬛🛞⬛⬛🟫",
+        "🟫⬛⬛⬛⬛⬛🟫",
+        "🟫🟫🚪🟫🚪🟫🟫",
+    ],
+    "quarters": [
+        "🟫🟫🟫🟫🟫🟫🟫",
+        "🟫🛏️⬛⬛⬛📜🟫",
+        "🟫⬛⬛⬛⬛⬛🟫",
+        "🟫⬛⬛⬛⬛📦🟫",
+        "🟫🟫🚪🟫🟫🟫🟫",
+    ],
+    "lower_deck": [
+        "🟫🟫🟫🟫🟫🟫🟫",
+        "🟫🪣⬛⬛⬛🪣🟫",
+        "🟫⬛⬛⚒️⬛⬛🟫",
+        "🟫📦⬛⬛⬛⬛🟫",
+        "🟫🟫🚪🟫🟫🟫🟫",
+    ],
+}
+
+_SHIP_ROOM_NAMES = {
+    "helm":       "⚓ Helm Deck",
+    "quarters":   "🛏️ Captain's Quarters",
+    "lower_deck": "🪜 Lower Deck",
+}
+
+
+def render_ship_room(player) -> str:
+    """Render the current ship interior room as emoji art."""
+    room = getattr(player, "ship_room", "helm")
+    grid_lines = _SHIP_ROOMS.get(room, _SHIP_ROOMS["helm"])
+    title = _SHIP_ROOM_NAMES.get(room, room)
+    hp = getattr(player, "ship_hp", 100)
+    max_hp = getattr(player, "ship_max_hp", 100)
+    hp_bar = "🟥" * (hp // 20) + "⬛" * (5 - hp // 20)
+    body = "\n".join(grid_lines)
+    desc = {
+        "helm":       "The helm deck. Seabirds cry overhead. Doors aft and fore lead below.",
+        "quarters":   "The captain's quarters. A bunk, a map, and a locked personal chest.",
+        "lower_deck": "The lower deck. Supply barrels and the repair station fill the hold.",
+    }.get(room, "")
+    return (
+        f"**🚢 Ship Interior — {title}**\n"
+        f"{body}\n\n"
+        f"🛳️ Hull: {hp_bar} {hp}/{max_hp}\n"
+        f"*{desc}*"
+    )
+
+
+def render_ship_chest(
+    chest_items: list[dict],
+    player_items: list[dict],
+    selected: int,
+    view: str,
+    chest_name: str,
+    player,
+    inv_rows: int = 2,
+    inv_cols: int = 5,
+) -> str:
+    """Render a ship chest (personal or cargo) using the same layout as the bank."""
+    COLS = 9
+    ROWS = 4
+    TOTAL = COLS * ROWS
+
+    if view == "player":
+        title = f"📦 **{chest_name}** — Your Inventory ({inv_rows}×{inv_cols})"
+        source = player_items
+        action_label = "⬇ Deposit"
+        COLS_disp, TOTAL_disp = inv_cols, inv_rows * inv_cols
+    else:
+        title = f"📦 **{chest_name}** — Chest (9×4)"
+        source = chest_items
+        action_label = "⬆ Withdraw"
+        COLS_disp, TOTAL_disp = COLS, TOTAL
+
+    lines = [title]
+    slots: list[str] = []
+    for i in range(TOTAL_disp):
+        if i < len(source):
+            item = source[i]
+            emoji = _item_emoji(item["item_id"])
+            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
+            cell = f"{emoji}{qty}"
+        else:
+            cell = _EMPTY_SLOT
+        if i == selected:
+            cell = f"[{cell}]"
+        slots.append(cell)
+
+    for row in range(TOTAL_disp // COLS_disp):
+        lines.append("  ".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
+
+    lines.append("")
+    if selected < len(source):
+        item = source[selected]
+        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
+    else:
+        lines.append("Selected: *(empty slot)*")
+
+    lines.append(f"◀▶ navigate  |  {action_label}  |  🔄 Switch View  |  🔙 Back")
+    return "\n".join(lines)
+
+
+# ── Island rendering ───────────────────────────────────────────────────────────
+
+_ISLAND_TERRAIN_EMOJI: dict[str, str] = {
+    "island_void":   "🌊",
+    "island_sand":   "🟡",
+    "island_grass":  "🌿",
+    "island_forest": "🌴",
+    "island_chest":  "📦",
+    "island_dock":   "⚓",
+}
+
+
+def render_island(
+    grid: list[list],
+    player_x: int,
+    player_y: int,
+    player,
+    msg: str = "",
+) -> str:
+    """Render island viewport (9×9) centered on player position."""
+    SIZE = len(grid)
+    half = SIZE // 2
+    lines: list[str] = []
+    for row_y in range(SIZE):
+        row_emojis: list[str] = []
+        for col_x in range(SIZE):
+            tile = grid[row_y][col_x]
+            is_center = (col_x == half and row_y == half)
+            if is_center:
+                row_emojis.append("🧙")
+            else:
+                terrain = getattr(tile, "terrain", "island_void")
+                row_emojis.append(_ISLAND_TERRAIN_EMOJI.get(terrain, "🌊"))
+        lines.append("".join(row_emojis))
+    result = "\n".join(lines)
+    hp = player.hp
+    max_hp = player.max_hp
+    status = f"\n❤️ {hp}/{max_hp}"
+    if msg:
+        status += f"\n> {msg}"
+    return result + status
+
+
 def render_chest(
     chest_items: list[dict], player_items: list[dict],
     selected: int, view: str,
