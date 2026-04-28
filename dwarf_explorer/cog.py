@@ -152,7 +152,10 @@ class DwarfExplorer(commands.Cog):
             " in_cave=0, cave_id=NULL, cave_x=0, cave_y=0,"
             " in_village=0, village_id=NULL, village_x=0, village_y=0,"
             " in_house=0, house_id=NULL, house_x=0, house_y=0,"
-            " in_combat=0, in_canoe=0"
+            " in_combat=0, in_canoe=0,"
+            " in_ocean=0, in_high_seas=0, in_ship=0, in_island=0,"
+            " ocean_x=0, ocean_y=0, ship_x=0, ship_y=0,"
+            " island_ox=0, island_oy=0"
         )
         # Generate a fresh random seed for the new world
         seed = await reset_world_seed(db)

@@ -148,6 +148,8 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             ship_room=row["ship_room"] if "ship_room" in cols else "helm",
             ship_hp=row["ship_hp"] if "ship_hp" in cols else 100,
             ship_max_hp=row["ship_max_hp"] if "ship_max_hp" in cols else 100,
+            ship_x=row["ship_x"] if "ship_x" in cols else 0,
+            ship_y=row["ship_y"] if "ship_y" in cols else 0,
             in_island=bool(row["in_island"]) if "in_island" in cols else False,
             island_ox=row["island_ox"] if "island_ox" in cols else 0,
             island_oy=row["island_oy"] if "island_oy" in cols else 0,
@@ -449,11 +451,18 @@ async def update_player_ocean_state(
 async def update_player_ship_state(
     db: Database, user_id: int,
     in_ship: bool, ship_room: str = "helm",
+    ship_x: int | None = None, ship_y: int | None = None,
 ) -> None:
-    await db.execute(
-        "UPDATE players SET in_ship=?, ship_room=? WHERE user_id=?",
-        (int(in_ship), ship_room, user_id),
-    )
+    if ship_x is not None and ship_y is not None:
+        await db.execute(
+            "UPDATE players SET in_ship=?, ship_room=?, ship_x=?, ship_y=? WHERE user_id=?",
+            (int(in_ship), ship_room, ship_x, ship_y, user_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE players SET in_ship=?, ship_room=? WHERE user_id=?",
+            (int(in_ship), ship_room, user_id),
+        )
 
 
 async def update_player_ship_hp(

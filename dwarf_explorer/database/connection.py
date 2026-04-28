@@ -199,6 +199,8 @@ class Database:
                 "ALTER TABLE players ADD COLUMN ship_room TEXT NOT NULL DEFAULT 'helm'",
                 "ALTER TABLE players ADD COLUMN ship_hp INTEGER NOT NULL DEFAULT 100",
                 "ALTER TABLE players ADD COLUMN ship_max_hp INTEGER NOT NULL DEFAULT 100",
+                "ALTER TABLE players ADD COLUMN ship_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN ship_y INTEGER NOT NULL DEFAULT 0",
                 # Island state
                 "ALTER TABLE players ADD COLUMN in_island INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN island_ox INTEGER NOT NULL DEFAULT 0",

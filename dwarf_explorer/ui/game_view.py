@@ -13,8 +13,9 @@ from dwarf_explorer.config import (
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
-    OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE,
+    OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
 )
+from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world,
@@ -73,7 +74,7 @@ from dwarf_explorer.world.villages import (
     load_village_viewport, load_village_single_tile,
     load_building_viewport, load_building_single_tile,
 )
-from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
     render_ship_room, render_ship_chest, render_island,
@@ -212,13 +213,22 @@ class GameView(discord.ui.View):
         right_btn = self._dir_btn("right", "\u27A1\uFE0F", 2, "right" in mine_dirs)
         if center_enabled and center_label:
             _center_emoji = _parse_emoji(center_label)
-            center_btn = discord.ui.Button(
-                style=discord.ButtonStyle.success,
-                **( {"emoji": _center_emoji, "label": None}
-                    if _center_emoji else {"label": center_label} ),
-                custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
-                row=2,
-            )
+            if _center_emoji:
+                center_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_center_emoji,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
+                    row=2,
+                )
+            else:
+                # Unicode emoji — use only the first word (the emoji character), no label text
+                _emoji_char = center_label.split()[0]
+                center_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_emoji_char,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
+                    row=2,
+                )
         else:
             center_btn = discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
@@ -1019,6 +1029,18 @@ def _compute_context_labels(
         t = center_tile.terrain
         s = center_tile.structure
 
+        # Ship tile context (highest priority when in_ship)
+        if player.in_ship:
+            if t == "ship_helm":
+                center_label, center_enabled = "\u2693", True
+            elif t == "ship_door":
+                center_label, center_enabled = "\U0001F6AA", True
+            elif t == "ship_chest_personal":
+                center_label, center_enabled = "\U0001F4E6", True
+            elif t == "ship_chest_cargo":
+                center_label, center_enabled = "\U0001F4E6", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled
+
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
             center_label, center_enabled = "🏠", True
@@ -1146,18 +1168,18 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                grid: list[list] | None = None,
                dock_available: bool = False) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
+    # When player is in ship, use ship tile view (GameView with ship grid)
     if player.in_ship:
-        from dwarf_explorer.database.repositories import get_inventory as _gi
-        # Note: can't await here so ship repair check is done in the handler
-        return ShipView(guild_id, user_id, room=player.ship_room,
-                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
-    if player.in_island:
+        if grid is None:
+            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        # Fall through to GameView builder below (skip other mode checks)
+    elif player.in_island:
         return IslandView(guild_id, user_id)
-    if player.in_high_seas:
+    elif player.in_high_seas:
         return OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
-    if player.in_ocean:
+    elif player.in_ocean:
         return BoatView(guild_id, user_id, dock_available=dock_available)
-    if player.in_canoe:
+    elif player.in_canoe:
         return CanoeView(guild_id, user_id, dock_available=False)
 
     center_label, center_enabled = "", False
@@ -1196,6 +1218,12 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
             if tile.terrain == "cave_rock":
                 mine_dirs.add(direction)
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs), grid=grid)
+
+
+def _ship_game_view(guild_id: int, user_id: int, player: Player) -> discord.ui.View:
+    """Build a GameView for ship interior with contextual center button."""
+    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+    return _game_view(guild_id, user_id, player, grid=grid)
 
 
 _CANOE_DIRS: dict[str, tuple[int, int]] = {
@@ -2479,14 +2507,12 @@ async def handle_ship_enter(
 
     player.in_ship = True
     player.ship_room = "helm"
-    await update_player_ship_state(db, user_id, True, "helm")
+    player.ship_x, player.ship_y = HELM_SPAWN
+    await update_player_ship_state(db, user_id, True, "helm", ship_x=player.ship_x, ship_y=player.ship_y)
 
-    inv = await get_inventory(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
-    content = render_ship_room(player)
-    view = ShipView(guild_id, user_id, room="helm",
-                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                    has_repair_logs=has_logs)
+    grid = load_ship_viewport("helm", player.ship_x, player.ship_y)
+    content = render_grid(grid, player, "\u2693 You board your ship at the helm.")
+    view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2504,12 +2530,62 @@ async def handle_ship_leave(
 
     player.in_ship = False
     player.ship_room = "helm"
-    await update_player_ship_state(db, user_id, False, "helm")
+    player.ship_x = 0
+    player.ship_y = 0
+    await update_player_ship_state(db, user_id, False, "helm", ship_x=0, ship_y=0)
 
     harbor_adj = await _adjacent_harbor(player, seed, db)
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
     view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ship_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    """Move player within ship interior."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_ship:
+        await interaction.response.defer()
+        return
+
+    dx, dy = DIRECTIONS[direction]
+    nx, ny = player.ship_x + dx, player.ship_y + dy
+
+    # Load target tile and check walkability
+    target_grid = load_ship_viewport(player.ship_room, nx, ny)
+    target_tile = target_grid[4][4]  # center = new position
+    ok, msg = can_move_ship(target_tile)
+    if not ok:
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        content = render_grid(grid, player, f"\U0001F6AB {msg}")
+        view = _ship_game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Check for door at target position
+    door_target = get_door_target(player.ship_room, nx, ny)
+    if door_target:
+        new_room, new_x, new_y = door_target
+        player.ship_room = new_room
+        player.ship_x, player.ship_y = new_x, new_y
+        await update_player_ship_state(db, user_id, True, new_room, ship_x=new_x, ship_y=new_y)
+        room_names = {"helm": "the helm deck", "quarters": "the captain's quarters", "lower_deck": "the lower deck"}
+        grid = load_ship_viewport(new_room, new_x, new_y)
+        content = render_grid(grid, player, f"\U0001F6AA You enter {room_names.get(new_room, new_room)}.")
+        view = _ship_game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Normal move
+    player.ship_x, player.ship_y = nx, ny
+    await update_player_ship_state(db, user_id, True, player.ship_room, ship_x=nx, ship_y=ny)
+    grid = load_ship_viewport(player.ship_room, nx, ny)
+    content = render_grid(grid, player, "")
+    view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2551,21 +2627,16 @@ async def handle_ship_repair(
     log_row = next((it for it in inv if it["item_id"] == "log"), None)
 
     if not log_row or log_row["quantity"] < 3:
-        content = render_ship_room(player)
-        view = ShipView(guild_id, user_id, room=player.ship_room,
-                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                        has_repair_logs=False)
-        # Append message manually since render_ship_room returns fixed text
-        content += "\n\n> ❌ You need at least 3 logs to repair."
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        content = render_grid(grid, player, "\u274C You need at least 3 logs to repair.")
+        view = _ship_game_view(guild_id, user_id, player)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if player.ship_hp >= player.ship_max_hp:
-        content = render_ship_room(player)
-        view = ShipView(guild_id, user_id, room=player.ship_room,
-                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                        has_repair_logs=True)
-        content += "\n\n> ✅ Hull is already at full integrity."
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        content = render_grid(grid, player, "\u2705 Hull is already at full integrity.")
+        view = _ship_game_view(guild_id, user_id, player)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -2574,13 +2645,9 @@ async def handle_ship_repair(
     player.ship_hp = min(player.ship_max_hp, player.ship_hp + heal)
     await update_player_ship_hp(db, user_id, player.ship_hp)
 
-    inv = await get_inventory(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
-    content = render_ship_room(player)
-    content += f"\n\n> 🔨 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})"
-    view = ShipView(guild_id, user_id, room=player.ship_room,
-                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                    has_repair_logs=has_logs)
+    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+    content = render_grid(grid, player, f"\U0001F528 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})")
+    view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2692,12 +2759,9 @@ async def handle_ship_chest_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     _ui_state.pop(user_id, None)
 
-    inv = await get_inventory(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
-    content = render_ship_room(player)
-    view = ShipView(guild_id, user_id, room=player.ship_room,
-                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                    has_repair_logs=has_logs)
+    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+    content = render_grid(grid, player, "\U0001F4E6 You close the chest.")
+    view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2948,6 +3012,22 @@ async def handle_interact(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # Ship interior tile interactions
+    if player.in_ship:
+        center_tile_type = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)[4][4].terrain
+        if center_tile_type == "ship_helm":
+            await handle_ship_leave(interaction, guild_id, user_id)
+            return
+        elif center_tile_type == "ship_chest_personal":
+            await handle_ship_chest_open_personal(interaction, guild_id, user_id)
+            return
+        elif center_tile_type == "ship_chest_cargo":
+            await handle_ship_chest_open_cargo(interaction, guild_id, user_id)
+            return
+        else:
+            await interaction.response.defer()
+            return
 
     if player.in_house:
         _is_ph = (player.house_type == "player_house")
@@ -4199,6 +4279,12 @@ async def handle_inventory(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if player.in_ocean or player.in_high_seas:
+        # Show ship cargo chest instead of personal inventory
+        await _open_ship_chest(interaction, guild_id, user_id, "cargo")
+        return
+
     prev_state = _ui_state.get(user_id, {})
     prev_arena = prev_state.get("arena")
     prev_selections = prev_state.get("selections", {})

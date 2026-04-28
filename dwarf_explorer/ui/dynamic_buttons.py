@@ -4,6 +4,8 @@ import re
 
 import discord
 
+from dwarf_explorer.database.connection import get_database
+from dwarf_explorer.database.repositories import get_or_create_player
 from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_sprint,
     handle_help, handle_help_back, handle_map,
@@ -19,7 +21,7 @@ from dwarf_explorer.ui.game_view import (
     handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
     handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
     handle_ocean_move, handle_ocean_dock, handle_boat_grapple,
-    handle_ship_enter, handle_ship_leave, handle_ship_room,
+    handle_ship_enter, handle_ship_leave, handle_ship_move, handle_ship_room,
     handle_ship_repair,
     handle_ship_chest_open_personal, handle_ship_chest_open_cargo,
     handle_ship_chest_close,
@@ -190,7 +192,13 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             elif act == "anvil_close":
                 await handle_anvil_close(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
-                await handle_move(interaction, gid, uid, act)
+                # Route ship interior movement separately
+                db = await get_database(gid)
+                _player = await get_or_create_player(db, uid, interaction.user.display_name)
+                if _player.in_ship:
+                    await handle_ship_move(interaction, gid, uid, act)
+                else:
+                    await handle_move(interaction, gid, uid, act)
             elif act == "interact":
                 await handle_interact(interaction, gid, uid)
             elif act == "sprint":

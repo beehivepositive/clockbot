@@ -2,7 +2,7 @@ import math
 
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
-    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, POUCH_SIZES,
+    CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -12,6 +12,8 @@ _FOV_RADIUS = 3.0   # torch illumination radius in tiles
 
 
 def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
+    if location == "ship":
+        return SHIP_EMOJI.get(tile.terrain, "\u2B1B")
     if location == "cave":
         return CAVE_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
@@ -47,7 +49,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     other_players: list of (world_x, world_y, display_name) for nearby players.
     Only rendered in overworld view.
     """
-    if player.in_house:
+    if player.in_ship:
+        location = "ship"
+    elif player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
     elif player.in_village:
         location = "village"
@@ -113,7 +117,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     lines.append("")
     hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
     gold = f"\U0001FA99 {player.gold}"
-    if player.in_house:
+    if player.in_ship:
+        room_labels = {"helm": "Helm", "quarters": "Captain's Quarters", "lower_deck": "Lower Deck"}
+        room_label = room_labels.get(player.ship_room, player.ship_room)
+        pos = f"\u2693 Ship: {room_label} ({player.ship_x},{player.ship_y})"
+    elif player.in_house:
         loc_labels = {
             "house": "House", "church": "Church", "bank": "Bank",
             "shop": "Shop", "blacksmith": "Blacksmith",

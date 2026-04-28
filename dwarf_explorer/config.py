@@ -240,6 +240,28 @@ OCEAN_ENCOUNTER_RATES = {
     "sea_serpent": 0.02,
 }
 
+# --- Ship System ---
+
+SHIP_EMOJI = {
+    "deep_water":            "\U0001F30A",      # 🌊 (ocean surrounding ship)
+    "ship_deck":             "\U0001FAB5",      # 🪵 wooden plank
+    "ship_wall":             "\U0001F7EB",      # 🟫 brown wall
+    "ship_helm":             "\u2693",          # ⚓ steering wheel / helm
+    "ship_door":             "\U0001F6AA",      # 🚪 door (between rooms)
+    "ship_chest_personal":   "\U0001F4E6",      # 📦 personal chest
+    "ship_chest_cargo":      "\U0001F4E6",      # 📦 cargo chest
+    "ship_mast":             "\U0001FAA1",      # 🪡 mast
+    "ship_cannon":           "\U0001F4A3",      # 💣 cannon
+    "ship_bed":              "\U0001F6CF\uFE0F",# 🛏️ bed
+    "ship_table":            "\U0001FA91",      # 🪑 chair/table
+    "ship_stairs":           "\U0001FA9C",      # 🪜 stairs
+}
+
+SHIP_WALKABLE = {
+    "ship_deck", "ship_helm", "ship_door",
+    "ship_chest_personal", "ship_chest_cargo", "ship_stairs",
+}
+
 # --- Cave System ---
 
 CAVE_EMOJI = {

@@ -5,7 +5,7 @@ from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
-    COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE,
+    COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE, SHIP_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -64,6 +64,8 @@ class Player:
     ship_room: str = "helm"    # "helm" | "quarters" | "lower_deck"
     ship_hp: int = 100
     ship_max_hp: int = 100
+    ship_x: int = 0
+    ship_y: int = 0
     # Island interior state
     in_island: bool = False
     island_ox: int = 0         # ocean_x of the island tile entered
@@ -87,6 +89,13 @@ class Player:
     boots: str | None = None
     accessory: str | None = None
     pouch: str | None = None
+
+
+def can_move_ship(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a ship room."""
+    if target_tile.terrain not in SHIP_WALKABLE:
+        return False, "You can't go that way."
+    return True, ""
 
 
 def can_move_village(target_tile: TileData) -> tuple[bool, str]:
@@ -123,6 +132,10 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         if terrain not in CANOE_PASSABLE:
             return False, "You can't paddle onto land. Dock at a 🚩 landing first."
         return True, ""
+
+    # Ship interior movement
+    if player.in_ship:
+        return can_move_ship(target_tile)
 
     # Boat mode: only ocean/shallow water tiles
     if player.in_ocean:
