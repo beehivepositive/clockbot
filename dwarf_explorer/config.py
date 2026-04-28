@@ -55,10 +55,12 @@ STRUCTURE_EMOJI = {
     "player_house": "\U0001F3E0",   # 🏠
     "harbor": "\U0001F6A2",         # 🚢 harbor/dock
     "shipwreck": "\u2693",          # ⚓ shipwreck
+    "island": "\U0001F3DD\uFE0F",  # 🏝️ high-seas island
 }
 
 ENTITY_EMOJI = {
-    "player": "\U0001F9D9",          # 🧙
+    "player":      "\U0001F9D9",     # 🧙
+    "player_boat": "\u26F5",         # ⛵  shown when player is in boat on ocean
     "wolf": "\U0001F43A",            # 🐺
     "bear": "\U0001F43B",            # 🐻
     "spider": "\U0001F577\uFE0F",   # 🕷️
@@ -125,8 +127,11 @@ WALKABLE_TILES = {
 # Tile types passable by canoe (water + bridges)
 CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 
+# Tile types navigable by boat on the wilderness ocean
+OCEAN_WALKABLE = {"deep_water", "shallow_water", "harbor"}
+
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {

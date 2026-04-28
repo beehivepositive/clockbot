@@ -187,8 +187,9 @@ class Database:
     broken_at    TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (cave_id, local_x, local_y)
 )""",
-                # Ocean state
+                # Ocean / boat state
                 "ALTER TABLE players ADD COLUMN in_ocean INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN in_high_seas INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN ocean_x INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN ocean_y INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN ocean_harbor_wx INTEGER NOT NULL DEFAULT 0",

@@ -38,11 +38,7 @@ def get_ocean_tile(ox: int, oy: int, seed: int) -> str:
     adjusted_e = e - depth_bias
 
     if adjusted_e > 0.50:
-        # High ground → island
-        m = fbm(ox, oy, seed + _OCEAN_MOIST_OFFSET)
-        if m > 0.5:
-            return "forest"
-        return "grass"
+        return "island"        # small island — explored separately
     elif adjusted_e > 0.35:
         return "sand"      # island beach / shoal
     elif adjusted_e > -0.05:

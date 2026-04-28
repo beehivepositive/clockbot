@@ -141,8 +141,9 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             combat_moves_left=row["combat_moves_left"] if "combat_moves_left" in cols else COMBAT_MOVES_DEFAULT,
             sprinting=bool(row["sprinting"]),
             ph_cave_id=row["ph_cave_id"] if "ph_cave_id" in cols else None,
-            # Ocean state
+            # Ocean / boat state
             in_ocean=bool(row["in_ocean"]) if "in_ocean" in cols else False,
+            in_high_seas=bool(row["in_high_seas"]) if "in_high_seas" in cols else False,
             ocean_x=row["ocean_x"] if "ocean_x" in cols else 0,
             ocean_y=row["ocean_y"] if "ocean_y" in cols else 0,
             ocean_harbor_wx=row["ocean_harbor_wx"] if "ocean_harbor_wx" in cols else 0,
@@ -408,23 +409,31 @@ async def clear_combat_state(db: Database, user_id: int) -> None:
     )
 
 
-# --- Ocean state ---
+# --- Ocean / boat state ---
 
 async def update_player_ocean_state(
     db: Database, user_id: int,
-    in_ocean: bool, ocean_x: int, ocean_y: int,
+    in_ocean: bool, ocean_x: int = 0, ocean_y: int = 0,
     harbor_wx: int | None = None, harbor_wy: int | None = None,
+    in_high_seas: bool = False,
 ) -> None:
+    """Update ocean/boat state.
+
+    in_ocean=True      → boat mode on wilderness ocean tiles
+    in_high_seas=True  → navigating the separate 200×200 open-ocean grid
+    """
     if harbor_wx is not None and harbor_wy is not None:
         await db.execute(
-            "UPDATE players SET in_ocean=?, ocean_x=?, ocean_y=?,"
+            "UPDATE players SET in_ocean=?, in_high_seas=?, ocean_x=?, ocean_y=?,"
             " ocean_harbor_wx=?, ocean_harbor_wy=? WHERE user_id=?",
-            (int(in_ocean), ocean_x, ocean_y, harbor_wx, harbor_wy, user_id),
+            (int(in_ocean), int(in_high_seas), ocean_x, ocean_y,
+             harbor_wx, harbor_wy, user_id),
         )
     else:
         await db.execute(
-            "UPDATE players SET in_ocean=?, ocean_x=?, ocean_y=? WHERE user_id=?",
-            (int(in_ocean), ocean_x, ocean_y, user_id),
+            "UPDATE players SET in_ocean=?, in_high_seas=?, ocean_x=?, ocean_y=?"
+            " WHERE user_id=?",
+            (int(in_ocean), int(in_high_seas), ocean_x, ocean_y, user_id),
         )
 
 

@@ -6,7 +6,7 @@ import random
 
 from dwarf_explorer.config import WORLD_SIZE
 from dwarf_explorer.world.noise import fbm
-from dwarf_explorer.world.terrain import get_biome
+from dwarf_explorer.world.terrain import get_biome, get_coast_boundary
 
 _WATER_BIOMES = {"deep_water", "shallow_water"}
 _HIGH_COST_BIOMES = {"mountain", "snow"}
@@ -62,8 +62,12 @@ def _trunk_path(
     the cross-axis offset driven by two fBm layers (coarse bends + fine wiggles).
     Uses the terrain heightmap's fBm so bends follow large-scale valley shapes.
     """
-    # Pick axis: 0 = W→E (x primary), 1 = N→S (y primary)
-    axis = rng.randint(0, 1)
+    # Pick axis perpendicular to the ocean edge so rivers flow INTO the ocean,
+    # not parallel along it.
+    # edge 0=south, 1=north → ocean is horizontal → rivers flow N-S (axis=1)
+    # edge 2=west,  3=east  → ocean is vertical   → rivers flow E-W (axis=0)
+    ocean_edge, _ = get_coast_boundary(seed)
+    axis = 1 if ocean_edge in (0, 1) else 0
     start_cross = float(rng.randint(40, WORLD_SIZE - 40))
 
     path: list[tuple[int, int]] = []

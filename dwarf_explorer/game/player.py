@@ -5,7 +5,7 @@ from dwarf_explorer.config import (
     PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
-    COMBAT_MOVES_DEFAULT, CANOE_PASSABLE,
+    COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -48,8 +48,13 @@ class Player:
     ph_cave_id: int | None = None  # if set, exiting player_house returns to this cave
     # Canoe state
     in_canoe: bool = False
-    # Ocean state
+    # Ocean / boat state
+    # in_ocean = True  → player is in a boat navigating wilderness ocean tiles
+    #                    position given by world_x / world_y as usual
+    # in_high_seas = True → player is on the separate 200×200 open-ocean grid
+    #                    position given by ocean_x / ocean_y
     in_ocean: bool = False
+    in_high_seas: bool = False
     ocean_x: int = 0
     ocean_y: int = 0
     ocean_harbor_wx: int = 0   # overworld x of harbor used to enter
@@ -108,6 +113,12 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
     if player.in_canoe:
         if terrain not in CANOE_PASSABLE:
             return False, "You can't paddle onto land. Dock at a 🚩 landing first."
+        return True, ""
+
+    # Boat mode: only ocean/shallow water tiles
+    if player.in_ocean:
+        if terrain not in OCEAN_WALKABLE:
+            return False, "Your boat can't sail onto land."
         return True, ""
 
     # Eight directional vectors (cardinal + diagonal) for canoe mode;

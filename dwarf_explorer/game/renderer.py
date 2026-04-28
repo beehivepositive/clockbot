@@ -96,7 +96,10 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                         row_emojis.append(_BLACK)
             else:
                 if is_center:
-                    row_emojis.append(ENTITY_EMOJI["player"])
+                    if player.in_ocean or player.in_high_seas:
+                        row_emojis.append(ENTITY_EMOJI["player_boat"])
+                    else:
+                        row_emojis.append(ENTITY_EMOJI["player"])
                 elif (col_x, row_y) in _other_pos:
                     row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
                 elif (cursor_pos and not is_center

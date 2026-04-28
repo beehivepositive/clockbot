@@ -5,7 +5,7 @@ import heapq
 import math
 import random
 
-from dwarf_explorer.world.terrain import get_biome
+from dwarf_explorer.world.terrain import get_biome, get_coast_boundary
 from dwarf_explorer.config import WORLD_SIZE, WALKABLE_TILES
 
 _STRUCTURE_SEED_OFFSET = 2000
@@ -353,30 +353,49 @@ def _generate_structures_sync(
             overrides.append((x, y, 'ruins'))
             found += 1
 
-    # --- Harbor: 1 dock on south coast, just above the ocean biome ---
-    # Ocean starts at y ≈ 0.88 × WORLD_SIZE; harbor sits at y ≈ 0.84–0.87
-    _harbor_y_min = int(WORLD_SIZE * 0.84)
-    _harbor_y_max = int(WORLD_SIZE * 0.87)
+    # --- Harbor: 1 village adjacent to the ocean coastline ---
+    _ocean_biomes = {'deep_water', 'shallow_water'}
+    _bad_biomes   = {'mountain', 'snow', 'deep_water', 'shallow_water'}
+    ocean_edge, coast_boundary = get_coast_boundary(seed)
     harbor_placed = False
     for _ in range(1200):
-        hx = rng.randint(8, WORLD_SIZE - 9)
-        hy = rng.randint(_harbor_y_min, _harbor_y_max)
-        biome = get_biome(hx, hy, seed)
-        if biome in ('sand', 'plains', 'grass'):
-            overrides.append((hx, hy, 'harbor'))
-            harbor_placed = True
-            break
+        if ocean_edge in (0, 1):  # south / north — vary x, compute y from boundary
+            hx = rng.randint(8, WORLD_SIZE - 9)
+            c  = coast_boundary[hx]
+            offset = rng.randint(1, 4)
+            hy = (c - offset) if ocean_edge == 0 else (c + offset)
+        else:                     # west / east — vary y, compute x from boundary
+            hy = rng.randint(8, WORLD_SIZE - 9)
+            c  = coast_boundary[hy]
+            offset = rng.randint(1, 4)
+            hx = (c + offset) if ocean_edge == 2 else (c - offset)
+        hx = max(2, min(WORLD_SIZE - 3, hx))
+        hy = max(2, min(WORLD_SIZE - 3, hy))
+        if get_biome(hx, hy, seed) not in _bad_biomes:
+            # Confirm at least one adjacent tile is ocean
+            adj_ocean = any(
+                get_biome(hx + ddx, hy + ddy, seed) in _ocean_biomes
+                for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0),
+                                 (0, 2), (0, -2), (2, 0), (-2, 0),
+                                 (0, 3), (0, -3), (3, 0), (-3, 0)]
+                if 0 <= hx + ddx < WORLD_SIZE and 0 <= hy + ddy < WORLD_SIZE
+            )
+            if adj_ocean:
+                overrides.append((hx, hy, 'harbor'))
+                harbor_placed = True
+                break
     if not harbor_placed:
-        # Force-place near centre of south coast on any walkable biome
-        for hy in range(_harbor_y_max, _harbor_y_min - 1, -1):
-            for hx in range(WORLD_SIZE // 2 - 30, WORLD_SIZE // 2 + 31):
-                if 0 <= hx < WORLD_SIZE:
-                    biome = get_biome(hx, hy, seed)
-                    if biome not in ('mountain', 'snow', 'deep_water', 'shallow_water'):
-                        overrides.append((hx, hy, 'harbor'))
-                        harbor_placed = True
-                        break
-            if harbor_placed:
+        # Fallback: scan along the coast boundary for first walkable tile
+        for col in range(WORLD_SIZE):
+            if ocean_edge in (0, 1):
+                hx, hy = col, coast_boundary[col] + (-1 if ocean_edge == 0 else 1)
+            else:
+                hy, hx = col, coast_boundary[col] + (1 if ocean_edge == 2 else -1)
+            hx = max(2, min(WORLD_SIZE - 3, hx))
+            hy = max(2, min(WORLD_SIZE - 3, hy))
+            if get_biome(hx, hy, seed) not in _bad_biomes:
+                overrides.append((hx, hy, 'harbor'))
+                harbor_placed = True
                 break
 
     cave_groups = _group_caves(cave_positions, rng)
