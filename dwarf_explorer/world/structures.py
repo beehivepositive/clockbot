@@ -353,36 +353,50 @@ def _generate_structures_sync(
             overrides.append((x, y, 'ruins'))
             found += 1
 
-    # --- Harbor: 1 village adjacent to the ocean coastline ---
-    _ocean_biomes = {'deep_water', 'shallow_water'}
-    _bad_biomes   = {'mountain', 'snow', 'deep_water', 'shallow_water'}
+    # --- Harbors: 2-3 villages adjacent to the ocean coastline, spaced apart ---
+    _ocean_biomes    = {'deep_water', 'shallow_water'}
+    _bad_biomes      = {'mountain', 'snow', 'deep_water', 'shallow_water'}
     ocean_edge, coast_boundary = get_coast_boundary(seed)
-    harbor_placed = False
-    for _ in range(1200):
+    _HARBOR_TARGET   = rng.randint(2, 3)
+    _HARBOR_MIN_SEP  = 80   # minimum coast-index distance between two harbors
+    harbor_positions: list[tuple[int, int]] = []
+
+    def _coast_index(hx: int, hy: int) -> int:
+        """Return the coast-parallel index (x for N/S edges, y for E/W edges)."""
+        return hx if ocean_edge in (0, 1) else hy
+
+    for _ in range(2400):
+        if len(harbor_positions) >= _HARBOR_TARGET:
+            break
         if ocean_edge in (0, 1):  # south / north — vary x, compute y from boundary
             hx = rng.randint(8, WORLD_SIZE - 9)
             c  = coast_boundary[hx]
-            offset = 1
-            hy = (c - offset) if ocean_edge == 0 else (c + offset)
+            hy = (c - 1) if ocean_edge == 0 else (c + 1)
         else:                     # west / east — vary y, compute x from boundary
             hy = rng.randint(8, WORLD_SIZE - 9)
             c  = coast_boundary[hy]
-            offset = 1
-            hx = (c + offset) if ocean_edge == 2 else (c - offset)
+            hx = (c + 1) if ocean_edge == 2 else (c - 1)
         hx = max(2, min(WORLD_SIZE - 3, hx))
         hy = max(2, min(WORLD_SIZE - 3, hy))
-        if get_biome(hx, hy, seed) not in _bad_biomes:
-            # Confirm at least one adjacent tile is ocean
-            adj_ocean = any(
-                get_biome(hx + ddx, hy + ddy, seed) in _ocean_biomes
-                for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                if 0 <= hx + ddx < WORLD_SIZE and 0 <= hy + ddy < WORLD_SIZE
-            )
-            if adj_ocean:
-                overrides.append((hx, hy, 'harbor'))
-                harbor_placed = True
-                break
-    if not harbor_placed:
+        if get_biome(hx, hy, seed) in _bad_biomes:
+            continue
+        # Confirm at least one adjacent tile is ocean
+        adj_ocean = any(
+            get_biome(hx + ddx, hy + ddy, seed) in _ocean_biomes
+            for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            if 0 <= hx + ddx < WORLD_SIZE and 0 <= hy + ddy < WORLD_SIZE
+        )
+        if not adj_ocean:
+            continue
+        # Enforce minimum spacing along the coastline
+        ci = _coast_index(hx, hy)
+        if any(abs(ci - _coast_index(px, py)) < _HARBOR_MIN_SEP
+               for px, py in harbor_positions):
+            continue
+        overrides.append((hx, hy, 'harbor'))
+        harbor_positions.append((hx, hy))
+
+    if not harbor_positions:
         # Fallback: scan along the coast boundary for first walkable tile
         for col in range(WORLD_SIZE):
             if ocean_edge in (0, 1):
@@ -393,7 +407,6 @@ def _generate_structures_sync(
             hy = max(2, min(WORLD_SIZE - 3, hy))
             if get_biome(hx, hy, seed) not in _bad_biomes:
                 overrides.append((hx, hy, 'harbor'))
-                harbor_placed = True
                 break
 
     cave_groups = _group_caves(cave_positions, rng)

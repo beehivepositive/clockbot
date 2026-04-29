@@ -66,19 +66,13 @@ def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
         medium = a2 * _math.sin(2.0 * _math.pi * i / p2 + ph2)
         # Meso roughness (25-50 tile scale, ±3 tiles) — fractal bumps
         meso   = (fbm(i * 0.3, 0.0, seed ^ 0xF1D37A, octaves=3) - 0.5) * 6.0
-        # Micro jaggedness (2-8 tile scale, ±1.5 tiles) — tile-level irregularity
-        micro  = (fbm(i * 2.0, 0.0, seed ^ 0xA3B2C1D4, octaves=3) - 0.5) * 3.0
+        # Micro jaggedness (2-8 tile scale, ±2 tiles) — tile-level irregularity
+        micro  = (fbm(i * 2.0, 0.0, seed ^ 0xA3B2C1D4, octaves=3) - 0.5) * 4.0
         offset = macro + medium + meso + micro
         val    = int(round(max(float(lo), min(float(hi), float(base) + offset))))
         boundary.append(val)
 
-    # Weighted 3-point smoother — centre counts double, so 2-tile features
-    # survive while lone 1-tile spikes are softened.
-    smoothed = list(boundary)
-    for i in range(1, len(boundary) - 1):
-        smoothed[i] = (boundary[i - 1] + 2 * boundary[i] + boundary[i + 1]) // 4
-
-    return edge, smoothed
+    return edge, boundary
 
 
 def get_coast_boundary(seed: int) -> tuple[int, list[int]]:

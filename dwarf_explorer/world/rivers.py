@@ -59,12 +59,15 @@ def _gradient_dir(
 def _trunk_path(
     seed: int,
     rng: random.Random,
+    start_cross: float | None = None,
 ) -> list[tuple[int, int]]:
     """Main trunk that enters from a random edge and exits at the opposite edge.
 
     Walks along the primary axis (W-E or N-S) visiting every column/row, with
     the cross-axis offset driven by two fBm layers (coarse bends + fine wiggles).
     Uses the terrain heightmap's fBm so bends follow large-scale valley shapes.
+
+    start_cross: cross-axis seed position (None → random in [40, WORLD_SIZE-40]).
     """
     # Pick axis perpendicular to the ocean edge so rivers flow INTO the ocean,
     # not parallel along it.
@@ -72,7 +75,8 @@ def _trunk_path(
     # edge 2=west,  3=east  → ocean is vertical   → rivers flow E-W (axis=0)
     ocean_edge, _ = get_coast_boundary(seed)
     axis = 1 if ocean_edge in (0, 1) else 0
-    start_cross = float(rng.randint(40, WORLD_SIZE - 40))
+    if start_cross is None:
+        start_cross = float(rng.randint(40, WORLD_SIZE - 40))
 
     path: list[tuple[int, int]] = []
     for primary in range(WORLD_SIZE):
@@ -388,6 +392,7 @@ def _generate_rivers_sync(
     rng = random.Random(seed ^ 0xDEAD_BEEF)
 
     river_tiles: set[tuple[int, int]] = set()
+    trunk_painted: set[tuple[int, int]] = set()   # tiles painted by any trunk
     bridge_tiles: set[tuple[int, int]] = set()
     paths_orders: list[tuple[list[tuple[int, int]], int]] = []
 
@@ -400,12 +405,31 @@ def _generate_rivers_sync(
     ocean_edge, _ = get_coast_boundary(seed)
     _skip_trib_edge = {0: 1, 1: 0, 2: 2, 3: 3}[ocean_edge]
 
-    # ── 1. Main trunk ─────────────────────────────────────────────────────────
-    trunk = _trunk_path(seed, rng)
-    _paint(trunk, hw=1, tiles=river_tiles)
-    _paint(trunk[len(trunk)//4: 3*len(trunk)//4], hw=2, tiles=river_tiles)
-    paths_orders.append((trunk, 4))
-    trunk_set = set(trunk)
+    # ── 1. Main trunks (2-3 rivers) ───────────────────────────────────────────
+    # Spread start_cross positions across the cross-axis so rivers are separated.
+    num_trunks = rng.randint(2, 3)
+    usable      = WORLD_SIZE - 80          # usable cross-axis range: [40, WORLD_SIZE-40]
+    section_w   = usable // num_trunks
+    trunk_starts: list[float] = []
+    for ti in range(num_trunks):
+        lo = 40 + ti * section_w
+        hi = 40 + (ti + 1) * section_w
+        trunk_starts.append(float(rng.randint(lo, min(hi, WORLD_SIZE - 40))))
+
+    trunks: list[list[tuple[int, int]]] = []
+    for ti, sc in enumerate(trunk_starts):
+        # Perturb the seed per-trunk so each one has a distinct shape
+        trunk_seed = (seed ^ (0xFEED_0000 + ti)) & 0xFFFF_FFFF
+        trunk = _trunk_path(trunk_seed, rng, start_cross=sc)
+        before = set(river_tiles)
+        _paint(trunk, hw=1, tiles=river_tiles)
+        _paint(trunk[len(trunk)//4: 3*len(trunk)//4], hw=2, tiles=river_tiles)
+        trunk_painted.update(river_tiles - before)
+        paths_orders.append((trunk, 4))
+        trunks.append(trunk)
+
+    # Combined trunk tile set for trib convergence targets
+    all_trunk_tiles: list[tuple[int, int]] = [t for tr in trunks for t in tr]
 
     # ── 2. Major tributaries ──────────────────────────────────────────────────
     # Each starts from a random position and converges to the nearest trunk tile.
@@ -445,7 +469,7 @@ def _generate_rivers_sync(
             continue   # couldn't find a valid land start
 
         # Convergence: nearest trunk tile to the start point
-        conv = min(trunk, key=lambda t: math.hypot(t[0]-sx, t[1]-sy))  # type: ignore[arg-type]
+        conv = min(all_trunk_tiles, key=lambda t: math.hypot(t[0]-sx, t[1]-sy))  # type: ignore[arg-type]
 
         trib_seed = (seed ^ (0x1000 + i)) & 0xFFFFFFFF
         trib = _trib_path(
@@ -504,11 +528,19 @@ def _generate_rivers_sync(
     _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
 
     # ── 5. Strip river/bridge tiles from ocean, shallow-water, and sand zones ─
-    # Rivers stop at the land/sand boundary — they do not enter the beach.
+    # Trunk rivers flow all the way to the ocean: only deep_water tiles are
+    # stripped from trunk-painted tiles (river mouth passes through sand →
+    # shallow_water and stops before the deep sea).
+    # Tributaries are still blocked from entering any coastal biome.
     # Bridge tiles are exempt (a bridge over a natural water body is valid).
-    _river_filter = _WATER_BIOMES | {"sand"}
-    river_tiles = {(x, y) for x, y in river_tiles
-                   if get_biome(x, y, seed) not in _river_filter}
+    _trib_filter   = _WATER_BIOMES | {"sand"}   # full coastal strip for tribs
+    _trunk_filter  = {"deep_water"}              # trunks only stop at deep water
+    river_tiles = {
+        (x, y) for x, y in river_tiles
+        if get_biome(x, y, seed) not in (
+            _trunk_filter if (x, y) in trunk_painted else _trib_filter
+        )
+    }
 
     bridge_tiles = {(x, y) for x, y in bridge_tiles
                     if get_biome(x, y, seed) not in _WATER_BIOMES}
