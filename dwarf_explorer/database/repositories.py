@@ -627,6 +627,16 @@ async def get_island_tiles(db: Database, island_id: int) -> list[tuple]:
     return [(r["local_x"], r["local_y"], r["tile_type"]) for r in rows]
 
 
+async def update_island_tile(
+    db: Database, island_id: int, local_x: int, local_y: int, tile_type: str
+) -> None:
+    """Change a single island tile type in the DB (e.g. island_forest → island_sapling)."""
+    await db.execute(
+        "UPDATE island_tiles SET tile_type=? WHERE island_id=? AND local_x=? AND local_y=?",
+        (tile_type, island_id, local_x, local_y),
+    )
+
+
 async def is_island_looted(db: Database, ocean_x: int, ocean_y: int) -> bool:
     row = await db.fetch_one(
         "SELECT 1 FROM island_loots WHERE ocean_x=? AND ocean_y=?",

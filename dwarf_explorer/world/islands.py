@@ -17,8 +17,8 @@ import random as _rng_module
 
 
 ISLAND_SIZE = 11   # square grid
-ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest",
-                   "island_chest", "island_dock"}
+ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree",
+                   "island_chest", "island_dock", "island_sapling"}
 
 
 def _generate_island_tiles(

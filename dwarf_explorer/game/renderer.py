@@ -14,6 +14,8 @@ _FOV_RADIUS = 3.0   # torch illumination radius in tiles
 def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
     if location == "ship":
         return SHIP_EMOJI.get(tile.terrain, "\u2B1B")
+    if location == "island":
+        return _ISLAND_TERRAIN_EMOJI.get(tile.terrain, "🌊")
     if location == "cave":
         return CAVE_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
@@ -51,6 +53,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     """
     if player.in_ship:
         location = "ship"
+    elif player.in_island:
+        location = "island"
     elif player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
     elif player.in_village:
@@ -115,7 +119,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         lines.append("".join(row_emojis))
 
     lines.append("")
-    hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
+    # Ship HP replaces player HP display when inside the ship
+    if player.in_ship:
+        hp_bar = f"\U0001F6F3\uFE0F {player.ship_hp}/{player.ship_max_hp}"
+    else:
+        hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
     gold = f"\U0001FA99 {player.gold}"
     if player.in_ship:
         room_labels = {"helm": "Helm", "quarters": "Captain's Quarters", "lower_deck": "Lower Deck"}
@@ -129,6 +137,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         }
         label = loc_labels.get(player.house_type, "Building")
         pos = f"\U0001F4CD {label} ({player.house_x},{player.house_y})"
+    elif player.in_island:
+        pos = f"\U0001F3DD\uFE0F Island ({player.ocean_x},{player.ocean_y})"
     elif player.in_village:
         pos = f"\U0001F4CD Village ({player.village_x},{player.village_y})"
     elif player.in_cave:
@@ -422,12 +432,14 @@ def render_ship_chest(
 # ── Island rendering ───────────────────────────────────────────────────────────
 
 _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
-    "island_void":   "🌊",
-    "island_sand":   "🟡",
-    "island_grass":  "🌿",
-    "island_forest": "🌴",
-    "island_chest":  "📦",
-    "island_dock":   "⚓",
+    "island_void":    "🌊",
+    "island_sand":    "🟡",
+    "island_grass":   "🌿",
+    "island_forest":  "🌴",
+    "island_tree":    "🌴",
+    "island_sapling": "🌱",
+    "island_chest":   "💰",   # distinct treasure-chest look
+    "island_dock":    "⚓",
 }
 
 

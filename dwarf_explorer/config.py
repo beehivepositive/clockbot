@@ -132,8 +132,8 @@ CANOE_PASSABLE = {"river", "bridge", "shallow_water", "deep_water"}
 OCEAN_WALKABLE = {"deep_water", "shallow_water", "harbor"}
 
 # Tile types walkable on an island interior
-ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest",
-                   "island_chest", "island_dock"}
+ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree",
+                   "island_chest", "island_dock", "island_sapling"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
 STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island"}

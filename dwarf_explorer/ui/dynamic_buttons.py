@@ -26,6 +26,7 @@ from dwarf_explorer.ui.game_view import (
     handle_ship_chest_open_personal, handle_ship_chest_open_cargo,
     handle_ship_chest_close,
     handle_island_move, handle_island_loot, handle_island_leave,
+    handle_ocean_fish, handle_island_dock_hs,
     _ship_chest_action,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
@@ -134,12 +135,17 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await _ship_chest_action(interaction, gid, uid, "cargo", sub)
             # Island
             elif act in ("island_up", "island_down", "island_left", "island_right"):
+                # Route through handle_move → _move_steps island branch
                 direction = act.removeprefix("island_")
-                await handle_island_move(interaction, gid, uid, direction)
+                await handle_move(interaction, gid, uid, direction)
             elif act == "island_loot":
                 await handle_island_loot(interaction, gid, uid)
             elif act == "island_leave":
                 await handle_island_leave(interaction, gid, uid)
+            elif act == "island_dock_hs":
+                await handle_island_dock_hs(interaction, gid, uid)
+            elif act == "ocean_fish":
+                await handle_ocean_fish(interaction, gid, uid)
             elif act in _CANOE_MOVE_ACTIONS:
                 direction = act[6:]  # strip "canoe_" prefix
                 await handle_canoe_move(interaction, gid, uid, direction)

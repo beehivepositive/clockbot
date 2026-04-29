@@ -33,6 +33,7 @@ from dwarf_explorer.database.repositories import (
     get_ship_cargo_items, ship_cargo_deposit, ship_cargo_withdraw,
     update_player_island_state,
     is_island_looted, mark_island_looted,
+    update_island_tile,
     get_cave_entrance_exit,
     equip_item, unequip_item,
     get_inventory,
@@ -706,7 +707,8 @@ class BoatView(discord.ui.View):
     Row 3: ↙ ↓ ↘
     """
 
-    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False):
+    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False,
+                 has_fishing_rod: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -734,8 +736,10 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
-        # Row 4: Ship interior
+        # Row 4: Ship interior | optional Fishing
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
+        if has_fishing_rod:
+            self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
 
 
 # ── High-seas view (separate 200×200 open-ocean grid) ────────────────────────
@@ -743,7 +747,8 @@ class BoatView(discord.ui.View):
 class OceanView(discord.ui.View):
     """8-directional high-seas navigation + Dock button."""
 
-    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False):
+    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False,
+                 island_nearby: bool = False, has_fishing_rod: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -754,12 +759,14 @@ class OceanView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Help | ⚓ Dock
+        # Row 0: Map | Inv | Help | ⚓ Dock | 🏝️ Island (if nearby)
         self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
         if dock_available:
             self.add_item(_btn("⚓ Dock", "ocean_dock", 0, discord.ButtonStyle.success))
+        if island_nearby:
+            self.add_item(_btn("🏝️ Island", "island_dock_hs", 0, discord.ButtonStyle.success))
 
         # Row 1: ↖ ↑ ↗
         self.add_item(_btn("↖", "ocean_upleft",   1))
@@ -775,6 +782,11 @@ class OceanView(discord.ui.View):
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
+
+        # Row 4: Ship interior | optional Fishing
+        self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
+        if has_fishing_rod:
+            self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
 
 
 class MerchantView(discord.ui.View):
@@ -1041,6 +1053,26 @@ def _compute_context_labels(
                 center_label, center_enabled = "\U0001F4E6", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled
 
+        # Island tile context
+        if player.in_island:
+            if t == "island_dock":
+                center_label, center_enabled = "⛵ Leave", True
+            elif t == "island_chest":
+                center_label, center_enabled = "💰 Loot", True
+            elif t in ("island_forest", "island_tree") and "axe" in hand_items:
+                center_label, center_enabled = "🪓", True
+            # Fishing: adjacent to island_void (open ocean surrounding island)
+            local_adj: set[str] = set()
+            for _ro, _co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _r, _c = vc + _ro, vc + _co
+                if 0 <= _r < len(grid) and 0 <= _c < len(grid[_r]):
+                    _adj = grid[_r][_c]
+                    if _adj.terrain:
+                        local_adj.add(_adj.terrain)
+            if "fishing_rod" in hand_items and "island_void" in local_adj:
+                action_label, action_enabled = "🎣 Fish", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled
+
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
             center_label, center_enabled = "🏠", True
@@ -1168,17 +1200,24 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                grid: list[list] | None = None,
                dock_available: bool = False) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
+    has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+
     # When player is in ship, use ship tile view (GameView with ship grid)
     if player.in_ship:
         if grid is None:
             grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
         # Fall through to GameView builder below (skip other mode checks)
     elif player.in_island:
-        return IslandView(guild_id, user_id)
+        pass  # Fall through to GameView; caller must supply grid
     elif player.in_high_seas:
-        return OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0))
+        island_nearby = bool(_ui_state.get(user_id, {}).get("island_target"))
+        return OceanView(guild_id, user_id,
+                         dock_available=(player.ocean_y == 0),
+                         island_nearby=island_nearby,
+                         has_fishing_rod=has_fishing_rod)
     elif player.in_ocean:
-        return BoatView(guild_id, user_id, dock_available=dock_available)
+        return BoatView(guild_id, user_id, dock_available=dock_available,
+                        has_fishing_rod=has_fishing_rod)
     elif player.in_canoe:
         return CanoeView(guild_id, user_id, dock_available=False)
 
@@ -1530,6 +1569,27 @@ async def _move_steps(
                 nx, ny, player.village_wx, player.village_wy,
             )
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+
+    elif player.in_island:
+        from dwarf_explorer.config import ISLAND_WALKABLE
+        from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+        ox, oy = player.island_ox, player.island_oy
+        px, py = player.ocean_x, player.ocean_y
+        nx, ny = px + dx, py + dy
+
+        _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+        tile_map = {(lx, ly): tt for lx, ly, tt in tiles}
+        target_terrain = tile_map.get((nx, ny), "island_void")
+
+        if target_terrain not in ISLAND_WALKABLE:
+            grid = load_island_viewport(tiles, px, py)
+            return render_grid(grid, player, "You can't go that way."), \
+                   _game_view(guild_id, user_id, player, grid=grid)
+
+        player.ocean_x, player.ocean_y = nx, ny
+        await update_player_ocean_state(db, user_id, False, nx, ny)
+        grid = load_island_viewport(tiles, nx, ny)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_cave:
@@ -2274,8 +2334,23 @@ async def handle_ocean_move(
 
         target_ocean = load_ocean_single_tile(nx, ny, seed)
         if target_ocean.structure == "island":
-            await handle_island_arrive(interaction, guild_id, user_id, nx, ny)
+            # Block movement onto island tile — show dock button instead
+            _ui_state[user_id] = {**_ui_state.get(user_id, {}), "island_target": (nx, ny)}
+            has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+            grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+            content = render_grid(grid, player,
+                "🏝️ An island lies ahead. Use 🏝️ Island to go ashore.")
+            view = OceanView(guild_id, user_id,
+                             dock_available=(player.ocean_y == 0),
+                             island_nearby=True,
+                             has_fishing_rod=has_rod)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
+
+        # Clear any stale island_target when moving away
+        if _ui_state.get(user_id, {}).get("island_target"):
+            _ui_state[user_id] = {k: v for k, v in _ui_state.get(user_id, {}).items()
+                                   if k != "island_target"}
 
         player.ocean_x, player.ocean_y = nx, ny
         await update_player_ocean_state(db, user_id, False, nx, ny, in_high_seas=True)
@@ -2304,11 +2379,13 @@ async def handle_ocean_move(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
         grid = load_ocean_viewport(nx, ny, seed)
         content = render_grid(grid, player)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
-            view=OceanView(guild_id, user_id, dock_available=(ny == 0)),
+            view=OceanView(guild_id, user_id, dock_available=(ny == 0),
+                           has_fishing_rod=has_rod),
         )
         return
 
@@ -2317,10 +2394,20 @@ async def handle_ocean_move(
 
     # Moving off the world edge → enter the high seas
     if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+        from dwarf_explorer.world.terrain import get_coast_boundary as _gcb
+        _coast_edge, _ = _gcb(seed)
+        # Map the player's position along the coastline to ocean_x,
+        # so they spawn at the matching offset in the high-seas grid.
+        if _coast_edge in (0, 1):  # south/north ocean — world_x spans the coast
+            spawn_ox = int(player.world_x / WORLD_SIZE * OCEAN_SIZE)
+        else:  # east/west ocean — world_y spans the coast
+            spawn_ox = int(player.world_y / WORLD_SIZE * OCEAN_SIZE)
+        spawn_ox = max(0, min(OCEAN_SIZE - 1, spawn_ox))
         player.in_ocean = False
         player.in_high_seas = True
-        player.ocean_x = OCEAN_SIZE // 2
-        player.ocean_y = OCEAN_SIZE // 2
+        player.ocean_x = spawn_ox
+        player.ocean_y = 1  # just inside the boundary; oy=0 means "return to harbour"
+        has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
         await update_player_ocean_state(
             db, user_id, False,
             player.ocean_x, player.ocean_y,
@@ -2331,7 +2418,7 @@ async def handle_ocean_move(
         content = render_grid(grid, player, "🌊 You sail beyond the horizon into the open ocean!")
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
-            view=OceanView(guild_id, user_id, dock_available=False),
+            view=OceanView(guild_id, user_id, dock_available=False, has_fishing_rod=has_rod),
         )
         return
 
@@ -2501,7 +2588,7 @@ async def handle_ship_enter(
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    if not player.in_ocean:
+    if not (player.in_ocean or player.in_high_seas):
         await interaction.response.defer()
         return
 
@@ -2528,16 +2615,25 @@ async def handle_ship_leave(
         await interaction.response.defer()
         return
 
+    was_high_seas = player.in_high_seas
     player.in_ship = False
     player.ship_room = "helm"
     player.ship_x = 0
     player.ship_y = 0
     await update_player_ship_state(db, user_id, False, "helm", ship_x=0, ship_y=0)
 
-    harbor_adj = await _adjacent_harbor(player, seed, db)
-    grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
-    view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None))
+    has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+    if was_high_seas:
+        grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
+        view = OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0),
+                        has_fishing_rod=has_rod)
+    else:
+        harbor_adj = await _adjacent_harbor(player, seed, db)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
+        view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None),
+                        has_fishing_rod=has_rod)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2792,10 +2888,10 @@ async def handle_island_arrive(
     await update_player_ocean_state(db, user_id, False, dock_x, dock_y)
 
     grid = load_island_viewport(tiles, dock_x, dock_y)
-    looted = await is_island_looted(db, ox, oy)
-    content = render_island(grid, dock_x, dock_y, player,
-                            "🏝️ You row ashore onto the island.")
-    view = IslandView(guild_id, user_id, can_loot=False, on_dock=True)
+    content = render_grid(grid, player, "🏝️ You row ashore onto the island.")
+    # Clear any island_target from high-seas ui_state
+    _ui_state.pop(user_id, None)
+    view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2827,13 +2923,8 @@ async def handle_island_move(
 
     if target_terrain not in ISLAND_WALKABLE:
         grid = load_island_viewport(tiles, px, py)
-        on_dock = tile_map.get((px, py)) == "island_dock"
-        can_loot_here = tile_map.get((px, py)) == "island_chest"
-        looted = await is_island_looted(db, ox, oy)
-        content = render_island(grid, px, py, player, "You can't go that way.")
-        view = IslandView(guild_id, user_id,
-                          can_loot=(can_loot_here and not looted),
-                          on_dock=on_dock)
+        content = render_grid(grid, player, "You can't go that way.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -2841,13 +2932,8 @@ async def handle_island_move(
     await update_player_ocean_state(db, user_id, False, nx, ny)
 
     grid = load_island_viewport(tiles, nx, ny)
-    on_dock = target_terrain == "island_dock"
-    can_loot_here = target_terrain == "island_chest"
-    looted = await is_island_looted(db, ox, oy)
-    content = render_island(grid, nx, ny, player)
-    view = IslandView(guild_id, user_id,
-                      can_loot=(can_loot_here and not looted),
-                      on_dock=on_dock)
+    content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2868,24 +2954,17 @@ async def handle_island_loot(
     px, py = player.ocean_x, player.ocean_y
 
     already = await is_island_looted(db, ox, oy)
+    _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+    grid = load_island_viewport(tiles, px, py)
     if already:
-        _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
-        grid = load_island_viewport(tiles, px, py)
-        content = render_island(grid, px, py, player, "📦 The chest has already been looted.")
-        view = IslandView(guild_id, user_id, can_loot=False, on_dock=False)
+        content = render_grid(grid, player, "💰 The chest has already been looted.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     await mark_island_looted(db, ox, oy)
 
-    import random as _irng
     loot_rng = _random.Random(hash((ox, oy, seed, "island_loot")))
-    loot_table = [
-        ("gold_coin", loot_rng.randint(10, 50)),
-        ("gem", loot_rng.randint(1, 3)),
-        ("map_fragment", 1),
-        ("iron_ingot", loot_rng.randint(2, 5)),
-    ]
     roll = loot_rng.random()
     if roll < 0.4:
         item_id, qty = "gold_coin", loot_rng.randint(10, 50)
@@ -2899,11 +2978,8 @@ async def handle_island_loot(
     await add_to_inventory(db, user_id, item_id, qty)
     label = item_id.replace("_", " ").title()
 
-    _island_id, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
-    grid = load_island_viewport(tiles, px, py)
-    content = render_island(grid, px, py, player,
-                            f"📦 You pry open the chest — **{label} ×{qty}**!")
-    view = IslandView(guild_id, user_id, can_loot=False, on_dock=False)
+    content = render_grid(grid, player, f"💰 You pry open the chest — **{label} ×{qty}**!")
+    view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -2926,10 +3002,77 @@ async def handle_island_leave(
     await update_player_island_state(db, user_id, False)
     await update_player_ocean_state(db, user_id, False, ox, oy, in_high_seas=True)
 
+    has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
     grid = load_ocean_viewport(ox, oy, seed)
     content = render_grid(grid, player, "⛵ You row back to your boat.")
-    view = OceanView(guild_id, user_id, dock_available=(oy == 0))
+    view = OceanView(guild_id, user_id, dock_available=(oy == 0), has_fishing_rod=has_rod)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_ocean_fish(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Handle the 🎣 Fish button from OceanView or BoatView."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not (player.in_ocean or player.in_high_seas):
+        await interaction.response.defer()
+        return
+
+    hand_items: set[str] = set()
+    if player.hand_1:
+        hand_items.add(player.hand_1)
+    if player.hand_2:
+        hand_items.add(player.hand_2)
+
+    if "fishing_rod" not in hand_items:
+        await interaction.response.defer()
+        return
+
+    roll = _random.random()
+    if roll < 0.45:
+        await add_to_inventory(db, user_id, "fish", 1)
+        msg = "🎣 You cast your line into the ocean... and reel in a **fish**!"
+    elif roll < 0.50:
+        await add_to_inventory(db, user_id, "gem", 1)
+        msg = "🎣 Something shiny on the hook — you pulled up a **gem**!"
+    elif roll < 0.51:
+        await add_to_inventory(db, user_id, "map_fragment", 1)
+        msg = "🎣 You reel in something unusual — a **map fragment**!"
+    else:
+        msg = "🎣 You cast your line... the fish got away."
+
+    has_rod = True
+    if player.in_high_seas:
+        grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        island_nearby = bool(_ui_state.get(user_id, {}).get("island_target"))
+        view = OceanView(guild_id, user_id,
+                         dock_available=(player.ocean_y == 0),
+                         island_nearby=island_nearby,
+                         has_fishing_rod=has_rod)
+    else:
+        harbor_adj = await _adjacent_harbor(player, seed, db)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        view = BoatView(guild_id, user_id,
+                        dock_available=(harbor_adj is not None),
+                        has_fishing_rod=has_rod)
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_island_dock_hs(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Dock at an island from the high seas (triggered by 🏝️ Island button)."""
+    state = _ui_state.get(user_id, {})
+    island_target = state.get("island_target")
+    if not island_target:
+        await interaction.response.defer()
+        return
+    ox, oy = island_target
+    await handle_island_arrive(interaction, guild_id, user_id, ox, oy)
 
 
 # ── Merchant handlers ────────────────────────────────────────────────────────
@@ -3303,6 +3446,90 @@ async def handle_interact(
 
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+    elif player.in_island:
+        from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+        ox, oy = player.island_ox, player.island_oy
+        px, py = player.ocean_x, player.ocean_y
+
+        _iid, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+        tile_map = {(lx, ly): tt for lx, ly, tt in tiles}
+        current_terrain = tile_map.get((px, py), "island_void")
+
+        hand_items: set[str] = set()
+        if player.hand_1:
+            hand_items.add(player.hand_1)
+        if player.hand_2:
+            hand_items.add(player.hand_2)
+
+        if current_terrain == "island_dock":
+            # Leave island → return to high seas
+            player.in_island = False
+            player.in_high_seas = True
+            player.ocean_x, player.ocean_y = ox, oy
+            await update_player_island_state(db, user_id, False)
+            await update_player_ocean_state(db, user_id, False, ox, oy, in_high_seas=True)
+            has_rod = "fishing_rod" in hand_items
+            grid = load_ocean_viewport(ox, oy, seed)
+            content = render_grid(grid, player, "⛵ You row back to your boat.")
+            view = OceanView(guild_id, user_id, dock_available=(oy == 0),
+                             has_fishing_rod=has_rod)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif current_terrain == "island_chest":
+            already = await is_island_looted(db, ox, oy)
+            grid = load_island_viewport(tiles, px, py)
+            if already:
+                content = render_grid(grid, player, "💰 The chest has already been looted.")
+            else:
+                await mark_island_looted(db, ox, oy)
+                loot_rng = _random.Random(hash((ox, oy, seed, "island_loot")))
+                roll = loot_rng.random()
+                if roll < 0.4:
+                    item_id, qty = "gold_coin", loot_rng.randint(10, 50)
+                elif roll < 0.65:
+                    item_id, qty = "gem", loot_rng.randint(1, 3)
+                elif roll < 0.80:
+                    item_id, qty = "map_fragment", 1
+                else:
+                    item_id, qty = "iron_ingot", loot_rng.randint(2, 5)
+                await add_to_inventory(db, user_id, item_id, qty)
+                label = item_id.replace("_", " ").title()
+                content = render_grid(grid, player,
+                                      f"💰 You pry open the chest — **{label} ×{qty}**!")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif current_terrain in ("island_forest", "island_tree") and "axe" in hand_items:
+            # Chop island tree
+            await update_island_tile(db, _iid, px, py, "island_sapling")
+            await add_to_inventory(db, user_id, "log", 1)
+            chop_rng = _random.Random()
+            extras = []
+            if chop_rng.random() < 0.66:
+                await add_to_inventory(db, user_id, "stick", 1)
+                extras.append("a stick")
+            if chop_rng.random() < 0.33:
+                await add_to_inventory(db, user_id, "resin", 1)
+                extras.append("some resin")
+            extra_str = (", " + ", ".join(extras)) if extras else ""
+            # Reload tiles after update
+            _iid2, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+            grid = load_island_viewport(tiles, px, py)
+            content = render_grid(grid, player,
+                f"🪓 You chop down the palm tree! Got a log{extra_str}. A sapling remains.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        else:
+            grid = load_island_viewport(tiles, px, py)
+            content = render_grid(grid, player, "Nothing to interact with here.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
     else:
         # Wilderness interact
@@ -3741,6 +3968,38 @@ async def handle_action(
         if "b_bank_npc" in adj_terrains:
             return await _open_bank(interaction, guild_id, user_id, player, db)
 
+        content = render_grid(grid, player, "Nothing to interact with nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Island: fishing adjacent to ocean ────────────────────────────────────
+    if player.in_island:
+        from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+        ox, oy = player.island_ox, player.island_oy
+        px, py = player.ocean_x, player.ocean_y
+        _iid, tiles, _ = await get_or_create_island_data(db, ox, oy, seed)
+        grid = load_island_viewport(tiles, px, py)
+        if "fishing_rod" in hand_items:
+            tile_map = {(lx, ly): tt for lx, ly, tt in tiles}
+            near_water = any(
+                tile_map.get((px + ddx, py + ddy), "island_void") == "island_void"
+                for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0))
+            )
+            if near_water:
+                roll = _random.random()
+                if roll < 0.50:
+                    await add_to_inventory(db, user_id, "fish", 1)
+                    msg = "🎣 You cast your line off the island shore... and reel in a **fish**!"
+                elif roll < 0.51:
+                    await add_to_inventory(db, user_id, "map_fragment", 1)
+                    msg = "🎣 You reel in something unusual — a **map fragment**!"
+                else:
+                    msg = "🎣 You cast your line... the fish got away."
+                content = render_grid(grid, player, msg)
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -4283,6 +4542,11 @@ async def handle_inventory(
     if player.in_ocean or player.in_high_seas:
         # Show ship cargo chest instead of personal inventory
         await _open_ship_chest(interaction, guild_id, user_id, "cargo")
+        return
+
+    if player.in_ship:
+        # Show personal chest as default inventory when inside the ship
+        await _open_ship_chest(interaction, guild_id, user_id, "personal")
         return
 
     prev_state = _ui_state.get(user_id, {})
