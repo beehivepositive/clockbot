@@ -730,7 +730,7 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↗", "ocean_upright",  1))
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(_btn("🪝 Hook", "boat_grapple", 2, discord.ButtonStyle.secondary))
         self.add_item(_btn("➡️", "ocean_right",  2))
         # Row 3: ↙ ↓ ↘
         self.add_item(_btn("↙", "ocean_downleft",  3))
@@ -775,7 +775,7 @@ class OceanView(discord.ui.View):
 
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(_btn("🪝 Hook", "boat_grapple", 2, discord.ButtonStyle.secondary))
         self.add_item(_btn("➡️", "ocean_right",  2))
 
         # Row 3: ↙ ↓ ↘
@@ -1044,13 +1044,15 @@ def _compute_context_labels(
         # Ship tile context (highest priority when in_ship)
         if player.in_ship:
             if t == "ship_helm":
-                center_label, center_enabled = "\u2693", True
+                center_label, center_enabled = "⚓", True
             elif t == "ship_door":
-                center_label, center_enabled = "\U0001F6AA", True
+                center_label, center_enabled = "🚪", True
             elif t == "ship_chest_personal":
-                center_label, center_enabled = "\U0001F4E6", True
+                from dwarf_explorer.config import SHIP_EMOJI
+                center_label, center_enabled = SHIP_EMOJI.get("ship_chest_personal", "📦"), True
             elif t == "ship_chest_cargo":
-                center_label, center_enabled = "\U0001F4E6", True
+                from dwarf_explorer.config import SHIP_EMOJI
+                center_label, center_enabled = SHIP_EMOJI.get("ship_chest_cargo", "📦"), True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled
 
         # Island tile context
@@ -2317,6 +2319,46 @@ _OCEAN_DIRS: dict[str, tuple[int, int]] = {
 }
 
 
+def _hs_spawn(world_x: int, world_y: int, coast_edge: int) -> tuple[int, int]:
+    """Return (ocean_x, ocean_y) spawn position when entering the high seas.
+
+    The player always spawns one tile in from the harbor/coast boundary so
+    they can sail back with a single move.
+      edge 0 (south): harbor at oy=0, deep at high oy  → spawn oy=1
+      edge 1 (north): harbor at oy=OCEAN_SIZE-1         → spawn oy=OCEAN_SIZE-2
+      edge 2 (west) : harbor at ox=OCEAN_SIZE-1         → spawn ox=OCEAN_SIZE-2
+      edge 3 (east) : harbor at ox=0                    → spawn ox=1
+    """
+    cross = int
+    if coast_edge in (0, 1):        # N/S ocean: world_x maps to ocean_x
+        ox = max(0, min(OCEAN_SIZE - 1, int(world_x / WORLD_SIZE * OCEAN_SIZE)))
+        oy = 1 if coast_edge == 0 else OCEAN_SIZE - 2
+    else:                            # E/W ocean: world_y maps to ocean_y
+        oy = max(0, min(OCEAN_SIZE - 1, int(world_y / WORLD_SIZE * OCEAN_SIZE)))
+        ox = OCEAN_SIZE - 2 if coast_edge == 2 else 1
+    return ox, oy
+
+
+def _hs_at_harbor(ox: int, oy: int, coast_edge: int) -> bool:
+    """True when one more step toward shore would leave the high-seas grid."""
+    return (
+        (coast_edge == 0 and oy == 0) or
+        (coast_edge == 1 and oy == OCEAN_SIZE - 1) or
+        (coast_edge == 2 and ox == OCEAN_SIZE - 1) or
+        (coast_edge == 3 and ox == 0)
+    )
+
+
+def _hs_past_harbor(nx: int, ny: int, coast_edge: int) -> bool:
+    """True when the proposed move steps outside the high-seas grid on the harbor side."""
+    return (
+        (coast_edge == 0 and ny < 0) or
+        (coast_edge == 1 and ny >= OCEAN_SIZE) or
+        (coast_edge == 2 and nx >= OCEAN_SIZE) or
+        (coast_edge == 3 and nx < 0)
+    )
+
+
 async def handle_ocean_move(
     interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
 ) -> None:
@@ -2334,8 +2376,11 @@ async def handle_ocean_move(
     if player.in_high_seas:
         nx, ny = player.ocean_x + dx, player.ocean_y + dy
 
-        # Moving back to coast row → auto-return to harbour village
-        if ny < 0:
+        from dwarf_explorer.world.terrain import get_coast_boundary as _gcb
+        _hs_coast_edge, _ = _gcb(seed)
+
+        # Moving back past the harbor boundary → auto-return to harbour village
+        if _hs_past_harbor(nx, ny, _hs_coast_edge):
             hwx, hwy = player.ocean_harbor_wx, player.ocean_harbor_wy
             vid, _vx, _vy, dock_x, dock_y = await get_or_create_harbor_village(seed, hwx, hwy, db)
             player.in_high_seas = False
@@ -2358,7 +2403,8 @@ async def handle_ocean_move(
             content = render_grid(grid, player, "The vast ocean stretches endlessly in that direction.")
             await interaction.response.edit_message(
                 embed=_embed(content), content=None,
-                view=OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0)),
+                view=OceanView(guild_id, user_id,
+                               dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge)),
             )
             return
 
@@ -2371,7 +2417,7 @@ async def handle_ocean_move(
             content = render_grid(grid, player,
                 "🏝️ An island lies ahead. Use 🏝️ Island to go ashore.")
             view = OceanView(guild_id, user_id,
-                             dock_available=(player.ocean_y == 0),
+                             dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge),
                              island_nearby=True,
                              has_fishing_rod=has_rod)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -2414,7 +2460,8 @@ async def handle_ocean_move(
         content = render_grid(grid, player)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
-            view=OceanView(guild_id, user_id, dock_available=(ny == 0),
+            view=OceanView(guild_id, user_id,
+                           dock_available=_hs_at_harbor(nx, ny, _hs_coast_edge),
                            has_fishing_rod=has_rod),
         )
         return
@@ -2426,17 +2473,11 @@ async def handle_ocean_move(
     if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
         from dwarf_explorer.world.terrain import get_coast_boundary as _gcb
         _coast_edge, _ = _gcb(seed)
-        # Map the player's position along the coastline to ocean_x,
-        # so they spawn at the matching offset in the high-seas grid.
-        if _coast_edge in (0, 1):  # south/north ocean — world_x spans the coast
-            spawn_ox = int(player.world_x / WORLD_SIZE * OCEAN_SIZE)
-        else:  # east/west ocean — world_y spans the coast
-            spawn_ox = int(player.world_y / WORLD_SIZE * OCEAN_SIZE)
-        spawn_ox = max(0, min(OCEAN_SIZE - 1, spawn_ox))
+        spawn_ox, spawn_oy = _hs_spawn(player.world_x, player.world_y, _coast_edge)
         player.in_ocean = False
         player.in_high_seas = True
         player.ocean_x = spawn_ox
-        player.ocean_y = 1  # just inside the boundary; oy=0 means "return to harbour"
+        player.ocean_y = spawn_oy
         has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
         await update_player_ocean_state(
             db, user_id, False,

@@ -648,6 +648,9 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI, "b_floor",           "grey_square"),
         (BUILDING_EMOJI, "b_floor_wood",      "wood_floor"),
         (BUILDING_EMOJI, "b_shelf",           "chest"),
+        (SHIP_EMOJI,     "ship_deck",         "wood_floor"),
+        (SHIP_EMOJI,     "ship_chest_personal", "chest"),
+        (SHIP_EMOJI,     "ship_chest_cargo",    "chest"),
         (BUILDING_EMOJI, "b_forge",           "forge"),
         (VILLAGE_EMOJI,  "vil_grass",         "grass"),
     ]
@@ -678,3 +681,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         if emoji_name in cache:
             ITEM_EMOJI[item_key] = cache[emoji_name]
             _renderer._ITEM_SLOT_EMOJI[item_key] = cache[emoji_name]
+
+    # Island chest uses the same custom :chest: emoji
+    if "chest" in cache:
+        _renderer._ISLAND_TERRAIN_EMOJI["island_chest"] = cache["chest"]

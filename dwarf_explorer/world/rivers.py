@@ -410,7 +410,7 @@ def _generate_rivers_sync(
 
     # ── 1. Main trunks (2-3 rivers) ───────────────────────────────────────────
     # Spread start_cross positions across the cross-axis so rivers are separated.
-    num_trunks = rng.randint(2, 3)
+    num_trunks = 1 if rng.random() < 0.65 else 2  # usually 1, occasionally 2
     usable      = WORLD_SIZE - 80          # usable cross-axis range: [40, WORLD_SIZE-40]
     section_w   = usable // num_trunks
     trunk_starts: list[float] = []
@@ -437,7 +437,7 @@ def _generate_rivers_sync(
     # ── 2. Major tributaries ──────────────────────────────────────────────────
     # Each starts from a random position and converges to the nearest trunk tile.
     # Start positions are validated to be on land (not ocean/beach/sand zone).
-    num_major = rng.randint(5, 8)
+    num_major = rng.randint(8, 13)  # more tributaries per trunk
     all_river = set(river_tiles)
 
     for i in range(num_major):

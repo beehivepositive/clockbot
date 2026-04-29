@@ -104,7 +104,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                         row_emojis.append(_BLACK)
             else:
                 if is_center:
-                    if player.in_ocean or player.in_high_seas:
+                    if (player.in_ocean or player.in_high_seas) and not player.in_ship:
                         row_emojis.append(ENTITY_EMOJI["player_boat"])
                     else:
                         row_emojis.append(ENTITY_EMOJI["player"])
