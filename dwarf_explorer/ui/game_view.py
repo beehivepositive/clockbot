@@ -1482,7 +1482,37 @@ async def _move_steps(
         grid = await load_viewport(nx, ny, seed, db)
         return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=(landing is not None))
 
-    if player.in_house:
+    if player.in_ship:
+        nx, ny = player.ship_x + dx, player.ship_y + dy
+        # Door transition takes priority over walkability
+        door_target = get_door_target(player.ship_room, nx, ny)
+        if door_target:
+            new_room, new_x, new_y = door_target
+            player.ship_room = new_room
+            player.ship_x, player.ship_y = new_x, new_y
+            await update_player_ship_state(db, user_id, True, new_room,
+                                           ship_x=new_x, ship_y=new_y)
+            _room_names = {"helm": "the helm deck",
+                           "quarters": "the captain's quarters",
+                           "lower_deck": "the lower deck"}
+            grid = load_ship_viewport(new_room, new_x, new_y)
+            return (render_grid(grid, player,
+                                f"\U0001F6AA You enter {_room_names.get(new_room, new_room)}."),
+                    _game_view(guild_id, user_id, player, grid=grid))
+        target_grid = load_ship_viewport(player.ship_room, nx, ny)
+        target_tile = target_grid[4][4]
+        ok, msg = can_move_ship(target_tile)
+        if not ok:
+            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+            return render_grid(grid, player, f"\U0001F6AB {msg}"), \
+                   _game_view(guild_id, user_id, player, grid=grid)
+        player.ship_x, player.ship_y = nx, ny
+        await update_player_ship_state(db, user_id, True, player.ship_room,
+                                       ship_x=nx, ship_y=ny)
+        grid = load_ship_viewport(player.ship_room, nx, ny)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+
+    elif player.in_house:
         _is_ph = (player.house_type == "player_house")
         for _ in range(steps):
             nx, ny = player.house_x + dx, player.house_y + dy

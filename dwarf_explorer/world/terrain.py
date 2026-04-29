@@ -32,22 +32,23 @@ def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
 
     # Place the coastline close to the world edge — ocean is ~14 tiles wide
     # at the base position (3 sand + 4 shallow + 7 deep).
+    # Wider lo/hi range lets the combined noise swing freely without rail-clamping.
     if edge == 0:   # south — ocean at high y
         base = WORLD_SIZE - 11
-        lo   = WORLD_SIZE - 21
-        hi   = WORLD_SIZE - 8
+        lo   = WORLD_SIZE - 26
+        hi   = WORLD_SIZE - 6
     elif edge == 1: # north — ocean at low y
         base = 10
-        lo   = 7
-        hi   = 20
+        lo   = 5
+        hi   = 24
     elif edge == 2: # west — ocean at low x
         base = 10
-        lo   = 7
-        hi   = 20
+        lo   = 5
+        hi   = 24
     else:           # east — ocean at high x
         base = WORLD_SIZE - 11
-        lo   = WORLD_SIZE - 21
-        hi   = WORLD_SIZE - 8
+        lo   = WORLD_SIZE - 26
+        hi   = WORLD_SIZE - 6
 
     # Macro bend: two sine waves with randomised period / phase / amplitude.
     # Primary: long meander (200-350 tile period) → ~1-2 full bends across map
@@ -63,16 +64,19 @@ def _compute_coast_boundary(seed: int) -> tuple[int, list[int]]:
     for i in range(WORLD_SIZE):
         macro  = a1 * _math.sin(2.0 * _math.pi * i / p1 + ph1)
         medium = a2 * _math.sin(2.0 * _math.pi * i / p2 + ph2)
-        # Fine roughness from fBm (freq=0.3 gives good variation → ±2 tiles)
-        fine   = (fbm(i * 0.3, 0.0, seed ^ 0xF1D37A, octaves=2) - 0.5) * 4.0
-        offset = macro + medium + fine
+        # Meso roughness (25-50 tile scale, ±3 tiles) — fractal bumps
+        meso   = (fbm(i * 0.3, 0.0, seed ^ 0xF1D37A, octaves=3) - 0.5) * 6.0
+        # Micro jaggedness (2-8 tile scale, ±1.5 tiles) — tile-level irregularity
+        micro  = (fbm(i * 2.0, 0.0, seed ^ 0xA3B2C1D4, octaves=3) - 0.5) * 3.0
+        offset = macro + medium + meso + micro
         val    = int(round(max(float(lo), min(float(hi), float(base) + offset))))
         boundary.append(val)
 
-    # Light 3-point smoothing to soften 1-tile spikes without flattening curves
+    # Weighted 3-point smoother — centre counts double, so 2-tile features
+    # survive while lone 1-tile spikes are softened.
     smoothed = list(boundary)
     for i in range(1, len(boundary) - 1):
-        smoothed[i] = (boundary[i - 1] + boundary[i] + boundary[i + 1]) // 3
+        smoothed[i] = (boundary[i - 1] + 2 * boundary[i] + boundary[i + 1]) // 4
 
     return edge, smoothed
 

@@ -198,13 +198,7 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             elif act == "anvil_close":
                 await handle_anvil_close(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
-                # Route ship interior movement separately
-                db = await get_database(gid)
-                _player = await get_or_create_player(db, uid, interaction.user.display_name)
-                if _player.in_ship:
-                    await handle_ship_move(interaction, gid, uid, act)
-                else:
-                    await handle_move(interaction, gid, uid, act)
+                await handle_move(interaction, gid, uid, act)
             elif act == "interact":
                 await handle_interact(interaction, gid, uid)
             elif act == "sprint":
