@@ -57,7 +57,8 @@ def _gradient_dir(
 # ── Trunk: noise-curve along primary axis ────────────────────────────────────
 
 def _trunk_path(
-    seed: int,
+    world_seed: int,
+    noise_seed: int,
     rng: random.Random,
     start_cross: float | None = None,
 ) -> list[tuple[int, int]]:
@@ -65,15 +66,17 @@ def _trunk_path(
 
     Walks along the primary axis (W-E or N-S) visiting every column/row, with
     the cross-axis offset driven by two fBm layers (coarse bends + fine wiggles).
-    Uses the terrain heightmap's fBm so bends follow large-scale valley shapes.
 
+    world_seed: used only for get_coast_boundary to determine flow axis — must
+                be the real world seed so all trunks share the same ocean edge.
+    noise_seed: used for fBm shape, varied per trunk so each one looks different.
     start_cross: cross-axis seed position (None → random in [40, WORLD_SIZE-40]).
     """
     # Pick axis perpendicular to the ocean edge so rivers flow INTO the ocean,
     # not parallel along it.
     # edge 0=south, 1=north → ocean is horizontal → rivers flow N-S (axis=1)
     # edge 2=west,  3=east  → ocean is vertical   → rivers flow E-W (axis=0)
-    ocean_edge, _ = get_coast_boundary(seed)
+    ocean_edge, _ = get_coast_boundary(world_seed)
     axis = 1 if ocean_edge in (0, 1) else 0
     if start_cross is None:
         start_cross = float(rng.randint(40, WORLD_SIZE - 40))
@@ -81,9 +84,9 @@ def _trunk_path(
     path: list[tuple[int, int]] = []
     for primary in range(WORLD_SIZE):
         # Coarse terrain sample gives big bends (~40-tile amplitude)
-        coarse = fbm(primary * 0.5, start_cross * 0.05, seed, octaves=2)
+        coarse = fbm(primary * 0.5, start_cross * 0.05, noise_seed, octaves=2)
         # Fine sample gives small wiggles
-        fine   = fbm(primary * 1.5, start_cross * 0.05, seed ^ 0xABCD, octaves=2)
+        fine   = fbm(primary * 1.5, start_cross * 0.05, noise_seed ^ 0xABCD, octaves=2)
         cross_offset = (coarse - 0.5) * 80.0 + (fine - 0.5) * 14.0
         cross = int(round(max(15.0, min(WORLD_SIZE - 15.0, start_cross + cross_offset))))
 
@@ -420,7 +423,7 @@ def _generate_rivers_sync(
     for ti, sc in enumerate(trunk_starts):
         # Perturb the seed per-trunk so each one has a distinct shape
         trunk_seed = (seed ^ (0xFEED_0000 + ti)) & 0xFFFF_FFFF
-        trunk = _trunk_path(trunk_seed, rng, start_cross=sc)
+        trunk = _trunk_path(seed, trunk_seed, rng, start_cross=sc)
         before = set(river_tiles)
         _paint(trunk, hw=1, tiles=river_tiles)
         _paint(trunk[len(trunk)//4: 3*len(trunk)//4], hw=2, tiles=river_tiles)

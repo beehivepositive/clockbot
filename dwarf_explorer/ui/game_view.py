@@ -5566,7 +5566,7 @@ async def handle_map(
 
     other_players = await get_all_overworld_players(db, user_id)
     from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(seed, db, player.world_x, player.world_y, other_players)
+    buf = await generate_world_map(seed, db, guild_id, player.world_x, player.world_y, other_players)
     file = discord.File(buf, filename="world_map.png")
     await interaction.followup.send(file=file, ephemeral=True)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 
 from dwarf_explorer.config import WORLD_SIZE, MAP_PIXEL_SCALE, TILE_COLORS
 from dwarf_explorer.world.terrain import get_biome
@@ -40,13 +41,36 @@ _LEGEND_COLS   = 2
 _ICON_TILES = {entry[0] for entry in _LEGEND_ICON_ENTRIES}
 _ICON_SIZE  = 7   # pixel radius (drawn as 7×7 centred on tile centre)
 
+# ── Base-map cache ─────────────────────────────────────────────────────────────
+# Keyed by guild_id.  Each entry stores the world seed (to detect /newworld),
+# overrides count (to detect newly generated structures), the render timestamp,
+# and the raw PNG bytes of the base image (terrain + overrides, NO player dots).
+# The cache is invalidated if seed or override count changes, or after 1 hour.
+
+_BASE_CACHE: dict[int, tuple[int, int, float, bytes]] = {}
+# guild_id → (seed, n_overrides, timestamp, png_bytes)
+
+_CACHE_TTL = 3600.0   # 1 hour
+
+
+def _cache_valid(guild_id: int, seed: int, n_overrides: int) -> bool:
+    entry = _BASE_CACHE.get(guild_id)
+    if entry is None:
+        return False
+    c_seed, c_n, c_ts, _ = entry
+    return c_seed == seed and c_n == n_overrides and (time.monotonic() - c_ts) < _CACHE_TTL
+
+
+def invalidate_map_cache(guild_id: int) -> None:
+    """Force regeneration of the base map on next /map call (e.g. after /newworld)."""
+    _BASE_CACHE.pop(guild_id, None)
+
 
 def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
     """Draw a distinctive 7-pixel icon centred at (cx, cy)."""
     r = 3   # half-size
     white = (255, 255, 255)
     if style == "filled_diamond":
-        # Diamond outline + fill
         pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
         draw.polygon(pts, fill=color, outline=white)
     elif style == "filled_circle":
@@ -62,15 +86,17 @@ def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
         draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color, outline=white)
 
 
-def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
-                       other_players: list | None = None) -> io.BytesIO:
+# ── Base-map renderer (slow — called at most once per hour) ───────────────────
+
+def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
+    """Render terrain + overrides + legend.  Returns raw PNG bytes (no players)."""
     from PIL import Image, ImageDraw, ImageFont
 
     scale = MAP_PIXEL_SCALE
     map_w = WORLD_SIZE * scale
     map_h = WORLD_SIZE * scale
 
-    rows_per_col = (len(_LEGEND_ENTRIES) + len(_LEGEND_ICON_ENTRIES) + 1 + _LEGEND_COLS - 1) // _LEGEND_COLS
+    rows_per_col = (len(_LEGEND_ENTRIES) + len(_LEGEND_ICON_ENTRIES) + 2 + _LEGEND_COLS - 1) // _LEGEND_COLS
     legend_h = rows_per_col * _LEGEND_ROW_H + _LEGEND_MARGIN * 2
     legend_w = _LEGEND_COLS * _LEGEND_COL_W + _LEGEND_MARGIN * 2
     panel_h  = max(map_h, legend_h)
@@ -87,10 +113,8 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
     # ── Tile overrides: normal tiles first, then icons on top ─────────────────
-    icon_rows = [(wx, wy, tile_type) for wx, wy, tile_type in overrides
-                 if tile_type in _ICON_TILES]
-    normal_rows = [(wx, wy, tile_type) for wx, wy, tile_type in overrides
-                   if tile_type not in _ICON_TILES]
+    icon_rows   = [(wx, wy, tt) for wx, wy, tt in overrides if tt in _ICON_TILES]
+    normal_rows = [(wx, wy, tt) for wx, wy, tt in overrides if tt not in _ICON_TILES]
 
     for wx, wy, tile_type in normal_rows:
         color = TILE_COLORS.get(tile_type)
@@ -98,7 +122,6 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
             x0, y0 = wx * scale, wy * scale
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
-    # Icon tiles: draw as large symbols
     _icon_style = {e[0]: (e[2], e[3]) for e in _LEGEND_ICON_ENTRIES}
     for wx, wy, tile_type in icon_rows:
         if tile_type in _icon_style:
@@ -106,19 +129,6 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
             cx = wx * scale + scale // 2
             cy = wy * scale + scale // 2
             _draw_icon(draw, cx, cy, style, color)
-
-    # ── Other player markers (blue) ───────────────────────────────────────────
-    if other_players:
-        for ox, oy, _ in other_players:
-            cx_o = ox * scale + scale // 2
-            cy_o = oy * scale + scale // 2
-            draw.ellipse([cx_o - 3, cy_o - 3, cx_o + 3, cy_o + 3],
-                         fill=(60, 120, 255), outline=(255, 255, 255))
-
-    # ── Player marker (red) ───────────────────────────────────────────────────
-    cx_p = player_x * scale + scale // 2
-    cy_p = player_y * scale + scale // 2
-    draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3], fill=(255, 0, 0), outline=(255, 255, 255))
 
     # ── Legend ────────────────────────────────────────────────────────────────
     try:
@@ -133,8 +143,8 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
                   for k, label in _LEGEND_ENTRIES]
     for tile_key, label, color, style in [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]:
         all_legend.append((tile_key, label, color, style))
-    all_legend.append(("__player__", "You", (255, 0, 0), "dot_red"))
-    all_legend.append(("__other__", "Other Player", (60, 120, 255), "dot_blue"))
+    all_legend.append(("__player__", "You",          (255, 0,   0),   "dot_red"))
+    all_legend.append(("__other__",  "Other Player", (60,  120, 255), "dot_blue"))
 
     for i, (tile_key, label, color, style) in enumerate(all_legend):
         col = i % _LEGEND_COLS
@@ -159,14 +169,65 @@ def _generate_map_sync(seed: int, overrides: list, player_x: int, player_y: int,
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ── Player-dot compositor (fast — called on every /map request) ───────────────
+
+def _composite_players_sync(
+    base_png: bytes,
+    player_x: int, player_y: int,
+    other_players: list,
+) -> io.BytesIO:
+    """Load the cached base PNG and stamp player position dots on top."""
+    from PIL import Image, ImageDraw
+
+    scale = MAP_PIXEL_SCALE
+    img  = Image.open(io.BytesIO(base_png)).copy()
+    draw = ImageDraw.Draw(img)
+
+    # Other players (blue)
+    for ox, oy, _ in other_players:
+        cx_o = ox * scale + scale // 2
+        cy_o = oy * scale + scale // 2
+        draw.ellipse([cx_o - 3, cy_o - 3, cx_o + 3, cy_o + 3],
+                     fill=(60, 120, 255), outline=(255, 255, 255))
+
+    # Current player (red)
+    cx_p = player_x * scale + scale // 2
+    cy_p = player_y * scale + scale // 2
+    draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3],
+                 fill=(255, 0, 0), outline=(255, 255, 255))
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
 
-async def generate_world_map(seed: int, db, player_x: int, player_y: int,
-                             other_players: list | None = None) -> io.BytesIO:
+# ── Public API ────────────────────────────────────────────────────────────────
+
+async def generate_world_map(
+    seed: int, db, guild_id: int,
+    player_x: int, player_y: int,
+    other_players: list | None = None,
+) -> io.BytesIO:
+    """Return a BytesIO PNG of the world map with player dots composited on top.
+
+    The base terrain+overrides image is rendered once and cached per guild for
+    up to 1 hour (or until the seed/override count changes).  Only the fast
+    player-dot composite step runs on every call.
+    """
     rows = await db.fetch_all("SELECT world_x, world_y, tile_type FROM tile_overrides")
     overrides = [(r["world_x"], r["world_y"], r["tile_type"]) for r in rows]
+    n_overrides = len(overrides)
+
+    if not _cache_valid(guild_id, seed, n_overrides):
+        base_png = await asyncio.to_thread(_generate_base_map_sync, seed, overrides)
+        _BASE_CACHE[guild_id] = (seed, n_overrides, time.monotonic(), base_png)
+    else:
+        _, _, _, base_png = _BASE_CACHE[guild_id]
+
     return await asyncio.to_thread(
-        _generate_map_sync, seed, overrides, player_x, player_y, other_players or []
+        _composite_players_sync, base_png, player_x, player_y, other_players or []
     )

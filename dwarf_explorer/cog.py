@@ -51,6 +51,8 @@ class DwarfExplorer(commands.Cog):
             await interaction.response.defer()
             await init_world(seed, db)
             await mark_world_initialized(db, guild_id)
+            from dwarf_explorer.world.world_map import invalidate_map_cache
+            invalidate_map_cache(guild_id)
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
             # Relocate player if default spawn is on water (river may flow through it)
             sx, sy = await find_walkable_spawn(seed, db)
@@ -161,6 +163,10 @@ class DwarfExplorer(commands.Cog):
         seed = await reset_world_seed(db)
         await init_world(seed, db)
         await mark_world_initialized(db, interaction.guild.id)
+
+        # Bust the cached world map so the next /map renders the new world
+        from dwarf_explorer.world.world_map import invalidate_map_cache
+        invalidate_map_cache(interaction.guild.id)
 
         await interaction.followup.send(
             f"New world generated (seed `{seed}`)! Use `/explore` to start playing.", ephemeral=True
