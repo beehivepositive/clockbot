@@ -116,19 +116,34 @@ def _precompute_costs(
     seed: int,
     river_tiles: set[tuple[int, int]],
     bridge_all: set[tuple[int, int]],
-) -> list[list[float]]:
-    """Build a WORLD_SIZE×WORLD_SIZE cost grid for A*.
+) -> tuple[list[list[float]], set[tuple[int, int]]]:
+    """Build a WORLD_SIZE×WORLD_SIZE cost grid for A* plus the narrow_river set.
+
+    narrow_river: river tiles with zero cardinal river neighbours (hw=0
+    sub-tributaries).  These are given a low cost so A* can ford them
+    rather than detour around, and are later promoted to 'path' in the DB.
 
     Calling get_biome once per tile upfront (instead of on every A* step)
     gives a large speedup when the same world is path-searched many times.
     Indexed as grid[y][x].
     """
+    # Detect narrow (isolated) river tiles — no cardinal river neighbours
+    narrow_river: set[tuple[int, int]] = set()
+    for rx, ry in river_tiles:
+        if sum(
+            1 for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+            if (rx + ddx, ry + ddy) in river_tiles
+        ) == 0:
+            narrow_river.add((rx, ry))
+
     grid: list[list[float]] = []
     for y in range(WORLD_SIZE):
         row: list[float] = []
         for x in range(WORLD_SIZE):
             if (x, y) in bridge_all:
                 row.append(1.0)
+            elif (x, y) in narrow_river:
+                row.append(8.0)   # fordable sub-tributary
             elif (x, y) in river_tiles:
                 row.append(9_999.0)
             else:
@@ -142,7 +157,7 @@ def _precompute_costs(
                 else:
                     row.append(0.5 + _meander_noise(x, y, seed ^ _PATH_SEED_OFFSET) * 2.0)
         grid.append(row)
-    return grid
+    return grid, narrow_river
 
 
 def _astar(
@@ -484,47 +499,46 @@ def _widen_path(
     return result
 
 
-def _bridge_stub(
+def _direct_bridge_approach(
     ep: tuple[int, int],
     bridge_all: set[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
     seed: int,
-    min_dist: int = 5,
-    max_dist: int = 12,
-) -> tuple[int, int] | None:
-    """Return a stub node several tiles away from a bridge endpoint, on dry land.
+    approach_len: int = 7,
+) -> tuple[list[tuple[int, int]], tuple[int, int] | None]:
+    """Walk approach_len tiles away from bridge endpoint on dry land.
 
-    Walks in the first cardinal direction that leads AWAY from the bridge/river,
-    then finds a walkable tile at distance min_dist..max_dist.  This forces the
-    MST to create a short road leading away from the bridge on each bank, so
-    both sides of every bridge have a road coming off them.
+    Returns (painted_tiles, far_end_node).
+    Mountain tiles are skipped from painting but the walk continues so the
+    far_end node still lands on the far side.
     """
     bx, by = ep
-    # Find direction pointing away from bridge/river
     away: tuple[int, int] | None = None
     for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
         nx, ny = bx + dx, by + dy
-        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
-            continue
-        if (nx, ny) not in bridge_all and (nx, ny) not in river_tiles:
-            if get_biome(nx, ny, seed) not in _WATER_BIOMES:
-                away = (dx, dy)
-                break
+        if (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE
+                and (nx, ny) not in bridge_all and (nx, ny) not in river_tiles
+                and get_biome(nx, ny, seed) not in _WATER_BIOMES):
+            away = (dx, dy)
+            break
     if away is None:
-        return None
+        return [], None
     adx, ady = away
-    # Walk outward, pick first dry non-bridge tile in min_dist..max_dist
-    for d in range(min_dist, max_dist + 1):
-        sx, sy = bx + adx * d, by + ady * d
-        if not (0 <= sx < WORLD_SIZE and 0 <= sy < WORLD_SIZE):
-            return None
-        biome = get_biome(sx, sy, seed)
-        if ((sx, sy) not in bridge_all
-                and (sx, sy) not in river_tiles
-                and biome not in _WATER_BIOMES
-                and biome not in ("mountain", "snow")):
-            return (sx, sy)
-    return None
+    painted: list[tuple[int, int]] = []
+    far_end: tuple[int, int] | None = None
+    for d in range(1, approach_len + 1):
+        tx, ty = bx + adx * d, by + ady * d
+        if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
+            break
+        biome = get_biome(tx, ty, seed)
+        if (tx, ty) in bridge_all or (tx, ty) in river_tiles:
+            continue
+        if biome in _WATER_BIOMES:
+            break
+        far_end = (tx, ty)
+        if biome not in ("mountain", "snow"):
+            painted.append((tx, ty))
+    return painted, far_end
 
 
 def _generate_village_paths_sync(
@@ -554,22 +568,31 @@ def _generate_village_paths_sync(
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
 
-    # Stub nodes: one per bridge endpoint, a few tiles into dry land away from
-    # the river.  Forces exit roads on both banks of every bridge.
+    # Pre-build cost grid once — avoids calling get_biome on every A* step
+    cost_grid, narrow_river = _precompute_costs(seed, river_tiles, bridge_all)
+
+    # Approach roads: pre-paint a short road on BOTH sides of every bridge,
+    # and add the far endpoint as a stub node so the MST is forced to route
+    # toward it.  This guarantees both banks always have an exit road.
+    approach_overrides: list[tuple[int, int, str]] = []
     stub_nodes: list[tuple[int, int]] = []
     existing_set = set(village_positions + bridge_endpoints)
+
     for ep in bridge_endpoints:
-        stub = _bridge_stub(ep, bridge_all, river_tiles, seed)
-        if stub and stub not in existing_set:
-            stub_nodes.append(stub)
-            existing_set.add(stub)
+        painted, far_end = _direct_bridge_approach(ep, bridge_all, river_tiles, seed)
+        for tx, ty in painted:
+            if (tx, ty) not in path_tiles:
+                path_tiles.add((tx, ty))
+                approach_overrides.append((tx, ty, "path"))
+        if far_end and far_end not in existing_set:
+            stub_nodes.append(far_end)
+            existing_set.add(far_end)
+
+    overrides.extend(approach_overrides)   # paint before MST runs
 
     all_nodes = village_positions + bridge_endpoints + stub_nodes
     if len(all_nodes) < 2:
         return overrides
-
-    # Pre-build cost grid once — avoids calling get_biome on every A* step
-    cost_grid = _precompute_costs(seed, river_tiles, bridge_all)
 
     def _river_cross_weight(a: tuple[int, int], b: tuple[int, int]) -> float:
         """Euclidean distance, multiplied if the straight line samples many river tiles.
@@ -607,7 +630,7 @@ def _generate_village_paths_sync(
 
     # ── 2. Bonus cross-connections (nearby non-MST pairs, creates loops) ──────
     used_pairs: set[frozenset] = {frozenset(e) for e in edges}
-    bonus_budget = max(2, len(all_nodes) // 3)
+    bonus_budget = max(4, len(all_nodes) * 2 // 3)
     candidates = sorted(
         [
             (_river_cross_weight(a, b), a, b)
@@ -621,12 +644,28 @@ def _generate_village_paths_sync(
     for dist_ab, a, b in candidates:
         if bonus_added >= bonus_budget:
             break
-        if dist_ab > 65:
+        if dist_ab > 90:
             break
-        if rng.random() < 0.55:
+        if rng.random() < 0.70:
             edges.append((a, b))
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1
+
+    # ── k-NN supplemental edges (ensures dense webbed connections) ────────────
+    knn_k, knn_max = 2, 70.0
+    used_knn = set(used_pairs)
+    for anchor in all_nodes:
+        added = 0
+        for d_knn, other in sorted(
+            (_river_cross_weight(anchor, o), o)
+            for o in all_nodes if o != anchor
+            and frozenset([anchor, o]) not in used_knn
+        ):
+            if added >= knn_k or d_knn > knn_max:
+                break
+            edges.append((anchor, other))
+            used_knn.add(frozenset([anchor, other]))
+            added += 1
 
     # ── 3. Compute all centerlines first (two-pass avoids 4-wide merging) ────
     # No explicit waypoints — fbm noise in _tile_move_cost produces natural meander,
@@ -641,10 +680,15 @@ def _generate_village_paths_sync(
         if seg is None:
             return None
         # Reject if the path is a huge river-avoidance detour
-        if len(seg) > 3.5 * dist:
+        if len(seg) > 4.0 * dist:
             return None
-        # Reject if it crosses more than 2 river tiles (small tribs ok; big rivers not)
-        if sum(1 for px, py in seg if (px, py) in river_tiles) > 2:
+        # Reject if it crosses more than 2 wide river tiles
+        # (narrow fords — in narrow_river — are allowed and don't count)
+        wide_crossings = sum(
+            1 for px, py in seg
+            if (px, py) in river_tiles and (px, py) not in narrow_river
+        )
+        if wide_crossings > 2:
             return None
         return seg
 
@@ -678,6 +722,23 @@ def _generate_village_paths_sync(
             if (nx, ny) not in path_tiles:
                 path_tiles.add((nx, ny))
                 overrides.append((nx, ny, "path"))
+
+    # ── Two-pass nub removal — strip isolated 1-2 tile dead-ends ─────────────
+    # A tile is a "nub" if it has zero cardinal path/bridge neighbours.
+    # We run twice to catch pairs where removing one tile isolates the next.
+    for _ in range(2):
+        nubs = {
+            (x, y) for x, y, _ in overrides
+            if (x, y) not in bridge_all
+            and not any(
+                (x + ddx, y + ddy) in path_tiles or (x + ddx, y + ddy) in bridge_all
+                for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+            )
+        }
+        if not nubs:
+            break
+        overrides = [(x, y, t) for x, y, t in overrides if (x, y) not in nubs]
+        path_tiles -= nubs
 
     return overrides
 
@@ -742,3 +803,12 @@ async def place_structures(seed: int, db) -> None:
                 "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
                 path_overrides,
             )
+            # Promote narrow ford crossings: INSERT OR IGNORE can't overwrite an
+            # existing river tile, so we explicitly UPDATE those that overlap.
+            ford_tiles = [(x, y) for x, y, _ in path_overrides if (x, y) in river_tiles]
+            if ford_tiles:
+                await db.executemany(
+                    "UPDATE tile_overrides SET tile_type='path'"
+                    " WHERE world_x=? AND world_y=? AND tile_type='river'",
+                    ford_tiles,
+                )
