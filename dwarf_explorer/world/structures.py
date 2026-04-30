@@ -499,26 +499,19 @@ def _widen_path(
     return result
 
 
-def _direct_bridge_approach(
+def _bridge_stub(
     ep: tuple[int, int],
     bridge_all: set[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
     seed: int,
-    path_tiles: set[tuple[int, int]],
-    stub_len: int = 7,
-    max_walk: int = 50,
-) -> tuple[list[tuple[int, int]], tuple[int, int] | None]:
-    """Walk away from a bridge endpoint toward the map edge (or nearest path tile).
+    stub_len: int = 6,
+) -> tuple[int, int] | None:
+    """Return a node ~stub_len tiles from bridge endpoint on dry land.
 
-    Paints all passable (non-mountain, non-water) tiles in the land-facing
-    cardinal direction.  Stops early when:
-      - the map edge is reached  → road exits world (always valid)
-      - an existing path tile is hit  → already connected, no need to go further
-      - ocean / deep water blocks the way  → walk aborted
-
-    Any painted segment that still ends up disconnected is later pruned by the
-    flood-fill orphan pass.  The far_end_node (~stub_len tiles out) is added to
-    the MST node list so the MST can route toward it and create a connected road.
+    No tiles are pre-painted here.  The node is added to the MST so A* renders
+    a natural (non-straight) approach road from the bridge bank to the stub.
+    The stub is also used as a flood-fill anchor so its short approach road
+    survives even if the stub can't connect onward to a village.
     """
     bx, by = ep
     away: tuple[int, int] | None = None
@@ -530,32 +523,19 @@ def _direct_bridge_approach(
             away = (dx, dy)
             break
     if away is None:
-        return [], None
+        return None
     adx, ady = away
-    painted: list[tuple[int, int]] = []
-    far_end: tuple[int, int] | None = None
-    for d in range(1, max_walk + 1):
-        tx, ty = bx + adx * d, by + ady * d
-        # Map edge reached — road exits world successfully
-        if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
-            break
-        biome = get_biome(tx, ty, seed)
-        if (tx, ty) in bridge_all or (tx, ty) in river_tiles:
-            continue  # skip bridge/river tile, keep walking
-        if biome in _WATER_BIOMES:
-            break  # water blocks further progress
-        # Record the stub node for MST at stub_len distance
-        if d == stub_len:
-            far_end = (tx, ty)
-        if biome not in ("mountain", "snow"):
-            painted.append((tx, ty))
-        # Already connected to path network — stop here
-        if (tx, ty) in path_tiles:
-            break
-    # Fallback: if stub_len tile was never reached, use the last painted tile
-    if far_end is None and painted:
-        far_end = painted[-1]
-    return painted, far_end
+    # Walk to stub_len, picking the first passable non-mountain tile
+    for d in range(stub_len, stub_len + 4):
+        sx, sy = bx + adx * d, by + ady * d
+        if not (0 <= sx < WORLD_SIZE and 0 <= sy < WORLD_SIZE):
+            return None
+        biome = get_biome(sx, sy, seed)
+        if ((sx, sy) not in bridge_all and (sx, sy) not in river_tiles
+                and biome not in _WATER_BIOMES
+                and biome not in ("mountain", "snow")):
+            return (sx, sy)
+    return None
 
 
 def _generate_village_paths_sync(
@@ -576,10 +556,10 @@ def _generate_village_paths_sync(
        for natural meander.
     4. Each path is widened by one tile (2-tile-wide roads).
 
-    Bridge stub nodes are added 5-12 tiles past each bridge endpoint so the
-    MST is forced to route a short road away from the bridge on BOTH banks —
-    otherwise the far-side bank gets no exit road when there are no villages
-    on that side of the river.
+    Bridge stub nodes are added ~6 tiles past each bridge endpoint.  They act
+    as MST nodes (A* renders a natural approach road from each bank) and as
+    flood-fill anchors (the approach road survives even if the stub can't
+    connect onward to a village).
     """
     rng = random.Random(seed + _PATH_SEED_OFFSET)
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
@@ -588,24 +568,18 @@ def _generate_village_paths_sync(
     # Pre-build cost grid once — avoids calling get_biome on every A* step
     cost_grid, narrow_river = _precompute_costs(seed, river_tiles, bridge_all)
 
-    # Approach roads: pre-paint a short road on BOTH sides of every bridge,
-    # and add the far endpoint as a stub node so the MST is forced to route
-    # toward it.  This guarantees both banks always have an exit road.
-    approach_overrides: list[tuple[int, int, str]] = []
+    # Stub nodes: one per bridge endpoint ~6 tiles into dry land.
+    # No tiles are pre-painted — A* renders a natural approach road between
+    # the bridge endpoint and the stub.  Stub nodes are added as flood-fill
+    # anchors so the short approach road survives even without a village connection.
     stub_nodes: list[tuple[int, int]] = []
     existing_set = set(village_positions + bridge_endpoints)
 
     for ep in bridge_endpoints:
-        painted, far_end = _direct_bridge_approach(ep, bridge_all, river_tiles, seed, path_tiles)
-        for tx, ty in painted:
-            if (tx, ty) not in path_tiles:
-                path_tiles.add((tx, ty))
-                approach_overrides.append((tx, ty, "path"))
-        if far_end and far_end not in existing_set:
-            stub_nodes.append(far_end)
-            existing_set.add(far_end)
-
-    overrides.extend(approach_overrides)   # paint before MST runs
+        stub = _bridge_stub(ep, bridge_all, river_tiles, seed)
+        if stub and stub not in existing_set:
+            stub_nodes.append(stub)
+            existing_set.add(stub)
 
     all_nodes = village_positions + bridge_endpoints + stub_nodes
     if len(all_nodes) < 2:
@@ -730,7 +704,7 @@ def _generate_village_paths_sync(
     #   • bridge tiles (bridges are always real infrastructure)
     #   • path tiles that touch the map edge (approach roads that exit the world)
     # Everything else is an orphaned nub — delete it.
-    anchor_tiles: set[tuple[int, int]] = set(village_positions) | bridge_all
+    anchor_tiles: set[tuple[int, int]] = set(village_positions) | bridge_all | set(stub_nodes)
     for x, y in path_tiles:
         if x == 0 or y == 0 or x == WORLD_SIZE - 1 or y == WORLD_SIZE - 1:
             anchor_tiles.add((x, y))

@@ -12,7 +12,7 @@ from dwarf_explorer.database.repositories import (
     is_world_initialized, mark_world_initialized,
     reset_world_seed,
 )
-from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn
+from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
 from dwarf_explorer.ui.dynamic_buttons import GameButton
@@ -65,10 +65,11 @@ class DwarfExplorer(commands.Cog):
             await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
-            # Relocate player if they're stuck on a non-walkable tile (e.g. river at default spawn)
+            # Relocate player if their current tile is impassable (river grew over it,
+            # death-reset landed on bad terrain, etc.)
             if not player.in_cave and not player.in_village and not player.in_house:
-                sx, sy = await find_walkable_spawn(seed, db)
-                if (player.world_x, player.world_y) == (SPAWN_X, SPAWN_Y) and (sx, sy) != (SPAWN_X, SPAWN_Y):
+                sx, sy = await find_walkable_near(seed, db, player.world_x, player.world_y)
+                if (sx, sy) != (player.world_x, player.world_y):
                     await update_player_stats(db, user_id, world_x=sx, world_y=sy)
                     player.world_x, player.world_y = sx, sy
             grid = await load_viewport(player.world_x, player.world_y, seed, db)

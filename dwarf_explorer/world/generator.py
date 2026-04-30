@@ -194,6 +194,14 @@ async def load_single_tile(wx: int, wy: int, seed: int, db=None) -> TileData:
 _SPAWN_IMPASSABLE = {"mountain", "snow", "deep_water", "shallow_water", "river", "void"}
 
 
+def _spawn_is_good(tile: TileData) -> bool:
+    """Return True if a tile is safe to stand on at spawn."""
+    effective = tile.structure if tile.structure else tile.terrain
+    if effective in _SPAWN_IMPASSABLE:
+        return False
+    return tile.walkable
+
+
 async def find_walkable_spawn(seed: int, db) -> tuple[int, int]:
     """Find the nearest walkable tile to (SPAWN_X, SPAWN_Y).
 
@@ -201,15 +209,8 @@ async def find_walkable_spawn(seed: int, db) -> tuple[int, int]:
     passable ground even if a river or mountain occupies the default spawn point.
     Explicitly rejects mountain/snow/water biomes even if tile.walkable passes.
     """
-    def _is_good(tile: TileData) -> bool:
-        effective = tile.structure if tile.structure else tile.terrain
-        if effective in _SPAWN_IMPASSABLE:
-            return False
-        return tile.walkable
-
-    # Quick check: is default spawn already good?
     default = await load_single_tile(SPAWN_X, SPAWN_Y, seed, db)
-    if _is_good(default):
+    if _spawn_is_good(default):
         return (SPAWN_X, SPAWN_Y)
 
     for radius in range(1, 60):
@@ -218,9 +219,32 @@ async def find_walkable_spawn(seed: int, db) -> tuple[int, int]:
                 wx, wy = SPAWN_X + dx, SPAWN_Y + dy
                 if 0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE:
                     tile = await load_single_tile(wx, wy, seed, db)
-                    if _is_good(tile):
+                    if _spawn_is_good(tile):
                         return (wx, wy)
     return (SPAWN_X, SPAWN_Y)
+
+
+async def find_walkable_near(seed: int, db, px: int, py: int) -> tuple[int, int]:
+    """Return (px, py) if walkable, otherwise find the nearest walkable tile.
+
+    Used to un-stick a player who is standing on impassable terrain at their
+    last-known position (e.g. after death-reset, world regen, or river expansion).
+    Searches within a 30-tile radius so it stays close to where the player was.
+    """
+    default = await load_single_tile(px, py, seed, db)
+    if _spawn_is_good(default):
+        return (px, py)
+
+    for radius in range(1, 30):
+        for dx in range(-radius, radius + 1):
+            for dy in ((-radius, radius) if abs(dx) < radius else range(-radius, radius + 1)):
+                wx, wy = px + dx, py + dy
+                if 0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE:
+                    tile = await load_single_tile(wx, wy, seed, db)
+                    if _spawn_is_good(tile):
+                        return (wx, wy)
+    # Fall back to global spawn search if nothing found nearby
+    return await find_walkable_spawn(seed, db)
 
 
 async def init_world(seed: int, db) -> None:
