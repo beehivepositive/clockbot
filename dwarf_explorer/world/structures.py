@@ -504,13 +504,21 @@ def _direct_bridge_approach(
     bridge_all: set[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
     seed: int,
-    approach_len: int = 7,
+    path_tiles: set[tuple[int, int]],
+    stub_len: int = 7,
+    max_walk: int = 50,
 ) -> tuple[list[tuple[int, int]], tuple[int, int] | None]:
-    """Walk approach_len tiles away from bridge endpoint on dry land.
+    """Walk away from a bridge endpoint toward the map edge (or nearest path tile).
 
-    Returns (painted_tiles, far_end_node).
-    Mountain tiles are skipped from painting but the walk continues so the
-    far_end node still lands on the far side.
+    Paints all passable (non-mountain, non-water) tiles in the land-facing
+    cardinal direction.  Stops early when:
+      - the map edge is reached  → road exits world (always valid)
+      - an existing path tile is hit  → already connected, no need to go further
+      - ocean / deep water blocks the way  → walk aborted
+
+    Any painted segment that still ends up disconnected is later pruned by the
+    flood-fill orphan pass.  The far_end_node (~stub_len tiles out) is added to
+    the MST node list so the MST can route toward it and create a connected road.
     """
     bx, by = ep
     away: tuple[int, int] | None = None
@@ -526,18 +534,27 @@ def _direct_bridge_approach(
     adx, ady = away
     painted: list[tuple[int, int]] = []
     far_end: tuple[int, int] | None = None
-    for d in range(1, approach_len + 1):
+    for d in range(1, max_walk + 1):
         tx, ty = bx + adx * d, by + ady * d
+        # Map edge reached — road exits world successfully
         if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
             break
         biome = get_biome(tx, ty, seed)
         if (tx, ty) in bridge_all or (tx, ty) in river_tiles:
-            continue
+            continue  # skip bridge/river tile, keep walking
         if biome in _WATER_BIOMES:
-            break
-        far_end = (tx, ty)
+            break  # water blocks further progress
+        # Record the stub node for MST at stub_len distance
+        if d == stub_len:
+            far_end = (tx, ty)
         if biome not in ("mountain", "snow"):
             painted.append((tx, ty))
+        # Already connected to path network — stop here
+        if (tx, ty) in path_tiles:
+            break
+    # Fallback: if stub_len tile was never reached, use the last painted tile
+    if far_end is None and painted:
+        far_end = painted[-1]
     return painted, far_end
 
 
@@ -579,7 +596,7 @@ def _generate_village_paths_sync(
     existing_set = set(village_positions + bridge_endpoints)
 
     for ep in bridge_endpoints:
-        painted, far_end = _direct_bridge_approach(ep, bridge_all, river_tiles, seed)
+        painted, far_end = _direct_bridge_approach(ep, bridge_all, river_tiles, seed, path_tiles)
         for tx, ty in painted:
             if (tx, ty) not in path_tiles:
                 path_tiles.add((tx, ty))
@@ -630,7 +647,7 @@ def _generate_village_paths_sync(
 
     # ── 2. Bonus cross-connections (nearby non-MST pairs, creates loops) ──────
     used_pairs: set[frozenset] = {frozenset(e) for e in edges}
-    bonus_budget = max(4, len(all_nodes) * 2 // 3)
+    bonus_budget = max(2, len(all_nodes) // 4)
     candidates = sorted(
         [
             (_river_cross_weight(a, b), a, b)
@@ -644,28 +661,12 @@ def _generate_village_paths_sync(
     for dist_ab, a, b in candidates:
         if bonus_added >= bonus_budget:
             break
-        if dist_ab > 90:
+        if dist_ab > 55:
             break
-        if rng.random() < 0.70:
+        if rng.random() < 0.45:
             edges.append((a, b))
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1
-
-    # ── k-NN supplemental edges (ensures dense webbed connections) ────────────
-    knn_k, knn_max = 2, 70.0
-    used_knn = set(used_pairs)
-    for anchor in all_nodes:
-        added = 0
-        for d_knn, other in sorted(
-            (_river_cross_weight(anchor, o), o)
-            for o in all_nodes if o != anchor
-            and frozenset([anchor, o]) not in used_knn
-        ):
-            if added >= knn_k or d_knn > knn_max:
-                break
-            edges.append((anchor, other))
-            used_knn.add(frozenset([anchor, other]))
-            added += 1
 
     # ── 3. Compute all centerlines first (two-pass avoids 4-wide merging) ────
     # No explicit waypoints — fbm noise in _tile_move_cost produces natural meander,
@@ -723,22 +724,33 @@ def _generate_village_paths_sync(
                 path_tiles.add((nx, ny))
                 overrides.append((nx, ny, "path"))
 
-    # ── Two-pass nub removal — strip isolated 1-2 tile dead-ends ─────────────
-    # A tile is a "nub" if it has zero cardinal path/bridge neighbours.
-    # We run twice to catch pairs where removing one tile isolates the next.
-    for _ in range(2):
-        nubs = {
-            (x, y) for x, y, _ in overrides
-            if (x, y) not in bridge_all
-            and not any(
-                (x + ddx, y + ddy) in path_tiles or (x + ddx, y + ddy) in bridge_all
-                for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
-            )
-        }
-        if not nubs:
-            break
-        overrides = [(x, y, t) for x, y, t in overrides if (x, y) not in nubs]
-        path_tiles -= nubs
+    # ── Flood-fill orphan removal ──────────────────────────────────────────────
+    # Keep only path tiles reachable (cardinal steps) from:
+    #   • village positions
+    #   • bridge tiles (bridges are always real infrastructure)
+    #   • path tiles that touch the map edge (approach roads that exit the world)
+    # Everything else is an orphaned nub — delete it.
+    anchor_tiles: set[tuple[int, int]] = set(village_positions) | bridge_all
+    for x, y in path_tiles:
+        if x == 0 or y == 0 or x == WORLD_SIZE - 1 or y == WORLD_SIZE - 1:
+            anchor_tiles.add((x, y))
+
+    reachable: set[tuple[int, int]] = set()
+    stack = [t for t in anchor_tiles if t in path_tiles or t in bridge_all]
+    visited: set[tuple[int, int]] = set(stack)
+    while stack:
+        cx, cy = stack.pop()
+        reachable.add((cx, cy))
+        for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            nb = (cx + ddx, cy + ddy)
+            if nb not in visited and (nb in path_tiles or nb in bridge_all):
+                visited.add(nb)
+                stack.append(nb)
+
+    orphans = {(x, y) for x, y, _ in overrides if (x, y) not in reachable}
+    if orphans:
+        overrides = [(x, y, t) for x, y, t in overrides if (x, y) not in orphans]
+        path_tiles -= orphans
 
     return overrides
 
