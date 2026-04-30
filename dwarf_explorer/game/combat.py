@@ -182,13 +182,26 @@ def action_use_potion(arena: dict, player) -> str:
 
 # ── Enemy AI ──────────────────────────────────────────────────────────────────
 
-def resolve_enemy_turn(arena: dict, player, rng: random.Random) -> str:
-    """Run the enemy's turn. Returns combined message string."""
+def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = False) -> str:
+    """Run the enemy's turn. Returns combined message string.
+
+    If naval=True, enemy attacks damage player.ship_hp instead of player.hp
+    (the creature is attacking the ship, not the player directly).
+    """
     enemy_type = player.combat_enemy_type
     abilities = ENEMY_ABILITIES.get(enemy_type, {})
     hp_entry, atk, defn, _xp, _gold = ENEMY_STATS[enemy_type]
     name = _enemy_name(enemy_type)
     msgs: list[str] = []
+
+    def _deal_damage(dmg: int) -> str:
+        """Apply damage to ship_hp (naval) or player hp, return status string."""
+        if naval:
+            player.ship_hp = max(0, player.ship_hp - dmg)
+            return f"({player.ship_hp}/{player.ship_max_hp} hull)"
+        else:
+            player.hp = max(0, player.hp - dmg)
+            return f"({player.hp}/{player.max_hp} HP)"
 
     # Enemy gets 1 action (cave_bat gets 2 for hit-and-run feel)
     num_actions = 2 if enemy_type == "cave_bat" else 1
@@ -219,10 +232,10 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random) -> str:
             line = [(ex + sdx * t, ey + sdy * t) for t in range(1, 5)]
             if (px, py) in line:
                 slam_dmg = max(1, atk * 2 - player.defense)
-                player.hp = max(0, player.hp - slam_dmg)
-                msgs.append(f"💥 The {name} SLAMS the ground! You take **{slam_dmg}** damage!")
+                status = _deal_damage(slam_dmg)
+                msgs.append(f"💥 The {name} SLAMS! **{slam_dmg}** damage! {status}")
             else:
-                msgs.append(f"💥 The {name} slams the ground! You barely dodge!")
+                msgs.append(f"💥 The {name} slams! You barely dodge!")
             continue
 
         # ── Bear roar ──
@@ -238,14 +251,15 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random) -> str:
         # ── Attack if adjacent ──
         if _adjacent(new_ex, new_ey, px, py):
             dmg = max(1, atk - player.defense // 2)
-            player.hp = max(0, player.hp - dmg)
+            status = _deal_damage(dmg)
 
-            # Cave spider poison
-            if abilities.get("poison") and rng.random() < 0.35:
+            # Cave spider poison (not applicable in naval — ship can't be poisoned)
+            if abilities.get("poison") and not naval and rng.random() < 0.35:
                 arena["poison_turns"] = max(arena["poison_turns"], 3)
                 msgs.append(f"🕷️ The {name} bites and **poisons** you!")
 
-            msgs.append(f"💢 {name} attacks for **{dmg}** damage! ({player.hp}/{player.max_hp} HP)")
+            prefix = "⚓" if naval else "💢"
+            msgs.append(f"{prefix} {name} attacks for **{dmg}** damage! {status}")
 
             # Bat hit-and-run: retreat after attacking
             if abilities.get("hit_run") and rng.random() < 0.50:
@@ -255,8 +269,8 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random) -> str:
                 player.combat_enemy_x, player.combat_enemy_y = away
                 msgs.append(f"🦇 The {name} darts away!")
 
-    # ── Poison tick ──
-    if arena["poison_turns"] > 0:
+    # ── Poison tick (land combat only) ──
+    if not naval and arena["poison_turns"] > 0:
         player.hp = max(0, player.hp - 2)
         arena["poison_turns"] -= 1
         msgs.append(f"🟢 Poison deals **2** damage. ({player.hp}/{player.max_hp} HP)")
@@ -302,6 +316,7 @@ def render_arena(arena: dict, player) -> str:
     )
     ALL_TERRAIN = {**TERRAIN_EMOJI, **CAVE_EMOJI, **VILLAGE_EMOJI}
 
+    is_naval = arena.get("naval", False)
     grid = arena["grid"]
     objects = arena["objects"]
     px, py = player.combat_player_x, player.combat_player_y
@@ -314,6 +329,14 @@ def render_arena(arena: dict, player) -> str:
     )
 
     rows: list[str] = []
+
+    # Naval: show ship art above the arena
+    if is_naval:
+        from dwarf_explorer.game.renderer import render_ship_room
+        ship_art = render_ship_room(player)
+        rows.append(ship_art)
+        rows.append("")
+
     for row_y in range(ARENA_SIZE):
         cells: list[str] = []
         for col_x in range(ARENA_SIZE):
@@ -331,7 +354,10 @@ def render_arena(arena: dict, player) -> str:
     # Status line
     enemy_max_hp = ENEMY_STATS[player.combat_enemy_type][0]
     name = _enemy_name(player.combat_enemy_type)
-    hp_bar = f"❤️ {player.hp}/{player.max_hp}"
+    if is_naval:
+        hp_bar = f"🛳️ {player.ship_hp}/{player.ship_max_hp}"
+    else:
+        hp_bar = f"❤️ {player.hp}/{player.max_hp}"
     enemy_bar = f"💀 {name} {player.combat_enemy_hp}/{enemy_max_hp}hp"
     moves_bar = f"⚡ {player.combat_moves_left} move{'s' if player.combat_moves_left != 1 else ''} left"
 
@@ -340,7 +366,7 @@ def render_arena(arena: dict, player) -> str:
 
     if arena.get("player_trapped"):
         rows.append("🕸️ **You are trapped in a cobweb!** Use 🕸️ Free to escape.")
-    if arena.get("poison_turns", 0) > 0:
+    if not is_naval and arena.get("poison_turns", 0) > 0:
         rows.append(f"🟢 Poisoned ({arena['poison_turns']} turns remaining)")
 
     if arena["combat_log"]:

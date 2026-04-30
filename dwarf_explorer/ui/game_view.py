@@ -30,7 +30,7 @@ from dwarf_explorer.database.repositories import (
     clear_combat_state,
     update_player_ship_state, update_player_ship_hp,
     get_ship_personal_items, ship_personal_deposit, ship_personal_withdraw,
-    get_ship_cargo_items, ship_cargo_deposit, ship_cargo_withdraw,
+    get_ship_cargo_items, ship_cargo_deposit, ship_cargo_withdraw, ship_cargo_consume,
     update_player_island_state,
     is_island_looted, mark_island_looted,
     update_island_tile,
@@ -1819,15 +1819,38 @@ async def _finish_combat(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player, grid=grid)
 
+    # Ship sank during naval combat
+    if player.ship_hp <= 0:
+        player.ship_hp = 1  # needs repair but ship isn't gone
+        await update_player_ship_hp(db, user_id, player.ship_hp)
+        # Wash player ashore at harbor world position
+        harbor_wx = getattr(player, "ocean_harbor_wx", player.world_x)
+        harbor_wy = getattr(player, "ocean_harbor_wy", player.world_y)
+        player.in_high_seas = False
+        player.in_ocean = False
+        player.in_ship = False
+        player.world_x, player.world_y = harbor_wx, harbor_wy
+        await update_player_ocean_state(db, user_id, False, 0, 0, in_high_seas=False)
+        await update_player_ship_state(db, user_id, False, player.ship_room)
+        await update_player_position(db, user_id, player.world_x, player.world_y)
+        await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        sink_msg = f"{extra_msg} 🛳️💥 Your ship sinks! You wash ashore near the harbor. Hull at 1/{player.ship_max_hp} — repair with logs from the cargo chest."
+        return render_grid(grid, player, sink_msg), _game_view(guild_id, user_id, player, grid=grid)
+
     await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
     # Return to the appropriate location view
     if player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     if player.in_high_seas:
+        from dwarf_explorer.world.terrain import get_coast_boundary as _gcb2
+        _hs_ce, _ = _gcb2(seed)
         grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+        has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
         return render_grid(grid, player, extra_msg), OceanView(guild_id, user_id,
-                                                               dock_available=(player.ocean_y == 0))
+                                                               dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_ce),
+                                                               has_fishing_rod=has_rod)
     if player.in_ocean:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         harbor_adj = await _adjacent_harbor(player, seed, db)
@@ -1845,6 +1868,11 @@ async def _after_player_action(
     """Called after a player action. Run enemy turn if moves exhausted, or re-render."""
     arena["combat_log"].append(msg)
 
+    is_naval = arena.get("naval", False)
+
+    def _is_dead() -> bool:
+        return (player.ship_hp <= 0) if is_naval else (player.hp <= 0)
+
     # Enemy dead?
     if player.combat_enemy_hp <= 0:
         victory_msg = apply_victory(player)
@@ -1854,8 +1882,8 @@ async def _after_player_action(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Player dead?
-    if player.hp <= 0:
+    # Player / ship dead?
+    if _is_dead():
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]))
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -1872,14 +1900,14 @@ async def _after_player_action(
     # No moves left → enemy turn
     rng = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y,
                                player.combat_enemy_hp)))
-    enemy_msg = resolve_enemy_turn(arena, player, rng)
+    enemy_msg = resolve_enemy_turn(arena, player, rng, naval=is_naval)
     arena["combat_log"].append(enemy_msg)
 
     # Restore player moves for next turn
     player.combat_moves_left = COMBAT_MOVES_DEFAULT
 
     # Check outcomes after enemy turn
-    if player.hp <= 0:
+    if _is_dead():
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]))
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -1989,6 +2017,15 @@ async def handle_combat_eat(
     if result is None:
         return
     db, player, arena = result
+
+    # Naval combat: food can't repair the ship
+    if arena.get("naval"):
+        arena["combat_log"].append("⚓ You can't eat to repair the ship! Use logs from the cargo chest.")
+        content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
     # Prefer cooked_fish, then fish
     for food_id in ("cooked_fish", "fish"):
         row = await db.fetch_one(
@@ -2109,6 +2146,9 @@ async def handle_sprint(
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    elif player.in_ship:
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        view = _ship_game_view(guild_id, user_id, player)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
@@ -2438,6 +2478,7 @@ async def handle_ocean_move(
             grid = load_ocean_viewport(nx, ny, seed)
             arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type, "ocean")))
             arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+            arena["naval"] = True  # enemy attacks damage ship_hp, not player_hp
             player.in_combat = True
             player.combat_enemy_type = enemy_type
             player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
@@ -2770,8 +2811,9 @@ async def handle_ship_room(
     player.ship_room = room
     await update_player_ship_state(db, user_id, True, room)
 
-    inv = await get_inventory(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in inv)
+    # Repair logs come from the cargo chest, not player inventory
+    cargo = await get_ship_cargo_items(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in cargo)
     content = render_ship_room(player)
     view = ShipView(guild_id, user_id, room=room,
                     ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
@@ -2782,7 +2824,7 @@ async def handle_ship_room(
 async def handle_ship_repair(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Repair ship hull using 3 logs → +20 HP, max twice (ship full at 100)."""
+    """Repair ship hull using 3 logs from the cargo chest → +20 HP."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
@@ -2790,31 +2832,38 @@ async def handle_ship_repair(
         await interaction.response.defer()
         return
 
-    inv = await get_inventory(db, user_id)
-    log_row = next((it for it in inv if it["item_id"] == "log"), None)
+    if player.ship_hp >= player.ship_max_hp:
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        content = render_grid(grid, player, "✅ Hull is already at full integrity.")
+        view = _ship_game_view(guild_id, user_id, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Logs come from the ship cargo chest, not player inventory
+    cargo = await get_ship_cargo_items(db, user_id)
+    log_row = next((it for it in cargo if it["item_id"] == "log"), None)
 
     if not log_row or log_row["quantity"] < 3:
         grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
-        content = render_grid(grid, player, "\u274C You need at least 3 logs to repair.")
+        content = render_grid(grid, player, "❌ You need at least 3 logs in the cargo chest to repair.")
         view = _ship_game_view(guild_id, user_id, player)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    if player.ship_hp >= player.ship_max_hp:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
-        content = render_grid(grid, player, "\u2705 Hull is already at full integrity.")
-        view = _ship_game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
-
-    await remove_from_inventory(db, user_id, "log", 3)
+    await ship_cargo_consume(db, user_id, "log", 3)
     heal = min(20, player.ship_max_hp - player.ship_hp)
     player.ship_hp = min(player.ship_max_hp, player.ship_hp + heal)
     await update_player_ship_hp(db, user_id, player.ship_hp)
 
-    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
-    content = render_grid(grid, player, f"\U0001F528 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})")
-    view = _ship_game_view(guild_id, user_id, player)
+    # Rebuild has_repair_logs from updated cargo
+    cargo = await get_ship_cargo_items(db, user_id)
+    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in cargo)
+    content = render_ship_room(player)
+    view = ShipView(guild_id, user_id, room=player.ship_room,
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
+                    has_repair_logs=has_logs)
+    # Append message to content
+    content += f"\n\n🔨 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})"
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 

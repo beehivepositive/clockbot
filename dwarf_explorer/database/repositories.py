@@ -576,6 +576,30 @@ async def ship_cargo_withdraw(
     return True
 
 
+async def ship_cargo_consume(
+    db, user_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    """Remove items from ship cargo without adding to player inventory (consumed in place)."""
+    row = await db.fetch_one(
+        "SELECT quantity FROM ship_cargo_items WHERE user_id=? AND item_id=?",
+        (user_id, item_id),
+    )
+    if not row or row["quantity"] < quantity:
+        return False
+    new_qty = row["quantity"] - quantity
+    if new_qty <= 0:
+        await db.execute(
+            "DELETE FROM ship_cargo_items WHERE user_id=? AND item_id=?",
+            (user_id, item_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE ship_cargo_items SET quantity=? WHERE user_id=? AND item_id=?",
+            (new_qty, user_id, item_id),
+        )
+    return True
+
+
 # --- Island state ---
 
 async def update_player_island_state(
