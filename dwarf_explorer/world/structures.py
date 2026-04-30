@@ -484,6 +484,49 @@ def _widen_path(
     return result
 
 
+def _bridge_stub(
+    ep: tuple[int, int],
+    bridge_all: set[tuple[int, int]],
+    river_tiles: set[tuple[int, int]],
+    seed: int,
+    min_dist: int = 5,
+    max_dist: int = 12,
+) -> tuple[int, int] | None:
+    """Return a stub node several tiles away from a bridge endpoint, on dry land.
+
+    Walks in the first cardinal direction that leads AWAY from the bridge/river,
+    then finds a walkable tile at distance min_dist..max_dist.  This forces the
+    MST to create a short road leading away from the bridge on each bank, so
+    both sides of every bridge have a road coming off them.
+    """
+    bx, by = ep
+    # Find direction pointing away from bridge/river
+    away: tuple[int, int] | None = None
+    for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+        nx, ny = bx + dx, by + dy
+        if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+            continue
+        if (nx, ny) not in bridge_all and (nx, ny) not in river_tiles:
+            if get_biome(nx, ny, seed) not in _WATER_BIOMES:
+                away = (dx, dy)
+                break
+    if away is None:
+        return None
+    adx, ady = away
+    # Walk outward, pick first dry non-bridge tile in min_dist..max_dist
+    for d in range(min_dist, max_dist + 1):
+        sx, sy = bx + adx * d, by + ady * d
+        if not (0 <= sx < WORLD_SIZE and 0 <= sy < WORLD_SIZE):
+            return None
+        biome = get_biome(sx, sy, seed)
+        if ((sx, sy) not in bridge_all
+                and (sx, sy) not in river_tiles
+                and biome not in _WATER_BIOMES
+                and biome not in ("mountain", "snow")):
+            return (sx, sy)
+    return None
+
+
 def _generate_village_paths_sync(
     seed: int,
     village_positions: list[tuple[int, int]],
@@ -501,12 +544,27 @@ def _generate_village_paths_sync(
     3. Each edge is rendered via A* with 1–3 large perpendicular waypoints
        for natural meander.
     4. Each path is widened by one tile (2-tile-wide roads).
+
+    Bridge stub nodes are added 5-12 tiles past each bridge endpoint so the
+    MST is forced to route a short road away from the bridge on BOTH banks —
+    otherwise the far-side bank gets no exit road when there are no villages
+    on that side of the river.
     """
     rng = random.Random(seed + _PATH_SEED_OFFSET)
     path_tiles: set[tuple[int, int]] = set(existing_path_tiles)
     overrides: list[tuple[int, int, str]] = []
 
-    all_nodes = village_positions + bridge_endpoints
+    # Stub nodes: one per bridge endpoint, a few tiles into dry land away from
+    # the river.  Forces exit roads on both banks of every bridge.
+    stub_nodes: list[tuple[int, int]] = []
+    existing_set = set(village_positions + bridge_endpoints)
+    for ep in bridge_endpoints:
+        stub = _bridge_stub(ep, bridge_all, river_tiles, seed)
+        if stub and stub not in existing_set:
+            stub_nodes.append(stub)
+            existing_set.add(stub)
+
+    all_nodes = village_positions + bridge_endpoints + stub_nodes
     if len(all_nodes) < 2:
         return overrides
 

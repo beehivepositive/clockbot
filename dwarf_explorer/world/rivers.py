@@ -121,8 +121,9 @@ def _trib_path(
       + toward convergence target  * conv_weight
       + worm noise rotation        * noise_weight
 
-    Stops when adjacent to any stop_tile, appending that tile so the
-    tributary is guaranteed to physically connect to the parent stream.
+    Stops when adjacent (cardinal OR diagonal) to any stop_tile, appending
+    that tile so the tributary is guaranteed to physically connect to the
+    parent stream.
     """
     x, y = float(start[0]), float(start[1])
     # Initial direction: toward convergence target
@@ -136,11 +137,15 @@ def _trib_path(
         if not path or (ix, iy) != path[-1]:
             path.append((ix, iy))
 
-        # Check connection to parent
+        # Check connection to parent — cardinal AND diagonal neighbours
         if len(path) > 2:
             if (ix, iy) in stop_tiles:
-                break
-            for nx, ny in [(ix+1,iy),(ix-1,iy),(ix,iy+1),(ix,iy-1)]:
+                # We're on a trunk tile — we're already connected.
+                return path
+            for nx, ny in [
+                (ix+1, iy),  (ix-1, iy),  (ix, iy+1),  (ix, iy-1),   # cardinal
+                (ix+1, iy+1),(ix-1, iy+1),(ix+1, iy-1),(ix-1, iy-1),  # diagonal
+            ]:
                 if (nx, ny) in stop_tiles:
                     path.append((nx, ny))
                     return path
@@ -530,18 +535,38 @@ def _generate_rivers_sync(
     # ── 4. Bridges ────────────────────────────────────────────────────────────
     _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
 
-    # ── 5. Strip river/bridge tiles from ocean, shallow-water, and sand zones ─
+    # ── 5. Strip river/bridge tiles from ocean and coastal-sand zones ────────
     # Trunk rivers flow all the way to the ocean: only deep_water tiles are
     # stripped from trunk-painted tiles (river mouth passes through sand →
     # shallow_water and stops before the deep sea).
-    # Tributaries are still blocked from entering any coastal biome.
+    # Tributaries: strip ocean biomes + sand that is DIRECTLY ADJACENT to
+    # ocean water (coastal sand).  Inland sand patches must NOT be stripped —
+    # stripping them creates visible gaps in the river where it crosses a
+    # sandy interior terrain.
     # Bridge tiles are exempt (a bridge over a natural water body is valid).
-    _trib_filter   = _WATER_BIOMES | {"sand"}   # full coastal strip for tribs
     _trunk_filter  = {"deep_water"}              # trunks only stop at deep water
+
+    def _coastal_sand(tx: int, ty: int) -> bool:
+        """True if (tx, ty) is a sand tile sitting next to ocean water."""
+        if get_biome(tx, ty, seed) != "sand":
+            return False
+        for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            nx, ny = tx + ddx, ty + ddy
+            if 0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE:
+                if get_biome(nx, ny, seed) in _WATER_BIOMES:
+                    return True
+        return False
+
     river_tiles = {
         (x, y) for x, y in river_tiles
-        if get_biome(x, y, seed) not in (
-            _trunk_filter if (x, y) in trunk_painted else _trib_filter
+        if not (
+            get_biome(x, y, seed) in (
+                _trunk_filter if (x, y) in trunk_painted else _WATER_BIOMES
+            )
+            or (
+                (x, y) not in trunk_painted
+                and _coastal_sand(x, y)
+            )
         )
     }
 
