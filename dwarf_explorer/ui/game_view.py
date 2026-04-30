@@ -2834,10 +2834,12 @@ async def _open_ship_chest(
 
     player_items = await get_inventory(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
+    prev_arena = _ui_state.get(user_id, {}).get("arena")
     _ui_state[user_id] = {
         "type": f"ship_chest_{chest_type}",
         "selected": 0,
         "chest_view": "player",
+        "prev_arena": prev_arena,
     }
     content = render_ship_chest(chest_items, player_items, 0, "player",
                                 chest_name, player, inv_rows, inv_cols)
@@ -2909,7 +2911,10 @@ async def _ship_chest_action(
             chest_items = await get_fn(db, user_id)
             player_items = await get_inventory(db, user_id)
 
-    _ui_state[user_id] = {"type": expected_type, "selected": selected, "chest_view": view_mode}
+    _ui_state[user_id] = {
+        "type": expected_type, "selected": selected, "chest_view": view_mode,
+        "prev_arena": state.get("prev_arena"),  # preserve so combat can be restored
+    }
     content = render_ship_chest(chest_items, player_items, selected, view_mode,
                                 chest_name, player, inv_rows, inv_cols)
     if msg:
@@ -2921,10 +2926,19 @@ async def _ship_chest_action(
 async def handle_ship_chest_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Return from ship chest view back to the ship room."""
+    """Return from ship chest view back to the ship room (or combat if opened during a fight)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    prev_arena = _ui_state.get(user_id, {}).get("prev_arena")
     _ui_state.pop(user_id, None)
+
+    # If chest was opened during combat, restore the combat view
+    if player.in_combat and prev_arena is not None:
+        _ui_state[user_id] = {"type": "combat", "arena": prev_arena}
+        content = render_arena(prev_arena, player)
+        view = _combat_view(guild_id, user_id, prev_arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
 
     grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
     content = render_grid(grid, player, "\U0001F4E6 You close the chest.")
@@ -4610,18 +4624,28 @@ async def handle_inventory(
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    if player.in_ocean or player.in_high_seas:
-        # Show ship cargo chest instead of personal inventory
-        await _open_ship_chest(interaction, guild_id, user_id, "cargo")
-        return
-
-    if player.in_ship:
-        # Show personal chest as default inventory when inside the ship
-        await _open_ship_chest(interaction, guild_id, user_id, "personal")
-        return
-
     prev_state = _ui_state.get(user_id, {})
     prev_arena = prev_state.get("arena")
+
+    # In combat + on ship → show ship cargo, but preserve prev_arena so combat restores
+    if player.in_combat and player.in_ship:
+        chest_items = await get_ship_cargo_items(db, user_id)
+        player_items = await get_inventory(db, user_id)
+        inv_rows, inv_cols = _inv_capacity(player)
+        _ui_state[user_id] = {
+            "type": "ship_chest_cargo",
+            "selected": 0,
+            "chest_view": "player",
+            "prev_arena": prev_arena,
+        }
+        content = render_ship_chest(chest_items, player_items, 0, "player",
+                                    "Ship Cargo", player, inv_rows, inv_cols)
+        view = ShipChestView(guild_id, user_id, "cargo", "player")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # In combat (not on ship) → normal inventory, preserving prev_arena
+    # Not in combat → normal inventory regardless of location (ship chest is a separate interaction)
     prev_selections = prev_state.get("selections", {})
     prev_mode = prev_state.get("sel_mode", "add")
     _ui_state[user_id] = {"type": "inventory", "selected": 0, "prev_arena": prev_arena,
