@@ -532,8 +532,8 @@ def _generate_rivers_sync(
             _paint(sub, hw=0, tiles=river_tiles)
             paths_orders.append((sub, 2))
 
-    # ── 4. Bridges ────────────────────────────────────────────────────────────
-    _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
+    # ── 4. Bridges ── removed: bridges now derived from path crossings ───────
+    # _add_bridges(paths_orders, river_tiles, bridge_tiles, rng)
 
     # ── 5. Strip river/bridge tiles from ocean and coastal-sand zones ────────
     # Trunk rivers flow all the way to the ocean: only deep_water tiles are
