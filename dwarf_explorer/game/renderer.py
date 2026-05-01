@@ -201,6 +201,8 @@ _ITEM_SLOT_EMOJI = {
     "ph_chest_small":  "\U0001F4E6",       # 📦
     "ph_chest_medium": "\U0001F5C4\uFE0F", # 🗄️
     "ph_chest_large":  "\U0001F9F3",       # 🧳
+    "gold_coin":       "\U0001FA99",       # 🪙
+    "potion":          "\U0001F9EA",       # 🧪
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
@@ -267,7 +269,7 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
         sel_parts = [f"{k.replace('_',' ').title()} ×{v}" for k, v in selections.items()]
         lines.append(f"Selected: {', '.join(sel_parts)}")
 
-    lines.append(f"◀▶ navigate  |  {equip_label}  |  ✚ Select  |  ❌ Close")
+    lines.append(f"⬆⬇◀▶ navigate  |  ✚ Select  |  ❌ Close")
     return "\n".join(lines)
 
 

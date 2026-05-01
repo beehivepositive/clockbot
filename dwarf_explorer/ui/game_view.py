@@ -260,8 +260,17 @@ class GameView(discord.ui.View):
 
 
 class InventoryView(discord.ui.View):
+    """Inventory view with D-pad navigation mirroring GameView.
+
+    Layout:
+      Row 0: [✚ Select / ✖ Deselect] [🗑 Unselect All?] [➕/➖ mode?] [Craft?]
+      Row 1: [spacer] [⬆️] [spacer]
+      Row 2: [⬅️]  [action emoji]  [➡️]
+      Row 3: [spacer] [⬇️]
+      Row 4: [❌ Close]
+    """
     def __init__(self, guild_id: int, user_id: int,
-                 equip_label: str = "⚔️ Equip",
+                 equip_label: str = "",
                  equip_action: str = "inv_equip",
                  selections: dict | None = None,
                  cursor_item_id: str | None = None,
@@ -269,54 +278,22 @@ class InventoryView(discord.ui.View):
         super().__init__(timeout=None)
         selections = selections or {}
         cursor_selected = cursor_item_id is not None and cursor_item_id in selections
+        has_cursor = cursor_item_id is not None
 
-        # Row 0: ◀ | ▶ | Eat/Equip/Unequip | Select/Deselect | ❌ Close
-        row0_items = [
-            ("◀", "inv_prev", discord.ButtonStyle.secondary, False),
-            ("▶", "inv_next", discord.ButtonStyle.secondary, False),
-            (equip_label, equip_action, discord.ButtonStyle.primary, False),
-            ("✖ Deselect" if cursor_selected else "✚ Select", "inv_select",
-             discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
-             cursor_item_id is None),  # disabled if no item under cursor
-            ("❌ Close", "inv_close", discord.ButtonStyle.danger, False),
-        ]
-        for label, action, style, disabled in row0_items:
-            self.add_item(discord.ui.Button(
-                style=style, label=label, disabled=disabled,
-                custom_id=_custom_id(guild_id, user_id, action), row=0,
-            ))
-
-        # Row 1: selected item buttons (up to 5)
-        from dwarf_explorer.game.renderer import _ITEM_SLOT_EMOJI as _ise
-        sel_items = list(selections.items())  # [(item_id, qty), ...]
-        for idx, (item_id, qty) in enumerate(sel_items[:5]):
-            emoji_s = _ise.get(item_id, "📦")
-            parsed_emoji = _parse_emoji(emoji_s)
-            if parsed_emoji:
-                # Custom Discord emoji: use emoji= param so it actually renders
-                self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.secondary,
-                    emoji=parsed_emoji,
-                    label=f"×{qty}",
-                    custom_id=_custom_id(guild_id, user_id, f"inv_item_{idx}"),
-                    row=1,
-                ))
-            else:
-                # Unicode emoji: safe to embed directly in label
-                self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.secondary,
-                    label=f"{emoji_s}×{qty}",
-                    custom_id=_custom_id(guild_id, user_id, f"inv_item_{idx}"),
-                    row=1,
-                ))
-
-        # Row 2: Unselect All + mode toggle + Craft if recipe matches
+        # ── Row 0: Select/Deselect toggle + conditional extras ────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
+            label="✖ Deselect" if cursor_selected else "✚ Select",
+            custom_id=_custom_id(guild_id, user_id, "inv_select"),
+            disabled=not has_cursor,
+            row=0,
+        ))
         if selections:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger,
-                label="🗑 Unselect All",
+                label="🗑 All",
                 custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"),
-                row=2,
+                row=0,
             ))
             mode_label = "➖ Sub" if sel_mode == "sub" else "➕ Add"
             mode_style = discord.ButtonStyle.danger if sel_mode == "sub" else discord.ButtonStyle.secondary
@@ -324,9 +301,8 @@ class InventoryView(discord.ui.View):
                 style=mode_style,
                 label=mode_label,
                 custom_id=_custom_id(guild_id, user_id, "inv_toggle_mode"),
-                row=2,
+                row=0,
             ))
-            # Check if selections match any recipe
             sel_set = frozenset((k, v) for k, v in selections.items())
             if sel_set in CRAFT_RECIPES:
                 recipe = CRAFT_RECIPES[sel_set]
@@ -334,8 +310,66 @@ class InventoryView(discord.ui.View):
                     style=discord.ButtonStyle.success,
                     label=recipe["label"],
                     custom_id=_custom_id(guild_id, user_id, "inv_craft"),
-                    row=2,
+                    row=0,
                 ))
+
+        # ── Row 1: spacer | ⬆️ | spacer ──────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(guild_id, user_id, "inv_sp1"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B06\uFE0F",
+            custom_id=_custom_id(guild_id, user_id, "inv_up"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(guild_id, user_id, "inv_sp2"), row=1,
+        ))
+
+        # ── Row 2: ⬅️ | action | ➡️ ──────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B05\uFE0F",
+            custom_id=_custom_id(guild_id, user_id, "inv_prev"), row=2,
+        ))
+        if equip_label and has_cursor:
+            _emoji_char = equip_label.split()[0]
+            _parsed = _parse_emoji(_emoji_char)
+            if _parsed:
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.success, emoji=_parsed,
+                    custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
+                ))
+            else:
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.success, emoji=_emoji_char,
+                    custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
+                ))
+        else:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+                custom_id=_custom_id(guild_id, user_id, "inv_sp3"), row=2,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u27A1\uFE0F",
+            custom_id=_custom_id(guild_id, user_id, "inv_next"), row=2,
+        ))
+
+        # ── Row 3: spacer | ⬇️ ────────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(guild_id, user_id, "inv_sp4"), row=3,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
+            custom_id=_custom_id(guild_id, user_id, "inv_down"), row=3,
+        ))
+
+        # ── Row 4: Close ──────────────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Close",
+            custom_id=_custom_id(guild_id, user_id, "inv_close"), row=4,
+        ))
 
 
 class InventoryItemView(discord.ui.View):
@@ -4717,6 +4751,41 @@ async def handle_inv_nav(
     inv_rows, inv_cols = _inv_capacity(player)
     total_slots = inv_rows * inv_cols
     new_sel = (state["selected"] + delta) % max(1, total_slots)
+    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
+    equipped = _equipped_dict(player)
+    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id])
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_up(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Move inventory cursor up one row."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    new_sel = max(0, state["selected"] - inv_cols)
+    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
+    equipped = _equipped_dict(player)
+    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id])
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_down(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Move inventory cursor down one row."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    inv_rows, inv_cols = _inv_capacity(player)
+    total_slots = inv_rows * inv_cols
+    new_sel = min(total_slots - 1, state["selected"] + inv_cols)
     _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     equipped = _equipped_dict(player)
     content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,

@@ -38,6 +38,7 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_item_btn, handle_inv_item_inc, handle_inv_item_dec,
     handle_inv_item_unsel, handle_inv_item_back, handle_inv_craft,
     handle_inv_toggle_mode,
+    handle_inv_up, handle_inv_down,
     handle_house_edit_move, handle_house_add, handle_house_remove,
     handle_house_delete, handle_house_edit_close,
     handle_house_deco_nav, handle_house_deco_sel, handle_house_deco_place,
@@ -216,6 +217,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_inv_nav(interaction, gid, uid, -1)
             elif act == "inv_next":
                 await handle_inv_nav(interaction, gid, uid, +1)
+            elif act == "inv_up":
+                await handle_inv_up(interaction, gid, uid)
+            elif act == "inv_down":
+                await handle_inv_down(interaction, gid, uid)
             elif act == "inv_equip":
                 await handle_inv_equip(interaction, gid, uid)
             elif act == "inv_eat":

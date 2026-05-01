@@ -437,8 +437,9 @@ def _fill_diagonal_gaps(
 ) -> list[tuple[int, int]]:
     """Return corner tiles for diagonal steps to eliminate checkerboard gaps.
 
-    Always adds both corners even if they're water — small tributary crossings
-    should become path (fords).
+    Skips adding a corner tile if it is a river tile AND both step tiles are
+    dry land — that combination means the path is skirting the river bank,
+    not crossing it, and the corner would become a spurious bridge fragment.
     """
     fillers: list[tuple[int, int]] = []
     for i in range(len(path) - 1):
@@ -446,8 +447,13 @@ def _fill_diagonal_gaps(
         nx, ny = path[i + 1]
         dx, dy = nx - x, ny - y
         if dx != 0 and dy != 0:
+            step_dry = (x, y) not in river_tiles and (nx, ny) not in river_tiles
             for fx, fy in ((x + dx, y), (x, y + dy)):
                 if 0 <= fx < WORLD_SIZE and 0 <= fy < WORLD_SIZE:
+                    # Dry-to-dry diagonal that clips a river corner → skip;
+                    # genuine crossings (at least one step tile is river) keep their corners.
+                    if step_dry and (fx, fy) in river_tiles:
+                        continue
                     fillers.append((fx, fy))
     return fillers
 
