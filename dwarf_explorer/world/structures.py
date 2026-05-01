@@ -32,11 +32,11 @@ def _is_adjacent_to(x: int, y: int, seed: int, biome: str) -> bool:
 # ── A* pathfinder ─────────────────────────────────────────────────────────────
 
 def _meander_noise(x: int, y: int, seed: int) -> float:
-    """Fast spatially-coherent noise for path meander (no fbm overhead).
+    """Two-octave spatially-coherent noise for path meander.
 
-    Bilinearly interpolates hashed values sampled every 8 tiles, giving
-    smooth 8-tile-scale cost variation without any expensive floating-point
-    noise functions.  Returns a value in [0, 1].
+    Coarse layer (8-tile grid, 60%) gives large-scale bends.
+    Fine layer (3-tile grid, 40%) adds small wiggles within each bend.
+    Returns a value in [0, 1].
     """
     def _h(n: int) -> float:
         n = (n ^ (n >> 16)) * 0x45D9F3B
@@ -44,16 +44,31 @@ def _meander_noise(x: int, y: int, seed: int) -> float:
         n ^= (n >> 16)
         return (n & 0xFFFFF) / 0xFFFFF
 
+    # Coarse layer — 8-tile grid
     x8, y8 = x >> 3, y >> 3
-    fx = (x & 7) / 8.0
-    fy = (y & 7) / 8.0
+    fx8 = (x & 7) / 8.0
+    fy8 = (y & 7) / 8.0
     s = seed & 0xFFFFFFFF
-    h00 = _h(x8 * 1664525   + y8 * 1013904223 + s)
-    h10 = _h((x8+1)*1664525  + y8 * 1013904223 + s)
-    h01 = _h(x8 * 1664525   + (y8+1)*1013904223 + s)
-    h11 = _h((x8+1)*1664525  + (y8+1)*1013904223 + s)
-    return (h00*(1-fx)*(1-fy) + h10*fx*(1-fy) +
-            h01*(1-fx)*fy    + h11*fx*fy)
+    coarse = (
+        _h(x8 * 1664525    + y8 * 1013904223 + s) * (1 - fx8) * (1 - fy8)
+      + _h((x8+1)*1664525  + y8 * 1013904223 + s) *      fx8  * (1 - fy8)
+      + _h(x8 * 1664525    + (y8+1)*1013904223+s) * (1 - fx8) *      fy8
+      + _h((x8+1)*1664525  + (y8+1)*1013904223+s) *      fx8  *      fy8
+    )
+
+    # Fine layer — 3-tile grid (independent seed offset)
+    s2 = (seed ^ 0xBEEF1234) & 0xFFFFFFFF
+    x3, y3 = x // 3, y // 3
+    fx3 = (x % 3) / 3.0
+    fy3 = (y % 3) / 3.0
+    fine = (
+        _h(x3 * 2246822519   + y3 * 3266489917 + s2) * (1 - fx3) * (1 - fy3)
+      + _h((x3+1)*2246822519 + y3 * 3266489917 + s2) *      fx3  * (1 - fy3)
+      + _h(x3 * 2246822519   + (y3+1)*3266489917+s2) * (1 - fx3) *      fy3
+      + _h((x3+1)*2246822519 + (y3+1)*3266489917+s2) *      fx3  *      fy3
+    )
+
+    return coarse * 0.6 + fine * 0.4
 
 
 def _tile_move_cost(
@@ -125,7 +140,7 @@ def _precompute_costs(
             if (x, y) in narrow_river:
                 row.append(6.0)    # fordable sub-tributary
             elif (x, y) in river_tiles:
-                row.append(25.0)   # crossable but costly — A* will seek narrow points
+                row.append(80.0)   # crossable but expensive — skimming the bank is never worth it
             else:
                 biome = get_biome(x, y, seed)
                 if biome in _WATER_BIOMES:
@@ -279,8 +294,8 @@ def _generate_structures_sync(
     overrides: list[tuple[int, int, str]] = []
     village_centers: list[tuple[int, int]] = []
 
-    # --- Villages (4-6): plains/grass, single tile, minimum 40 tiles apart ---
-    village_count = rng.randint(4, 6)
+    # --- Villages (7-10): plains/grass, single tile, minimum 40 tiles apart ---
+    village_count = rng.randint(7, 10)
     found = 0
     for _ in range(800):
         if found >= village_count:
@@ -352,8 +367,8 @@ def _generate_structures_sync(
     _ocean_biomes    = {'deep_water', 'shallow_water'}
     _bad_biomes      = {'mountain', 'snow', 'deep_water', 'shallow_water'}
     ocean_edge, coast_boundary = get_coast_boundary(seed)
-    _HARBOR_TARGET   = rng.randint(2, 3)
-    _HARBOR_MIN_SEP  = 80   # minimum coast-index distance between two harbors
+    _HARBOR_TARGET   = rng.randint(3, 5)
+    _HARBOR_MIN_SEP  = 60   # 5 harbors × 60 = 300 tiles — fits comfortably on 448-tile coast
     harbor_positions: list[tuple[int, int]] = []
 
     def _coast_index(hx: int, hy: int) -> int:

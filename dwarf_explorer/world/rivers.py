@@ -483,7 +483,7 @@ def _generate_rivers_sync(
         trib = _trib_path(
             start=(sx, sy),
             convergence=(float(conv[0]), float(conv[1])),
-            max_steps=180,
+            max_steps=800,
             seed=trib_seed,
             freq=0.6,
             octaves=3,
@@ -512,15 +512,14 @@ def _generate_rivers_sync(
         if sx2 is None:
             continue
 
-        # Nearest river tile as convergence target
-        sample = rng.sample(list(all_river), min(200, len(all_river)))
-        conv_t = min(sample, key=lambda t: math.hypot(t[0]-sx2, t[1]-sy2))  # type: ignore[arg-type]
+        # Nearest river tile as convergence target — scan full set for accuracy
+        conv_t = min(all_river, key=lambda t: math.hypot(t[0]-sx2, t[1]-sy2))  # type: ignore[arg-type]
 
         sub_seed = (seed ^ (0x2000 + i)) & 0xFFFFFFFF
         sub = _trib_path(
             start=(sx2, sy2),
             convergence=(float(conv_t[0]), float(conv_t[1])),
-            max_steps=120,
+            max_steps=600,
             seed=sub_seed,
             freq=0.9,
             octaves=4,
