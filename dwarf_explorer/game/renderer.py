@@ -248,19 +248,25 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
-        digits, pad = str(qty), ""
+        digits, n_pad = str(qty), 0
     elif qty > 1:
-        digits, pad = str(qty), _PAD
+        digits, n_pad = str(qty), 1
     else:
-        digits, pad = "", _PAD * 2
-    content = f"{emoji}{digits}"   # tight: emoji + digits only (no pad)
+        digits, n_pad = "", 2
+    content = f"{emoji}{digits}"   # tight: emoji + digits only
+    # Indicators consume pad chars rather than adding width where possible
+    # «  = selected prefix  (costs 1 pad)
+    # <  = cursor suffix    (costs 1 pad)
     if cursor_on and is_selected:
-        return f"[{{{content}}}]{pad}"
+        trail = _PAD * max(0, n_pad - 2)
+        return f"\u00AB{content}<{trail}"   # «content<
     if is_selected:
-        return f"{{{content}}}{pad}"
+        trail = _PAD * max(0, n_pad - 1)
+        return f"\u00AB{content}{trail}"    # «content
     if cursor_on:
-        return f"[{content}]{pad}"
-    return f"{content}{pad}"
+        trail = _PAD * max(0, n_pad - 1)
+        return f"{content}<{trail}"         # content<
+    return f"{content}{_PAD * n_pad}"
 
 
 def render_inventory(
@@ -313,7 +319,7 @@ def render_inventory(
         else:
             pad = _PAD * 2  # match qty=1 filled slot width
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"[{_EMPTY_SLOT}]{pad}")
+                slots.append(f"{_EMPTY_SLOT}<{_PAD}")  # cursor: < displaces 1 pad
             else:
                 slots.append(f"{_EMPTY_SLOT}{pad}")
 
