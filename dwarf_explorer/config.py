@@ -573,7 +573,7 @@ COIN_PURSE_CAPACITY: dict[str | None, int] = {
 }
 
 # Maximum stack size per inventory slot
-MAX_STACK_SIZE = 81
+MAX_STACK_SIZE = 9
 
 # Cave random encounter rates per step: {enemy_type: chance 0-1}
 CAVE_ENCOUNTER_RATES = {

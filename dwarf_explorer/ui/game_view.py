@@ -317,25 +317,37 @@ class InventoryView(discord.ui.View):
                 style=discord.ButtonStyle.danger, label="✖ Cancel",
                 custom_id=_custom_id(guild_id, user_id, "inv_move_cancel"), row=0,
             ))
-        else:
-            # Normal mode — Select/Desel shown in all cursor modes
+        elif cursor_selected:
+            # Cursor is ON a selected item — show only Unselect + Unselect All
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
-                label="✖ Desel" if cursor_selected else "✚ Select",
+                style=discord.ButtonStyle.danger,
+                label="◎ Unselect",
+                custom_id=_custom_id(guild_id, user_id, "inv_select"),
+                row=0,
+            ))
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.danger, label="◎ All",
+                custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"), row=0,
+            ))
+        else:
+            # Normal mode — ⬤ Select, Move, Craft (if recipe matches), Unselect All (if any)
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="⬤ Select",
                 custom_id=_custom_id(guild_id, user_id, "inv_select"),
                 disabled=cursor_item_id is None,
                 row=0,
             ))
-            # Move button (only when in inventory mode and no selection active)
-            can_move = cursor_mode == "inventory" and not selections and has_cursor
+            # Move button — allow whenever cursor is on an inventory item (even with selections)
+            can_move_item = cursor_mode == "inventory" and has_cursor
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
                 label="↕ Move",
                 custom_id=_custom_id(guild_id, user_id, "inv_move"),
-                disabled=not can_move,
+                disabled=not can_move_item,
                 row=0,
             ))
-            # Craft button (when recipe matches)
+            # Craft button (when recipe matches); Unselect All (when any selected)
             if selections:
                 sel_set = frozenset((k, v) for k, v in selections.items())
                 if sel_set in CRAFT_RECIPES:
@@ -346,18 +358,10 @@ class InventoryView(discord.ui.View):
                         custom_id=_custom_id(guild_id, user_id, "inv_craft"),
                         row=0,
                     ))
-                else:
-                    _sp("inv_sp_r0c", 0)
-            else:
-                _sp("inv_sp_r0c", 0)
-            # Unselect all
-            if selections:
                 self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.danger, label="🗑 All",
+                    style=discord.ButtonStyle.danger, label="◎ All",
                     custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"), row=0,
                 ))
-            else:
-                _sp("inv_sp_r0d", 0)
 
         # ── Row 1: [−?] [⬆️] [+?] ─────────────────────────────────────────────
         if show_plus_minus and not move_mode:
@@ -385,7 +389,7 @@ class InventoryView(discord.ui.View):
             custom_id=_custom_id(guild_id, user_id, "inv_prev"), row=2,
         ))
         if equip_label and (has_cursor or cursor_mode == "equipped"):
-            _emoji_char = equip_label.split()[0]
+            _emoji_char = equip_label.split()[0] if " " in equip_label else equip_label
             _parsed = _parse_emoji(_emoji_char)
             if _parsed:
                 self.add_item(discord.ui.Button(
@@ -393,9 +397,9 @@ class InventoryView(discord.ui.View):
                     custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
                 ))
             else:
-                # Unicode emoji — must use emoji= not label= for correct rendering
+                # Unicode emoji — use emoji= for correct rendering
                 self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.success, emoji=equip_label,
+                    style=discord.ButtonStyle.success, emoji=_emoji_char,
                     custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
                 ))
         else:
@@ -405,7 +409,7 @@ class InventoryView(discord.ui.View):
             custom_id=_custom_id(guild_id, user_id, "inv_next"), row=2,
         ))
 
-        # ── Row 3: spacer | ⬇️ | 🫳? | spacer ──────────────────────────────
+        # ── Row 3: spacer | ⬇️ | 🫳? ──────────────────────────────────────
         _sp("inv_sp4", 3)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
@@ -416,9 +420,7 @@ class InventoryView(discord.ui.View):
                 style=discord.ButtonStyle.danger, emoji="\U0001FAF3",  # 🫳
                 custom_id=_custom_id(guild_id, user_id, "inv_drop"), row=3,
             ))
-        else:
-            _sp("inv_sp5", 3)
-        _sp("inv_sp6", 3)
+        # (no trailing spacer — user requested it be removed)
 
         # ── Row 4: Close ──────────────────────────────────────────────────────
         self.add_item(discord.ui.Button(
@@ -444,23 +446,65 @@ class InventoryItemView(discord.ui.View):
 
 
 class BankView(discord.ui.View):
+    """Bank UI — D-pad layout matching InventoryView but deposit/withdraw instead of equip."""
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "player"):
         super().__init__(timeout=None)
-        action = "bank_withdraw" if view_mode == "bank" else "bank_deposit"
-        action_label = "⬆ Withdraw" if view_mode == "bank" else "⬇ Deposit"
-        for label, act in [
-            ("◀", "bank_prev"),
-            ("▶", "bank_next"),
-            (action_label, action),
-            ("🔄 Switch", "bank_switch"),
-            ("❌ Close", "bank_close"),
-        ]:
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label=label,
-                custom_id=_custom_id(guild_id, user_id, act),
-                row=0,
-            ))
+        gid, uid = guild_id, user_id
+
+        _sp = lambda act, r: self.add_item(discord.ui.Button(  # noqa
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, act), row=r,
+        ))
+
+        # ── Row 0: Switch (🏦 to go to vault / 🎒 to go to player inv) ───────
+        switch_emoji = "\U0001F3E6" if view_mode == "player" else "\U0001F392"  # 🏦 / 🎒
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji=switch_emoji,
+            custom_id=_custom_id(gid, uid, "bank_switch"), row=0,
+        ))
+
+        # ── Row 1: [−] [⬆] [+] ───────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="➖",
+            custom_id=_custom_id(gid, uid, "bank_qty_dec"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B06\uFE0F",
+            custom_id=_custom_id(gid, uid, "bank_up"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="➕",
+            custom_id=_custom_id(gid, uid, "bank_qty_inc"), row=1,
+        ))
+
+        # ── Row 2: ⬅ | 📤/📥 | ➡ ────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B05\uFE0F",
+            custom_id=_custom_id(gid, uid, "bank_prev"), row=2,
+        ))
+        action_emoji = "\U0001F4E4" if view_mode == "player" else "\U0001F4E5"  # 📤 / 📥
+        action_id = "bank_deposit" if view_mode == "player" else "bank_withdraw"
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success, emoji=action_emoji,
+            custom_id=_custom_id(gid, uid, action_id), row=2,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u27A1\uFE0F",
+            custom_id=_custom_id(gid, uid, "bank_next"), row=2,
+        ))
+
+        # ── Row 3: spacer | ⬇ ────────────────────────────────────────────────
+        _sp("bank_sp4", 3)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
+            custom_id=_custom_id(gid, uid, "bank_down"), row=3,
+        ))
+
+        # ── Row 4: Close ─────────────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Close",
+            custom_id=_custom_id(gid, uid, "bank_close"), row=4,
+        ))
 
 
 class ShipChestView(discord.ui.View):
@@ -571,27 +615,64 @@ class IslandView(discord.ui.View):
 
 
 class ShopView(discord.ui.View):
-    def __init__(self, guild_id: int, user_id: int, mode: str = "buy"):
+    """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
+    def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop"):
         super().__init__(timeout=None)
-        if mode == "buy":
-            action_label, action_id = "🪙 Buy", "shop_buy"
-            mode_label, mode_id = "💲 Sell", "shop_mode"
-        else:
-            action_label, action_id = "🪙 Sell", "shop_sell"
-            mode_label, mode_id = "🛒 Buy", "shop_mode"
-        for label, act in [
-            ("◀", "shop_prev"),
-            ("▶", "shop_next"),
-            (action_label, action_id),
-            (mode_label, mode_id),
-            ("❌ Close", "shop_close"),
-        ]:
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label=label,
-                custom_id=_custom_id(guild_id, user_id, act),
-                row=0,
-            ))
+        gid, uid = guild_id, user_id
+
+        _sp = lambda act, r: self.add_item(discord.ui.Button(  # noqa
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, act), row=r,
+        ))
+
+        # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv) ────────
+        switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji=switch_emoji,
+            custom_id=_custom_id(gid, uid, "shop_switch"), row=0,
+        ))
+
+        # ── Row 1: [−] [⬆] [+] ───────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="➖",
+            custom_id=_custom_id(gid, uid, "shop_qty_dec"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B06\uFE0F",
+            custom_id=_custom_id(gid, uid, "shop_up"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="➕",
+            custom_id=_custom_id(gid, uid, "shop_qty_inc"), row=1,
+        ))
+
+        # ── Row 2: ⬅ | 🪙 Buy / 🪙 Sell | ➡ ────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B05\uFE0F",
+            custom_id=_custom_id(gid, uid, "shop_prev"), row=2,
+        ))
+        action_id = "shop_buy" if view_mode == "shop" else "shop_sell"
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success, emoji="\U0001FA99",  # 🪙
+            custom_id=_custom_id(gid, uid, action_id), row=2,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u27A1\uFE0F",
+            custom_id=_custom_id(gid, uid, "shop_next"), row=2,
+        ))
+
+        # ── Row 3: spacer | ⬇ ────────────────────────────────────────────────
+        _sp("shop_sp4", 3)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
+            custom_id=_custom_id(gid, uid, "shop_down"), row=3,
+        ))
+
+        # ── Row 4: Close ─────────────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Close",
+            custom_id=_custom_id(gid, uid, "shop_close"), row=4,
+        ))
 
 
 class ChestView(discord.ui.View):
@@ -1063,14 +1144,15 @@ def _inv_action_btn(
         if equipped_cursor < len(_EQUIP_SLOT_ORDER):
             slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
             if equipped.get(slot):
-                return ("\U0001FAF3", "inv_unequip")   # 🫳 hand down = take off
+                return ("\u2B07\uFE0F", "inv_unequip")  # ⬇️ down arrow = unequip
         return ("", "")
     if cursor_mode == "gold":
         return ("", "")
-    # inventory mode
+    # inventory mode — use slot_index-aware lookup
     visible = [it for it in items if it["item_id"] != "gold_coin"]
-    if selected < len(visible):
-        item_id = visible[selected]["item_id"]
+    ci = _cursor_item(visible, selected)
+    if ci is not None:
+        item_id = ci["item_id"]
         if item_id in FOOD_HP_RESTORE:
             return ("\U0001F357", "inv_eat")            # 🍗 eat
         if item_id in ITEM_EQUIP_SLOTS:
@@ -4685,7 +4767,7 @@ async def handle_house_deco_cancel(
 async def handle_forge_iron(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Smelt iron ore into ingots at the forge (3 ore → 1 ingot)."""
+    """Smelt iron ore into ingots at the forge (1 ore → 1 ingot)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
@@ -4693,15 +4775,14 @@ async def handle_forge_iron(
         "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
     )
     ore_count = ore_row["quantity"] if ore_row else 0
-    ingot_batches = ore_count // 3
 
-    if ingot_batches > 0:
-        await remove_from_inventory(db, user_id, "iron_ore", ingot_batches * 3)
-        await add_to_inventory(db, user_id, "iron_ingot", ingot_batches)
-        msg = (f"🔥 Smelted {ingot_batches * 3} iron ore → "
-               f"**{ingot_batches} iron ingot{'s' if ingot_batches > 1 else ''}**!")
+    if ore_count > 0:
+        await remove_from_inventory(db, user_id, "iron_ore", ore_count)
+        await add_to_inventory(db, user_id, "iron_ingot", ore_count)
+        msg = (f"🔥 Smelted {ore_count} iron ore → "
+               f"**{ore_count} iron ingot{'s' if ore_count > 1 else ''}**!")
     else:
-        msg = "🔥 You need at least 3 iron ore to smelt an ingot."
+        msg = "🔥 You need iron ore to smelt ingots."
 
     await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
@@ -5796,38 +5877,144 @@ async def handle_inv_move_cancel(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+# ── Shop helpers ──────────────────────────────────────────────────────────────
+
+def _shop_render(state: dict, player_items: list, equipped: dict,
+                 player_gold: int, inv_rows: int, inv_cols: int) -> str:
+    """Build shop content string from current state."""
+    view_mode = state.get("shop_view", "shop")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    return render_shop(
+        SHOP_CATALOG, player_items, sel, view_mode, equipped,
+        player_gold, inv_rows, inv_cols, ITEM_SELL_PRICES, qty,
+    )
+
+
 # ── Shop handlers ─────────────────────────────────────────────────────────────
 
 async def _open_shop(
     interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
 ) -> None:
-    _ui_state[user_id] = {"type": "shop", "selected": 0, "mode": "buy"}
-    content = render_shop(SHOP_CATALOG, 0, player.gold, mode="buy")
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
+    content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, "buy"))
+                                            view=ShopView(guild_id, user_id, "shop"))
+
+
+def _shop_nav_bounds(state: dict, player_items: list) -> int:
+    """Return total navigable slots in current shop view."""
+    view_mode = state.get("shop_view", "shop")
+    inv_cols = 7
+    if view_mode == "player":
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        return max(1, len(visible))
+    else:
+        return max(1, len(SHOP_CATALOG))
+
+
+async def _shop_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    delta_col: int = 0, delta_row: int = 0,
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
+    sel = state.get("selected", 0)
+    total = _shop_nav_bounds(state, player_items)
+    cols = inv_cols if state.get("shop_view") == "player" else 7
+    new_sel = (sel + delta_col + delta_row * cols) % total
+    new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop")))
 
 
 async def handle_shop_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
 ) -> None:
+    await _shop_nav(interaction, guild_id, user_id, delta_col=delta)
+
+
+async def handle_shop_up(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _shop_nav(interaction, guild_id, user_id, delta_row=-1)
+
+
+async def handle_shop_down(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _shop_nav(interaction, guild_id, user_id, delta_row=1)
+
+
+async def handle_shop_qty_inc(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
-    mode = state.get("mode", "buy")
-    if mode == "sell":
-        items = await get_inventory(db, user_id)
-        total = max(1, len(items))
-        new_sel = (state["selected"] + delta) % total
-        _ui_state[user_id] = {**state, "selected": new_sel}
-        content = render_shop(SHOP_CATALOG, new_sel, player.gold,
-                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
+    view_mode = state.get("shop_view", "shop")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    if view_mode == "shop" and sel < len(SHOP_CATALOG):
+        max_qty = max(1, player.gold // max(1, SHOP_CATALOG[sel]["price"]))
+        new_qty = (qty % max_qty) + 1
+    elif view_mode == "player":
+        from dwarf_explorer.game.renderer import _build_slot_map
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+        item = slot_map.get(sel)
+        new_qty = ((qty % max(1, item["quantity"])) + 1) if item else 1
     else:
-        total = len(SHOP_CATALOG)
-        new_sel = (state["selected"] + delta) % total
-        _ui_state[user_id] = {**state, "selected": new_sel}
-        content = render_shop(SHOP_CATALOG, new_sel, player.gold, mode="buy")
+        new_qty = qty
+    new_state = {**state, "qty": new_qty}
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, mode))
+                                            view=ShopView(guild_id, user_id, view_mode))
+
+
+async def handle_shop_qty_dec(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
+    view_mode = state.get("shop_view", "shop")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    if view_mode == "shop" and sel < len(SHOP_CATALOG):
+        max_qty = max(1, player.gold // max(1, SHOP_CATALOG[sel]["price"]))
+        new_qty = max_qty if qty <= 1 else qty - 1
+    elif view_mode == "player":
+        from dwarf_explorer.game.renderer import _build_slot_map
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+        item = slot_map.get(sel)
+        max_qty = item["quantity"] if item else 1
+        new_qty = max_qty if qty <= 1 else qty - 1
+    else:
+        new_qty = qty
+    new_state = {**state, "qty": new_qty}
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, view_mode))
 
 
 async def handle_shop_buy(
@@ -5835,20 +6022,35 @@ async def handle_shop_buy(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
     sel = state.get("selected", 0)
-    item = SHOP_CATALOG[sel]
-    if player.gold < item["price"]:
-        content = render_shop(SHOP_CATALOG, sel, player.gold, mode="buy") + f"\n*Not enough gold! Need {item['price']}.*"
+    qty = max(1, state.get("qty", 1))
+    if sel >= len(SHOP_CATALOG):
+        content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "buy"))
+                                                view=ShopView(guild_id, user_id, "shop"))
         return
-    player.gold -= item["price"]
+    item = SHOP_CATALOG[sel]
+    total_cost = item["price"] * qty
+    if player.gold < total_cost:
+        suffix = f"\n*Not enough gold! Need {total_cost}g for ×{qty}.*"
+        content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=ShopView(guild_id, user_id, "shop"))
+        return
+    player.gold -= total_cost
     await update_player_stats(db, user_id, gold=player.gold)
-    await add_to_inventory(db, user_id, item["id"])
-    content = render_shop(SHOP_CATALOG, sel, player.gold, mode="buy") + f"\n*Purchased {item['name']}!*"
+    await add_to_inventory(db, user_id, item["id"], qty)
+    player_items = await get_inventory(db, user_id)
+    suffix = f"\n*Purchased {qty}× {item['name']} for {total_cost}g!*"
+    new_state = {**state, "qty": 1}
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, "buy"))
+                                            view=ShopView(guild_id, user_id, "shop"))
 
 
 async def handle_shop_sell(
@@ -5856,54 +6058,65 @@ async def handle_shop_sell(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "mode": "sell"})
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "player", "qty": 1})
     sel = state.get("selected", 0)
-    items = await get_inventory(db, user_id)
-    if sel >= len(items):
-        content = render_shop(SHOP_CATALOG, sel, player.gold,
-                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + "\n*(No item selected)*"
+    qty = max(1, state.get("qty", 1))
+    from dwarf_explorer.game.renderer import _build_slot_map
+    visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+    slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+    item = slot_map.get(sel)
+    if item is None:
+        content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + "\n*(No item at cursor)*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "sell"))
+                                                view=ShopView(guild_id, user_id, "player"))
         return
-    item_id = items[sel]["item_id"]
+    item_id = item["item_id"]
     price = ITEM_SELL_PRICES.get(item_id, 0)
     if price == 0:
-        content = render_shop(SHOP_CATALOG, sel, player.gold,
-                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + \
-                  f"\n*The shop won't buy {item_id.replace('_', ' ').title()}.*"
+        suffix = f"\n*The shop won't buy {item_id.replace('_', ' ').title()}.*"
+        content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "sell"))
+                                                view=ShopView(guild_id, user_id, "player"))
         return
-    await remove_from_inventory(db, user_id, item_id, 1)
-    player.gold += price
+    actual_qty = min(qty, item["quantity"])
+    await remove_from_inventory(db, user_id, item_id, actual_qty)
+    player.gold += price * actual_qty
     await update_player_stats(db, user_id, gold=player.gold)
-    items = await get_inventory(db, user_id)
-    new_sel = min(sel, max(0, len(items) - 1))
-    if user_id in _ui_state:
-        _ui_state[user_id]["selected"] = new_sel
-    content = render_shop(SHOP_CATALOG, new_sel, player.gold,
-                          mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES) + \
-              f"\n*Sold {item_id.replace('_', ' ').title()} for {price} gold!*"
+    player_items = await get_inventory(db, user_id)
+    suffix = f"\n*Sold {actual_qty}× {item_id.replace('_', ' ').title()} for {price * actual_qty}g!*"
+    new_state = {**state, "qty": 1}
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, "sell"))
+                                            view=ShopView(guild_id, user_id, "player"))
 
 
+async def handle_shop_switch(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch between shop catalog and player inventory."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
+    new_view = "player" if state.get("shop_view", "shop") == "shop" else "shop"
+    new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}
+    _ui_state[user_id] = new_state
+    content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, new_view))
+
+
+# handle_shop_mode kept for backward compatibility (old buttons may still trigger it)
 async def handle_shop_mode(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    db = await get_database(guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "mode": "buy"})
-    new_mode = "sell" if state.get("mode", "buy") == "buy" else "buy"
-    _ui_state[user_id] = {"type": "shop", "selected": 0, "mode": new_mode}
-    if new_mode == "sell":
-        items = await get_inventory(db, user_id)
-        content = render_shop(SHOP_CATALOG, 0, player.gold,
-                              mode="sell", sell_items=items, sell_prices=ITEM_SELL_PRICES)
-    else:
-        content = render_shop(SHOP_CATALOG, 0, player.gold, mode="buy")
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, new_mode))
+    await handle_shop_switch(interaction, guild_id, user_id)
 
 
 async def handle_shop_close(
@@ -5912,37 +6125,137 @@ async def handle_shop_close(
     await handle_inv_close(interaction, guild_id, user_id)
 
 
+# ── Bank helpers ──────────────────────────────────────────────────────────────
+
+def _bank_render(state: dict, player_items: list, bank_items: list,
+                 equipped: dict, player_gold: int,
+                 inv_rows: int, inv_cols: int) -> str:
+    """Build bank content string from current state."""
+    bv = state.get("bank_view", "player")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    return render_bank(player_items, bank_items, sel, bv, equipped,
+                       inv_rows, inv_cols, gold=player_gold, qty=qty)
+
+
 # ── Bank handlers ─────────────────────────────────────────────────────────────
 
 async def _open_bank(
     interaction: discord.Interaction, guild_id: int, user_id: int,
     player: Player, db,
 ) -> None:
-    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": "player"}
+    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": "player", "qty": 1}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
-    content = render_bank(player_items, bank_items, 0, "player", equipped, inv_rows, inv_cols)
+    content = _bank_render(_ui_state[user_id], player_items, bank_items,
+                           equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
+
+
+async def _bank_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    delta_col: int = 0, delta_row: int = 0,
+) -> None:
+    """Navigate bank cursor, resetting qty on item change."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
+    bv = state.get("bank_view", "player")
+    sel = state.get("selected", 0)
+    cols = inv_cols if bv == "player" else 7
+    total = max(1, inv_rows * inv_cols if bv == "player" else 28)
+    new_sel = (sel + delta_col + delta_row * cols) % total
+    new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
+    _ui_state[user_id] = new_state
+    content = _bank_render(new_state, player_items, bank_items,
+                           equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, bv))
 
 
 async def handle_bank_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
 ) -> None:
+    await _bank_nav(interaction, guild_id, user_id, delta_col=delta)
+
+
+async def handle_bank_up(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _bank_nav(interaction, guild_id, user_id, delta_row=-1)
+
+
+async def handle_bank_down(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await _bank_nav(interaction, guild_id, user_id, delta_row=1)
+
+
+async def handle_bank_qty_inc(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
-    bv = state.get("bank_view", "player")
-    inv_rows, inv_cols = _inv_capacity(player)
-    total = max(1, (inv_rows * inv_cols if bv == "player" else 36))
-    new_sel = (state["selected"] + delta) % total
-    _ui_state[user_id] = {"type": "bank", "selected": new_sel, "bank_view": bv}
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    content = render_bank(player_items, bank_items, new_sel, bv, equipped, inv_rows, inv_cols)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
+    bv = state.get("bank_view", "player")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    from dwarf_explorer.game.renderer import _build_slot_map
+    if bv == "player":
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+        item = slot_map.get(sel)
+        max_qty = item["quantity"] if item else 1
+    else:
+        slot_map = _build_slot_map(bank_items, 28)
+        item = slot_map.get(sel)
+        max_qty = item["quantity"] if item else 1
+    new_qty = (qty % max_qty) + 1
+    new_state = {**state, "qty": new_qty}
+    _ui_state[user_id] = new_state
+    content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=BankView(guild_id, user_id, bv))
+
+
+async def handle_bank_qty_dec(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player_items = await get_inventory(db, user_id)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
+    bv = state.get("bank_view", "player")
+    sel = state.get("selected", 0)
+    qty = state.get("qty", 1)
+    from dwarf_explorer.game.renderer import _build_slot_map
+    if bv == "player":
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+        item = slot_map.get(sel)
+        max_qty = item["quantity"] if item else 1
+    else:
+        slot_map = _build_slot_map(bank_items, 28)
+        item = slot_map.get(sel)
+        max_qty = item["quantity"] if item else 1
+    new_qty = max_qty if qty <= 1 else qty - 1
+    new_state = {**state, "qty": new_qty}
+    _ui_state[user_id] = new_state
+    content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
@@ -5954,12 +6267,13 @@ async def handle_bank_switch(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
     new_view = "bank" if state.get("bank_view") == "player" else "player"
-    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": new_view}
+    new_state = {"type": "bank", "selected": 0, "bank_view": new_view, "qty": 1}
+    _ui_state[user_id] = new_state
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
-    content = render_bank(player_items, bank_items, 0, new_view, equipped, inv_rows, inv_cols)
+    content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, new_view))
 
@@ -5969,27 +6283,31 @@ async def handle_bank_deposit(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
     sel = state.get("selected", 0)
-    items = await get_inventory(db, user_id)
+    qty = max(1, state.get("qty", 1))
+    player_items = await get_inventory(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
-    if sel >= len(items):
-        player_items = items
-        bank_items = await get_bank_items(db, user_id)
-        equipped = _equipped_dict(player)
-        content = render_bank(player_items, bank_items, sel, "player", equipped, inv_rows, inv_cols) + "\n*(Empty slot)*"
+    from dwarf_explorer.game.renderer import _build_slot_map
+    visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+    slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+    item = slot_map.get(sel)
+    bank_items = await get_bank_items(db, user_id)
+    equipped = _equipped_dict(player)
+    if item is None:
+        suffix = "\n*(Empty slot)*"
+        content = _bank_render(state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "player"))
         return
-    item_id = items[sel]["item_id"]
-    ok = await bank_deposit(db, user_id, item_id)
+    actual_qty = min(qty, item["quantity"])
+    ok = await bank_deposit(db, user_id, item["item_id"], actual_qty)
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    equipped = _equipped_dict(player)
-    new_sel = min(sel, max(0, len(player_items) - 1))
-    _ui_state[user_id]["selected"] = new_sel
-    suffix = f"\n*Deposited {item_id}.*" if ok else "\n*Deposit failed.*"
-    content = render_bank(player_items, bank_items, new_sel, "player", equipped, inv_rows, inv_cols) + suffix
+    suffix = f"\n*Deposited {actual_qty}× {item['item_id'].replace('_', ' ')}.*" if ok else "\n*Deposit failed.*"
+    new_state = {**state, "qty": 1}
+    _ui_state[user_id] = new_state
+    content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
 
@@ -5999,27 +6317,30 @@ async def handle_bank_withdraw(
 ) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "bank"})
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "bank", "qty": 1})
     sel = state.get("selected", 0)
-    items = await get_bank_items(db, user_id)
+    qty = max(1, state.get("qty", 1))
+    bank_items = await get_bank_items(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
-    if sel >= len(items):
-        player_items = await get_inventory(db, user_id)
-        bank_items = items
-        equipped = _equipped_dict(player)
-        content = render_bank(player_items, bank_items, sel, "bank", equipped, inv_rows, inv_cols) + "\n*(Empty slot)*"
+    from dwarf_explorer.game.renderer import _build_slot_map
+    slot_map = _build_slot_map(bank_items, 28)
+    item = slot_map.get(sel)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    if item is None:
+        suffix = "\n*(Empty slot)*"
+        content = _bank_render(state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "bank"))
         return
-    item_id = items[sel]["item_id"]
-    ok = await bank_withdraw(db, user_id, item_id)
+    actual_qty = min(qty, item["quantity"])
+    ok = await bank_withdraw(db, user_id, item["item_id"], actual_qty)
     player_items = await get_inventory(db, user_id)
     bank_items_new = await get_bank_items(db, user_id)
-    equipped = _equipped_dict(player)
-    new_sel = min(sel, max(0, len(bank_items_new) - 1))
-    _ui_state[user_id]["selected"] = new_sel
-    suffix = f"\n*Withdrew {item_id}.*" if ok else "\n*Withdraw failed.*"
-    content = render_bank(player_items, bank_items_new, new_sel, "bank", equipped, inv_rows, inv_cols) + suffix
+    suffix = f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*" if ok else "\n*Withdraw failed.*"
+    new_state = {**state, "qty": 1}
+    _ui_state[user_id] = new_state
+    content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "bank"))
 

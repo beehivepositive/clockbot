@@ -241,10 +241,9 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell.
 
     Uses EN QUAD (\u2000) for padding so columns align in Discord embeds.
-    Selected (in basket): {emoji qq}
-    Cursor only:          [emoji qq]
-    Both cursor+selected: [{emoji qq}]
-    Plain:                _emoji qq_  (EN QUAD padding each side)
+    Cursor only (or cursor + selected):  emoji◀  (cursor takes priority)
+    Selected only:                       emoji«
+    Plain:                               emoji__  (2-char qty padding)
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
@@ -254,14 +253,11 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     else:
         digits, n_pad = "", 2
     content = f"{emoji}{digits}"   # tight: emoji + digits only
-    # Both indicators are suffixes; each displaces 1 trailing pad char
-    # «  = selected   <  = cursor
-    if cursor_on and is_selected:
-        return f"{content}«<{_PAD * max(0, n_pad - 2)}"
+    # cursor_on takes priority — never show « when cursor is on the item
+    if cursor_on:
+        return f"{content}◀{_PAD * max(0, n_pad - 1)}"
     if is_selected:
         return f"{content}«{_PAD * max(0, n_pad - 1)}"
-    if cursor_on:
-        return f"{content}<{_PAD * max(0, n_pad - 1)}"
     return f"{content}{_PAD * n_pad}"
 
 
@@ -306,7 +302,12 @@ def render_inventory(
     lines = [f"\U0001F392 **Inventory** ({inv_rows}×{inv_cols})"]
 
     # --- Gold row (above equipped) ---
-    gold_marker = " ◀" if cursor_mode == "gold" else ""
+    if cursor_mode == "gold":
+        gold_marker = " ◀"
+    elif selections.get("gold_coin", 0) > 0:
+        gold_marker = " «"
+    else:
+        gold_marker = ""
     lines.append(f"\U0001FA99 **{gold}** coins{gold_marker}")
 
     # --- Equipped row ---
@@ -315,8 +316,11 @@ def render_inventory(
         item_id = equipped.get(slot)
         emoji = _item_emoji(item_id) if item_id else empty_emoji
         cursor_here = cursor_mode == "equipped" and idx == equipped_cursor
+        selected_here = item_id is not None and item_id in selections
         if cursor_here:
-            eq_line_parts.append(f"{emoji}<")
+            eq_line_parts.append(f"{emoji}◀")   # cursor takes priority
+        elif selected_here:
+            eq_line_parts.append(f"{emoji}«")
         else:
             eq_line_parts.append(emoji)
     lines.append("**Equipped:** " + " ".join(eq_line_parts))
@@ -336,7 +340,7 @@ def render_inventory(
             slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_EMPTY_SLOT}<{_PAD}")  # cursor: < displaces 1 pad
+                slots.append(f"{_EMPTY_SLOT}◀{_PAD}")  # cursor: ◀ displaces 1 pad
             else:
                 slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
 
@@ -376,48 +380,86 @@ def render_bank(
     player_items: list[dict], bank_items: list[dict],
     selected: int, view: str, equipped: dict,
     inv_rows: int = 1, inv_cols: int = 7,
+    gold: int = 0, qty: int = 1,
 ) -> str:
-    """Render bank UI. view = 'player' or 'bank'."""
+    """Render bank UI. view = 'player' or 'bank'.
+
+    Player view mirrors render_inventory layout (gold + equipped + grid).
+    Bank view shows the vault grid.
+    """
     BANK_COLS = 7
     BANK_ROWS = 4
     BANK_TOTAL = BANK_COLS * BANK_ROWS
 
     if view == "player":
-        title = f"\U0001F3E6 **Bank** — Your Inventory ({inv_rows}×{inv_cols})"
-        source = [it for it in player_items if it["item_id"] != "gold_coin"]
-        action_label = "⬇ Deposit"
-        COLS_disp, TOTAL_disp = inv_cols, inv_rows * inv_cols
-    else:
-        title = f"\U0001F3E6 **Bank** — Vault ({BANK_COLS}×{BANK_ROWS})"
-        source = bank_items
-        action_label = "⬆ Withdraw"
-        COLS_disp, TOTAL_disp = BANK_COLS, BANK_TOTAL
+        lines = [f"\U0001F3E6 **Bank** — Your Inventory ({inv_rows}×{inv_cols})"]
 
-    lines = [title]
-    slots: list[str] = []
-    for i in range(TOTAL_disp):
-        if i < len(source):
-            item = source[i]
-            emoji = _item_emoji(item["item_id"])
-            qty_str = str(item["quantity"]).ljust(2) if item["quantity"] > 1 else "  "
-            cell = f"{emoji}{qty_str}"
+        # Gold row
+        lines.append(f"\U0001FA99 **{gold}** coins")
+
+        # Equipped row
+        eq_parts: list[str] = []
+        for slot, empty_emoji in _EQUIP_SLOT_ORDER:
+            item_id = equipped.get(slot)
+            eq_parts.append(_item_emoji(item_id) if item_id else empty_emoji)
+        lines.append("**Equipped:** " + " ".join(eq_parts))
+        lines.append("")
+
+        # Inventory grid (position-aware)
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        total_slots = inv_rows * inv_cols
+        slot_map = _build_slot_map(visible, total_slots)
+        slots: list[str] = []
+        for i in range(total_slots):
+            item = slot_map.get(i)
+            if item is not None:
+                slots.append(_fmt_slot(item["item_id"], item["quantity"],
+                                       cursor_on=(i == selected), is_selected=False))
+            else:
+                if i == selected:
+                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                else:
+                    slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
+        for row in range(inv_rows):
+            lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
+
+        lines.append("")
+        item = slot_map.get(selected)
+        if item:
+            lines.append(
+                f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
+                f"  |  📤 Deposit qty: **{qty}**"
+            )
         else:
-            cell = f" {_EMPTY_SLOT}  "
-        if i == selected:
-            cell = f"[{cell}]"
-        slots.append(cell)
+            lines.append("Cursor: *(empty slot)*")
 
-    for row in range(TOTAL_disp // COLS_disp):
-        lines.append("".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
-
-    lines.append("")
-    if selected < len(source):
-        item = source[selected]
-        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** {item['quantity']}")
     else:
-        lines.append("Selected: *(empty slot)*")
+        lines = [f"\U0001F3E6 **Bank Vault** ({BANK_COLS}×{BANK_ROWS})"]
+        slot_map = _build_slot_map(bank_items, BANK_TOTAL)
+        slots = []
+        for i in range(BANK_TOTAL):
+            item = slot_map.get(i)
+            if item is not None:
+                slots.append(_fmt_slot(item["item_id"], item["quantity"],
+                                       cursor_on=(i == selected), is_selected=False))
+            else:
+                if i == selected:
+                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                else:
+                    slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
+        for row in range(BANK_ROWS):
+            lines.append("".join(slots[row * BANK_COLS: row * BANK_COLS + BANK_COLS]))
 
-    lines.append(f"◀▶ navigate  |  {action_label}  |  🔄 Switch View  |  ❌ Close")
+        lines.append("")
+        item = slot_map.get(selected)
+        if item:
+            lines.append(
+                f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
+                f"  |  📥 Withdraw qty: **{qty}**"
+            )
+        else:
+            lines.append("Cursor: *(empty slot)*")
+
     return "\n".join(lines)
 
 
@@ -646,40 +688,103 @@ def render_chest(
     return "\n".join(lines)
 
 
-def render_shop(catalog: list[dict], selected: int, player_gold: int,
-                mode: str = "buy", sell_items: list[dict] | None = None,
-                sell_prices: dict | None = None) -> str:
-    """Render shop menu. mode='buy' shows catalog; mode='sell' shows inventory."""
+def render_shop(
+    catalog: list[dict],
+    player_items: list[dict],
+    selected: int,
+    view: str,
+    equipped: dict,
+    player_gold: int,
+    inv_rows: int = 1,
+    inv_cols: int = 7,
+    sell_prices: dict | None = None,
+    qty: int = 1,
+) -> str:
+    """Render shop UI.
+
+    view = 'shop'   — shop catalog grid; buy button active.
+    view = 'player' — full player inventory; sell button active.
+    """
     from dwarf_explorer.config import ITEM_EMOJI as _IE
-    if mode == "sell":
-        lines = ["\U0001F3EA **Shop — Sell Items**", f"\U0001FA99 You have: **{player_gold} gold**", ""]
-        items = sell_items or []
-        if not items:
-            lines.append("*(Your inventory is empty)*")
+
+    SHOP_COLS = 7
+
+    if view == "player":
+        # Full inventory display for selling
+        lines = [f"\U0001F3EA **Shop — Sell** | \U0001FA99 {player_gold}g"]
+
+        # Gold row
+        lines.append(f"\U0001FA99 **{player_gold}** coins")
+
+        # Equipped row
+        eq_parts: list[str] = []
+        for slot, empty_emoji in _EQUIP_SLOT_ORDER:
+            item_id = equipped.get(slot)
+            eq_parts.append(_item_emoji(item_id) if item_id else empty_emoji)
+        lines.append("**Equipped:** " + " ".join(eq_parts))
+        lines.append("")
+
+        # Inventory grid
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        total_slots = inv_rows * inv_cols
+        slot_map = _build_slot_map(visible, total_slots)
+        slots: list[str] = []
+        for i in range(total_slots):
+            item = slot_map.get(i)
+            if item is not None:
+                slots.append(_fmt_slot(item["item_id"], item["quantity"],
+                                       cursor_on=(i == selected), is_selected=False))
+            else:
+                if i == selected:
+                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                else:
+                    slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
+        for row in range(inv_rows):
+            lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
+
+        lines.append("")
+        item = slot_map.get(selected)
+        if item:
+            price = (sell_prices or {}).get(item["item_id"], 0)
+            price_str = f"{price}g each" if price else "*(no value)*"
+            lines.append(
+                f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
+                f"  |  Sell qty **{qty}** for {price * qty if price else 0}g"
+            )
         else:
-            for i, item in enumerate(items):
-                price = (sell_prices or {}).get(item["item_id"], 0)
-                prefix = "▶ " if i == selected else "  "
-                brk_o = "[" if i == selected else ""
-                brk_c = "]" if i == selected else ""
-                qty_str = f" ×{item['quantity']}" if item["quantity"] > 1 else ""
-                price_str = f"{price}g" if price else "no value"
-                lines.append(
-                    f"{prefix}{brk_o}{_item_emoji(item['item_id'])} "
-                    f"{item['item_id'].replace('_', ' ').title()}{qty_str} — {price_str}{brk_c}"
-                )
-        lines.append("")
-        lines.append("◀▶ navigate  |  🪙 Sell  |  🛒 Buy Mode  |  ❌ Close")
+            lines.append("Cursor: *(empty slot)*")
+
     else:
-        lines = ["\U0001F3EA **Shop**", f"\U0001FA99 You have: **{player_gold} gold**", ""]
-        for i, item in enumerate(catalog):
-            prefix = "▶ " if i == selected else "  "
-            bracket_open  = "[" if i == selected else ""
-            bracket_close = "]" if i == selected else ""
-            # Use live ITEM_EMOJI so custom server emojis display correctly
-            item_emoji = _IE.get(item["id"], item.get("emoji", "\U0001F4E6"))
-            lines.append(f"{prefix}{bracket_open}{item_emoji} {item['name']} — {item['price']} gold{bracket_close}")
-            lines.append(f"   *{item['description']}*")
+        # Shop catalog grid
+        shop_rows = max(1, (len(catalog) + SHOP_COLS - 1) // SHOP_COLS)
+        lines = [f"\U0001F3EA **Shop** | \U0001FA99 {player_gold}g"]
         lines.append("")
-        lines.append("◀▶ navigate  |  🪙 Buy  |  💲 Sell Mode  |  ❌ Close")
+
+        slots = []
+        for i, item in enumerate(catalog):
+            emoji = _IE.get(item["id"], item.get("emoji", "\U0001F4E6"))
+            cursor_on = (i == selected)
+            # Pad to 3 chars wide (emoji + 2 trailing pads)
+            if cursor_on:
+                slots.append(f"{emoji}◀{_PAD}")
+            else:
+                slots.append(f"{emoji}{_PAD * 2}")
+        # Pad to full grid
+        while len(slots) % SHOP_COLS != 0:
+            slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
+
+        for row in range(len(slots) // SHOP_COLS):
+            lines.append("".join(slots[row * SHOP_COLS: row * SHOP_COLS + SHOP_COLS]))
+
+        lines.append("")
+        if 0 <= selected < len(catalog):
+            item = catalog[selected]
+            lines.append(
+                f"Cursor: **{item['name']}** — {item['price']}g"
+                f"  |  Buy qty **{qty}** for {item['price'] * qty}g"
+            )
+            lines.append(f"*{item['description']}*")
+        else:
+            lines.append("Cursor: *(empty slot)*")
+
     return "\n".join(lines)

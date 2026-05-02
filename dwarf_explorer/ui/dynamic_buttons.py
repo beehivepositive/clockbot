@@ -10,8 +10,11 @@ from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_sprint,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
-    handle_shop_nav, handle_shop_buy, handle_shop_sell, handle_shop_mode, handle_shop_close,
-    handle_bank_nav, handle_bank_switch,
+    handle_shop_nav, handle_shop_buy, handle_shop_sell, handle_shop_mode,
+    handle_shop_switch, handle_shop_up, handle_shop_down,
+    handle_shop_qty_inc, handle_shop_qty_dec, handle_shop_close,
+    handle_bank_nav, handle_bank_up, handle_bank_down, handle_bank_switch,
+    handle_bank_qty_inc, handle_bank_qty_dec,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
     handle_combat_move, handle_combat_attack, handle_combat_flee,
     handle_combat_eat, handle_combat_end_turn,
@@ -73,6 +76,11 @@ _IGNORED_ACTIONS = {
     "hesp1", "hesp2", "hesp3",
     # Ocean spacers
     "ocsp1", "ocsp3", "ocsp4",
+    # Bank/shop spacers
+    "bank_sp4", "shop_sp4",
+    # Inventory spacers (all inv_sp*)
+    "inv_sp1", "inv_sp2", "inv_sp3", "inv_sp4", "inv_sp5", "inv_sp6",
+    "inv_sp_r0c", "inv_sp_r0d",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
@@ -252,10 +260,20 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_shop_nav(interaction, gid, uid, -1)
             elif act == "shop_next":
                 await handle_shop_nav(interaction, gid, uid, +1)
+            elif act == "shop_up":
+                await handle_shop_up(interaction, gid, uid)
+            elif act == "shop_down":
+                await handle_shop_down(interaction, gid, uid)
+            elif act == "shop_qty_inc":
+                await handle_shop_qty_inc(interaction, gid, uid)
+            elif act == "shop_qty_dec":
+                await handle_shop_qty_dec(interaction, gid, uid)
             elif act == "shop_buy":
                 await handle_shop_buy(interaction, gid, uid)
             elif act == "shop_sell":
                 await handle_shop_sell(interaction, gid, uid)
+            elif act == "shop_switch":
+                await handle_shop_switch(interaction, gid, uid)
             elif act == "shop_mode":
                 await handle_shop_mode(interaction, gid, uid)
             elif act == "shop_close":
@@ -265,6 +283,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_bank_nav(interaction, gid, uid, -1)
             elif act == "bank_next":
                 await handle_bank_nav(interaction, gid, uid, +1)
+            elif act == "bank_up":
+                await handle_bank_up(interaction, gid, uid)
+            elif act == "bank_down":
+                await handle_bank_down(interaction, gid, uid)
+            elif act == "bank_qty_inc":
+                await handle_bank_qty_inc(interaction, gid, uid)
+            elif act == "bank_qty_dec":
+                await handle_bank_qty_dec(interaction, gid, uid)
             elif act == "bank_switch":
                 await handle_bank_switch(interaction, gid, uid)
             elif act == "bank_deposit":
