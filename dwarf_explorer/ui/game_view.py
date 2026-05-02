@@ -5745,11 +5745,12 @@ async def handle_inv_move_confirm(
             await swap_inventory_slots(db, user_id, origin_item["slot_index"], dest_slot)
             msg = "\n*↔️ Items swapped.*"
         else:
-            # Move to empty slot: place it after the last filled slot
+            # Move to empty slot: reassign by slot_index (id not in cached dict)
             await db.execute(
-                "UPDATE inventory SET slot_index=? WHERE id=?",
-                (sel, origin_item["id"]),
+                "UPDATE inventory SET slot_index=? WHERE user_id=? AND slot_index=?",
+                (sel, user_id, origin_item["slot_index"]),
             )
+            await db.commit()
             msg = "\n*↔️ Item moved.*"
     else:
         msg = "\n*(Nothing to move)*"

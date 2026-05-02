@@ -311,10 +311,11 @@ def render_inventory(
             cursor_on = (i == selected) and cursor_mode == "inventory"
             slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
-            cell = _EMPTY_SLOT
+            pad = _PAD * 2  # match qty=1 filled slot width
             if i == selected and cursor_mode == "inventory":
-                cell = f"[{cell}]"
-            slots.append(f" {cell} ")
+                slots.append(f"[{_EMPTY_SLOT}{pad}]")
+            else:
+                slots.append(f"{_EMPTY_SLOT}{pad}")
 
     for row in range(inv_rows):
         lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
