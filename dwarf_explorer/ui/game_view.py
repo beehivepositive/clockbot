@@ -295,11 +295,16 @@ class InventoryView(discord.ui.View):
         show_plus_minus: bool = False,
         show_drop: bool = False,
         move_mode: bool = False,
+        move_qty: int = 1,
     ):
         super().__init__(timeout=None)
         selections = selections or {}
         cursor_selected = cursor_item_id is not None and cursor_item_id in selections
         has_cursor = cursor_item_id is not None and cursor_mode == "inventory"
+        # ± buttons appear in move mode (always when moving) or select mode (when item is selected)
+        show_pm_move = move_mode
+        show_pm_sel  = show_plus_minus and not move_mode
+        show_notepad = show_pm_move or show_pm_sel
 
         _sp = lambda act, r: self.add_item(discord.ui.Button(  # noqa
             style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
@@ -364,7 +369,12 @@ class InventoryView(discord.ui.View):
                 ))
 
         # ── Row 1: [−?] [⬆️] [+?] ─────────────────────────────────────────────
-        if show_plus_minus and not move_mode:
+        if show_pm_move:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="➖",
+                custom_id=_custom_id(guild_id, user_id, "inv_move_qty_dec"), row=1,
+            ))
+        elif show_pm_sel:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary, label="➖",
                 custom_id=_custom_id(guild_id, user_id, "inv_sel_dec"), row=1,
@@ -375,7 +385,12 @@ class InventoryView(discord.ui.View):
             style=discord.ButtonStyle.primary, emoji="\u2B06\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_up"), row=1,
         ))
-        if show_plus_minus and not move_mode:
+        if show_pm_move:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="➕",
+                custom_id=_custom_id(guild_id, user_id, "inv_move_qty_inc"), row=1,
+            ))
+        elif show_pm_sel:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary, label="➕",
                 custom_id=_custom_id(guild_id, user_id, "inv_sel_inc"), row=1,
@@ -409,8 +424,14 @@ class InventoryView(discord.ui.View):
             custom_id=_custom_id(guild_id, user_id, "inv_next"), row=2,
         ))
 
-        # ── Row 3: spacer | ⬇️ | 🫳? ──────────────────────────────────────
-        _sp("inv_sp4", 3)
+        # ── Row 3: 📒?/spacer | ⬇️ | 🫳? ───────────────────────────────────
+        if show_notepad:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, emoji="\U0001F4CB",  # 📋
+                custom_id=_custom_id(guild_id, user_id, "inv_qty_modal"), row=3,
+            ))
+        else:
+            _sp("inv_sp4", 3)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_down"), row=3,
@@ -427,6 +448,69 @@ class InventoryView(discord.ui.View):
             style=discord.ButtonStyle.danger, label="❌ Close",
             custom_id=_custom_id(guild_id, user_id, "inv_close"), row=4,
         ))
+
+
+class InvQtyModal(discord.ui.Modal, title="Enter Quantity"):
+    """Modal that lets the player type a custom quantity for move or select operations."""
+
+    qty_input: discord.ui.TextInput = discord.ui.TextInput(
+        label="Quantity",
+        placeholder="Enter a number…",
+        min_length=1,
+        max_length=6,
+        required=True,
+    )
+
+    def __init__(self, guild_id: int, user_id: int, mode: str, max_qty: int):
+        super().__init__()
+        self.guild_id  = guild_id
+        self.user_id   = user_id
+        self.mode      = mode       # "move" or "select"
+        self.max_qty   = max_qty
+        self.qty_input.placeholder = f"1 – {max_qty}"
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = self.qty_input.value.strip()
+        try:
+            entered = int(raw)
+        except ValueError:
+            await interaction.response.send_message("*Not a valid number.*", ephemeral=True)
+            return
+
+        entered = max(1, min(entered, self.max_qty))
+        db     = await get_database(self.guild_id)
+        player = await get_or_create_player(db, self.user_id, interaction.user.display_name)
+        state  = _ui_state.get(self.user_id, {"selected": 0})
+        items  = await get_inventory(db, self.user_id)
+        sel    = state.get("selected", 0)
+        equipped   = _equipped_dict(player)
+        inv_rows, inv_cols = _inv_capacity(player)
+
+        if self.mode == "move":
+            _ui_state[self.user_id] = {**state, "move_qty": entered}
+            msg = f"\n*📋 Move quantity set to ×{entered}.*"
+        else:
+            # select mode
+            visible = [it for it in items if it["item_id"] != "gold_coin"]
+            cursor_mode = state.get("cursor_mode", "inventory")
+            selections  = dict(state.get("selections", {}))
+            if cursor_mode == "gold":
+                item_id = "gold_coin"
+            else:
+                ci = _cursor_item(visible, sel)
+                item_id = ci["item_id"] if ci else None
+            if item_id:
+                selections[item_id] = entered
+                _ui_state[self.user_id] = {**state, "selections": selections}
+                msg = f"\n*📋 Quantity set to ×{entered}.*"
+            else:
+                msg = "\n*(No item at cursor)*"
+
+        content, view = _inv_view(
+            self.guild_id, self.user_id, items, sel, equipped,
+            inv_rows, inv_cols, _ui_state[self.user_id], msg, gold=player.gold,
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 class InventoryItemView(discord.ui.View):
@@ -5062,12 +5146,31 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
     # Drop button: only for inventory and gold mode (equipped items must be unequipped first)
     show_drop = show_pm and cursor_mode in ("inventory", "gold")
 
+    move_qty = state.get("move_qty", 1)
+
     content = render_inventory(
         items, sel, equipped, label, inv_rows, inv_cols, selections,
         gold=gold, cursor_mode=cursor_mode, equipped_cursor=equipped_cursor,
     )
+    if move_mode and cursor_id is not None:
+        # Show move qty in move mode suffix
+        origin = state.get("move_origin", sel)
+        visible_for_mv = [it for it in items if it["item_id"] != "gold_coin"]
+        origin_item = _cursor_item(visible_for_mv, origin)
+        slot_max = origin_item["quantity"] if origin_item else 1
+        content += f"\n*↔️ Moving ×{move_qty}/{slot_max} — navigate to destination, then Confirm.*"
     if msg_suffix:
         content += msg_suffix
+
+    # Determine max qty for modal (move mode: origin stack size; select mode: total across stacks)
+    if move_mode and cursor_id is not None:
+        _vis = [it for it in items if it["item_id"] != "gold_coin"]
+        _oi  = _cursor_item(_vis, state.get("move_origin", sel))
+        modal_max = _oi["quantity"] if _oi else 1
+    elif show_pm and cursor_id is not None:
+        modal_max = sum(it["quantity"] for it in items if it["item_id"] == cursor_id)
+    else:
+        modal_max = 1
 
     view = InventoryView(
         guild_id, user_id, label, action, selections, cursor_id, sel_mode,
@@ -5075,7 +5178,10 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
         show_plus_minus=show_pm,
         show_drop=show_drop,
         move_mode=move_mode,
+        move_qty=move_qty,
     )
+    # Stash modal_max on view so the button handler can read it
+    view._modal_max = modal_max
     return content, view
 
 
@@ -5799,17 +5905,22 @@ async def handle_inv_move(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    if sel >= len(visible):
+    origin_item = _cursor_item(visible, sel)
+    if origin_item is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item to move)*",
                                   gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    _ui_state[user_id] = {**state, "move_mode": True, "move_origin": sel}
+    _ui_state[user_id] = {
+        **state,
+        "move_mode": True,
+        "move_origin": sel,
+        "move_qty": origin_item["quantity"],  # default to full stack
+    }
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
-                              "\n*↔️ Move mode: navigate to destination, then Confirm.*",
                               gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -5817,7 +5928,7 @@ async def handle_inv_move(
 async def handle_inv_move_confirm(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Confirm move: swap origin and destination slots."""
+    """Confirm move: move/split/swap origin to destination using move_qty."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
@@ -5830,26 +5941,53 @@ async def handle_inv_move_confirm(
 
     origin_item = _cursor_item(visible, origin)
     dest_item   = _cursor_item(visible, sel)
+
     if origin == sel or origin_item is None:
         msg = "\n*(Nothing to move)*"
     elif dest_item is not None:
-        # Swap two filled slots by their slot_index values
+        # Destination occupied — swap full stacks (partial swap not supported)
         await swap_inventory_slots(db, user_id, origin_item["slot_index"], dest_item["slot_index"])
         msg = "\n*↔️ Items swapped.*"
     else:
-        # Move to empty cell: set slot_index = sel directly (position-aware grid)
-        fresh = await db.fetch_all(
-            "SELECT id, slot_index FROM inventory WHERE user_id=? ORDER BY slot_index, id",
-            (user_id,),
-        )
-        row = next((r for r in fresh if r["slot_index"] == origin_item["slot_index"]), None)
-        if row:
-            await db.execute("UPDATE inventory SET slot_index=? WHERE id=?", (sel, row["id"]))
-            msg = "\n*↔️ Item moved.*"
-        else:
-            msg = "\n*(Nothing to move)*"
+        # Moving to empty cell — respect move_qty for partial moves
+        move_qty = state.get("move_qty", origin_item["quantity"])
+        move_qty = max(1, min(move_qty, origin_item["quantity"]))
+        origin_qty = origin_item["quantity"]
 
-    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None}
+        if move_qty >= origin_qty:
+            # Move entire stack to new slot_index
+            fresh = await db.fetch_all(
+                "SELECT id, slot_index FROM inventory WHERE user_id=? ORDER BY slot_index, id",
+                (user_id,),
+            )
+            row = next((r for r in fresh if r["slot_index"] == origin_item["slot_index"]), None)
+            if row:
+                await db.execute("UPDATE inventory SET slot_index=? WHERE id=?", (sel, row["id"]))
+                await db.commit()
+                msg = f"\n*↔️ Moved ×{move_qty}.*"
+            else:
+                msg = "\n*(Nothing to move)*"
+        else:
+            # Split stack: reduce origin qty, insert new row at destination slot
+            fresh = await db.fetch_all(
+                "SELECT id FROM inventory WHERE user_id=? AND slot_index=?",
+                (user_id, origin_item["slot_index"]),
+            )
+            if fresh:
+                await db.execute(
+                    "UPDATE inventory SET quantity=? WHERE id=?",
+                    (origin_qty - move_qty, fresh[0]["id"]),
+                )
+                await db.execute(
+                    "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,?,?)",
+                    (user_id, origin_item["item_id"], move_qty, sel),
+                )
+                await db.commit()
+                msg = f"\n*↔️ Split ×{move_qty} to new slot.*"
+            else:
+                msg = "\n*(Nothing to move)*"
+
+    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None, "move_qty": 1}
     items = await get_inventory(db, user_id)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
@@ -5869,12 +6007,101 @@ async def handle_inv_move_cancel(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None, "selected": origin}
+    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None,
+                          "move_qty": 1, "selected": origin}
     content, view = _inv_view(guild_id, user_id, items, origin, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               "\n*↔️ Move cancelled.*",
                               gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_move_qty_inc(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Increase move quantity by 1, wrapping at the origin stack size."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    origin = state.get("move_origin", state.get("selected", 0))
+    origin_item = _cursor_item(visible, origin)
+    slot_max = origin_item["quantity"] if origin_item else 1
+
+    current = state.get("move_qty", slot_max)
+    new_qty = (current % slot_max) + 1  # wraps 1 → slot_max
+    _ui_state[user_id] = {**state, "move_qty": new_qty}
+
+    sel = state.get("selected", 0)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_move_qty_dec(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Decrease move quantity by 1, wrapping at 1 → slot_max."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    origin = state.get("move_origin", state.get("selected", 0))
+    origin_item = _cursor_item(visible, origin)
+    slot_max = origin_item["quantity"] if origin_item else 1
+
+    current = state.get("move_qty", slot_max)
+    new_qty = slot_max if current <= 1 else current - 1
+    _ui_state[user_id] = {**state, "move_qty": new_qty}
+
+    sel = state.get("selected", 0)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_qty_modal(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open a modal to enter a custom quantity (for move or select)."""
+    state = _ui_state.get(user_id, {"selected": 0})
+    move_mode = state.get("move_mode", False)
+
+    if move_mode:
+        db = await get_database(guild_id)
+        items = await get_inventory(db, user_id)
+        visible = [it for it in items if it["item_id"] != "gold_coin"]
+        origin = state.get("move_origin", state.get("selected", 0))
+        origin_item = _cursor_item(visible, origin)
+        max_qty = origin_item["quantity"] if origin_item else 1
+        modal = InvQtyModal(guild_id, user_id, "move", max_qty)
+    else:
+        # select mode — look up total across stacks
+        db = await get_database(guild_id)
+        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        items = await get_inventory(db, user_id)
+        visible = [it for it in items if it["item_id"] != "gold_coin"]
+        sel = state.get("selected", 0)
+        cursor_mode = state.get("cursor_mode", "inventory")
+        if cursor_mode == "gold":
+            max_qty = player.gold
+        else:
+            ci = _cursor_item(visible, sel)
+            if ci:
+                max_qty = sum(it["quantity"] for it in items if it["item_id"] == ci["item_id"])
+            else:
+                max_qty = 1
+        modal = InvQtyModal(guild_id, user_id, "select", max_qty)
+
+    await interaction.response.send_modal(modal)
 
 
 # ── Shop helpers ──────────────────────────────────────────────────────────────

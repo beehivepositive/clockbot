@@ -45,6 +45,8 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_sel_inc, handle_inv_sel_dec,
     handle_inv_drop,
     handle_inv_move, handle_inv_move_confirm, handle_inv_move_cancel,
+    handle_inv_move_qty_inc, handle_inv_move_qty_dec,
+    handle_inv_qty_modal,
     handle_inv_unequip,
     handle_house_edit_move, handle_house_add, handle_house_remove,
     handle_house_delete, handle_house_edit_close,
@@ -341,6 +343,12 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_inv_move_confirm(interaction, gid, uid)
             elif act == "inv_move_cancel":
                 await handle_inv_move_cancel(interaction, gid, uid)
+            elif act == "inv_move_qty_inc":
+                await handle_inv_move_qty_inc(interaction, gid, uid)
+            elif act == "inv_move_qty_dec":
+                await handle_inv_move_qty_dec(interaction, gid, uid)
+            elif act == "inv_qty_modal":
+                await handle_inv_qty_modal(interaction, gid, uid)
             # Inventory unequip
             elif act == "inv_unequip":
                 await handle_inv_unequip(interaction, gid, uid)
