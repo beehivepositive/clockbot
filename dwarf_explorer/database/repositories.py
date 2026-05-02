@@ -516,9 +516,17 @@ async def get_bank_items(db: Database, user_id: int) -> list[dict]:
         "SELECT item_id, quantity FROM bank_items WHERE user_id = ? ORDER BY rowid",
         (user_id,),
     )
-    # Include slot_index so _build_slot_map works (dense array — no gaps in bank)
-    return [{"item_id": r["item_id"], "quantity": r["quantity"], "slot_index": i}
-            for i, r in enumerate(rows)]
+    # Split oversized stacks into MAX_STACK_SIZE chunks so the vault grid respects limits.
+    result = []
+    slot_idx = 0
+    for r in rows:
+        remaining = r["quantity"]
+        while remaining > 0:
+            stack_qty = min(MAX_STACK_SIZE, remaining)
+            result.append({"item_id": r["item_id"], "quantity": stack_qty, "slot_index": slot_idx})
+            remaining -= stack_qty
+            slot_idx += 1
+    return result
 
 
 async def bank_deposit(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:

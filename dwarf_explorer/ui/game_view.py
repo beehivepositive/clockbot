@@ -5181,21 +5181,16 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
         items, sel, equipped, label, inv_rows, inv_cols, selections,
         gold=gold, cursor_mode=cursor_mode, equipped_cursor=equipped_cursor,
     )
-    if move_mode and cursor_id is not None:
-        # Show move qty in move mode suffix
-        origin = state.get("move_origin", sel)
-        visible_for_mv = [it for it in items if it["item_id"] != "gold_coin"]
-        origin_item = _cursor_item(visible_for_mv, origin)
-        slot_max = origin_item["quantity"] if origin_item else 1
-        content += f"\n*↔️ Moving ×{move_qty}/{slot_max} — navigate to destination, then Confirm.*"
+    if move_mode:
+        # Show move qty and total in move mode suffix
+        total_max = state.get("move_qty_max") or move_qty
+        content += f"\n*↔️ Moving ×{move_qty} of {total_max} — navigate to destination, then Confirm.*"
     if msg_suffix:
         content += msg_suffix
 
-    # Determine max qty for modal (move mode: origin stack size; select mode: total across stacks)
-    if move_mode and cursor_id is not None:
-        _vis = [it for it in items if it["item_id"] != "gold_coin"]
-        _oi  = _cursor_item(_vis, state.get("move_origin", sel))
-        modal_max = _oi["quantity"] if _oi else 1
+    # Determine max qty for modal
+    if move_mode:
+        modal_max = state.get("move_qty_max") or 1
     elif show_pm and cursor_id is not None:
         modal_max = sum(it["quantity"] for it in items if it["item_id"] == cursor_id)
     else:
@@ -5942,11 +5937,14 @@ async def handle_inv_move(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
+    # move_qty_max = total of this item across ALL stacks (user can consolidate)
+    total_of_item = sum(it["quantity"] for it in items if it["item_id"] == origin_item["item_id"])
     _ui_state[user_id] = {
         **state,
         "move_mode": True,
         "move_origin": sel,
-        "move_qty": origin_item["quantity"],  # default to full stack
+        "move_qty": origin_item["quantity"],  # default to this slot's qty
+        "move_qty_max": total_of_item,
     }
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
@@ -5970,51 +5968,95 @@ async def handle_inv_move_confirm(
 
     origin_item = _cursor_item(visible, origin)
     dest_item   = _cursor_item(visible, sel)
+    move_qty    = max(1, state.get("move_qty", 1))
 
     if origin == sel or origin_item is None:
         msg = "\n*(Nothing to move)*"
-    elif dest_item is not None:
-        # Destination occupied — swap full stacks (partial swap not supported)
+
+    elif dest_item is not None and dest_item["item_id"] != origin_item["item_id"]:
+        # Different item types — swap full stacks, ignore move_qty
         await swap_inventory_slots(db, user_id, origin_item["slot_index"], dest_item["slot_index"])
         msg = "\n*↔️ Items swapped.*"
-    else:
-        # Moving to empty cell — respect move_qty for partial moves
-        move_qty = state.get("move_qty", origin_item["quantity"])
-        move_qty = max(1, min(move_qty, origin_item["quantity"]))
-        origin_qty = origin_item["quantity"]
 
-        if move_qty >= origin_qty:
-            # Move entire stack to new slot_index
-            fresh = await db.fetch_all(
-                "SELECT id, slot_index FROM inventory WHERE user_id=? ORDER BY slot_index, id",
-                (user_id,),
-            )
-            row = next((r for r in fresh if r["slot_index"] == origin_item["slot_index"]), None)
-            if row:
-                await db.execute("UPDATE inventory SET slot_index=? WHERE id=?", (sel, row["id"]))
-                msg = f"\n*↔️ Moved ×{move_qty}.*"
-            else:
-                msg = "\n*(Nothing to move)*"
+    elif dest_item is not None and dest_item["item_id"] == origin_item["item_id"]:
+        # Same item type — fill destination up to MAX_STACK_SIZE from source stacks
+        from dwarf_explorer.config import MAX_STACK_SIZE
+        space = MAX_STACK_SIZE - dest_item["quantity"]
+        if space <= 0:
+            msg = "\n*(Destination stack is full)*"
         else:
-            # Split stack: reduce origin qty, insert new row at destination slot
-            fresh = await db.fetch_all(
-                "SELECT id FROM inventory WHERE user_id=? AND slot_index=?",
-                (user_id, origin_item["slot_index"]),
+            # Available = sum of all stacks EXCEPT the destination slot
+            available = sum(
+                it["quantity"] for it in visible
+                if it["item_id"] == origin_item["item_id"]
+                and it["slot_index"] != dest_item["slot_index"]
             )
-            if fresh:
-                await db.execute(
-                    "UPDATE inventory SET quantity=? WHERE id=?",
-                    (origin_qty - move_qty, fresh[0]["id"]),
-                )
-                await db.execute(
-                    "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,?,?)",
-                    (user_id, origin_item["item_id"], move_qty, sel),
-                )
-                msg = f"\n*↔️ Split ×{move_qty} to new slot.*"
-            else:
+            transfer = min(move_qty, space, available)
+            if transfer <= 0:
                 msg = "\n*(Nothing to move)*"
+            else:
+                # Grow the destination slot
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity + ? WHERE user_id=? AND slot_index=?",
+                    (transfer, user_id, dest_item["slot_index"]),
+                )
+                # Drain from all other stacks of same item (LIFO), excluding destination
+                stacks = await db.fetch_all(
+                    "SELECT id, quantity FROM inventory "
+                    "WHERE user_id=? AND item_id=? AND slot_index!=? ORDER BY slot_index DESC",
+                    (user_id, origin_item["item_id"], dest_item["slot_index"]),
+                )
+                remaining = transfer
+                for stack in stacks:
+                    if remaining <= 0:
+                        break
+                    take = min(stack["quantity"], remaining)
+                    if take == stack["quantity"]:
+                        await db.execute("DELETE FROM inventory WHERE id=?", (stack["id"],))
+                    else:
+                        await db.execute(
+                            "UPDATE inventory SET quantity = quantity - ? WHERE id=?",
+                            (take, stack["id"]),
+                        )
+                    remaining -= take
+                msg = f"\n*↔️ Merged ×{transfer} into stack.*"
 
-    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None, "move_qty": 1}
+    else:
+        # Empty destination — move up to MAX_STACK_SIZE, drawing from all stacks
+        from dwarf_explorer.config import MAX_STACK_SIZE
+        total_avail = sum(
+            it["quantity"] for it in visible if it["item_id"] == origin_item["item_id"]
+        )
+        transfer = min(move_qty, MAX_STACK_SIZE, total_avail)
+        # Drain stacks (LIFO)
+        stacks = await db.fetch_all(
+            "SELECT id, quantity FROM inventory "
+            "WHERE user_id=? AND item_id=? ORDER BY slot_index DESC",
+            (user_id, origin_item["item_id"]),
+        )
+        remaining = transfer
+        for stack in stacks:
+            if remaining <= 0:
+                break
+            take = min(stack["quantity"], remaining)
+            if take == stack["quantity"]:
+                await db.execute("DELETE FROM inventory WHERE id=?", (stack["id"],))
+            else:
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - ? WHERE id=?",
+                    (take, stack["id"]),
+                )
+            remaining -= take
+        # Place at destination slot
+        await db.execute(
+            "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,?,?)",
+            (user_id, origin_item["item_id"], transfer, sel),
+        )
+        msg = f"\n*↔️ Moved ×{transfer}.*"
+
+    _ui_state[user_id] = {
+        **state, "move_mode": False, "move_origin": None, "move_qty": 1, "move_qty_max": None,
+    }
     items = await get_inventory(db, user_id)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
@@ -6035,7 +6077,7 @@ async def handle_inv_move_cancel(
     inv_rows, inv_cols = _inv_capacity(player)
 
     _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None,
-                          "move_qty": 1, "selected": origin}
+                          "move_qty": 1, "move_qty_max": None, "selected": origin}
     content, view = _inv_view(guild_id, user_id, items, origin, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               "\n*↔️ Move cancelled.*",
@@ -6046,18 +6088,15 @@ async def handle_inv_move_cancel(
 async def handle_inv_move_qty_inc(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Increase move quantity by 1, wrapping at the origin stack size."""
+    """Increase move quantity by 1, wrapping at move_qty_max (total of item across all stacks)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
-    visible = [it for it in items if it["item_id"] != "gold_coin"]
-    origin = state.get("move_origin", state.get("selected", 0))
-    origin_item = _cursor_item(visible, origin)
-    slot_max = origin_item["quantity"] if origin_item else 1
+    total_max = state.get("move_qty_max") or 1
 
-    current = state.get("move_qty", slot_max)
-    new_qty = (current % slot_max) + 1  # wraps 1 → slot_max
+    current = state.get("move_qty", total_max)
+    new_qty = (current % total_max) + 1  # wraps 1 → total_max
     _ui_state[user_id] = {**state, "move_qty": new_qty}
 
     sel = state.get("selected", 0)
@@ -6072,18 +6111,15 @@ async def handle_inv_move_qty_inc(
 async def handle_inv_move_qty_dec(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Decrease move quantity by 1, wrapping at 1 → slot_max."""
+    """Decrease move quantity by 1, wrapping at 1 → move_qty_max."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
-    visible = [it for it in items if it["item_id"] != "gold_coin"]
-    origin = state.get("move_origin", state.get("selected", 0))
-    origin_item = _cursor_item(visible, origin)
-    slot_max = origin_item["quantity"] if origin_item else 1
+    total_max = state.get("move_qty_max") or 1
 
-    current = state.get("move_qty", slot_max)
-    new_qty = slot_max if current <= 1 else current - 1
+    current = state.get("move_qty", total_max)
+    new_qty = total_max if current <= 1 else current - 1
     _ui_state[user_id] = {**state, "move_qty": new_qty}
 
     sel = state.get("selected", 0)
@@ -6103,12 +6139,7 @@ async def handle_inv_qty_modal(
     move_mode = state.get("move_mode", False)
 
     if move_mode:
-        db = await get_database(guild_id)
-        items = await get_inventory(db, user_id)
-        visible = [it for it in items if it["item_id"] != "gold_coin"]
-        origin = state.get("move_origin", state.get("selected", 0))
-        origin_item = _cursor_item(visible, origin)
-        max_qty = origin_item["quantity"] if origin_item else 1
+        max_qty = state.get("move_qty_max") or 1
         modal = InvQtyModal(guild_id, user_id, "move", max_qty)
     else:
         # select mode — look up total across stacks
@@ -6691,7 +6722,7 @@ async def handle_bank_deposit(
             suffix = "\n*(No item at cursor)*"
 
     else:
-        # Normal inventory deposit
+        # Normal inventory deposit — remove from the exact cursor slot (not LIFO)
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
         slot_map = _build_slot_map(visible, inv_rows * inv_cols)
         item = slot_map.get(sel)
@@ -6699,9 +6730,28 @@ async def handle_bank_deposit(
             suffix = "\n*(Empty slot)*"
         else:
             actual_qty = min(qty, item["quantity"])
-            ok = await bank_deposit(db, user_id, item["item_id"], actual_qty)
-            suffix = (f"\n*Deposited {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
-                      if ok else "\n*Deposit failed.*")
+            # Find the exact inventory row for this slot and remove directly
+            inv_row = await db.fetch_one(
+                "SELECT id, quantity FROM inventory WHERE user_id=? AND slot_index=?",
+                (user_id, item["slot_index"]),
+            )
+            if inv_row:
+                if inv_row["quantity"] <= actual_qty:
+                    await db.execute("DELETE FROM inventory WHERE id=?", (inv_row["id"],))
+                else:
+                    await db.execute(
+                        "UPDATE inventory SET quantity = quantity - ? WHERE id=?",
+                        (actual_qty, inv_row["id"]),
+                    )
+                # Add to bank (single-row-per-item, no stack limit in storage)
+                await db.execute(
+                    "INSERT INTO bank_items(user_id, item_id, quantity) VALUES(?,?,?) "
+                    "ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + ?",
+                    (user_id, item["item_id"], actual_qty, actual_qty),
+                )
+                suffix = f"\n*Deposited {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
+            else:
+                suffix = "\n*Deposit failed.*"
 
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     player_items = await get_inventory(db, user_id)
