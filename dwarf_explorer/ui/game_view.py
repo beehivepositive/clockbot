@@ -88,6 +88,11 @@ from dwarf_explorer.game.renderer import (
 _CUSTOM_EMOJI_RE = _re.compile(r"^<a?:(\w+):(\d+)>$")
 
 
+def _cursor_item(visible: list[dict], slot_pos: int) -> dict | None:
+    """Return the inventory item whose slot_index == slot_pos (grid cell), or None."""
+    return next((it for it in visible if it["slot_index"] == slot_pos), None)
+
+
 def _parse_emoji(s: str) -> discord.PartialEmoji | None:
     """Parse a custom emoji string '<:name:id>' into a PartialEmoji, or None for plain text."""
     m = _CUSTOM_EMOJI_RE.match(s)
@@ -4957,7 +4962,8 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
 
     # Resolve cursor_id for all modes so Select / ± work everywhere
     if cursor_mode == "inventory":
-        cursor_id = visible[sel]["item_id"] if sel < len(visible) else None
+        _ci = _cursor_item(visible, sel)
+        cursor_id = _ci["item_id"] if _ci else None
     elif cursor_mode == "gold":
         cursor_id = "gold_coin"
     elif cursor_mode == "equipped":
@@ -5005,14 +5011,15 @@ async def handle_inv_equip(
     inv_rows, inv_cols = _inv_capacity(player)
     visible = [it for it in items if it["item_id"] != "gold_coin"]
 
-    if sel >= len(visible):
+    cur_item = _cursor_item(visible, sel)
+    if cur_item is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item selected)*",
                                   gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    item_id = visible[sel]["item_id"]
+    item_id = cur_item["item_id"]
 
     # Food items are handled by handle_inv_eat — redirect
     if item_id in FOOD_HP_RESTORE:
@@ -5162,14 +5169,15 @@ async def handle_inv_eat(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    if sel >= len(visible):
+    cur_item = _cursor_item(visible, sel)
+    if cur_item is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item selected)*",
                                   gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    item_id = visible[sel]["item_id"]
+    item_id = cur_item["item_id"]
     restore = FOOD_HP_RESTORE.get(item_id)
     if restore is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
@@ -5255,17 +5263,18 @@ async def handle_inv_select(
                 msg = "\n*(No item equipped in that slot)*"
         else:
             msg = "\n*(No item at cursor)*"
-    elif sel < len(visible):
-        item_id = visible[sel]["item_id"]
-        if item_id in selections:
-            del selections[item_id]
-            msg = f"\n*Deselected {item_id.replace('_', ' ').title()}.*"
+    else:  # cursor_mode == "inventory"
+        cur_item = _cursor_item(visible, sel)
+        if cur_item is not None:
+            item_id = cur_item["item_id"]
+            if item_id in selections:
+                del selections[item_id]
+                msg = f"\n*Deselected {item_id.replace('_', ' ').title()}.*"
+            else:
+                selections[item_id] = 1
+                msg = f"\n*Selected {item_id.replace('_', ' ').title()} ×1.*"
         else:
-            # Add with qty 1 (can be adjusted via ± buttons)
-            selections[item_id] = 1
-            msg = f"\n*Selected {item_id.replace('_', ' ').title()} ×1.*"
-    else:
-        msg = "\n*(No item at cursor)*"
+            msg = "\n*(No item at cursor)*"
 
     _ui_state[user_id] = {**state, "selections": selections}
     equipped = _equipped_dict(player)
@@ -5546,6 +5555,7 @@ async def handle_inv_sel_inc(
     inv_rows, inv_cols = _inv_capacity(player)
 
     cursor_mode = state.get("cursor_mode", "inventory")
+    msg = None
     if cursor_mode == "gold":
         total_have = player.gold
         current = selections.get("gold_coin", 0)
@@ -5553,15 +5563,17 @@ async def handle_inv_sel_inc(
         selections["gold_coin"] = new_qty
         _ui_state[user_id] = {**state, "selections": selections}
         msg = f"\n*➕ Coins → ×{new_qty}*"
-    elif sel < len(visible):
-        item_id = visible[sel]["item_id"]
-        total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
-        current = selections.get(item_id, 0)
-        new_qty = (current % max(total_have, 1)) + 1  # wraps: max → 1
-        selections[item_id] = new_qty
-        _ui_state[user_id] = {**state, "selections": selections}
-        msg = f"\n*➕ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
     else:
+        cur_item = _cursor_item(visible, sel)
+        if cur_item is not None:
+            item_id = cur_item["item_id"]
+            total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
+            current = selections.get(item_id, 0)
+            new_qty = (current % max(total_have, 1)) + 1
+            selections[item_id] = new_qty
+            _ui_state[user_id] = {**state, "selections": selections}
+            msg = f"\n*➕ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    if msg is None:
         msg = "\n*(No item at cursor)*"
 
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
@@ -5585,6 +5597,7 @@ async def handle_inv_sel_dec(
     inv_rows, inv_cols = _inv_capacity(player)
 
     cursor_mode = state.get("cursor_mode", "inventory")
+    msg = None
     if cursor_mode == "gold":
         total_have = player.gold
         current = selections.get("gold_coin", 1)
@@ -5592,18 +5605,17 @@ async def handle_inv_sel_dec(
         selections["gold_coin"] = new_qty
         _ui_state[user_id] = {**state, "selections": selections}
         msg = f"\n*➖ Coins → ×{new_qty}*"
-    elif sel < len(visible):
-        item_id = visible[sel]["item_id"]
-        total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
-        current = selections.get(item_id, 1)
-        if current <= 1:
-            new_qty = total_have  # wrap to max
-        else:
-            new_qty = current - 1
-        selections[item_id] = new_qty
-        _ui_state[user_id] = {**state, "selections": selections}
-        msg = f"\n*➖ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
     else:
+        cur_item = _cursor_item(visible, sel)
+        if cur_item is not None:
+            item_id = cur_item["item_id"]
+            total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
+            current = selections.get(item_id, 1)
+            new_qty = total_have if current <= 1 else current - 1
+            selections[item_id] = new_qty
+            _ui_state[user_id] = {**state, "selections": selections}
+            msg = f"\n*➖ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    if msg is None:
         msg = "\n*(No item at cursor)*"
 
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
@@ -5735,35 +5747,26 @@ async def handle_inv_move_confirm(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    if origin == sel:
+    origin_item = _cursor_item(visible, origin)
+    dest_item   = _cursor_item(visible, sel)
+    if origin == sel or origin_item is None:
         msg = "\n*(Nothing to move)*"
-    elif origin < len(visible):
-        origin_item = visible[origin]
-        if sel < len(visible):
-            # Swap with an existing item
-            dest_slot = visible[sel]["slot_index"]
-            await swap_inventory_slots(db, user_id, origin_item["slot_index"], dest_slot)
-            msg = "\n*↔️ Items swapped.*"
-        else:
-            # Move to empty slot: fetch fresh rows (with id), reorder, compact
-            fresh = await db.fetch_all(
-                "SELECT id FROM inventory WHERE user_id=? ORDER BY slot_index, id",
-                (user_id,),
-            )
-            if origin < len(fresh):
-                row_id = fresh[origin]["id"]
-                others = [r["id"] for i, r in enumerate(fresh) if i != origin]
-                insert_at = min(sel, len(fresh))  # clamp to valid range
-                new_order = others[:insert_at] + [row_id] + others[insert_at:]
-                for new_idx, rid in enumerate(new_order):
-                    await db.execute(
-                        "UPDATE inventory SET slot_index=? WHERE id=?", (new_idx, rid)
-                    )
-                msg = "\n*↔️ Item moved.*"
-            else:
-                msg = "\n*(Nothing to move)*"
+    elif dest_item is not None:
+        # Swap two filled slots by their slot_index values
+        await swap_inventory_slots(db, user_id, origin_item["slot_index"], dest_item["slot_index"])
+        msg = "\n*↔️ Items swapped.*"
     else:
-        msg = "\n*(Nothing to move)*"
+        # Move to empty cell: set slot_index = sel directly (position-aware grid)
+        fresh = await db.fetch_all(
+            "SELECT id, slot_index FROM inventory WHERE user_id=? ORDER BY slot_index, id",
+            (user_id,),
+        )
+        row = next((r for r in fresh if r["slot_index"] == origin_item["slot_index"]), None)
+        if row:
+            await db.execute("UPDATE inventory SET slot_index=? WHERE id=?", (sel, row["id"]))
+            msg = "\n*↔️ Item moved.*"
+        else:
+            msg = "\n*(Nothing to move)*"
 
     _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None}
     items = await get_inventory(db, user_id)

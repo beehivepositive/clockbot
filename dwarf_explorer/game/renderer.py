@@ -254,19 +254,37 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     else:
         digits, n_pad = "", 2
     content = f"{emoji}{digits}"   # tight: emoji + digits only
-    # Indicators consume pad chars rather than adding width where possible
-    # «  = selected prefix  (costs 1 pad)
-    # <  = cursor suffix    (costs 1 pad)
+    # Both indicators are suffixes; each displaces 1 trailing pad char
+    # «  = selected   <  = cursor
     if cursor_on and is_selected:
-        trail = _PAD * max(0, n_pad - 2)
-        return f"\u00AB{content}<{trail}"   # «content<
+        return f"{content}«<{_PAD * max(0, n_pad - 2)}"
     if is_selected:
-        trail = _PAD * max(0, n_pad - 1)
-        return f"\u00AB{content}{trail}"    # «content
+        return f"{content}«{_PAD * max(0, n_pad - 1)}"
     if cursor_on:
-        trail = _PAD * max(0, n_pad - 1)
-        return f"{content}<{trail}"         # content<
+        return f"{content}<{_PAD * max(0, n_pad - 1)}"
     return f"{content}{_PAD * n_pad}"
+
+
+def _build_slot_map(visible_items: list[dict], total_slots: int) -> dict[int, dict]:
+    """Map grid cell index → item using slot_index as the grid position.
+
+    Items whose slot_index falls outside [0, total_slots) are packed into
+    the nearest free cell at the end so they are never invisible.
+    """
+    result: dict[int, dict] = {}
+    overflow: list[dict] = []
+    for it in visible_items:
+        idx = it["slot_index"]
+        if 0 <= idx < total_slots:
+            result[idx] = it
+        else:
+            overflow.append(it)
+    for it in overflow:
+        for i in range(total_slots - 1, -1, -1):
+            if i not in result:
+                result[i] = it
+                break
+    return result
 
 
 def render_inventory(
@@ -296,32 +314,31 @@ def render_inventory(
     for idx, (slot, empty_emoji) in enumerate(_EQUIP_SLOT_ORDER):
         item_id = equipped.get(slot)
         emoji = _item_emoji(item_id) if item_id else empty_emoji
-        label = _EQUIP_SLOT_LABELS.get(slot, slot)
         cursor_here = cursor_mode == "equipped" and idx == equipped_cursor
         if cursor_here:
-            eq_line_parts.append(f"[{emoji}]")
+            eq_line_parts.append(f"{emoji}<")
         else:
             eq_line_parts.append(emoji)
     lines.append("**Equipped:** " + " ".join(eq_line_parts))
     lines.append("")
 
-    # --- Inventory grid (skip gold_coin items) ---
+    # --- Inventory grid (position-aware: slot_index = grid cell index) ---
     visible_items = [it for it in items if it["item_id"] != "gold_coin"]
+    slot_map = _build_slot_map(visible_items, total_slots)
     slots: list[str] = []
     for i in range(total_slots):
-        if i < len(visible_items):
-            item = visible_items[i]
+        item = slot_map.get(i)
+        if item is not None:
             item_id = item["item_id"]
             qty = item["quantity"]
             is_selected = item_id in selections
             cursor_on = (i == selected) and cursor_mode == "inventory"
             slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
-            pad = _PAD * 2  # match qty=1 filled slot width
             if i == selected and cursor_mode == "inventory":
                 slots.append(f"{_EMPTY_SLOT}<{_PAD}")  # cursor: < displaces 1 pad
             else:
-                slots.append(f"{_EMPTY_SLOT}{pad}")
+                slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
 
     for row in range(inv_rows):
         lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
@@ -338,8 +355,8 @@ def render_inventory(
             lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}")
         else:
             lines.append(f"Cursor: **{label}** — *(empty)*")
-    elif selected < len(visible_items):
-        item = visible_items[selected]
+    elif slot_map.get(selected):
+        item = slot_map[selected]
         sel_qty = selections.get(item["item_id"], 0)
         sel_marker = f" ✚ {sel_qty} selected" if sel_qty else ""
         lines.append(
