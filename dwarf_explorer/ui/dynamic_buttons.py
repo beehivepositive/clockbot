@@ -39,6 +39,10 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_item_unsel, handle_inv_item_back, handle_inv_craft,
     handle_inv_toggle_mode,
     handle_inv_up, handle_inv_down,
+    handle_inv_sel_inc, handle_inv_sel_dec,
+    handle_inv_drop,
+    handle_inv_move, handle_inv_move_confirm, handle_inv_move_cancel,
+    handle_inv_unequip,
     handle_house_edit_move, handle_house_add, handle_house_remove,
     handle_house_delete, handle_house_edit_close,
     handle_house_deco_nav, handle_house_deco_sel, handle_house_deco_place,
@@ -296,6 +300,24 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             # Inventory mode toggle
             elif act == "inv_toggle_mode":
                 await handle_inv_toggle_mode(interaction, gid, uid)
+            # Inventory quantity selection
+            elif act == "inv_sel_inc":
+                await handle_inv_sel_inc(interaction, gid, uid)
+            elif act == "inv_sel_dec":
+                await handle_inv_sel_dec(interaction, gid, uid)
+            # Inventory drop
+            elif act == "inv_drop":
+                await handle_inv_drop(interaction, gid, uid)
+            # Inventory move mode
+            elif act == "inv_move":
+                await handle_inv_move(interaction, gid, uid)
+            elif act == "inv_move_confirm":
+                await handle_inv_move_confirm(interaction, gid, uid)
+            elif act == "inv_move_cancel":
+                await handle_inv_move_cancel(interaction, gid, uid)
+            # Inventory unequip
+            elif act == "inv_unequip":
+                await handle_inv_unequip(interaction, gid, uid)
             # Player house edit
             elif act in _HEDIT_MOVE_ACTIONS:
                 direction = act[6:]  # strip "hedit_"

@@ -14,6 +14,7 @@ from dwarf_explorer.config import (
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
+    COIN_PURSE_CAPACITY,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
@@ -39,6 +40,9 @@ from dwarf_explorer.database.repositories import (
     get_inventory,
     add_to_inventory,
     remove_from_inventory,
+    swap_inventory_slots,
+    create_drop_box,
+    pickup_drop_box,
     get_bank_items,
     bank_deposit,
     bank_withdraw,
@@ -260,79 +264,127 @@ class GameView(discord.ui.View):
 
 
 class InventoryView(discord.ui.View):
-    """Inventory view with D-pad navigation mirroring GameView.
+    """Inventory view with D-pad navigation, ±qty controls, drop/move/unequip actions.
 
-    Layout:
-      Row 0: [✚ Select / ✖ Deselect] [🗑 Unselect All?] [➕/➖ mode?] [Craft?]
-      Row 1: [spacer] [⬆️] [spacer]
-      Row 2: [⬅️]  [action emoji]  [➡️]
-      Row 3: [spacer] [⬇️]
-      Row 4: [❌ Close]
+    cursor_mode:
+      "inventory"  — navigating item grid
+      "equipped"   — navigating equipped slots row
+      "gold"       — gold pseudo-slot (select only)
+      "move"       — move mode: select destination slot then confirm/cancel
+
+    Layout (5 rows × up to 5 buttons each):
+      Row 0: [Select/Desel] [Move/Confirm] [Craft?/Cancel?] [UnselAll?] [spacer]
+      Row 1: [−?] [⬆️] [+?] [spacer] [spacer]
+      Row 2: [⬅️] [action/spacer] [➡️] [spacer] [spacer]
+      Row 3: [spacer] [⬇️] [spacer] [🫳 Drop?] [spacer]
+      Row 4: [❌ Close] [spacer] [spacer] [spacer] [spacer]
     """
-    def __init__(self, guild_id: int, user_id: int,
-                 equip_label: str = "",
-                 equip_action: str = "inv_equip",
-                 selections: dict | None = None,
-                 cursor_item_id: str | None = None,
-                 sel_mode: str = "add"):
+    def __init__(
+        self, guild_id: int, user_id: int,
+        equip_label: str = "",
+        equip_action: str = "inv_equip",
+        selections: dict | None = None,
+        cursor_item_id: str | None = None,
+        sel_mode: str = "add",
+        cursor_mode: str = "inventory",
+        show_plus_minus: bool = False,
+        show_drop: bool = False,
+        move_mode: bool = False,
+    ):
         super().__init__(timeout=None)
         selections = selections or {}
         cursor_selected = cursor_item_id is not None and cursor_item_id in selections
-        has_cursor = cursor_item_id is not None
+        has_cursor = cursor_item_id is not None and cursor_mode == "inventory"
 
-        # ── Row 0: Select/Deselect toggle + conditional extras ────────────────
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
-            label="✖ Deselect" if cursor_selected else "✚ Select",
-            custom_id=_custom_id(guild_id, user_id, "inv_select"),
-            disabled=not has_cursor,
-            row=0,
+        _sp = lambda act, r: self.add_item(discord.ui.Button(  # noqa
+            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
+            custom_id=_custom_id(guild_id, user_id, act), row=r,
         ))
-        if selections:
+
+        # ── Row 0: Select/Move/Craft/UnselAll ─────────────────────────────────
+        if move_mode:
+            # Move mode: Confirm + Cancel only
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.danger,
-                label="🗑 All",
-                custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"),
-                row=0,
+                style=discord.ButtonStyle.success, label="✔ Confirm",
+                custom_id=_custom_id(guild_id, user_id, "inv_move_confirm"), row=0,
             ))
-            mode_label = "➖ Sub" if sel_mode == "sub" else "➕ Add"
-            mode_style = discord.ButtonStyle.danger if sel_mode == "sub" else discord.ButtonStyle.secondary
             self.add_item(discord.ui.Button(
-                style=mode_style,
-                label=mode_label,
-                custom_id=_custom_id(guild_id, user_id, "inv_toggle_mode"),
-                row=0,
+                style=discord.ButtonStyle.danger, label="✖ Cancel",
+                custom_id=_custom_id(guild_id, user_id, "inv_move_cancel"), row=0,
             ))
-            sel_set = frozenset((k, v) for k, v in selections.items())
-            if sel_set in CRAFT_RECIPES:
-                recipe = CRAFT_RECIPES[sel_set]
+        else:
+            # Normal mode
+            if cursor_mode == "equipped":
+                _sp("inv_sp_r0a", 0)
+            elif cursor_mode == "gold":
+                _sp("inv_sp_r0a", 0)
+            else:
                 self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.success,
-                    label=recipe["label"],
-                    custom_id=_custom_id(guild_id, user_id, "inv_craft"),
+                    style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
+                    label="✖ Desel" if cursor_selected else "✚ Select",
+                    custom_id=_custom_id(guild_id, user_id, "inv_select"),
+                    disabled=not has_cursor,
                     row=0,
                 ))
+            # Move button (only when in inventory mode and no selection active)
+            can_move = cursor_mode == "inventory" and not selections and has_cursor
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="↕ Move",
+                custom_id=_custom_id(guild_id, user_id, "inv_move"),
+                disabled=not can_move,
+                row=0,
+            ))
+            # Craft button (when recipe matches)
+            if selections:
+                sel_set = frozenset((k, v) for k, v in selections.items())
+                if sel_set in CRAFT_RECIPES:
+                    recipe = CRAFT_RECIPES[sel_set]
+                    self.add_item(discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        label=recipe["label"],
+                        custom_id=_custom_id(guild_id, user_id, "inv_craft"),
+                        row=0,
+                    ))
+                else:
+                    _sp("inv_sp_r0c", 0)
+            else:
+                _sp("inv_sp_r0c", 0)
+            # Unselect all
+            if selections:
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.danger, label="🗑 All",
+                    custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"), row=0,
+                ))
+            else:
+                _sp("inv_sp_r0d", 0)
 
-        # ── Row 1: spacer | ⬆️ | spacer ──────────────────────────────────────
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(guild_id, user_id, "inv_sp1"), row=1,
-        ))
+        # ── Row 1: [−?] [⬆️] [+?] ─────────────────────────────────────────────
+        if show_plus_minus and not move_mode:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="➖",
+                custom_id=_custom_id(guild_id, user_id, "inv_sel_dec"), row=1,
+            ))
+        else:
+            _sp("inv_sp1", 1)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u2B06\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_up"), row=1,
         ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(guild_id, user_id, "inv_sp2"), row=1,
-        ))
+        if show_plus_minus and not move_mode:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="➕",
+                custom_id=_custom_id(guild_id, user_id, "inv_sel_inc"), row=1,
+            ))
+        else:
+            _sp("inv_sp2", 1)
 
         # ── Row 2: ⬅️ | action | ➡️ ──────────────────────────────────────────
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u2B05\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_prev"), row=2,
         ))
-        if equip_label and has_cursor:
+        if equip_label and (has_cursor or cursor_mode == "equipped"):
             _emoji_char = equip_label.split()[0]
             _parsed = _parse_emoji(_emoji_char)
             if _parsed:
@@ -342,28 +394,30 @@ class InventoryView(discord.ui.View):
                 ))
             else:
                 self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.success, emoji=_emoji_char,
+                    style=discord.ButtonStyle.success, label=equip_label,
                     custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
                 ))
         else:
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-                custom_id=_custom_id(guild_id, user_id, "inv_sp3"), row=2,
-            ))
+            _sp("inv_sp3", 2)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u27A1\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_next"), row=2,
         ))
 
-        # ── Row 3: spacer | ⬇️ ────────────────────────────────────────────────
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(guild_id, user_id, "inv_sp4"), row=3,
-        ))
+        # ── Row 3: spacer | ⬇️ | spacer | 🫳? ───────────────────────────────
+        _sp("inv_sp4", 3)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="\u2B07\uFE0F",
             custom_id=_custom_id(guild_id, user_id, "inv_down"), row=3,
         ))
+        _sp("inv_sp5", 3)
+        if show_drop and not move_mode:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.danger, emoji="\U0001FAF3",  # 🫳
+                custom_id=_custom_id(guild_id, user_id, "inv_drop"), row=3,
+            ))
+        else:
+            _sp("inv_sp6", 3)
 
         # ── Row 4: Close ──────────────────────────────────────────────────────
         self.add_item(discord.ui.Button(
@@ -975,6 +1029,7 @@ def _equipped_dict(player: Player) -> dict:
         ("head", player.head), ("chest", player.chest),
         ("legs", player.legs), ("boots", player.boots),
         ("accessory", player.accessory), ("pouch", player.pouch),
+        ("coin_purse", player.coin_purse),
     ]:
         if val:
             d[slot] = val
@@ -986,15 +1041,31 @@ def _inv_capacity(player: Player) -> tuple[int, int]:
     return POUCH_SIZES.get(player.pouch, POUCH_SIZES[None])
 
 
-def _inv_action_btn(items: list[dict], selected: int, equipped: dict) -> tuple[str, str]:
+def _inv_action_btn(
+    items: list[dict], selected: int, equipped: dict,
+    cursor_mode: str = "inventory", equipped_cursor: int = 0,
+) -> tuple[str, str]:
     """Return (button_label, button_action) for the primary inventory action button."""
-    if selected < len(items):
-        item_id = items[selected]["item_id"]
+    if cursor_mode == "equipped":
+        from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER
+        if equipped_cursor < len(_EQUIP_SLOT_ORDER):
+            slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
+            if equipped.get(slot):
+                return ("👇 Unequip", "inv_unequip")
+        return ("", "")
+    if cursor_mode == "gold":
+        return ("", "")
+    # inventory mode
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    if selected < len(visible):
+        item_id = visible[selected]["item_id"]
         if item_id in FOOD_HP_RESTORE:
             return ("🍗 Eat", "inv_eat")
-        if item_id in equipped.values():
-            return ("↩ Unequip", "inv_equip")
-    return ("⚔️ Equip", "inv_equip")
+        if item_id in ITEM_EQUIP_SLOTS:
+            if item_id in equipped.values():
+                return ("↩ Unequip", "inv_equip")
+            return ("⚔️ Equip", "inv_equip")
+    return ("", "")
 
 
 def _equip_label(items: list[dict], selected: int, equipped: dict) -> str:
@@ -1003,11 +1074,12 @@ def _equip_label(items: list[dict], selected: int, equipped: dict) -> str:
 
 
 async def _auto_unequip_depleted(db, user_id: int, item_id: str, player: Player) -> None:
-    """Unequip item from hand slots if its inventory stack is now empty."""
-    row = await db.fetch_one(
+    """Unequip item from hand slots if all inventory stacks of it are now empty."""
+    rows = await db.fetch_all(
         "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
     )
-    if row:
+    total = sum(r["quantity"] for r in rows)
+    if total > 0:
         return
     for slot in ("hand_1", "hand_2"):
         if getattr(player, slot, None) == item_id:
@@ -3921,6 +3993,16 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        elif terrain == "drop_box":
+            # Pick up items from a drop box on the overworld
+            results = await pickup_drop_box(db, wx, wy, user_id)
+            grid = await load_viewport(wx, wy, seed, db)
+            if results:
+                desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in results)
+                content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
+            else:
+                content = render_grid(grid, player, "🤲 The box is empty.")
+
         elif terrain in ("forest", "dense_forest") and "axe" in hand_items:
             # Chop tree
             rng = _random.Random()
@@ -4731,86 +4813,156 @@ async def handle_inventory(
     # Not in combat → normal inventory regardless of location (ship chest is a separate interaction)
     prev_selections = prev_state.get("selections", {})
     prev_mode = prev_state.get("sel_mode", "add")
-    _ui_state[user_id] = {"type": "inventory", "selected": 0, "prev_arena": prev_arena,
-                          "selections": prev_selections, "sel_mode": prev_mode}
+    _ui_state[user_id] = {
+        "type": "inventory", "selected": 0, "prev_arena": prev_arena,
+        "selections": prev_selections, "sel_mode": prev_mode,
+        "cursor_mode": "inventory", "equipped_cursor": 0,
+        "move_mode": False, "move_origin": None,
+    }
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, 0, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id])
+                              inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
 ) -> None:
+    """Navigate inventory left/right (prev/next) — also handles equipped/gold row."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
-    inv_rows, inv_cols = _inv_capacity(player)
-    total_slots = inv_rows * inv_cols
-    new_sel = (state["selected"] + delta) % max(1, total_slots)
-    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     equipped = _equipped_dict(player)
-    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id])
+    inv_rows, inv_cols = _inv_capacity(player)
+    cursor_mode = state.get("cursor_mode", "inventory")
+    total_slots = inv_rows * inv_cols
+
+    if cursor_mode == "equipped":
+        from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER
+        num_eq = len(_EQUIP_SLOT_ORDER)
+        new_eq = (state.get("equipped_cursor", 0) + delta) % num_eq
+        _ui_state[user_id] = {**state, "equipped_cursor": new_eq}
+    elif cursor_mode == "inventory":
+        visible = [it for it in items if it["item_id"] != "gold_coin"]
+        max_slots = max(1, min(total_slots, len(visible) + 1))
+        new_sel = (state.get("selected", 0) + delta) % max(1, total_slots)
+        _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
+    else:
+        _ui_state[user_id] = {**state}
+
+    content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
+                              equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_up(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move inventory cursor up one row."""
+    """Move inventory cursor up one row (or to equipped/gold row)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
-    new_sel = max(0, state["selected"] - inv_cols)
-    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
+    cursor_mode = state.get("cursor_mode", "inventory")
+
+    if cursor_mode == "inventory":
+        current_row = state.get("selected", 0) // inv_cols
+        if current_row == 0:
+            # Move up into equipped row
+            new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
+        else:
+            new_sel = max(0, state["selected"] - inv_cols)
+            new_state = {**state, "selected": new_sel}
+    elif cursor_mode == "equipped":
+        new_state = {**state, "cursor_mode": "gold"}
+    else:
+        new_state = {**state}  # already at gold (top)
+
+    _ui_state[user_id] = {**new_state, "type": "inventory"}
     equipped = _equipped_dict(player)
-    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id])
+    content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
+                              equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_down(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move inventory cursor down one row."""
+    """Move inventory cursor down one row (or from equipped/gold into grid)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
     total_slots = inv_rows * inv_cols
-    new_sel = min(total_slots - 1, state["selected"] + inv_cols)
-    _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
+    cursor_mode = state.get("cursor_mode", "inventory")
+
+    if cursor_mode == "gold":
+        new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
+    elif cursor_mode == "equipped":
+        new_state = {**state, "cursor_mode": "inventory", "selected": 0}
+    else:
+        new_sel = min(total_slots - 1, state.get("selected", 0) + inv_cols)
+        new_state = {**state, "selected": new_sel}
+
+    _ui_state[user_id] = {**new_state, "type": "inventory"}
     equipped = _equipped_dict(player)
-    content, view = _inv_view(guild_id, user_id, items, new_sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id])
+    content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
+                              equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict,
-              inv_rows: int, inv_cols: int, state: dict, msg_suffix: str = "") -> tuple[str, "InventoryView"]:
+              inv_rows: int, inv_cols: int, state: dict, msg_suffix: str = "",
+              gold: int = 0) -> tuple[str, "InventoryView"]:
     """Helper: build inventory content + view with consistent state."""
+    from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER
     selections = state.get("selections", {})
     sel_mode = state.get("sel_mode", "add")
-    label, action = _inv_action_btn(items, sel, equipped)
-    cursor_id = items[sel]["item_id"] if sel < len(items) else None
-    content = render_inventory(items, sel, equipped, label, inv_rows, inv_cols, selections)
+    cursor_mode = state.get("cursor_mode", "inventory")
+    equipped_cursor = state.get("equipped_cursor", 0)
+    move_mode = state.get("move_mode", False)
+
+    # Visible items (gold_coin filtered out)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+
+    label, action = _inv_action_btn(items, sel, equipped, cursor_mode, equipped_cursor)
+    cursor_id = visible[sel]["item_id"] if sel < len(visible) and cursor_mode == "inventory" else None
+
+    # ± buttons: show when cursor is on a selected item in inventory mode
+    show_pm = (
+        cursor_mode == "inventory"
+        and cursor_id is not None
+        and cursor_id in selections
+    )
+    # Drop button: show when cursor is on a selected item in inventory mode
+    show_drop = show_pm
+
+    content = render_inventory(
+        items, sel, equipped, label, inv_rows, inv_cols, selections,
+        gold=gold, cursor_mode=cursor_mode, equipped_cursor=equipped_cursor,
+    )
     if msg_suffix:
         content += msg_suffix
-    view = InventoryView(guild_id, user_id, label, action, selections, cursor_id, sel_mode)
+
+    view = InventoryView(
+        guild_id, user_id, label, action, selections, cursor_id, sel_mode,
+        cursor_mode=cursor_mode,
+        show_plus_minus=show_pm,
+        show_drop=show_drop,
+        move_mode=move_mode,
+    )
     return content, view
 
 
 async def handle_inv_equip(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Handles both equip and unequip based on whether the selected item is already equipped."""
+    """Equip the item under the cursor (also redirects food → eat)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
@@ -4818,47 +4970,20 @@ async def handle_inv_equip(
     sel = state.get("selected", 0)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
 
-    if sel >= len(items):
+    if sel >= len(visible):
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                                  inv_rows, inv_cols, state, "\n*(No item selected)*")
+                                  inv_rows, inv_cols, state, "\n*(No item selected)*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    item_id = items[sel]["item_id"]
+    item_id = visible[sel]["item_id"]
 
-    # Food items are handled by handle_inv_eat — if this is called with food, redirect
+    # Food items are handled by handle_inv_eat — redirect
     if item_id in FOOD_HP_RESTORE:
         await handle_inv_eat(interaction, guild_id, user_id)
-        return
-
-    # Unequip if already equipped
-    if item_id in equipped.values():
-        # Pouch unequip: check if current inv fits in smaller size
-        if item_id in ("small_pouch", "medium_pouch", "large_pouch"):
-            pouch_order = [None, "small_pouch", "medium_pouch", "large_pouch"]
-            cur_idx = pouch_order.index(item_id)
-            new_rows, new_cols = POUCH_SIZES[pouch_order[cur_idx - 1]] if cur_idx > 0 else POUCH_SIZES[None]
-            new_capacity = new_rows * new_cols
-            if len(items) > new_capacity:
-                content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                    inv_rows, inv_cols, state,
-                    f"\n*Can't unequip: inventory has {len(items)} items but smaller pouch fits {new_capacity}. Remove items first.*")
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                return
-        if item_id in TWO_HANDED_ITEMS:
-            await unequip_item(db, user_id, "hand_1")
-            await unequip_item(db, user_id, "hand_2")
-        else:
-            slot = next(s for s, v in equipped.items() if v == item_id)
-            await unequip_item(db, user_id, slot)
-        player = await get_or_create_player(db, user_id, interaction.user.display_name)
-        equipped = _equipped_dict(player)
-        inv_rows, inv_cols = _inv_capacity(player)
-        content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                                  inv_rows, inv_cols, state,
-                                  f"\n*Unequipped {item_id.replace('_', ' ').title()}.*")
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Look up slot type
@@ -4866,9 +4991,16 @@ async def handle_inv_equip(
     if not slot_type:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state,
-                                  f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*")
+                                  f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
+
+    # Pouch unequip capacity check (if equipping a smaller pouch to replace)
+    existing_in_slot = equipped.get(slot_type)
+    if existing_in_slot:
+        # Return old equipped item to inventory first
+        await add_to_inventory(db, user_id, existing_in_slot, 1)
 
     # Resolve hand slot
     if slot_type == "hand":
@@ -4876,7 +5008,8 @@ async def handle_inv_equip(
             if equipped.get("hand_1") or equipped.get("hand_2"):
                 content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                           inv_rows, inv_cols, state,
-                                          "\n*Your hands must be free for a two-handed item.*")
+                                          "\n*Your hands must be free for a two-handed item.*",
+                                          gold=player.gold)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             await equip_item(db, user_id, "hand_1", item_id)
@@ -4889,23 +5022,97 @@ async def handle_inv_equip(
             else:
                 content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                           inv_rows, inv_cols, state,
-                                          "\n*Both hands are full.*")
+                                          "\n*Both hands are full.*",
+                                          gold=player.gold)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             await equip_item(db, user_id, resolved_slot, item_id)
     else:
-        # Direct slot (boots, head, chest, legs, accessory, pouch) — replace if occupied
         await equip_item(db, user_id, slot_type, item_id)
+
+    # Remove 1 of the equipped item from inventory
+    await remove_from_inventory(db, user_id, item_id, 1)
 
     bonuses = EQUIP_BONUSES.get(item_id, {})
     if bonuses:
         await update_player_stats(db, user_id, **bonuses)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, state,
-                              f"\n*Equipped {item_id.replace('_', ' ').title()}!*")
+                              f"\n*Equipped {item_id.replace('_', ' ').title()}!*",
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_unequip(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Unequip the item at the equipped-row cursor (returns it to inventory)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    equipped_cursor = state.get("equipped_cursor", 0)
+
+    from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER
+    if equipped_cursor >= len(_EQUIP_SLOT_ORDER):
+        await interaction.response.defer()
+        return
+
+    slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
+    item_id = equipped.get(slot)
+    if not item_id:
+        content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0),
+                                  equipped, inv_rows, inv_cols, state,
+                                  "\n*(Nothing equipped in that slot.)*", gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Special: coin purse unequip with overflow
+    if slot == "coin_purse":
+        new_cap = COIN_PURSE_CAPACITY[None]  # bare capacity
+        overflow = max(0, player.gold - new_cap)
+        if overflow > 0:
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (new_cap, user_id))
+            px = player.world_x if not player.in_cave else player.cave_x
+            py = player.world_y if not player.in_cave else player.cave_y
+            await create_drop_box(db, px, py, [("gold_coin", overflow)])
+
+    # Pouch unequip: check inventory fits in smaller grid
+    if slot == "pouch":
+        pouch_order = [None, "small_pouch", "medium_pouch", "large_pouch"]
+        cur_idx = pouch_order.index(item_id) if item_id in pouch_order else 0
+        new_rows, new_cols = POUCH_SIZES[pouch_order[cur_idx - 1]] if cur_idx > 0 else POUCH_SIZES[None]
+        new_capacity = new_rows * new_cols
+        visible = [it for it in items if it["item_id"] != "gold_coin"]
+        if len(visible) > new_capacity:
+            content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0),
+                equipped, inv_rows, inv_cols, state,
+                f"\n*Can't unequip: inventory has {len(visible)} items but smaller pouch fits {new_capacity}. Remove items first.*",
+                gold=player.gold)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+    if item_id in TWO_HANDED_ITEMS:
+        await unequip_item(db, user_id, "hand_1")
+        await unequip_item(db, user_id, "hand_2")
+    else:
+        await unequip_item(db, user_id, slot)
+
+    await add_to_inventory(db, user_id, item_id, 1)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0),
+                              equipped, inv_rows, inv_cols, state,
+                              f"\n*Unequipped {item_id.replace('_', ' ').title()}.*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -4917,29 +5124,33 @@ async def handle_inv_eat(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
     sel = state.get("selected", 0)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    if sel >= len(items):
+    if sel >= len(visible):
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                                  inv_rows, inv_cols, state, "\n*(No item selected)*")
+                                  inv_rows, inv_cols, state, "\n*(No item selected)*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    item_id = items[sel]["item_id"]
+    item_id = visible[sel]["item_id"]
     restore = FOOD_HP_RESTORE.get(item_id)
     if restore is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state,
-                                  f"\n*{item_id.replace('_', ' ').title()} is not food.*")
+                                  f"\n*{item_id.replace('_', ' ').title()} is not food.*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if player.hp >= player.max_hp:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state,
-                                  "\n*You're already at full health!*")
+                                  "\n*You're already at full health!*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -4947,13 +5158,13 @@ async def handle_inv_eat(
     await update_player_stats(db, user_id, hp=new_hp)
     await remove_from_inventory(db, user_id, item_id, 1)
     await _auto_unequip_depleted(db, user_id, item_id, player)
-    # Auto-deselect if selection qty now exceeds remaining stack (or stack is gone)
+    # Auto-deselect if selection qty now exceeds remaining (across all stacks)
     selections = dict(state.get("selections", {}))
     if item_id in selections:
-        remain_row = await db.fetch_one(
+        remain_rows = await db.fetch_all(
             "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
         )
-        remain = remain_row["quantity"] if remain_row else 0
+        remain = sum(r["quantity"] for r in remain_rows)
         if remain <= 0:
             del selections[item_id]
         else:
@@ -4966,7 +5177,8 @@ async def handle_inv_eat(
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, state,
-                              f"\n*🍗 Ate {item_id.replace('_', ' ')}. HP: {new_hp}/{player.max_hp}*")
+                              f"\n*🍗 Ate {item_id.replace('_', ' ')}. HP: {new_hp}/{player.max_hp}*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -4978,16 +5190,17 @@ async def handle_inv_select(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0})
     items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
     sel = state.get("selected", 0)
     selections = dict(state.get("selections", {}))
 
-    if sel < len(items):
-        item_id = items[sel]["item_id"]
+    if sel < len(visible):
+        item_id = visible[sel]["item_id"]
         if item_id in selections:
             del selections[item_id]
             msg = f"\n*Deselected {item_id.replace('_', ' ').title()}.*"
         else:
-            # Add with qty 1 (can be adjusted via item sub-menu)
+            # Add with qty 1 (can be adjusted via ± buttons)
             selections[item_id] = 1
             msg = f"\n*Selected {item_id.replace('_', ' ').title()} ×1.*"
     else:
@@ -4997,7 +5210,8 @@ async def handle_inv_select(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id], msg)
+                              inv_rows, inv_cols, _ui_state[user_id], msg,
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5014,7 +5228,8 @@ async def handle_inv_unselect_all(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id], "\n*Cleared all selections.*")
+                              inv_rows, inv_cols, _ui_state[user_id], "\n*Cleared all selections.*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5037,7 +5252,7 @@ async def handle_inv_item_btn(
     inv_rows, inv_cols = _inv_capacity(player)
     sel = state.get("selected", 0)
     if sel_mode == "add":
-        have = next((it["quantity"] for it in items if it["item_id"] == item_id), 0)
+        have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
         new_qty = min(have, qty + 1)
         selections[item_id] = new_qty
         msg = f"\n*➕ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
@@ -5051,7 +5266,8 @@ async def handle_inv_item_btn(
             msg = f"\n*➖ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
     _ui_state[user_id] = {**state, "selections": selections}
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id], msg)
+                              inv_rows, inv_cols, _ui_state[user_id], msg,
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5071,7 +5287,8 @@ async def handle_inv_toggle_mode(
     mode_name = "➖ Subtract" if new_mode == "sub" else "➕ Add"
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
-                              f"\n*Mode switched to {mode_name}*")
+                              f"\n*Mode switched to {mode_name}*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5087,7 +5304,7 @@ async def handle_inv_item_inc(
     if item_id and item_id in selections:
         # Cap at player's actual stack
         items = await get_inventory(db, user_id)
-        have = next((it["quantity"] for it in items if it["item_id"] == item_id), 0)
+        have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
         new_qty = min(have, selections[item_id] + 1)
         selections[item_id] = new_qty
         _ui_state[user_id] = {**state, "selections": selections}
@@ -5160,7 +5377,8 @@ async def handle_inv_item_back(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
-                              inv_rows, inv_cols, _ui_state[user_id])
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5182,19 +5400,21 @@ async def handle_inv_craft(
     if recipe is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state,
-                                  "\n*No matching recipe for the selected items.*")
+                                  "\n*No matching recipe for the selected items.*",
+                                  gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Verify player has enough of each ingredient
+    # Verify player has enough of each ingredient (sum across all stacks)
     for item_id, qty in selections.items():
-        row = await db.fetch_one(
-            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
+        total_have = sum(
+            it["quantity"] for it in items if it["item_id"] == item_id
         )
-        if not row or row["quantity"] < qty:
+        if total_have < qty:
             content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                       inv_rows, inv_cols, state,
-                                      f"\n*Not enough {item_id.replace('_', ' ')} to craft.*")
+                                      f"\n*Not enough {item_id.replace('_', ' ')} to craft.*",
+                                      gold=player.gold)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
@@ -5206,10 +5426,12 @@ async def handle_inv_craft(
     # Clear selections and refresh
     _ui_state[user_id] = {**state, "selections": {}}
     items = await get_inventory(db, user_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
     equipped = _equipped_dict(player)
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
-                              f"\n*✨ Crafted {recipe['qty']}× {recipe['result'].replace('_', ' ').title()}!*")
+                              f"\n*✨ Crafted {recipe['qty']}× {recipe['result'].replace('_', ' ').title()}!*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5245,6 +5467,207 @@ async def handle_inv_close(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_sel_inc(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Increase the selected quantity for the cursor item (+1, wrapping)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    sel = state.get("selected", 0)
+    selections = dict(state.get("selections", {}))
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    if sel < len(visible):
+        item_id = visible[sel]["item_id"]
+        total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
+        current = selections.get(item_id, 0)
+        new_qty = (current % total_have) + 1  # wraps: max → 1
+        selections[item_id] = new_qty
+        _ui_state[user_id] = {**state, "selections": selections}
+        msg = f"\n*➕ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    else:
+        msg = "\n*(No item at cursor)*"
+
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id], msg,
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_sel_dec(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Decrease the selected quantity for the cursor item (−1, wrapping to max)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    sel = state.get("selected", 0)
+    selections = dict(state.get("selections", {}))
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    if sel < len(visible):
+        item_id = visible[sel]["item_id"]
+        total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
+        current = selections.get(item_id, 1)
+        if current <= 1:
+            new_qty = total_have  # wrap to max
+        else:
+            new_qty = current - 1
+        selections[item_id] = new_qty
+        _ui_state[user_id] = {**state, "selections": selections}
+        msg = f"\n*➖ {item_id.replace('_', ' ').title()} → ×{new_qty}*"
+    else:
+        msg = "\n*(No item at cursor)*"
+
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id], msg,
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_drop(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Drop selected items onto the player's current tile as a drop box."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    selections = dict(state.get("selections", {}))
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    # Can't drop in caves, villages, buildings, or on the high seas
+    if player.in_cave or player.in_village or player.in_house or player.in_high_seas or player.in_ship or player.in_island:
+        content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
+                                  inv_rows, inv_cols, state,
+                                  "\n*You can only drop items in the overworld.*",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if not selections:
+        content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
+                                  inv_rows, inv_cols, state,
+                                  "\n*Select items first (use Select/Desel, then ➖/➕ to set qty).*",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    wx, wy = player.world_x, player.world_y
+    drop_pairs: list[tuple[str, int]] = []
+    for item_id, qty in selections.items():
+        total_have = sum(it["quantity"] for it in items if it["item_id"] == item_id)
+        drop_qty = min(qty, total_have)
+        if drop_qty > 0:
+            drop_pairs.append((item_id, drop_qty))
+
+    if not drop_pairs:
+        content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
+                                  inv_rows, inv_cols, state, "\n*Nothing to drop.*",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    for item_id, qty in drop_pairs:
+        await remove_from_inventory(db, user_id, item_id, qty)
+    await create_drop_box(db, wx, wy, drop_pairs)
+
+    _ui_state[user_id] = {**state, "selections": {}}
+    items = await get_inventory(db, user_id)
+    drop_desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in drop_pairs)
+    content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              f"\n*🫳 Dropped: {drop_desc}.*",
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Enter move mode: remember the current slot as origin."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    sel = state.get("selected", 0)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    if sel >= len(visible):
+        content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                                  inv_rows, inv_cols, state, "\n*(No item to move)*",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    _ui_state[user_id] = {**state, "move_mode": True, "move_origin": sel}
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              "\n*↔️ Move mode: navigate to destination, then Confirm.*",
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_move_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Confirm move: swap origin and destination slots."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    items = await get_inventory(db, user_id)
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
+    sel = state.get("selected", 0)
+    origin = state.get("move_origin", sel)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    if origin != sel and origin < len(visible) and sel < len(visible):
+        origin_slot = visible[origin]["slot_index"]
+        dest_slot = visible[sel]["slot_index"]
+        await swap_inventory_slots(db, user_id, origin_slot, dest_slot)
+        msg = "\n*↔️ Items swapped.*"
+    else:
+        msg = "\n*(Nothing to swap)*"
+
+    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None}
+    items = await get_inventory(db, user_id)
+    content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id], msg,
+                              gold=player.gold)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_inv_move_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel move mode, returning cursor to origin slot."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {"selected": 0})
+    origin = state.get("move_origin", state.get("selected", 0))
+    items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+
+    _ui_state[user_id] = {**state, "move_mode": False, "move_origin": None, "selected": origin}
+    content, view = _inv_view(guild_id, user_id, items, origin, equipped,
+                              inv_rows, inv_cols, _ui_state[user_id],
+                              "\n*↔️ Move cancelled.*",
+                              gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 

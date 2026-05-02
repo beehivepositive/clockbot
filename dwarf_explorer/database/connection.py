@@ -249,6 +249,119 @@ class Database:
                         _log.warning("Migration warning (%s): %.120s", e, mig_sql)
                 except Exception as e:
                     _log.error("Migration error (%s): %.120s", e, mig_sql)
+            # ── Inventory table rebuild (remove UNIQUE, add slot_index) ──────────
+            inv_cols = {row[1] for row in conn.execute("PRAGMA table_info(inventory)").fetchall()}
+            if "slot_index" not in inv_cols:
+                try:
+                    # Rebuild inventory without UNIQUE(user_id, item_id), with slot_index
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS inventory_new (
+                            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id    INTEGER NOT NULL,
+                            item_id    TEXT    NOT NULL,
+                            quantity   INTEGER NOT NULL DEFAULT 1,
+                            slot_index INTEGER NOT NULL DEFAULT 0
+                        )
+                    """)
+                    rows = conn.execute(
+                        "SELECT id, user_id, item_id, quantity FROM inventory ORDER BY user_id, id"
+                    ).fetchall()
+                    user_counters: dict = {}
+                    for row in rows:
+                        uid = row[1]
+                        idx = user_counters.get(uid, 0)
+                        conn.execute(
+                            "INSERT INTO inventory_new (user_id, item_id, quantity, slot_index)"
+                            " VALUES (?, ?, ?, ?)",
+                            (uid, row[2], row[3], idx),
+                        )
+                        user_counters[uid] = idx + 1
+                    conn.execute("DROP TABLE inventory")
+                    conn.execute("ALTER TABLE inventory_new RENAME TO inventory")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id, slot_index)"
+                    )
+                    conn.commit()
+                    _log.info("Inventory table rebuilt with slot_index column")
+                except Exception as e:
+                    _log.error("Inventory rebuild error: %s", e)
+
+            # ── Remove equipped items from inventory (one-time migration) ─────────
+            # Check via a flag column on world table — add it if missing
+            wt_cols = {row[1] for row in conn.execute("PRAGMA table_info(world)").fetchall()}
+            if "inv_equip_migrated" not in wt_cols:
+                try:
+                    conn.execute(
+                        "ALTER TABLE world ADD COLUMN inv_equip_migrated INTEGER NOT NULL DEFAULT 0"
+                    )
+                    conn.commit()
+                except Exception:
+                    pass
+            needs_equip_mig = conn.execute(
+                "SELECT COALESCE(inv_equip_migrated, 0) FROM world WHERE guild_id=0"
+            ).fetchone()
+            if needs_equip_mig and not needs_equip_mig[0]:
+                try:
+                    eq_rows = conn.execute(
+                        "SELECT user_id, item_id FROM equipment"
+                    ).fetchall()
+                    for uid, item_id in eq_rows:
+                        inv_row = conn.execute(
+                            "SELECT id, quantity FROM inventory WHERE user_id=? AND item_id=? LIMIT 1",
+                            (uid, item_id),
+                        ).fetchone()
+                        if inv_row:
+                            if inv_row[1] <= 1:
+                                conn.execute("DELETE FROM inventory WHERE id=?", (inv_row[0],))
+                            else:
+                                conn.execute(
+                                    "UPDATE inventory SET quantity=quantity-1 WHERE id=?",
+                                    (inv_row[0],),
+                                )
+                    # Renumber slot_index per user after removals
+                    all_inv = conn.execute(
+                        "SELECT id, user_id FROM inventory ORDER BY user_id, slot_index, id"
+                    ).fetchall()
+                    uc: dict = {}
+                    for inv_id, uid in all_inv:
+                        idx = uc.get(uid, 0)
+                        conn.execute("UPDATE inventory SET slot_index=? WHERE id=?", (idx, inv_id))
+                        uc[uid] = idx + 1
+                    conn.execute("UPDATE world SET inv_equip_migrated=1 WHERE guild_id=0")
+                    conn.commit()
+                    _log.info("Equipped items removed from inventory (migration complete)")
+                except Exception as e:
+                    _log.error("Equip migration error: %s", e)
+
+            # ── ground_items rebuild (remove UNIQUE, add is_drop) ─────────────────
+            gi_cols = {row[1] for row in conn.execute("PRAGMA table_info(ground_items)").fetchall()}
+            if "is_drop" not in gi_cols:
+                try:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS ground_items_new (
+                            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                            world_x    INTEGER NOT NULL,
+                            world_y    INTEGER NOT NULL,
+                            item_id    TEXT    NOT NULL,
+                            quantity   INTEGER NOT NULL DEFAULT 1,
+                            is_drop    INTEGER NOT NULL DEFAULT 0,
+                            spawned_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO ground_items_new (world_x, world_y, item_id, quantity, spawned_at)
+                        SELECT world_x, world_y, item_id, quantity, spawned_at FROM ground_items
+                    """)
+                    conn.execute("DROP TABLE ground_items")
+                    conn.execute("ALTER TABLE ground_items_new RENAME TO ground_items")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ground_items_pos ON ground_items(world_x, world_y)"
+                    )
+                    conn.commit()
+                    _log.info("ground_items table rebuilt with is_drop column")
+                except Exception as e:
+                    _log.error("ground_items rebuild error: %s", e)
+
             # Clean up quest_board overrides from old worlds
             try:
                 conn.execute("DELETE FROM tile_overrides WHERE tile_type = 'quest_board'")

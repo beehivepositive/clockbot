@@ -21,6 +21,7 @@ NOISE_BASE_SCALE = 16.0
 # --- Emoji Maps ---
 
 TERRAIN_EMOJI = {
+    "drop_box":   "\U0001F4E6",      # 📦 dropped item box
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
     "river": "\U0001F30A",           # 🌊
@@ -103,6 +104,9 @@ ITEM_EMOJI = {
     "small_pouch": "\U0001F45C",     # 👜
     "medium_pouch": "\U0001F45C",    # 👜
     "large_pouch": "\U0001F45C",     # 👜
+    "small_coin_purse":  "\U0001F45B",  # 👛
+    "medium_coin_purse": "\U0001F45B",  # 👛
+    "large_coin_purse":  "\U0001F45B",  # 👛
     "fishing_net": "\U0001F3A3",     # 🎣
     "fishing_rod": "\U0001F3A3",     # 🎣
     "cooked_fish": "\U0001F956",     # 🍖
@@ -122,6 +126,7 @@ WALKABLE_TILES = {
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
+    "drop_box",      # item drop box — walkable, interact to pick up
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
 
@@ -446,7 +451,7 @@ SHOP_CATALOG = [
         "emoji": "\U0001F45C",
         "price": 80,
         "equip_slot": "pouch",
-        "description": "Expands inventory to 2×9 (18 slots).",
+        "description": "Expands inventory to 2×7 (14 slots).",
     },
     {
         "id": "medium_pouch",
@@ -454,7 +459,7 @@ SHOP_CATALOG = [
         "emoji": "\U0001F45C",
         "price": 180,
         "equip_slot": "pouch",
-        "description": "Expands inventory to 3×9 (27 slots).",
+        "description": "Expands inventory to 3×7 (21 slots).",
     },
     {
         "id": "large_pouch",
@@ -462,12 +467,36 @@ SHOP_CATALOG = [
         "emoji": "\U0001F45C",
         "price": 350,
         "equip_slot": "pouch",
-        "description": "Expands inventory to 4×9 (36 slots).",
+        "description": "Expands inventory to 4×7 (28 slots).",
+    },
+    {
+        "id": "small_coin_purse",
+        "name": "Small Coin Purse",
+        "emoji": "\U0001F45B",
+        "price": 100,
+        "equip_slot": "coin_purse",
+        "description": "Increases coin capacity to 200 coins.",
+    },
+    {
+        "id": "medium_coin_purse",
+        "name": "Medium Coin Purse",
+        "emoji": "\U0001F45B",
+        "price": 250,
+        "equip_slot": "coin_purse",
+        "description": "Increases coin capacity to 500 coins.",
+    },
+    {
+        "id": "large_coin_purse",
+        "name": "Large Coin Purse",
+        "emoji": "\U0001F45B",
+        "price": 600,
+        "equip_slot": "coin_purse",
+        "description": "Increases coin capacity to 1000 coins.",
     },
 ]
 
 # Equipment slots
-EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory", "pouch"}
+EQUIP_SLOTS = {"hand_1", "hand_2", "head", "chest", "legs", "boots", "accessory", "pouch", "coin_purse"}
 
 # Maps item_id → equipment slot type ("hand" resolves to hand_1 or hand_2 at equip time)
 ITEM_EQUIP_SLOTS = {
@@ -487,10 +516,13 @@ ITEM_EQUIP_SLOTS = {
     "iron_leggings":   "legs",
     "sword":        "hand",
     "hiking_boots": "boots",
-    "small_pouch":  "pouch",
-    "medium_pouch": "pouch",
-    "large_pouch":  "pouch",
-    "house_kit":    "hand",
+    "small_pouch":       "pouch",
+    "medium_pouch":      "pouch",
+    "large_pouch":       "pouch",
+    "house_kit":         "hand",
+    "small_coin_purse":  "coin_purse",
+    "medium_coin_purse": "coin_purse",
+    "large_coin_purse":  "coin_purse",
 }
 
 # Items that occupy both hand slots
@@ -508,10 +540,13 @@ EQUIP_BONUSES = {
     "watering_can": {},
     "seed":         {},
     "sapling":      {},
-    "small_pouch":  {},
-    "medium_pouch": {},
-    "large_pouch":  {},
-    "fishing_rod":  {},
+    "small_pouch":       {},
+    "medium_pouch":      {},
+    "large_pouch":       {},
+    "fishing_rod":       {},
+    "small_coin_purse":  {},
+    "medium_coin_purse": {},
+    "large_coin_purse":  {},
     "dagger":       {"attack": 8},
     "iron_helmet":     {"defense": 3},
     "iron_chestplate": {"defense": 5},
@@ -519,13 +554,24 @@ EQUIP_BONUSES = {
     "sword":        {"attack": 12},
 }
 
-# Pouch inventory sizes: (rows, cols) — default 2×5 when no pouch equipped
+# Pouch inventory sizes: (rows, cols) — default 1×7 when no pouch equipped
 POUCH_SIZES: dict[str | None, tuple[int, int]] = {
-    None:           (2, 5),
-    "small_pouch":  (2, 9),
-    "medium_pouch": (3, 9),
-    "large_pouch":  (4, 9),
+    None:           (1, 7),
+    "small_pouch":  (2, 7),
+    "medium_pouch": (3, 7),
+    "large_pouch":  (4, 7),
 }
+
+# Coin purse capacity: default 100, upgradeable with purse items
+COIN_PURSE_CAPACITY: dict[str | None, int] = {
+    None:                100,
+    "small_coin_purse":  200,
+    "medium_coin_purse": 500,
+    "large_coin_purse":  1000,
+}
+
+# Maximum stack size per inventory slot
+MAX_STACK_SIZE = 81
 
 # Cave random encounter rates per step: {enemy_type: chance 0-1}
 CAVE_ENCOUNTER_RATES = {
@@ -587,9 +633,12 @@ ITEM_SELL_PRICES = {
     "iron_helmet":     40,
     "iron_chestplate": 60,
     "iron_leggings":   50,
-    "small_pouch":  48,
-    "medium_pouch": 108,
-    "large_pouch":  210,
+    "small_pouch":       48,
+    "medium_pouch":      108,
+    "large_pouch":       210,
+    "small_coin_purse":  60,
+    "medium_coin_purse": 150,
+    "large_coin_purse":  360,
 }
 
 # --- World Map Image ---

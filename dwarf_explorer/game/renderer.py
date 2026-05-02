@@ -201,67 +201,135 @@ _ITEM_SLOT_EMOJI = {
     "ph_chest_small":  "\U0001F4E6",       # 📦
     "ph_chest_medium": "\U0001F5C4\uFE0F", # 🗄️
     "ph_chest_large":  "\U0001F9F3",       # 🧳
-    "gold_coin":       "\U0001FA99",       # 🪙
-    "potion":          "\U0001F9EA",       # 🧪
+    "gold_coin":         "\U0001FA99",       # 🪙
+    "potion":            "\U0001F9EA",       # 🧪
+    "small_coin_purse":  "\U0001F45B",       # 👛
+    "medium_coin_purse": "\U0001F45B",       # 👛
+    "large_coin_purse":  "\U0001F45B",       # 👛
+    "drop_box":          "\U0001F4E6",       # 📦
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
+
+# Ordered list of equipped slots (for the equipped row display)
+_EQUIP_SLOT_ORDER = [
+    ("hand_1",    "\u270B"),          # ✋  empty hand
+    ("hand_2",    "\U0001F91A"),      # 🤚  empty hand
+    ("head",      "\U0001FA96"),      # 🪖  empty helmet slot
+    ("chest",     "\U0001F6E1\uFE0F"), # 🛡️  empty chest slot
+    ("legs",      "\U0001F455"),      # 👕  empty legs slot
+    ("boots",     "\U0001F9B6"),      # 🦶  empty boots
+    ("pouch",     "\U0001F45C"),      # 👜  empty pouch
+    ("accessory", "\U0001F48D"),      # 💍  empty accessory
+    ("coin_purse","\U0001F45B"),      # 👛  empty coin purse
+]
+_EQUIP_SLOT_LABELS = {
+    "hand_1": "Main hand", "hand_2": "Off hand",
+    "head": "Head", "chest": "Chest", "legs": "Legs",
+    "boots": "Boots", "pouch": "Pouch", "accessory": "Accessory",
+    "coin_purse": "Coin Purse",
+}
 
 
 def _item_emoji(item_id: str) -> str:
     return _ITEM_SLOT_EMOJI.get(item_id, "\U0001F4E6")
 
 
-def render_inventory(items: list[dict], selected: int, equipped: dict,
-                     equip_label: str = "⚔️ Equip",
-                     inv_rows: int = 2, inv_cols: int = 5,
-                     selections: dict | None = None) -> str:
-    """Render equipped row + inventory grid as text. Grid size from pouch."""
+def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str:
+    """Format a single inventory slot cell.
+
+    Layout: emoji + 2-char qty pad (space-padded when qty=1).
+    Selected (in basket): {emoji qq}
+    Cursor only:          [emoji qq]
+    Both cursor+selected: [{emoji qq}]
+    Plain:                 emoji qq
+    """
+    emoji = _item_emoji(item_id)
+    qty_str = str(qty).ljust(2) if qty > 1 else "  "
+    core = f"{emoji}{qty_str}"
+    if cursor_on and is_selected:
+        return f"[{{{core}}}]"
+    if is_selected:
+        return f"{{{core}}}"
+    if cursor_on:
+        return f"[{core}]"
+    return f" {core} "
+
+
+def render_inventory(
+    items: list[dict],
+    selected: int,
+    equipped: dict,
+    equip_label: str = "⚔️ Equip",
+    inv_rows: int = 1,
+    inv_cols: int = 7,
+    selections: dict | None = None,
+    gold: int = 0,
+    cursor_mode: str = "inventory",
+    equipped_cursor: int = 0,
+) -> str:
+    """Render gold + equipped row + inventory grid as text."""
     total_slots = inv_rows * inv_cols
     selections = selections or {}
+
     lines = [f"\U0001F392 **Inventory** ({inv_rows}×{inv_cols})"]
 
-    # --- Equipped bar ---
-    h1 = equipped.get("hand_1")
-    h2 = equipped.get("hand_2")
-    boots_item = equipped.get("boots")
-    pouch_item = equipped.get("pouch")
+    # --- Gold row (above equipped) ---
+    gold_marker = " ◀" if cursor_mode == "gold" else ""
+    lines.append(f"\U0001FA99 **{gold}** coins{gold_marker}")
 
-    hand1_cell = _item_emoji(h1) if h1 else "\u270B"      # ✋
-    hand2_cell = _item_emoji(h2) if h2 else "\U0001F91A"   # 🤚
-    boots_cell = _item_emoji(boots_item) if boots_item else "\U0001F9B6"  # 🦶
-    pouch_cell = _item_emoji(pouch_item) if pouch_item else "\U0001F45C"  # 👜 (empty)
-
-    eq_parts = [hand1_cell, hand2_cell, boots_cell, pouch_cell]
-    for slot in ("head", "chest", "legs", "accessory"):
+    # --- Equipped row ---
+    eq_line_parts: list[str] = []
+    for idx, (slot, empty_emoji) in enumerate(_EQUIP_SLOT_ORDER):
         item_id = equipped.get(slot)
-        if item_id:
-            eq_parts.append(_item_emoji(item_id))
-
-    lines.append("**Equipped:** " + "  ".join(eq_parts))
+        emoji = _item_emoji(item_id) if item_id else empty_emoji
+        label = _EQUIP_SLOT_LABELS.get(slot, slot)
+        cursor_here = cursor_mode == "equipped" and idx == equipped_cursor
+        if cursor_here:
+            eq_line_parts.append(f"[{emoji}]")
+        else:
+            eq_line_parts.append(emoji)
+    lines.append("**Equipped:** " + " ".join(eq_line_parts))
     lines.append("")
 
-    # --- Inventory grid ---
+    # --- Inventory grid (skip gold_coin items) ---
+    visible_items = [it for it in items if it["item_id"] != "gold_coin"]
     slots: list[str] = []
     for i in range(total_slots):
-        if i < len(items):
-            item = items[i]
-            emoji = _item_emoji(item["item_id"])
-            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
-            cell = f"{emoji}{qty}"
+        if i < len(visible_items):
+            item = visible_items[i]
+            item_id = item["item_id"]
+            qty = item["quantity"]
+            is_selected = item_id in selections
+            cursor_on = (i == selected) and cursor_mode == "inventory"
+            slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             cell = _EMPTY_SLOT
-        if i == selected:
-            cell = f"[{cell}]"
-        slots.append(cell)
+            if i == selected and cursor_mode == "inventory":
+                cell = f"[{cell}]"
+            slots.append(f" {cell} ")
 
     for row in range(inv_rows):
-        lines.append("  ".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
+        lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
 
     lines.append("")
-    if selected < len(items):
-        item = items[selected]
-        sel_marker = " ✚" if item["item_id"] in selections else ""
-        lines.append(f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}{sel_marker}")
+    # Cursor item detail line
+    if cursor_mode == "gold":
+        lines.append(f"Cursor: **Gold** ({gold} coins)")
+    elif cursor_mode == "equipped":
+        slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
+        item_id = equipped.get(slot)
+        label = _EQUIP_SLOT_LABELS.get(slot, slot)
+        if item_id:
+            lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}")
+        else:
+            lines.append(f"Cursor: **{label}** — *(empty)*")
+    elif selected < len(visible_items):
+        item = visible_items[selected]
+        sel_qty = selections.get(item["item_id"], 0)
+        sel_marker = f" ✚ {sel_qty} selected" if sel_qty else ""
+        lines.append(
+            f"Cursor: **{item['item_id'].replace('_',' ').title()}** {item['quantity']}{sel_marker}"
+        )
     else:
         lines.append("Cursor: *(empty slot)*")
 
@@ -269,30 +337,29 @@ def render_inventory(items: list[dict], selected: int, equipped: dict,
         sel_parts = [f"{k.replace('_',' ').title()} ×{v}" for k, v in selections.items()]
         lines.append(f"Selected: {', '.join(sel_parts)}")
 
-    lines.append(f"⬆⬇◀▶ navigate  |  ✚ Select  |  ❌ Close")
     return "\n".join(lines)
 
 
 def render_bank(
     player_items: list[dict], bank_items: list[dict],
     selected: int, view: str, equipped: dict,
-    inv_rows: int = 2, inv_cols: int = 5,
+    inv_rows: int = 1, inv_cols: int = 7,
 ) -> str:
     """Render bank UI. view = 'player' or 'bank'."""
-    COLS = 9
-    ROWS = 4
-    TOTAL = COLS * ROWS
+    BANK_COLS = 7
+    BANK_ROWS = 4
+    BANK_TOTAL = BANK_COLS * BANK_ROWS
 
     if view == "player":
         title = f"\U0001F3E6 **Bank** — Your Inventory ({inv_rows}×{inv_cols})"
-        source = player_items
+        source = [it for it in player_items if it["item_id"] != "gold_coin"]
         action_label = "⬇ Deposit"
         COLS_disp, TOTAL_disp = inv_cols, inv_rows * inv_cols
     else:
-        title = "\U0001F3E6 **Bank** — Vault (9×4)"
+        title = f"\U0001F3E6 **Bank** — Vault ({BANK_COLS}×{BANK_ROWS})"
         source = bank_items
         action_label = "⬆ Withdraw"
-        COLS_disp, TOTAL_disp = COLS, TOTAL
+        COLS_disp, TOTAL_disp = BANK_COLS, BANK_TOTAL
 
     lines = [title]
     slots: list[str] = []
@@ -300,21 +367,21 @@ def render_bank(
         if i < len(source):
             item = source[i]
             emoji = _item_emoji(item["item_id"])
-            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
-            cell = f"{emoji}{qty}"
+            qty_str = str(item["quantity"]).ljust(2) if item["quantity"] > 1 else "  "
+            cell = f"{emoji}{qty_str}"
         else:
-            cell = _EMPTY_SLOT
+            cell = f" {_EMPTY_SLOT}  "
         if i == selected:
             cell = f"[{cell}]"
         slots.append(cell)
 
     for row in range(TOTAL_disp // COLS_disp):
-        lines.append("  ".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
+        lines.append("".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
 
     lines.append("")
     if selected < len(source):
         item = source[selected]
-        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
+        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** {item['quantity']}")
     else:
         lines.append("Selected: *(empty slot)*")
 
@@ -384,24 +451,24 @@ def render_ship_chest(
     view: str,
     chest_name: str,
     player,
-    inv_rows: int = 2,
-    inv_cols: int = 5,
+    inv_rows: int = 1,
+    inv_cols: int = 7,
 ) -> str:
     """Render a ship chest (personal or cargo) using the same layout as the bank."""
-    COLS = 9
-    ROWS = 4
-    TOTAL = COLS * ROWS
+    CHEST_COLS = 7
+    CHEST_ROWS = 4
+    CHEST_TOTAL = CHEST_COLS * CHEST_ROWS
 
     if view == "player":
         title = f"📦 **{chest_name}** — Your Inventory ({inv_rows}×{inv_cols})"
-        source = player_items
+        source = [it for it in player_items if it["item_id"] != "gold_coin"]
         action_label = "⬇ Deposit"
         COLS_disp, TOTAL_disp = inv_cols, inv_rows * inv_cols
     else:
-        title = f"📦 **{chest_name}** — Chest (9×4)"
+        title = f"📦 **{chest_name}** — Chest ({CHEST_COLS}×{CHEST_ROWS})"
         source = chest_items
         action_label = "⬆ Withdraw"
-        COLS_disp, TOTAL_disp = COLS, TOTAL
+        COLS_disp, TOTAL_disp = CHEST_COLS, CHEST_TOTAL
 
     lines = [title]
     slots: list[str] = []
@@ -409,21 +476,21 @@ def render_ship_chest(
         if i < len(source):
             item = source[i]
             emoji = _item_emoji(item["item_id"])
-            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
-            cell = f"{emoji}{qty}"
+            qty_str = str(item["quantity"]).ljust(2) if item["quantity"] > 1 else "  "
+            cell = f"{emoji}{qty_str}"
         else:
-            cell = _EMPTY_SLOT
+            cell = f" {_EMPTY_SLOT}  "
         if i == selected:
             cell = f"[{cell}]"
         slots.append(cell)
 
     for row in range(TOTAL_disp // COLS_disp):
-        lines.append("  ".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
+        lines.append("".join(slots[row * COLS_disp: row * COLS_disp + COLS_disp]))
 
     lines.append("")
     if selected < len(source):
         item = source[selected]
-        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}")
+        lines.append(f"Selected: **{item['item_id'].replace('_',' ').title()}** {item['quantity']}")
     else:
         lines.append("Selected: *(empty slot)*")
 

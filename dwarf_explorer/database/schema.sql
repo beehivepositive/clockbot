@@ -26,15 +26,15 @@ CREATE TABLE IF NOT EXISTS tile_overrides (
     PRIMARY KEY (world_x, world_y)
 );
 
--- Ground items
+-- Ground items (is_drop=1 means placed by a player; expires after 1 hour)
 CREATE TABLE IF NOT EXISTS ground_items (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     world_x      INTEGER NOT NULL,
     world_y      INTEGER NOT NULL,
     item_id      TEXT    NOT NULL,
     quantity     INTEGER NOT NULL DEFAULT 1,
-    spawned_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(world_x, world_y, item_id)
+    is_drop      INTEGER NOT NULL DEFAULT 0,
+    spawned_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Enemies
@@ -67,13 +67,13 @@ CREATE TABLE IF NOT EXISTS players (
     last_active  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
--- Player inventory
+-- Player inventory (slot_index allows multiple stacks of same item; no UNIQUE constraint)
 CREATE TABLE IF NOT EXISTS inventory (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES players(user_id),
     item_id      TEXT    NOT NULL,
     quantity     INTEGER NOT NULL DEFAULT 1,
-    UNIQUE(user_id, item_id)
+    slot_index   INTEGER NOT NULL DEFAULT 0
 );
 
 -- Quest definitions
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS bank_items (
 CREATE INDEX IF NOT EXISTS idx_ground_items_pos ON ground_items(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_enemies_pos ON enemies(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_tile_overrides_pos ON tile_overrides(world_x, world_y);
-CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id, slot_index);
 CREATE INDEX IF NOT EXISTS idx_player_quests_user ON player_quests(user_id);
 
 -- Farm watered timestamps (5-minute cooldown between watering stages)

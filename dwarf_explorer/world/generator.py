@@ -123,6 +123,13 @@ async def load_viewport(center_x: int, center_y: int, seed: int, db=None) -> lis
         y_min = center_y - half
         y_max = center_y + half
 
+        # Lazily expire old drop boxes on every viewport load
+        try:
+            from dwarf_explorer.database.repositories import cleanup_expired_drop_boxes
+            await cleanup_expired_drop_boxes(db)
+        except Exception:
+            pass
+
         # Tile overrides (rivers, structures)
         overrides = await db.fetch_all(
             "SELECT world_x, world_y, tile_type FROM tile_overrides "

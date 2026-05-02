@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import random
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE, COMBAT_MOVES_DEFAULT, OCEAN_SIZE
+from dwarf_explorer.config import (
+    SPAWN_X, SPAWN_Y, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
+    COMBAT_MOVES_DEFAULT, OCEAN_SIZE, MAX_STACK_SIZE, COIN_PURSE_CAPACITY,
+)
 from dwarf_explorer.database.connection import Database
 from dwarf_explorer.game.player import Player
 
@@ -165,6 +168,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             boots=equipped.get("boots"),
             accessory=equipped.get("accessory"),
             pouch=equipped.get("pouch"),
+            coin_purse=equipped.get("coin_purse"),
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -315,40 +319,194 @@ async def unequip_item(db: Database, user_id: int, slot: str) -> None:
 
 async def get_inventory(db: Database, user_id: int) -> list[dict]:
     rows = await db.fetch_all(
-        "SELECT item_id, quantity FROM inventory WHERE user_id = ? ORDER BY rowid",
+        "SELECT id, item_id, quantity, slot_index FROM inventory"
+        " WHERE user_id = ? ORDER BY slot_index, id",
         (user_id,),
     )
-    return [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in rows]
+    return [{"item_id": r["item_id"], "quantity": r["quantity"], "slot_index": r["slot_index"]} for r in rows]
+
+
+async def _next_slot_index(db: Database, user_id: int) -> int:
+    """Return the next available slot_index for a user (max + 1, or 0 if empty)."""
+    row = await db.fetch_one(
+        "SELECT COALESCE(MAX(slot_index) + 1, 0) AS next_idx FROM inventory WHERE user_id = ?",
+        (user_id,),
+    )
+    return row["next_idx"] if row else 0
 
 
 async def add_to_inventory(db: Database, user_id: int, item_id: str, quantity: int = 1) -> None:
-    await db.execute(
-        "INSERT INTO inventory (user_id, item_id, quantity) VALUES (?, ?, ?) "
-        "ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + ?",
-        (user_id, item_id, quantity, quantity),
+    """Add quantity of item_id, filling existing stacks first, then creating new slots (max 81)."""
+    remaining = quantity
+    # Fill existing stacks that have room
+    rows = await db.fetch_all(
+        "SELECT id, quantity FROM inventory WHERE user_id = ? AND item_id = ? ORDER BY slot_index, id",
+        (user_id, item_id),
     )
+    for row in rows:
+        if remaining <= 0:
+            break
+        space = MAX_STACK_SIZE - row["quantity"]
+        if space > 0:
+            add = min(space, remaining)
+            await db.execute("UPDATE inventory SET quantity = quantity + ? WHERE id = ?", (add, row["id"]))
+            remaining -= add
+    # Create new slots for any overflow
+    while remaining > 0:
+        add = min(MAX_STACK_SIZE, remaining)
+        next_idx = await _next_slot_index(db, user_id)
+        await db.execute(
+            "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, ?, ?, ?)",
+            (user_id, item_id, add, next_idx),
+        )
+        remaining -= add
 
 
 async def remove_from_inventory(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:
-    """Remove quantity of item. Returns True if successful."""
-    row = await db.fetch_one(
-        "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
+    """Remove quantity of item across all stacks (LIFO by slot_index). Returns True if successful."""
+    rows = await db.fetch_all(
+        "SELECT id, quantity FROM inventory WHERE user_id = ? AND item_id = ? ORDER BY slot_index DESC, id DESC",
         (user_id, item_id),
     )
-    if not row or row["quantity"] < quantity:
+    total_have = sum(r["quantity"] for r in rows)
+    if total_have < quantity:
         return False
-    new_qty = row["quantity"] - quantity
-    if new_qty <= 0:
-        await db.execute(
-            "DELETE FROM inventory WHERE user_id = ? AND item_id = ?",
-            (user_id, item_id),
-        )
-    else:
-        await db.execute(
-            "UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_id = ?",
-            (new_qty, user_id, item_id),
-        )
+    remaining = quantity
+    for row in rows:
+        if remaining <= 0:
+            break
+        take = min(row["quantity"], remaining)
+        if take == row["quantity"]:
+            await db.execute("DELETE FROM inventory WHERE id = ?", (row["id"],))
+        else:
+            await db.execute("UPDATE inventory SET quantity = quantity - ? WHERE id = ?", (take, row["id"]))
+        remaining -= take
+    # Compact slot_index after removal to avoid gaps
+    await _compact_slot_index(db, user_id)
     return True
+
+
+async def _compact_slot_index(db: Database, user_id: int) -> None:
+    """Renumber slot_index values so they're contiguous starting from 0."""
+    rows = await db.fetch_all(
+        "SELECT id FROM inventory WHERE user_id = ? ORDER BY slot_index, id",
+        (user_id,),
+    )
+    for new_idx, row in enumerate(rows):
+        await db.execute("UPDATE inventory SET slot_index = ? WHERE id = ?", (new_idx, row["id"]))
+
+
+async def swap_inventory_slots(db: Database, user_id: int, slot_a: int, slot_b: int) -> None:
+    """Swap two inventory slots by their slot_index values."""
+    if slot_a == slot_b:
+        return
+    # Use a temporary large index to avoid collisions during swap
+    tmp_idx = 999999
+    await db.execute(
+        "UPDATE inventory SET slot_index = ? WHERE user_id = ? AND slot_index = ?",
+        (tmp_idx, user_id, slot_a),
+    )
+    await db.execute(
+        "UPDATE inventory SET slot_index = ? WHERE user_id = ? AND slot_index = ?",
+        (slot_a, user_id, slot_b),
+    )
+    await db.execute(
+        "UPDATE inventory SET slot_index = ? WHERE user_id = ? AND slot_index = ?",
+        (slot_b, user_id, tmp_idx),
+    )
+
+
+# --- Drop boxes ---
+
+async def create_drop_box(
+    db: Database, world_x: int, world_y: int, items: list[tuple[str, int]]
+) -> None:
+    """Create a drop box at (world_x, world_y) with the given items.
+
+    Items dropped on an existing box are merged into it.
+    A tile_override of 'drop_box' is inserted (or left existing) so the renderer shows 📦.
+    """
+    # Upsert the tile_override
+    await db.execute(
+        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'drop_box')",
+        (world_x, world_y),
+    )
+    # Merge items into ground_items (upsert by position + item_id for drop rows)
+    for item_id, qty in items:
+        existing = await db.fetch_one(
+            "SELECT id, quantity FROM ground_items WHERE world_x=? AND world_y=? AND item_id=? AND is_drop=1",
+            (world_x, world_y, item_id),
+        )
+        if existing:
+            await db.execute(
+                "UPDATE ground_items SET quantity=quantity+?, spawned_at=datetime('now') WHERE id=?",
+                (qty, existing["id"]),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO ground_items (world_x, world_y, item_id, quantity, is_drop)"
+                " VALUES (?, ?, ?, ?, 1)",
+                (world_x, world_y, item_id, qty),
+            )
+
+
+async def pickup_drop_box(
+    db: Database, world_x: int, world_y: int, user_id: int
+) -> list[tuple[str, int]]:
+    """Pick up all items in a drop box at (world_x, world_y) into user's inventory.
+
+    Returns list of (item_id, qty) actually picked up.
+    """
+    items = await db.fetch_all(
+        "SELECT id, item_id, quantity FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
+        (world_x, world_y),
+    )
+    picked = []
+    for row in items:
+        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+        await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
+        picked.append((row["item_id"], row["quantity"]))
+    # Remove tile_override if no drop items remain
+    remaining = await db.fetch_one(
+        "SELECT COUNT(*) AS cnt FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
+        (world_x, world_y),
+    )
+    if remaining and remaining["cnt"] == 0:
+        await db.execute(
+            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='drop_box'",
+            (world_x, world_y),
+        )
+    return picked
+
+
+async def cleanup_expired_drop_boxes(db: Database) -> None:
+    """Delete drop box items older than 1 hour and remove their tile_overrides."""
+    expired_positions = await db.fetch_all(
+        "SELECT DISTINCT world_x, world_y FROM ground_items"
+        " WHERE is_drop=1 AND spawned_at < datetime('now', '-1 hour')",
+    )
+    for pos in expired_positions:
+        await db.execute(
+            "DELETE FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
+            (pos["world_x"], pos["world_y"]),
+        )
+        await db.execute(
+            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='drop_box'",
+            (pos["world_x"], pos["world_y"]),
+        )
+
+
+# --- Gold cap ---
+
+async def add_player_gold(db: Database, user_id: int, delta: int, capacity: int) -> tuple[int, int]:
+    """Add delta gold respecting capacity. Returns (actual_added, overflow)."""
+    row = await db.fetch_one("SELECT gold FROM players WHERE user_id=?", (user_id,))
+    current = row["gold"] if row else 0
+    new_val = max(0, min(current + delta, capacity))
+    await db.execute("UPDATE players SET gold=? WHERE user_id=?", (new_val, user_id))
+    actual = new_val - current
+    overflow = delta - actual if delta > 0 else 0
+    return actual, overflow
 
 
 # --- Bank ---

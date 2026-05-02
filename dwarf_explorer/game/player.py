@@ -89,6 +89,7 @@ class Player:
     boots: str | None = None
     accessory: str | None = None
     pouch: str | None = None
+    coin_purse: str | None = None
 
 
 def can_move_ship(target_tile: TileData) -> tuple[bool, str]:
