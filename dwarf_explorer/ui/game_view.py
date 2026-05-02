@@ -5750,7 +5750,6 @@ async def handle_inv_move_confirm(
                 "UPDATE inventory SET slot_index=? WHERE user_id=? AND slot_index=?",
                 (sel, user_id, origin_item["slot_index"]),
             )
-            await db.commit()
             msg = "\n*↔️ Item moved.*"
     else:
         msg = "\n*(Nothing to move)*"
