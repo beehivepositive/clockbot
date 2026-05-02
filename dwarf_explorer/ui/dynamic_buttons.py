@@ -16,6 +16,7 @@ from dwarf_explorer.ui.game_view import (
     handle_bank_nav, handle_bank_up, handle_bank_down, handle_bank_switch,
     handle_bank_qty_inc, handle_bank_qty_dec,
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
+    handle_bank_qty_modal, handle_shop_qty_modal,
     handle_combat_move, handle_combat_attack, handle_combat_flee,
     handle_combat_eat, handle_combat_end_turn,
     handle_chest_nav, handle_chest_switch, handle_chest_take,
@@ -48,6 +49,8 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_move_qty_inc, handle_inv_move_qty_dec,
     handle_inv_qty_modal,
     handle_inv_unequip,
+    handle_bank_qty_modal,
+    handle_shop_qty_modal,
     handle_house_edit_move, handle_house_add, handle_house_remove,
     handle_house_delete, handle_house_edit_close,
     handle_house_deco_nav, handle_house_deco_sel, handle_house_deco_place,
@@ -270,6 +273,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_shop_qty_inc(interaction, gid, uid)
             elif act == "shop_qty_dec":
                 await handle_shop_qty_dec(interaction, gid, uid)
+            elif act == "shop_qty_modal":
+                await handle_shop_qty_modal(interaction, gid, uid)
             elif act == "shop_buy":
                 await handle_shop_buy(interaction, gid, uid)
             elif act == "shop_sell":
@@ -293,6 +298,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_bank_qty_inc(interaction, gid, uid)
             elif act == "bank_qty_dec":
                 await handle_bank_qty_dec(interaction, gid, uid)
+            elif act == "bank_qty_modal":
+                await handle_bank_qty_modal(interaction, gid, uid)
             elif act == "bank_switch":
                 await handle_bank_switch(interaction, gid, uid)
             elif act == "bank_deposit":
