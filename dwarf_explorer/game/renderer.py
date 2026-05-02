@@ -260,7 +260,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
         return f"{{{core}}}"
     if cursor_on:
         return f"[{core}]"
-    return f"{_PAD}{core}{_PAD}"
+    return core
 
 
 def render_inventory(
