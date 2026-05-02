@@ -2530,9 +2530,9 @@ async def handle_mine(
     )
     # Get cave level for drop bonuses
     cave_meta = await db.fetch_one(
-        "SELECT level FROM caves WHERE cave_id=?", (player.cave_id,)
+        "SELECT cave_level FROM caves WHERE cave_id=?", (player.cave_id,)
     )
-    cave_level = cave_meta["level"] if cave_meta else 1
+    cave_level = cave_meta["cave_level"] if cave_meta else 1
 
     loot = []
     if tile.terrain == "gold_ore_deposit":
