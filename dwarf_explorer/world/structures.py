@@ -91,6 +91,8 @@ def _tile_move_cost(
         return 30.0
     if biome == "hills":
         return 3.0
+    if biome == "sand":
+        return 20.0   # paths avoid beach (still passable but very costly)
     return 0.5 + _meander_noise(x, y, seed ^ _PATH_SEED_OFFSET) * 2.0
 
 

@@ -51,8 +51,12 @@ class DwarfExplorer(commands.Cog):
             await interaction.response.defer()
             await init_world(seed, db)
             await mark_world_initialized(db, guild_id)
-            from dwarf_explorer.world.world_map import invalidate_map_cache
-            invalidate_map_cache(guild_id)
+            from dwarf_explorer.world.world_map import generate_world_map
+            # Pre-generate base map so first /map call is instant
+            try:
+                await generate_world_map(seed, db, guild_id, SPAWN_X, SPAWN_Y)
+            except Exception:
+                pass  # Non-fatal: map will be generated on demand if this fails
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
             # Relocate player if default spawn is on water (river may flow through it)
             sx, sy = await find_walkable_spawn(seed, db)

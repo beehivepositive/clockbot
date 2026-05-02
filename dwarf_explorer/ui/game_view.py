@@ -14,7 +14,7 @@ from dwarf_explorer.config import (
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
-    COIN_PURSE_CAPACITY,
+    COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
@@ -863,7 +863,7 @@ class CombatView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=1,
             ))
 
-        # Row 2: ↙ ↓ ↘ 🎒 spacer
+        # Row 2: ↙ ↓ ↘ spacer spacer
         for emoji, action in [("↙", "c_downleft"), ("⬇️", "c_down"), ("↘", "c_downright")]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary,
@@ -872,13 +872,39 @@ class CombatView(discord.ui.View):
             ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="🎒", disabled=False,
-            custom_id=_custom_id(gid, uid, "c_inventory"), row=2,
+            label="\u200b", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp0"), row=2,
         ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp0"), row=2,
+            custom_id=_custom_id(gid, uid, "csp_a"), row=2,
+        ))
+
+
+class ConsumablesView(discord.ui.View):
+    """Combat food/consumables menu — one button per item the player has."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 available_items: list[tuple[str, int]]):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        for i, (item_id, qty) in enumerate(available_items[:8]):  # max 8 items + cancel
+            info = CONSUMABLE_ITEMS.get(item_id, {})
+            desc = info.get("desc", "")
+            name = item_id.replace("_", " ").title()
+            label = f"{name} ×{qty} ({desc})"[:80]
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=label,
+                custom_id=_custom_id(gid, uid, f"consume_{item_id}"),
+                row=i // 4,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="❌ Back",
+            custom_id=_custom_id(gid, uid, "consume_cancel"),
+            row=2,
         ))
 
 
@@ -1089,18 +1115,49 @@ class MerchantView(discord.ui.View):
             ))
 
 
+class ShrineView(discord.ui.View):
+    """Shrine enchantment menu — choose a gem imbuing sacrifice."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 inv_counts: dict[str, int] | None = None):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        inv_counts = inv_counts or {}
+        keys = list(SHRINE_SACRIFICES.keys())
+        for i, stype in enumerate(keys):
+            data = SHRINE_SACRIFICES[stype]
+            have = inv_counts.get(data["item"], 0)
+            need = data["qty"]
+            enough = have >= need
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary if enough else discord.ButtonStyle.secondary,
+                label=f"{data['label']} ({have}/{need})"[:80],
+                disabled=not enough,
+                custom_id=_custom_id(gid, uid, f"shrine_{stype}"),
+                row=i // 3,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "shrine_cancel"),
+            row=2,
+        ))
+
+
 class ForgeView(discord.ui.View):
-    """Forge interaction menu: smelt iron ore into ingots."""
+    """Forge interaction menu: smelt iron/gold ore into ingots, craft gold ring."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
-        for label, act, style in [
-            ("🧱 Smelt (3 ore → 1 ingot)", "forge_iron",  discord.ButtonStyle.primary),
-            ("❌ Close",                   "forge_close", discord.ButtonStyle.danger),
+        for label, act, style, row in [
+            ("🔥 Smelt Iron (1 ore → 1 ingot)",    "forge_iron",      discord.ButtonStyle.primary, 0),
+            ("🟡 Smelt Gold (1 ore → 1 ingot)",    "forge_gold",      discord.ButtonStyle.primary, 0),
+            ("💍 Gold Ring (2 gold ingots)",        "forge_gold_ring", discord.ButtonStyle.primary, 1),
+            ("❌ Close",                            "forge_close",     discord.ButtonStyle.danger,  1),
         ]:
             self.add_item(discord.ui.Button(
                 style=style, label=label,
-                custom_id=_custom_id(guild_id, user_id, act), row=0,
+                custom_id=_custom_id(guild_id, user_id, act), row=row,
             ))
 
 
@@ -1110,12 +1167,14 @@ class AnvilView(discord.ui.View):
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
         for label, act, style, row in [
-            ("🗡️ Dagger (1 ingot)",     "anvil_dagger",      discord.ButtonStyle.primary, 0),
-            ("⚔️ Sword (2 ingots)",     "anvil_sword",       discord.ButtonStyle.primary, 0),
-            ("🪖 Helmet (2 ingots)",    "anvil_helmet",      discord.ButtonStyle.primary, 0),
-            ("🛡️ Chestplate (4 ingots)","anvil_chestplate",  discord.ButtonStyle.primary, 1),
-            ("👕 Leggings (3 ingots)",  "anvil_leggings",    discord.ButtonStyle.primary, 1),
-            ("❌ Close",                "anvil_close",        discord.ButtonStyle.danger,  1),
+            ("🗡️ Dagger (1 ingot)",       "anvil_dagger",      discord.ButtonStyle.primary, 0),
+            ("⚔️ Sword (2 ingots)",       "anvil_sword",       discord.ButtonStyle.primary, 0),
+            ("🪖 Helmet (2 ingots)",      "anvil_helmet",      discord.ButtonStyle.primary, 0),
+            ("🛡️ Chestplate (4 ingots)",  "anvil_chestplate",  discord.ButtonStyle.primary, 1),
+            ("👖 Leggings (3 ingots)",    "anvil_leggings",    discord.ButtonStyle.primary, 1),
+            ("💣 Cannonball (4 ingots)",  "anvil_cannonball",  discord.ButtonStyle.primary, 1),
+            ("🥾 Iron Boots (2 ingots)",  "anvil_iron_boots",  discord.ButtonStyle.primary, 2),
+            ("❌ Close",                  "anvil_close",        discord.ButtonStyle.danger,  2),
         ]:
             self.add_item(discord.ui.Button(
                 style=style, label=label,
@@ -1564,14 +1623,14 @@ def _game_view(guild_id: int, user_id: int, player: Player,
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
                            grid: list[list] | None = None) -> GameView:
-    """Build a GameView with mine buttons for any adjacent cave_rock tiles."""
+    """Build a GameView with mine buttons for any adjacent mineable tiles."""
     mine_dirs: set[str] = set()
     if player.in_cave:
         for direction, (dx, dy) in DIRECTIONS.items():
             tile = await load_cave_single_tile(
                 player.cave_id, player.cave_x + dx, player.cave_y + dy, db
             )
-            if tile.terrain == "cave_rock":
+            if tile.terrain in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit"):
                 mine_dirs.add(direction)
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs), grid=grid)
 
@@ -2023,7 +2082,7 @@ async def _move_steps(
                     player.combat_enemy_y = ey
                     player.combat_player_x = ARENA_SIZE // 2
                     player.combat_player_y = ARENA_SIZE // 2
-                    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+                    player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
                     _ui_state[user_id] = {"type": "combat", "arena": arena}
                     await save_combat_state(db, user_id, player)
                     content = render_arena(arena, player)
@@ -2069,7 +2128,7 @@ async def _move_steps(
                     player.combat_enemy_y = ey
                     player.combat_player_x = ARENA_SIZE // 2
                     player.combat_player_y = ARENA_SIZE // 2
-                    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+                    player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
                     _ui_state[user_id] = {"type": "combat", "arena": arena}
                     await save_combat_state(db, user_id, player)
                     content = render_arena(arena, player)
@@ -2219,7 +2278,7 @@ async def _after_player_action(
     arena["combat_log"].append(enemy_msg)
 
     # Restore player moves for next turn
-    player.combat_moves_left = COMBAT_MOVES_DEFAULT
+    player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
 
     # Check outcomes after enemy turn
     if _is_dead():
@@ -2328,6 +2387,7 @@ async def handle_combat_flee(
 async def handle_combat_eat(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
+    """Open the consumables menu in combat."""
     result = await _load_combat(interaction, guild_id, user_id)
     if result is None:
         return
@@ -2341,21 +2401,71 @@ async def handle_combat_eat(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Prefer cooked_fish, then fish
-    for food_id in ("cooked_fish", "fish"):
-        row = await db.fetch_one(
-            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, food_id)
+    # Build list of consumables the player has
+    available: list[tuple[str, int]] = []
+    for item_id in CONSUMABLE_ITEMS:
+        rows = await db.fetch_all(
+            "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id=?",
+            (user_id, item_id)
         )
-        if row:
-            await remove_from_inventory(db, user_id, food_id, 1)
-            heal_amt = FOOD_HP_RESTORE.get(food_id, 15)
-            heal = min(heal_amt, player.max_hp - player.hp)
-            player.hp += heal
-            player.combat_moves_left -= 1
-            msg = f"🍗 You eat {food_id.replace('_', ' ')}! Restored **{heal}** HP. ({player.hp}/{player.max_hp})"
-            await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
-            return
-    arena["combat_log"].append("You have no food! Fish and cook at a hearth for HP recovery.")
+        total = rows[0]["total"] if rows and rows[0]["total"] else 0
+        if total > 0:
+            available.append((item_id, total))
+
+    if not available:
+        arena["combat_log"].append("🍗 You have no food! Fish and cook at a hearth for HP recovery.")
+        content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    lines = ["**🍗 Consumables** — select an item to use (costs 1 turn):", ""]
+    for item_id, qty in available:
+        info = CONSUMABLE_ITEMS.get(item_id, {})
+        desc = info.get("desc", "")
+        name = item_id.replace("_", " ").title()
+        lines.append(f"• **{name}** ×{qty}  —  {desc}")
+    content = "\n".join(lines)
+    view = ConsumablesView(guild_id, user_id, available)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_combat_consume(
+    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+) -> None:
+    """Consume a specific food item during combat."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+
+    row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, item_id)
+    )
+    if not row:
+        arena["combat_log"].append(f"You no longer have any {item_id.replace('_', ' ')}.")
+        content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    await remove_from_inventory(db, user_id, item_id, 1)
+    heal_amt = FOOD_HP_RESTORE.get(item_id, CONSUMABLE_ITEMS.get(item_id, {}).get("hp", 10))
+    heal = min(heal_amt, player.max_hp - player.hp)
+    player.hp += heal
+    player.combat_moves_left -= 1
+    msg = f"🍗 You eat {item_id.replace('_', ' ')}! Restored **{heal}** HP. ({player.hp}/{player.max_hp})"
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+async def handle_combat_consume_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel consumables menu, return to combat."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
     content = render_arena(arena, player)
     view = _combat_view(guild_id, user_id, arena, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -2399,7 +2509,7 @@ async def handle_mine(
         return
 
     tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
-    if tile.terrain not in ("cave_rock", "iron_ore_deposit"):
+    if tile.terrain not in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit"):
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "That rock has already been mined.")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
@@ -2418,9 +2528,22 @@ async def handle_mine(
         " VALUES (?, ?, ?, datetime('now'))",
         (player.cave_id, nx, ny),
     )
+    # Get cave level for drop bonuses
+    cave_meta = await db.fetch_one(
+        "SELECT level FROM caves WHERE cave_id=?", (player.cave_id,)
+    )
+    cave_level = cave_meta["level"] if cave_meta else 1
+
     loot = []
-    if tile.terrain == "iron_ore_deposit":
+    if tile.terrain == "gold_ore_deposit":
+        ore_count = rng.randint(2, 6)
+        await add_to_inventory(db, user_id, "gold_ore", ore_count)
+        loot.append(f"{ore_count} gold ore")
+    elif tile.terrain == "iron_ore_deposit":
         ore_count = rng.randint(3, 9)
+        # Luck ring bonus: +1 ore
+        if player.accessory == "ring_of_luck":
+            ore_count += 1
         await add_to_inventory(db, user_id, "iron_ore", ore_count)
         loot.append(f"{ore_count} iron ore")
     else:
@@ -2430,9 +2553,16 @@ async def handle_mine(
         if rng.random() < 0.33:
             await add_to_inventory(db, user_id, "flint", 1)
             loot.append("flint")
-        if rng.random() < 0.15:
+        # Iron ore chance from regular rocks (level-dependent)
+        iron_chance = {1: 0.15, 2: 0.15, 3: 0.15}.get(cave_level, 0.15)
+        if rng.random() < iron_chance:
             await add_to_inventory(db, user_id, "iron_ore", 1)
             loot.append("iron ore")
+        # Gold ore chance from regular rocks (level 2: 1%, level 3: 5%)
+        gold_chance = {2: 0.01, 3: 0.05}.get(cave_level, 0.0)
+        if gold_chance > 0 and rng.random() < gold_chance:
+            await add_to_inventory(db, user_id, "gold_ore", 1)
+            loot.append("gold ore")
 
     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
@@ -2806,7 +2936,7 @@ async def handle_ocean_move(
             player.combat_enemy_y = ey
             player.combat_player_x = ARENA_SIZE // 2
             player.combat_player_y = ARENA_SIZE // 2
-            player.combat_moves_left = COMBAT_MOVES_DEFAULT
+            player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
             _ui_state[user_id] = {"type": "combat", "arena": arena}
             await save_combat_state(db, user_id, player)
             content = render_arena(arena, player)
@@ -4142,37 +4272,36 @@ async def handle_interact(
             content = render_grid(grid, player, "You enter the village.")
 
         elif tile.structure == "shrine":
-            # ── Shrine: sacrifice a held item for a stat boost ─────────────────
-            sacrificed = player.hand_1 or player.hand_2
-            if not sacrificed:
+            # ── Shrine: imbue a held gem with a sacrifice to create enchanted gems ──
+            gem_slot = None
+            if player.hand_1 == "gem":
+                gem_slot = "hand_1"
+            elif player.hand_2 == "gem":
+                gem_slot = "hand_2"
+
+            if gem_slot is None:
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player,
-                    "⛩️ An ancient shrine. Equip an item to hand and interact to make an offering.")
+                    "⛩️ An ancient shrine. Equip a gem to hand and interact to imbue it with power.")
             else:
-                slot = "hand_1" if player.hand_1 == sacrificed else "hand_2"
-                await unequip_item(db, user_id, slot)
-                await remove_from_inventory(db, user_id, sacrificed, 1)
-                if sacrificed == "gem":
-                    player.attack += 1
-                    await update_player_stats(db, user_id, attack=player.attack)
-                    msg = f"⛩️ You offer the gem. The shrine glows — **Attack +1**! ({player.attack} ATK)"
-                elif sacrificed == "iron_ingot":
-                    player.defense += 1
-                    await update_player_stats(db, user_id, defense=player.defense)
-                    msg = f"⛩️ You offer the iron ingot. The shrine hums — **Defense +1**! ({player.defense} DEF)"
-                elif sacrificed in ("cooked_fish", "fish"):
-                    player.max_hp += 10
-                    player.hp = min(player.max_hp, player.hp + 10)
-                    await update_player_stats(db, user_id, max_hp=player.max_hp, hp=player.hp)
-                    msg = f"⛩️ You offer the food. Warmth fills your body — **Max HP +10**! ({player.max_hp} HP)"
-                else:
-                    xp_gain = 15
-                    player.xp += xp_gain
-                    await update_player_stats(db, user_id, xp=player.xp)
-                    item_name = sacrificed.replace("_", " ")
-                    msg = f"⛩️ You offer the {item_name}. The shrine accepts your gift — **+{xp_gain} XP**."
-                grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, msg)
+                # Build inventory counts for each sacrifice item
+                inv_counts: dict[str, int] = {}
+                for stype, data in SHRINE_SACRIFICES.items():
+                    sac_item = data["item"]
+                    if sac_item not in inv_counts:
+                        rows_q = await db.fetch_all(
+                            "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id=?",
+                            (user_id, sac_item)
+                        )
+                        inv_counts[sac_item] = (rows_q[0]["total"] if rows_q and rows_q[0]["total"] else 0)
+                view = ShrineView(guild_id, user_id, inv_counts)
+                content = (
+                    "⛩️ **Ancient Shrine** — The gem in your hand glows faintly.\n"
+                    "Choose a sacrifice to imbue the gem with power.\n"
+                    "The resulting enchanted gem can be combined with a **gold ring** to craft a special ring."
+                )
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
         elif tile.structure == "ruins_looted":
             grid = await load_viewport(wx, wy, seed, db)
@@ -4880,22 +5009,74 @@ async def handle_house_deco_cancel(
 async def handle_forge_iron(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Smelt iron ore into ingots at the forge (1 ore → 1 ingot)."""
+    """Smelt all iron ore into ingots at the forge (1 ore → 1 ingot)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    ore_row = await db.fetch_one(
-        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ore'", (user_id,)
+    ore_rows = await db.fetch_all(
+        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='iron_ore'",
+        (user_id,)
     )
-    ore_count = ore_row["quantity"] if ore_row else 0
+    ore_count = ore_rows[0]["total"] if ore_rows and ore_rows[0]["total"] else 0
 
     if ore_count > 0:
         await remove_from_inventory(db, user_id, "iron_ore", ore_count)
         await add_to_inventory(db, user_id, "iron_ingot", ore_count)
-        msg = (f"🔥 Smelted {ore_count} iron ore → "
+        msg = (f"🔥 Smelted **{ore_count}** iron ore → "
                f"**{ore_count} iron ingot{'s' if ore_count > 1 else ''}**!")
     else:
         msg = "🔥 You need iron ore to smelt ingots."
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+    )
+
+
+async def handle_forge_gold(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Smelt all gold ore into gold ingots at the forge (1 ore → 1 ingot)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ore_rows = await db.fetch_all(
+        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='gold_ore'",
+        (user_id,)
+    )
+    ore_count = ore_rows[0]["total"] if ore_rows and ore_rows[0]["total"] else 0
+
+    if ore_count > 0:
+        await remove_from_inventory(db, user_id, "gold_ore", ore_count)
+        await add_to_inventory(db, user_id, "gold_ingot", ore_count)
+        msg = (f"🟡 Smelted **{ore_count}** gold ore → "
+               f"**{ore_count} gold ingot{'s' if ore_count > 1 else ''}**!")
+    else:
+        msg = "🟡 You need gold ore to smelt gold ingots."
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+    )
+
+
+async def handle_forge_gold_ring(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft a gold ring from 2 gold ingots at the forge."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ingot_rows = await db.fetch_all(
+        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='gold_ingot'",
+        (user_id,)
+    )
+    ingot_count = ingot_rows[0]["total"] if ingot_rows and ingot_rows[0]["total"] else 0
+
+    if ingot_count >= 2:
+        await remove_from_inventory(db, user_id, "gold_ingot", 2)
+        await add_to_inventory(db, user_id, "gold_ring", 1)
+        msg = "💍 You craft a **gold ring**! Combine with an enchanted gem in your inventory to make a special ring."
+    else:
+        msg = f"💍 You need 2 gold ingots to craft a gold ring. (Have: {ingot_count})"
 
     await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
@@ -4992,6 +5173,14 @@ async def handle_anvil_leggings(interaction: discord.Interaction, guild_id: int,
     await _anvil_craft(interaction, guild_id, user_id, "iron_leggings", 3, "Iron Leggings", "+4 defense, equip to legs")
 
 
+async def handle_anvil_cannonball(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_craft(interaction, guild_id, user_id, "cannonball", 4, "Cannonball", "ammunition for ship cannons")
+
+
+async def handle_anvil_iron_boots(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_craft(interaction, guild_id, user_id, "iron_boots", 2, "Iron Boots", "+2 defense, equip to boots")
+
+
 async def handle_anvil_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -4999,6 +5188,97 @@ async def handle_anvil_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You step away from the anvil.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Shrine handlers ───────────────────────────────────────────────────────────
+
+async def handle_shrine_enchant(
+    interaction: discord.Interaction, guild_id: int, user_id: int, shrine_type: str
+) -> None:
+    """Imbue gem with selected enchantment at the shrine."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    seed = await get_or_create_world(db, guild_id)
+
+    if shrine_type not in SHRINE_SACRIFICES:
+        await interaction.response.defer()
+        return
+
+    data = SHRINE_SACRIFICES[shrine_type]
+    sac_item = data["item"]
+    sac_qty = data["qty"]
+    result_item = data["result"]
+
+    # Verify gem is still in hand
+    gem_slot = None
+    if player.hand_1 == "gem":
+        gem_slot = "hand_1"
+    elif player.hand_2 == "gem":
+        gem_slot = "hand_2"
+
+    if gem_slot is None:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "⛩️ You no longer have a gem equipped.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Check sacrifice items
+    sac_rows = await db.fetch_all(
+        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id=?",
+        (user_id, sac_item)
+    )
+    have = sac_rows[0]["total"] if sac_rows and sac_rows[0]["total"] else 0
+    if have < sac_qty:
+        # Rebuild shrine view with updated counts
+        inv_counts: dict[str, int] = {}
+        for st, sdata in SHRINE_SACRIFICES.items():
+            si = sdata["item"]
+            if si not in inv_counts:
+                r2 = await db.fetch_all(
+                    "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id=?",
+                    (user_id, si)
+                )
+                inv_counts[si] = (r2[0]["total"] if r2 and r2[0]["total"] else 0)
+        view = ShrineView(guild_id, user_id, inv_counts)
+        content = (
+            f"⛩️ Not enough {sac_item.replace('_', ' ')} — need {sac_qty}, have {have}.\n"
+            "Choose a different enchantment or gather more materials."
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Consume gem (unequip + remove from inventory)
+    await unequip_item(db, user_id, gem_slot)
+    await remove_from_inventory(db, user_id, "gem", 1)
+    # Consume sacrifice
+    await remove_from_inventory(db, user_id, sac_item, sac_qty)
+    # Give enchanted gem
+    await add_to_inventory(db, user_id, result_item, 1)
+
+    result_name = result_item.replace("_", " ")
+    sac_name = sac_item.replace("_", " ")
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(
+        grid, player,
+        f"⛩️ The shrine blazes with light! Your gem is imbued — you receive a **{result_name}**!\n"
+        f"Combine it with a **gold ring** in your inventory to craft a special ring."
+    )
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_shrine_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel shrine enchantment menu and return to game."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    seed = await get_or_create_world(db, guild_id)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, "⛩️ You step away from the shrine.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 

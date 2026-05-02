@@ -117,6 +117,22 @@ ITEM_EMOJI = {
     "iron_leggings":   "\U0001F456",    # 👖
     "seaweed":         "\U0001F33F",    # 🌿
     "cannonball":      "\U0001F4A3",    # 💣
+    "gold_ore":             "\U0001F7E1",           # 🟡
+    "gold_ingot":           "\U0001F947",           # 🥇
+    "gold_ring":            "\U0001F48D",           # 💍
+    "iron_boots":           "\U0001F97E",           # 🥾
+    "ring_of_strength":     "\U0001F48D",           # 💍 (red glow in mind)
+    "ring_of_time":         "\U0001F48D",           # 💍 (blue glow)
+    "ring_of_defense":      "\U0001F48D",           # 💍 (grey glow)
+    "ring_of_sight":        "\U0001F48D",           # 💍 (yellow glow)
+    "ring_of_luck":         "\U0001F48D",           # 💍 (green glow)
+    "enchanted_gem_strength": "\U0001F4AB",         # 💫
+    "enchanted_gem_time":     "\U0001F4AB",         # 💫
+    "enchanted_gem_defense":  "\U0001F4AB",         # 💫
+    "enchanted_gem_sight":    "\U0001F4AB",         # 💫
+    "enchanted_gem_luck":     "\U0001F4AB",         # 💫
+    "flint_and_steel":      "\U0001F525",           # 🔥
+    "arrow":                "\U0001F3F9",           # 🏹
 }
 
 WALKABLE_TILES = {
@@ -199,6 +215,41 @@ ARENA_EMOJI = {
 
 FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
 
+# Consumable items: shown in combat food menu
+CONSUMABLE_ITEMS = {
+    "fish":        {"hp": 15,  "desc": "+15 HP"},
+    "cooked_fish": {"hp": 35,  "desc": "+35 HP"},
+}
+
+# Shrine enchantment sacrifices: type → {item, qty, result, label}
+SHRINE_SACRIFICES = {
+    "strength": {
+        "item": "iron_ore",    "qty": 63,
+        "result": "enchanted_gem_strength",
+        "label": "⚔️ Strength (63 iron ore)",
+    },
+    "time": {
+        "item": "cooked_fish", "qty": 20,
+        "result": "enchanted_gem_time",
+        "label": "⏱️ Time (20 cooked fish)",
+    },
+    "defense": {
+        "item": "iron_ingot",  "qty": 30,
+        "result": "enchanted_gem_defense",
+        "label": "🛡️ Defense (30 iron ingots)",
+    },
+    "sight": {
+        "item": "gem",         "qty": 5,
+        "result": "enchanted_gem_sight",
+        "label": "👁️ Sight (5 gems)",
+    },
+    "luck": {
+        "item": "poison_sac",  "qty": 10,
+        "result": "enchanted_gem_luck",
+        "label": "🍀 Luck (10 poison sacs)",
+    },
+}
+
 # Player-built house: materials needed to construct one
 HOUSE_BUILD_COST = {"log": 8, "rock": 4}
 
@@ -226,6 +277,15 @@ PH_CHEST_TYPES = {"ph_chest_small", "ph_chest_medium", "ph_chest_large"}
 CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("stick", 1), ("resin", 1)}):           {"result": "torch",         "qty": 1, "label": "🔦 Craft Torch"},
     frozenset({("log", 8), ("rock", 4)}):               {"result": "house_kit",     "qty": 1, "label": "🏠 Craft House Kit"},
+    # Flint recipes
+    frozenset({("flint", 1), ("iron_ingot", 1)}):       {"result": "flint_and_steel", "qty": 1, "label": "🔥 Flint & Steel"},
+    frozenset({("flint", 1), ("stick", 3)}):            {"result": "arrow",           "qty": 9, "label": "🏹 Arrows (×9)"},
+    # Ring crafting (enchanted gem + gold ring)
+    frozenset({("enchanted_gem_strength", 1), ("gold_ring", 1)}): {"result": "ring_of_strength", "qty": 1, "label": "💪 Ring of Strength"},
+    frozenset({("enchanted_gem_time", 1),     ("gold_ring", 1)}): {"result": "ring_of_time",     "qty": 1, "label": "⏱️ Ring of Time"},
+    frozenset({("enchanted_gem_defense", 1),  ("gold_ring", 1)}): {"result": "ring_of_defense",  "qty": 1, "label": "🛡️ Ring of Defense"},
+    frozenset({("enchanted_gem_sight", 1),    ("gold_ring", 1)}): {"result": "ring_of_sight",    "qty": 1, "label": "👁️ Ring of Sight"},
+    frozenset({("enchanted_gem_luck", 1),     ("gold_ring", 1)}): {"result": "ring_of_luck",     "qty": 1, "label": "🍀 Ring of Luck"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -279,6 +339,7 @@ CAVE_EMOJI = {
     "cave_chest_large":   "\U0001F381",            # 🎁 large chest
     "cave_rock":          "\U0001FAA8",            # 🪨
     "iron_ore_deposit":   "\U0001F7EB",            # 🟫 (overridable with :iron_ore:)
+    "gold_ore_deposit":   "\U0001F7E1",            # 🟡
     "cave_bat":           "\U0001F987",            # 🦇
     "cave_spider":        "\U0001F577\uFE0F",      # 🕷️
     "cave_golem":         "\U0001F5FF",            # 🗿 (moai — rock golem)
@@ -525,6 +586,14 @@ ITEM_EQUIP_SLOTS = {
     "small_coin_purse":  "coin_purse",
     "medium_coin_purse": "coin_purse",
     "large_coin_purse":  "coin_purse",
+    "iron_boots":          "boots",
+    "gold_ring":           "accessory",
+    "ring_of_strength":    "accessory",
+    "ring_of_time":        "accessory",
+    "ring_of_defense":     "accessory",
+    "ring_of_sight":       "accessory",
+    "ring_of_luck":        "accessory",
+    "flint_and_steel":     "hand",
 }
 
 # Items that occupy both hand slots
@@ -554,6 +623,15 @@ EQUIP_BONUSES = {
     "iron_chestplate": {"defense": 5},
     "iron_leggings":   {"defense": 4},
     "sword":        {"attack": 12},
+    "iron_boots":          {"defense": 2},
+    "gold_ring":           {},
+    "ring_of_strength":    {"attack": 5},
+    "ring_of_time":        {},    # +1 combat move — handled in combat code
+    "ring_of_defense":     {"defense": 5},
+    "ring_of_sight":       {},    # 9x9 cave view without torch — handled in cave code
+    "ring_of_luck":        {},    # better drops — handled in drop code
+    "flint_and_steel":     {},
+    "arrow":               {},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 1×7 when no pouch equipped
@@ -585,11 +663,14 @@ CAVE_ENCOUNTER_RATES = {
 # Per-level iron ore deposit spawn probability (fraction of rock tiles replaced)
 CAVE_ORE_RATES: dict[int, float] = {1: 0.05, 2: 0.15, 3: 0.30}
 
+# Per-level gold ore deposit spawn probability (additional fraction of rock tiles, level 3 only)
+CAVE_GOLD_ORE_RATES: dict[int, float] = {3: 0.05}
+
 # Per-level cave encounter rates: {level: {enemy_type: chance}}
 CAVE_LEVEL_ENCOUNTER_RATES = {
-    1: {"cave_bat": 0.07, "cave_spider": 0.07},
-    2: {"cave_spider": 0.05, "cave_golem": 0.06, "cave_troll": 0.05},
-    3: {"cave_golem": 0.05, "cave_troll": 0.06, "cave_wyvern": 0.05},
+    1: {"cave_bat": 0.12, "cave_spider": 0.10},
+    2: {"cave_spider": 0.08, "cave_golem": 0.10, "cave_troll": 0.08},
+    3: {"cave_golem": 0.10, "cave_troll": 0.12, "cave_wyvern": 0.10},
 }
 
 # Surface encounters: terrain → enemy_type (1% chance per step, short_grass excluded)
@@ -645,6 +726,22 @@ ITEM_SELL_PRICES = {
     "medium_coin_purse": 120,
     "large_coin_purse":  300,
     "cannonball":        10,
+    "gold_ore":          20,
+    "gold_ingot":        50,
+    "gold_ring":         100,
+    "iron_boots":        60,
+    "ring_of_strength":  250,
+    "ring_of_time":      250,
+    "ring_of_defense":   250,
+    "ring_of_sight":     250,
+    "ring_of_luck":      250,
+    "enchanted_gem_strength": 80,
+    "enchanted_gem_time":     80,
+    "enchanted_gem_defense":  80,
+    "enchanted_gem_sight":    80,
+    "enchanted_gem_luck":     80,
+    "flint_and_steel":   15,
+    "arrow":             3,
 }
 
 # --- World Map Image ---
@@ -724,6 +821,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("fishing_rod",  "fishing_pole"),
         ("poison_sac",   "poison_sac"),
         ("cooked_fish",  "cooked_fish"),
+        ("flint",        "flint~1"),
         # Pouches — try specific names first, fallback to generic "pouch"
         ("small_pouch",  "small_pouch"),
         ("medium_pouch", "medium_pouch"),
@@ -745,3 +843,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     # Iron ore deposit uses the same :iron_ore: custom emoji
     if "iron_ore" in cache:
         CAVE_EMOJI["iron_ore_deposit"] = cache["iron_ore"]
+
+    # Gold ore deposit uses :gold_ore: if available
+    if "gold_ore" in cache:
+        CAVE_EMOJI["gold_ore_deposit"] = cache["gold_ore"]
+        ITEM_EMOJI["gold_ore"] = cache["gold_ore"]

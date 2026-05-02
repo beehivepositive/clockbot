@@ -79,7 +79,8 @@ def _trunk_path(
     ocean_edge, _ = get_coast_boundary(world_seed)
     axis = 1 if ocean_edge in (0, 1) else 0
     if start_cross is None:
-        start_cross = float(rng.randint(40, WORLD_SIZE - 40))
+        # Allow off-map starts so tributaries can flow in from outside the world edge
+        start_cross = float(rng.randint(-WORLD_SIZE // 4, WORLD_SIZE + WORLD_SIZE // 4))
 
     path: list[tuple[int, int]] = []
     for primary in range(WORLD_SIZE):

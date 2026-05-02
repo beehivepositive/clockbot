@@ -34,9 +34,12 @@ from dwarf_explorer.ui.game_view import (
     _ship_chest_action,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
-    handle_forge_iron, handle_forge_close,
+    handle_forge_iron, handle_forge_gold, handle_forge_gold_ring, handle_forge_close,
     handle_anvil_dagger, handle_anvil_sword, handle_anvil_close,
     handle_anvil_helmet, handle_anvil_chestplate, handle_anvil_leggings,
+    handle_anvil_cannonball, handle_anvil_iron_boots,
+    handle_shrine_enchant, handle_shrine_cancel,
+    handle_combat_consume, handle_combat_consume_cancel,
     handle_inv_eat,
     handle_inv_select, handle_inv_unselect_all,
     handle_inv_item_btn, handle_inv_item_inc, handle_inv_item_dec,
@@ -200,6 +203,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             # Forge
             elif act == "forge_iron":
                 await handle_forge_iron(interaction, gid, uid)
+            elif act == "forge_gold":
+                await handle_forge_gold(interaction, gid, uid)
+            elif act == "forge_gold_ring":
+                await handle_forge_gold_ring(interaction, gid, uid)
             elif act == "forge_close":
                 await handle_forge_close(interaction, gid, uid)
             # Anvil
@@ -213,8 +220,23 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_anvil_chestplate(interaction, gid, uid)
             elif act == "anvil_leggings":
                 await handle_anvil_leggings(interaction, gid, uid)
+            elif act == "anvil_cannonball":
+                await handle_anvil_cannonball(interaction, gid, uid)
+            elif act == "anvil_iron_boots":
+                await handle_anvil_iron_boots(interaction, gid, uid)
             elif act == "anvil_close":
                 await handle_anvil_close(interaction, gid, uid)
+            # Shrine
+            elif act.startswith("shrine_") and act[7:] in ("strength", "time", "defense", "sight", "luck"):
+                await handle_shrine_enchant(interaction, gid, uid, act[7:])
+            elif act == "shrine_cancel":
+                await handle_shrine_cancel(interaction, gid, uid)
+            # Consumables (combat food menu)
+            elif act.startswith("consume_") and act != "consume_cancel":
+                item_id = act[8:]  # strip "consume_"
+                await handle_combat_consume(interaction, gid, uid, item_id)
+            elif act == "consume_cancel":
+                await handle_combat_consume_cancel(interaction, gid, uid)
             elif act in _MOVE_ACTIONS:
                 await handle_move(interaction, gid, uid, act)
             elif act == "interact":

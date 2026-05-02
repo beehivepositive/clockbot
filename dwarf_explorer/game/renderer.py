@@ -142,7 +142,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     elif player.in_village:
         pos = f"\U0001F4CD Village ({player.village_x},{player.village_y})"
     elif player.in_cave:
-        dark_tag = "  \u26AB Darkness" if not torch_on else "  \U0001F526"
+        _torch_emoji = ITEM_EMOJI.get("torch", "\U0001F526")
+        dark_tag = "  \u26AB Darkness" if not torch_on else f"  {_torch_emoji}"
         pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y}){dark_tag}"
     else:
         sprint_tag = " \U0001F3C3" if player.sprinting else ""

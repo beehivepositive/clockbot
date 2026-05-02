@@ -7,7 +7,7 @@ import random
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
     CAVE_WALKABLE, CAVE_CHEST_TYPES, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
-    WALKABLE_TILES, CHEST_LOOT, CAVE_ORE_RATES,
+    WALKABLE_TILES, CHEST_LOOT, CAVE_ORE_RATES, CAVE_GOLD_ORE_RATES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
@@ -228,9 +228,10 @@ def _generate_cave_interior(
                    for cx2, cy2 in chest_positions):
                 chest_positions.add(pos)
 
-    # --- Cave rocks and iron ore deposits (mineable) ---
+    # --- Cave rocks, iron ore deposits, and gold ore deposits (mineable) ---
     rock_positions: set[tuple[int, int]] = set()
     ore_positions: set[tuple[int, int]] = set()
+    gold_ore_positions: set[tuple[int, int]] = set()
     rock_candidates = [
         p for p in carved
         if p not in entrance_set
@@ -240,9 +241,13 @@ def _generate_cave_interior(
     rng.shuffle(rock_candidates)
     rock_count = len(rock_candidates) // 8  # ~12% of floor tiles
     ore_rate = CAVE_ORE_RATES.get(cave_level, 0.0)
+    gold_ore_rate = CAVE_GOLD_ORE_RATES.get(cave_level, 0.0)
     for pos in rock_candidates[:rock_count]:
-        if rng.random() < ore_rate:
+        r = rng.random()
+        if r < ore_rate:
             ore_positions.add(pos)
+        elif r < ore_rate + gold_ore_rate:
+            gold_ore_positions.add(pos)
         else:
             rock_positions.add(pos)
 
@@ -297,6 +302,8 @@ def _generate_cave_interior(
                 tiles.append((x, y, chest_types[(x, y)]))
             elif (x, y) in ore_positions:
                 tiles.append((x, y, "iron_ore_deposit"))
+            elif (x, y) in gold_ore_positions:
+                tiles.append((x, y, "gold_ore_deposit"))
             elif (x, y) in rock_positions:
                 tiles.append((x, y, "cave_rock"))
             elif (x, y) in carved:
