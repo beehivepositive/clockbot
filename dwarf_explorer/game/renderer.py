@@ -248,19 +248,19 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
-        qty_str = str(qty)          # double digit — full width, no extra pad
+        digits, pad = str(qty), ""
     elif qty > 1:
-        qty_str = str(qty) + _PAD   # single digit + 1 pad
+        digits, pad = str(qty), _PAD
     else:
-        qty_str = _PAD * 2          # no number — 2 pads
-    core = f"{emoji}{qty_str}"
+        digits, pad = "", _PAD * 2
+    content = f"{emoji}{digits}"   # tight: emoji + digits only (no pad)
     if cursor_on and is_selected:
-        return f"[{{{core}}}]"
+        return f"[{{{content}}}]{pad}"
     if is_selected:
-        return f"{{{core}}}"
+        return f"{{{content}}}{pad}"
     if cursor_on:
-        return f"[{core}]"
-    return core
+        return f"[{content}]{pad}"
+    return f"{content}{pad}"
 
 
 def render_inventory(
@@ -313,7 +313,7 @@ def render_inventory(
         else:
             pad = _PAD * 2  # match qty=1 filled slot width
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"[{_EMPTY_SLOT}{pad}]")
+                slots.append(f"[{_EMPTY_SLOT}]{pad}")
             else:
                 slots.append(f"{_EMPTY_SLOT}{pad}")
 
