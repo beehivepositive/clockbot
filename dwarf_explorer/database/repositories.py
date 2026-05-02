@@ -516,7 +516,9 @@ async def get_bank_items(db: Database, user_id: int) -> list[dict]:
         "SELECT item_id, quantity FROM bank_items WHERE user_id = ? ORDER BY rowid",
         (user_id,),
     )
-    return [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in rows]
+    # Include slot_index so _build_slot_map works (dense array — no gaps in bank)
+    return [{"item_id": r["item_id"], "quantity": r["quantity"], "slot_index": i}
+            for i, r in enumerate(rows)]
 
 
 async def bank_deposit(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:
@@ -531,7 +533,8 @@ async def bank_deposit(db: Database, user_id: int, item_id: str, quantity: int =
     return True
 
 
-async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:
+async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int = 1,
+                        gold_cap: int | None = None) -> bool:
     row = await db.fetch_one(
         "SELECT quantity FROM bank_items WHERE user_id = ? AND item_id = ?",
         (user_id, item_id),
@@ -549,7 +552,20 @@ async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int 
             "UPDATE bank_items SET quantity = ? WHERE user_id = ? AND item_id = ?",
             (new_qty, user_id, item_id),
         )
-    await add_to_inventory(db, user_id, item_id, quantity)
+    # Gold goes back to players.gold, not inventory
+    if item_id == "gold_coin":
+        if gold_cap is not None:
+            await db.execute(
+                "UPDATE players SET gold = MIN(gold + ?, ?) WHERE user_id = ?",
+                (quantity, gold_cap, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE players SET gold = gold + ? WHERE user_id = ?",
+                (quantity, user_id),
+            )
+    else:
+        await add_to_inventory(db, user_id, item_id, quantity)
     return True
 
 

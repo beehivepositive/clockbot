@@ -1144,7 +1144,7 @@ def _inv_action_btn(
         if equipped_cursor < len(_EQUIP_SLOT_ORDER):
             slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
             if equipped.get(slot):
-                return ("\u2B07\uFE0F", "inv_unequip")  # ⬇️ down arrow = unequip
+                return ("\u2935\uFE0F", "inv_unequip")  # ⤵️ arrow heading down = unequip
         return ("", "")
     if cursor_mode == "gold":
         return ("", "")
@@ -6134,8 +6134,11 @@ def _bank_render(state: dict, player_items: list, bank_items: list,
     bv = state.get("bank_view", "player")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
+    cursor_mode = state.get("cursor_mode", "inventory")
+    equipped_cursor = state.get("equipped_cursor", 0)
     return render_bank(player_items, bank_items, sel, bv, equipped,
-                       inv_rows, inv_cols, gold=player_gold, qty=qty)
+                       inv_rows, inv_cols, gold=player_gold, qty=qty,
+                       cursor_mode=cursor_mode, equipped_cursor=equipped_cursor)
 
 
 # ── Bank handlers ─────────────────────────────────────────────────────────────
@@ -6144,7 +6147,10 @@ async def _open_bank(
     interaction: discord.Interaction, guild_id: int, user_id: int,
     player: Player, db,
 ) -> None:
-    _ui_state[user_id] = {"type": "bank", "selected": 0, "bank_view": "player", "qty": 1}
+    _ui_state[user_id] = {
+        "type": "bank", "selected": 0, "bank_view": "player", "qty": 1,
+        "cursor_mode": "inventory", "equipped_cursor": 0,
+    }
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
@@ -6159,23 +6165,63 @@ async def _bank_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int,
     delta_col: int = 0, delta_row: int = 0,
 ) -> None:
-    """Navigate bank cursor, resetting qty on item change."""
+    """Navigate bank cursor with full cursor_mode support (gold → equipped → inventory)."""
+    from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER as _ESO
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
-    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
+    state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1,
+                                     "cursor_mode": "inventory", "equipped_cursor": 0})
     bv = state.get("bank_view", "player")
     sel = state.get("selected", 0)
-    cols = inv_cols if bv == "player" else 7
-    total = max(1, inv_rows * inv_cols if bv == "player" else 28)
-    new_sel = (sel + delta_col + delta_row * cols) % total
-    new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
+    cursor_mode = state.get("cursor_mode", "inventory")
+    eq_cur = state.get("equipped_cursor", 0)
+
+    if bv == "player":
+        cols = inv_cols
+        total = max(1, inv_rows * inv_cols)
+        if delta_row < 0:   # UP
+            if cursor_mode == "inventory" and sel < cols:
+                # Top row → go to equipped
+                cursor_mode = "equipped"
+                eq_cur = min(eq_cur, len(_ESO) - 1)
+            elif cursor_mode == "inventory":
+                sel = (sel - cols) % total
+            elif cursor_mode == "equipped":
+                cursor_mode = "gold"
+            # already at gold — do nothing
+        elif delta_row > 0:  # DOWN
+            if cursor_mode == "gold":
+                cursor_mode = "equipped"
+            elif cursor_mode == "equipped":
+                cursor_mode = "inventory"
+                sel = 0
+            else:
+                sel = min(sel + cols, total - 1)
+        else:  # LEFT/RIGHT
+            if cursor_mode == "equipped":
+                eq_cur = (eq_cur + delta_col) % len(_ESO)
+            elif cursor_mode == "inventory":
+                new_sel = sel + delta_col
+                if 0 <= new_sel < total:
+                    sel = new_sel
+                else:
+                    sel = new_sel % total
+    else:
+        # Bank vault — simple grid nav
+        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        cols = 7
+        total = max(1, 28)
+        cursor_mode = "inventory"
+        sel = (sel + delta_col + delta_row * cols) % total
+
+    new_state = {**state, "selected": sel, "qty": 1, "cursor_mode": cursor_mode,
+                 "equipped_cursor": eq_cur}
     _ui_state[user_id] = new_state
-    content = _bank_render(new_state, player_items, bank_items,
-                           equipped, player.gold, inv_rows, inv_cols)
+    content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
@@ -6211,14 +6257,18 @@ async def handle_bank_qty_inc(
     bv = state.get("bank_view", "player")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
+    cursor_mode = state.get("cursor_mode", "inventory")
     from dwarf_explorer.game.renderer import _build_slot_map
-    if bv == "player":
-        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
-        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+    if bv == "bank":
+        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(vault_items, 28)
         item = slot_map.get(sel)
         max_qty = item["quantity"] if item else 1
+    elif cursor_mode == "gold":
+        max_qty = max(player.gold, 1)
     else:
-        slot_map = _build_slot_map(bank_items, 28)
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
         item = slot_map.get(sel)
         max_qty = item["quantity"] if item else 1
     new_qty = (qty % max_qty) + 1
@@ -6242,14 +6292,18 @@ async def handle_bank_qty_dec(
     bv = state.get("bank_view", "player")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
+    cursor_mode = state.get("cursor_mode", "inventory")
     from dwarf_explorer.game.renderer import _build_slot_map
-    if bv == "player":
-        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
-        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+    if bv == "bank":
+        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(vault_items, 28)
         item = slot_map.get(sel)
         max_qty = item["quantity"] if item else 1
+    elif cursor_mode == "gold":
+        max_qty = max(player.gold, 1)
     else:
-        slot_map = _build_slot_map(bank_items, 28)
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
         item = slot_map.get(sel)
         max_qty = item["quantity"] if item else 1
     new_qty = max_qty if qty <= 1 else qty - 1
@@ -6267,7 +6321,8 @@ async def handle_bank_switch(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player"})
     new_view = "bank" if state.get("bank_view") == "player" else "player"
-    new_state = {"type": "bank", "selected": 0, "bank_view": new_view, "qty": 1}
+    new_state = {"type": "bank", "selected": 0, "bank_view": new_view, "qty": 1,
+                 "cursor_mode": "inventory", "equipped_cursor": 0}
     _ui_state[user_id] = new_state
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
@@ -6286,25 +6341,66 @@ async def handle_bank_deposit(
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "player", "qty": 1})
     sel = state.get("selected", 0)
     qty = max(1, state.get("qty", 1))
+    cursor_mode = state.get("cursor_mode", "inventory")
+    equipped_cursor = state.get("equipped_cursor", 0)
     player_items = await get_inventory(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
-    from dwarf_explorer.game.renderer import _build_slot_map
-    visible = [it for it in player_items if it["item_id"] != "gold_coin"]
-    slot_map = _build_slot_map(visible, inv_rows * inv_cols)
-    item = slot_map.get(sel)
     bank_items = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    if item is None:
-        suffix = "\n*(Empty slot)*"
-        content = _bank_render(state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-        await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=BankView(guild_id, user_id, "player"))
-        return
-    actual_qty = min(qty, item["quantity"])
-    ok = await bank_deposit(db, user_id, item["item_id"], actual_qty)
+    from dwarf_explorer.game.renderer import _build_slot_map, _EQUIP_SLOT_ORDER as _ESO
+
+    suffix = "\n*Deposit failed.*"
+
+    if cursor_mode == "gold":
+        # Deposit gold: deduct from players.gold, add to bank_items
+        actual_qty = min(qty, player.gold)
+        if actual_qty > 0:
+            await db.execute("UPDATE players SET gold=gold-? WHERE user_id=?",
+                             (actual_qty, user_id))
+            await db.execute(
+                "INSERT INTO bank_items(user_id, item_id, quantity) VALUES(?,'gold_coin',?) "
+                "ON CONFLICT(user_id, item_id) DO UPDATE SET quantity=quantity+?",
+                (user_id, actual_qty, actual_qty),
+            )
+            suffix = f"\n*Deposited {actual_qty}g into bank.*"
+        else:
+            suffix = "\n*(No gold to deposit)*"
+
+    elif cursor_mode == "equipped":
+        # Deposit equipped item: unequip it first, then bank_deposit
+        if equipped_cursor < len(_ESO):
+            slot, _ = _ESO[equipped_cursor]
+            item_id = equipped.get(slot)
+            if item_id:
+                from dwarf_explorer.database.repositories import unequip_item as _unequip_item
+                await _unequip_item(db, user_id, slot)
+                await add_to_inventory(db, user_id, item_id, 1)
+                player_items = await get_inventory(db, user_id)
+                ok = await bank_deposit(db, user_id, item_id, 1)
+                suffix = f"\n*Unequipped and deposited {item_id.replace('_', ' ').title()}.*" if ok else "\n*Deposit failed.*"
+            else:
+                suffix = "\n*(No item equipped in that slot)*"
+        else:
+            suffix = "\n*(No item at cursor)*"
+
+    else:
+        # Normal inventory deposit
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map = _build_slot_map(visible, inv_rows * inv_cols)
+        item = slot_map.get(sel)
+        if item is None:
+            suffix = "\n*(Empty slot)*"
+        else:
+            actual_qty = min(qty, item["quantity"])
+            ok = await bank_deposit(db, user_id, item["item_id"], actual_qty)
+            suffix = (f"\n*Deposited {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
+                      if ok else "\n*Deposit failed.*")
+
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
     player_items = await get_inventory(db, user_id)
     bank_items = await get_bank_items(db, user_id)
-    suffix = f"\n*Deposited {actual_qty}× {item['item_id'].replace('_', ' ')}.*" if ok else "\n*Deposit failed.*"
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
@@ -6323,7 +6419,9 @@ async def handle_bank_withdraw(
     bank_items = await get_bank_items(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
     from dwarf_explorer.game.renderer import _build_slot_map
-    slot_map = _build_slot_map(bank_items, 28)
+    # Vault view excludes gold_coin row (shown separately as bank gold)
+    vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+    slot_map = _build_slot_map(vault_items, 28)
     item = slot_map.get(sel)
     player_items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
@@ -6334,10 +6432,14 @@ async def handle_bank_withdraw(
                                                 view=BankView(guild_id, user_id, "bank"))
         return
     actual_qty = min(qty, item["quantity"])
-    ok = await bank_withdraw(db, user_id, item["item_id"], actual_qty)
+    cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+    ok = await bank_withdraw(db, user_id, item["item_id"], actual_qty, gold_cap=cap)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
     player_items = await get_inventory(db, user_id)
     bank_items_new = await get_bank_items(db, user_id)
-    suffix = f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*" if ok else "\n*Withdraw failed.*"
+    equipped = _equipped_dict(player)
+    suffix = (f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
+              if ok else "\n*Withdraw failed.*")
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix

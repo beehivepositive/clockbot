@@ -98,7 +98,7 @@ ITEM_EMOJI = {
     "flint": "\U0001FAA8",           # 🪨
     "iron_ore": "\U0001F7EB",        # 🟫
     "iron_ingot": "\U0001F9F1",      # 🧱 (overridable with :iron_ingot:)
-    "slingshot": "\U0001FA83",       # 🪃
+    "slingshot": "<:slingshot:1495973515722227822>",
     "rock": "\U0001FAA8",            # 🪨
     "poison_sac": "\U0001F9EA",      # 🧪 (green tint in mind)
     "small_pouch": "\U0001F45C",     # 👜

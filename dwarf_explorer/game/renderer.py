@@ -183,7 +183,7 @@ _ITEM_SLOT_EMOJI = {
     "flint":        "\U0001FAA8",
     "iron_ore":     "\U0001F7EB",
     "iron_ingot":   "\U0001F9F1",
-    "slingshot":    "\U0001FA83",
+    "slingshot":    "<:slingshot:1495973515722227822>",
     "rock":         "\U0001FAA8",
     "poison_sac":   "\U0001F9EA",
     "small_pouch":  "\U0001F45C",
@@ -241,7 +241,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell.
 
     Uses EN QUAD (\u2000) for padding so columns align in Discord embeds.
-    Cursor only (or cursor + selected):  emoji◀  (cursor takes priority)
+    Cursor only (or cursor + selected):  emoji◀︎  (cursor takes priority)
     Selected only:                       emoji«
     Plain:                               emoji__  (2-char qty padding)
     """
@@ -255,7 +255,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     content = f"{emoji}{digits}"   # tight: emoji + digits only
     # cursor_on takes priority — never show « when cursor is on the item
     if cursor_on:
-        return f"{content}◀{_PAD * max(0, n_pad - 1)}"
+        return f"{content}◀︎{_PAD * max(0, n_pad - 1)}"
     if is_selected:
         return f"{content}«{_PAD * max(0, n_pad - 1)}"
     return f"{content}{_PAD * n_pad}"
@@ -303,7 +303,7 @@ def render_inventory(
 
     # --- Gold row (above equipped) ---
     if cursor_mode == "gold":
-        gold_marker = " ◀"
+        gold_marker = " ◀︎"
     elif selections.get("gold_coin", 0) > 0:
         gold_marker = " «"
     else:
@@ -318,7 +318,7 @@ def render_inventory(
         cursor_here = cursor_mode == "equipped" and idx == equipped_cursor
         selected_here = item_id is not None and item_id in selections
         if cursor_here:
-            eq_line_parts.append(f"{emoji}◀")   # cursor takes priority
+            eq_line_parts.append(f"{emoji}◀︎")   # cursor takes priority
         elif selected_here:
             eq_line_parts.append(f"{emoji}«")
         else:
@@ -340,7 +340,7 @@ def render_inventory(
             slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_EMPTY_SLOT}◀{_PAD}")  # cursor: ◀ displaces 1 pad
+                slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")  # cursor: ◀︎ displaces 1 pad
             else:
                 slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
 
@@ -381,11 +381,14 @@ def render_bank(
     selected: int, view: str, equipped: dict,
     inv_rows: int = 1, inv_cols: int = 7,
     gold: int = 0, qty: int = 1,
+    cursor_mode: str = "inventory",
+    equipped_cursor: int = 0,
 ) -> str:
     """Render bank UI. view = 'player' or 'bank'.
 
-    Player view mirrors render_inventory layout (gold + equipped + grid).
-    Bank view shows the vault grid.
+    Player view shows full inventory (gold row + equipped row + grid) with
+    cursor_mode navigation support (gold / equipped / inventory).
+    Bank vault view shows the vault grid.
     """
     BANK_COLS = 7
     BANK_ROWS = 4
@@ -394,18 +397,27 @@ def render_bank(
     if view == "player":
         lines = [f"\U0001F3E6 **Bank** — Your Inventory ({inv_rows}×{inv_cols})"]
 
-        # Gold row
-        lines.append(f"\U0001FA99 **{gold}** coins")
+        # --- Gold row ---
+        bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
+        if cursor_mode == "gold":
+            gold_marker = " ◀︎"
+        else:
+            gold_marker = ""
+        lines.append(f"\U0001FA99 **{gold}** coins{gold_marker}  *(bank: {bank_gold}g)*")
 
-        # Equipped row
+        # --- Equipped row ---
         eq_parts: list[str] = []
-        for slot, empty_emoji in _EQUIP_SLOT_ORDER:
+        for idx, (slot, empty_emoji) in enumerate(_EQUIP_SLOT_ORDER):
             item_id = equipped.get(slot)
-            eq_parts.append(_item_emoji(item_id) if item_id else empty_emoji)
+            emoji = _item_emoji(item_id) if item_id else empty_emoji
+            if cursor_mode == "equipped" and idx == equipped_cursor:
+                eq_parts.append(f"{emoji}◀︎")
+            else:
+                eq_parts.append(emoji)
         lines.append("**Equipped:** " + " ".join(eq_parts))
         lines.append("")
 
-        # Inventory grid (position-aware)
+        # --- Inventory grid (position-aware) ---
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
         total_slots = inv_rows * inv_cols
         slot_map = _build_slot_map(visible, total_slots)
@@ -414,18 +426,30 @@ def render_bank(
             item = slot_map.get(i)
             if item is not None:
                 slots.append(_fmt_slot(item["item_id"], item["quantity"],
-                                       cursor_on=(i == selected), is_selected=False))
+                                       cursor_on=(cursor_mode == "inventory" and i == selected),
+                                       is_selected=False))
             else:
-                if i == selected:
-                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                if cursor_mode == "inventory" and i == selected:
+                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(inv_rows):
             lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
 
         lines.append("")
-        item = slot_map.get(selected)
-        if item:
+        # Cursor detail
+        if cursor_mode == "gold":
+            lines.append(f"Cursor: **Gold** ({gold} coins)  |  📤 Deposit qty: **{qty}**")
+        elif cursor_mode == "equipped":
+            slot, _ = _EQUIP_SLOT_ORDER[equipped_cursor]
+            item_id = equipped.get(slot)
+            label = _EQUIP_SLOT_LABELS.get(slot, slot)
+            if item_id:
+                lines.append(f"Cursor: **{label}** — {item_id.replace('_',' ').title()}  |  📤 Deposit (unequip first)")
+            else:
+                lines.append(f"Cursor: **{label}** — *(empty)*")
+        elif slot_map.get(selected):
+            item = slot_map[selected]
             lines.append(
                 f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
                 f"  |  📤 Deposit qty: **{qty}**"
@@ -434,8 +458,14 @@ def render_bank(
             lines.append("Cursor: *(empty slot)*")
 
     else:
+        # Bank vault — use dense array (bank items have sequential slot_index from get_bank_items)
+        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         lines = [f"\U0001F3E6 **Bank Vault** ({BANK_COLS}×{BANK_ROWS})"]
-        slot_map = _build_slot_map(bank_items, BANK_TOTAL)
+        lines.append(f"\U0001FA99 Bank gold: **{bank_gold}**")
+        lines.append("")
+
+        slot_map = _build_slot_map(vault_items, BANK_TOTAL)
         slots = []
         for i in range(BANK_TOTAL):
             item = slot_map.get(i)
@@ -444,7 +474,7 @@ def render_bank(
                                        cursor_on=(i == selected), is_selected=False))
             else:
                 if i == selected:
-                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(BANK_ROWS):
@@ -568,7 +598,7 @@ def render_ship_chest(
     else:
         lines.append("Selected: *(empty slot)*")
 
-    lines.append(f"◀▶ navigate  |  {action_label}  |  🔄 Switch View  |  🔙 Back")
+    lines.append(f"◀︎▶ navigate  |  {action_label}  |  🔄 Switch View  |  🔙 Back")
     return "\n".join(lines)
 
 
@@ -682,9 +712,9 @@ def render_chest(
         lines.append("Selected: *(empty slot)*")
 
     if view == "chest":
-        lines.append("◀▶ navigate  |  📤 Take  |  📦 Loot All  |  ❌ Close")
+        lines.append("◀︎▶ navigate  |  📤 Take  |  📦 Loot All  |  ❌ Close")
     else:
-        lines.append("◀▶ navigate  |  📥 Give  |  🔄 Switch View  |  ❌ Close")
+        lines.append("◀︎▶ navigate  |  📥 Give  |  🔄 Switch View  |  ❌ Close")
     return "\n".join(lines)
 
 
@@ -736,7 +766,7 @@ def render_shop(
                                        cursor_on=(i == selected), is_selected=False))
             else:
                 if i == selected:
-                    slots.append(f"{_EMPTY_SLOT}◀{_PAD}")
+                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(inv_rows):
@@ -766,7 +796,7 @@ def render_shop(
             cursor_on = (i == selected)
             # Pad to 3 chars wide (emoji + 2 trailing pads)
             if cursor_on:
-                slots.append(f"{emoji}◀{_PAD}")
+                slots.append(f"{emoji}◀︎{_PAD}")
             else:
                 slots.append(f"{emoji}{_PAD * 2}")
         # Pad to full grid
