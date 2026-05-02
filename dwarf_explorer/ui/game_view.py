@@ -4249,11 +4249,25 @@ async def handle_interact(
             )
             cw = cave_meta["width"] if cave_meta else 40
             ch = cave_meta["height"] if cave_meta else 40
+            # Step 4 tiles inward as a candidate, then snap to nearest floor tile
             INWARD = 4
-            if ey == 0:            sx, sy = ex, min(INWARD, ch - 1)
-            elif ey == ch - 1:     sx, sy = ex, max(ch - 1 - INWARD, 0)
-            elif ex == 0:          sx, sy = min(INWARD, cw - 1), ey
-            else:                  sx, sy = max(cw - 1 - INWARD, 0), ey
+            if ey == 0:            cand_x, cand_y = ex, min(INWARD, ch - 1)
+            elif ey == ch - 1:     cand_x, cand_y = ex, max(ch - 1 - INWARD, 0)
+            elif ex == 0:          cand_x, cand_y = min(INWARD, cw - 1), ey
+            else:                  cand_x, cand_y = max(cw - 1 - INWARD, 0), ey
+            # Find nearest walkable floor tile so the player never spawns in a wall
+            floor_rows = await db.fetch_all(
+                "SELECT local_x, local_y FROM cave_tiles "
+                "WHERE cave_id=? AND tile_type IN ('stone_floor', 'cave_entrance')",
+                (cave_id,)
+            )
+            if floor_rows:
+                sx, sy = min(
+                    ((r["local_x"], r["local_y"]) for r in floor_rows),
+                    key=lambda t: abs(t[0] - cand_x) + abs(t[1] - cand_y),
+                )
+            else:
+                sx, sy = cand_x, cand_y
             player.in_cave = True
             player.cave_id = cave_id
             player.cave_x, player.cave_y = sx, sy

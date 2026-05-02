@@ -132,6 +132,10 @@ def get_biome(x: int, y: int, seed: int) -> str:
         if m > 0.30:  return "plains"
         return "sand"
     else:
-        if m > 0.55:  return "deep_water"
-        if m > 0.30:  return "shallow_water"
-        return "sand"
+        # Use a coarser fBm to form large consolidated lakes rather than many
+        # small scattered water bodies.
+        e_lake = fbm(x, y, seed, octaves=2, base_scale=48.0)
+        m_lake = fbm(x, y, seed + _MOISTURE_OFFSET, octaves=2, base_scale=48.0)
+        if e_lake <= 0.38:
+            return "deep_water" if m_lake > 0.50 else "shallow_water"
+        return "plains" if m > 0.40 else "sand"

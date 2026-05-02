@@ -484,12 +484,12 @@ def _generate_rivers_sync(
         trib = _trib_path(
             start=(sx, sy),
             convergence=(float(conv[0]), float(conv[1])),
-            max_steps=800,
+            max_steps=1500,
             seed=trib_seed,
             freq=0.6,
             octaves=3,
-            noise_weight=0.20,
-            conv_weight=0.45,
+            noise_weight=0.15,
+            conv_weight=0.60,
             stop_tiles=all_river,
         )
         if len(trib) >= 8:
@@ -520,12 +520,12 @@ def _generate_rivers_sync(
         sub = _trib_path(
             start=(sx2, sy2),
             convergence=(float(conv_t[0]), float(conv_t[1])),
-            max_steps=600,
+            max_steps=1000,
             seed=sub_seed,
             freq=0.9,
             octaves=4,
-            noise_weight=0.25,
-            conv_weight=0.40,
+            noise_weight=0.15,
+            conv_weight=0.55,
             stop_tiles=all_river,
         )
         if len(sub) >= 6:

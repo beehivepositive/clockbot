@@ -147,6 +147,8 @@ def _precompute_costs(
                 biome = get_biome(x, y, seed)
                 if biome in _WATER_BIOMES:
                     row.append(9_999.0)
+                elif biome == "sand":
+                    row.append(9_998.0)   # paths avoid beach/sand entirely
                 elif biome in ("mountain", "snow"):
                     row.append(30.0)
                 elif biome == "hills":
