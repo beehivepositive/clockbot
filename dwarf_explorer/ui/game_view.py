@@ -313,19 +313,14 @@ class InventoryView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, "inv_move_cancel"), row=0,
             ))
         else:
-            # Normal mode
-            if cursor_mode == "equipped":
-                _sp("inv_sp_r0a", 0)
-            elif cursor_mode == "gold":
-                _sp("inv_sp_r0a", 0)
-            else:
-                self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
-                    label="✖ Desel" if cursor_selected else "✚ Select",
-                    custom_id=_custom_id(guild_id, user_id, "inv_select"),
-                    disabled=not has_cursor,
-                    row=0,
-                ))
+            # Normal mode — Select/Desel shown in all cursor modes
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.danger if cursor_selected else discord.ButtonStyle.secondary,
+                label="✖ Desel" if cursor_selected else "✚ Select",
+                custom_id=_custom_id(guild_id, user_id, "inv_select"),
+                disabled=cursor_item_id is None,
+                row=0,
+            ))
             # Move button (only when in inventory mode and no selection active)
             can_move = cursor_mode == "inventory" and not selections and has_cursor
             self.add_item(discord.ui.Button(
@@ -393,8 +388,9 @@ class InventoryView(discord.ui.View):
                     custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
                 ))
             else:
+                # Unicode emoji — must use emoji= not label= for correct rendering
                 self.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.success, label=equip_label,
+                    style=discord.ButtonStyle.success, emoji=equip_label,
                     custom_id=_custom_id(guild_id, user_id, equip_action), row=2,
                 ))
         else:
@@ -4958,16 +4954,26 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
     visible = [it for it in items if it["item_id"] != "gold_coin"]
 
     label, action = _inv_action_btn(items, sel, equipped, cursor_mode, equipped_cursor)
-    cursor_id = visible[sel]["item_id"] if sel < len(visible) and cursor_mode == "inventory" else None
 
-    # ± buttons: show when cursor is on a selected item in inventory mode
-    show_pm = (
-        cursor_mode == "inventory"
-        and cursor_id is not None
-        and cursor_id in selections
-    )
-    # Drop button: show when cursor is on a selected item in inventory mode
-    show_drop = show_pm
+    # Resolve cursor_id for all modes so Select / ± work everywhere
+    if cursor_mode == "inventory":
+        cursor_id = visible[sel]["item_id"] if sel < len(visible) else None
+    elif cursor_mode == "gold":
+        cursor_id = "gold_coin"
+    elif cursor_mode == "equipped":
+        from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER as _ESO
+        if equipped_cursor < len(_ESO):
+            _eq_slot, _ = _ESO[equipped_cursor]
+            cursor_id = equipped.get(_eq_slot)  # None if slot is empty
+        else:
+            cursor_id = None
+    else:
+        cursor_id = None
+
+    # ± buttons: show when cursor item is in the selection basket
+    show_pm = cursor_id is not None and cursor_id in selections
+    # Drop button: only for inventory and gold mode (equipped items must be unequipped first)
+    show_drop = show_pm and cursor_mode in ("inventory", "gold")
 
     content = render_inventory(
         items, sel, equipped, label, inv_rows, inv_cols, selections,

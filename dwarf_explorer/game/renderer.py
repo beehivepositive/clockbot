@@ -247,7 +247,12 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     Plain:                _emoji qq_  (EN QUAD padding each side)
     """
     emoji = _item_emoji(item_id)
-    qty_str = (str(qty) + _PAD) if qty > 1 else (_PAD * 2)
+    if qty >= 10:
+        qty_str = str(qty)          # double digit — full width, no extra pad
+    elif qty > 1:
+        qty_str = str(qty) + _PAD   # single digit + 1 pad
+    else:
+        qty_str = _PAD * 2          # no number — 2 pads
     core = f"{emoji}{qty_str}"
     if cursor_on and is_selected:
         return f"[{{{core}}}]"
