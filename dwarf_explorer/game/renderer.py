@@ -195,17 +195,18 @@ _ITEM_SLOT_EMOJI = {
     "treasure_map": "\U0001F4DC",
     "dagger":       "\U0001F5E1\uFE0F",
     "iron_helmet":     "\U0001FA96",
-    "iron_chestplate": "\U0001F6E1\uFE0F",
-    "iron_leggings":   "\U0001F455",
+    "iron_chestplate": "\U0001F455",    # 👕
+    "iron_leggings":   "\U0001F456",    # 👖
     "house_kit":       "\U0001F3E0",       # 🏠
     "ph_chest_small":  "\U0001F4E6",       # 📦
     "ph_chest_medium": "\U0001F5C4\uFE0F", # 🗄️
     "ph_chest_large":  "\U0001F9F3",       # 🧳
     "gold_coin":         "\U0001FA99",       # 🪙
     "potion":            "\U0001F9EA",       # 🧪
-    "small_coin_purse":  "\U0001F45B",       # 👛
-    "medium_coin_purse": "\U0001F45B",       # 👛
-    "large_coin_purse":  "\U0001F45B",       # 👛
+    "small_coin_purse":  "\U0001F4B0",       # 💰
+    "medium_coin_purse": "\U0001F4B0",       # 💰
+    "large_coin_purse":  "\U0001F4B0",       # 💰
+    "cannonball":        "\U0001F4A3",       # 💣
     "drop_box":          "\U0001F4E6",       # 📦
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
@@ -214,13 +215,13 @@ _EMPTY_SLOT = "\u2B1C"   # ⬜
 _EQUIP_SLOT_ORDER = [
     ("hand_1",    "\u270B"),          # ✋  empty hand
     ("hand_2",    "\U0001F91A"),      # 🤚  empty hand
-    ("head",      "\U0001FA96"),      # 🪖  empty helmet slot
-    ("chest",     "\U0001F6E1\uFE0F"), # 🛡️  empty chest slot
-    ("legs",      "\U0001F455"),      # 👕  empty legs slot
+    ("head",      "\U0001F9D4"),      # 🧔  empty head slot
+    ("chest",     "\U0001F455"),      # 👕  empty chest slot
+    ("legs",      "\U0001F456"),      # 👖  empty legs slot
     ("boots",     "\U0001F9B6"),      # 🦶  empty boots
     ("pouch",     "\U0001F45C"),      # 👜  empty pouch
     ("accessory", "\U0001F48D"),      # 💍  empty accessory
-    ("coin_purse","\U0001F45B"),      # 👛  empty coin purse
+    ("coin_purse","\U0001F4B0"),      # 💰  empty coin purse
 ]
 _EQUIP_SLOT_LABELS = {
     "hand_1": "Main hand", "hand_2": "Off hand",
@@ -234,17 +235,19 @@ def _item_emoji(item_id: str) -> str:
     return _ITEM_SLOT_EMOJI.get(item_id, "\U0001F4E6")
 
 
+_PAD = "\u2000"  # EN QUAD — wider than a regular space, won't collapse in Discord
+
 def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str:
     """Format a single inventory slot cell.
 
-    Layout: emoji + 2-char qty pad (space-padded when qty=1).
+    Uses EN QUAD (\u2000) for padding so columns align in Discord embeds.
     Selected (in basket): {emoji qq}
     Cursor only:          [emoji qq]
     Both cursor+selected: [{emoji qq}]
-    Plain:                 emoji qq
+    Plain:                _emoji qq_  (EN QUAD padding each side)
     """
     emoji = _item_emoji(item_id)
-    qty_str = str(qty).ljust(2) if qty > 1 else "  "
+    qty_str = (str(qty) + _PAD) if qty > 1 else (_PAD * 2)
     core = f"{emoji}{qty_str}"
     if cursor_on and is_selected:
         return f"[{{{core}}}]"
@@ -252,7 +255,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
         return f"{{{core}}}"
     if cursor_on:
         return f"[{core}]"
-    return f" {core} "
+    return f"{_PAD}{core}{_PAD}"
 
 
 def render_inventory(

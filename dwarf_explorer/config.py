@@ -97,25 +97,26 @@ ITEM_EMOJI = {
     "sapling": "\U0001F331",         # 🌱
     "flint": "\U0001FAA8",           # 🪨
     "iron_ore": "\U0001F7EB",        # 🟫
-    "iron_ingot": "\U0001F9F1",      # 🧱
+    "iron_ingot": "\U0001F9F1",      # 🧱 (overridable with :iron_ingot:)
     "slingshot": "\U0001FA83",       # 🪃
     "rock": "\U0001FAA8",            # 🪨
     "poison_sac": "\U0001F9EA",      # 🧪 (green tint in mind)
     "small_pouch": "\U0001F45C",     # 👜
     "medium_pouch": "\U0001F45C",    # 👜
     "large_pouch": "\U0001F45C",     # 👜
-    "small_coin_purse":  "\U0001F45B",  # 👛
-    "medium_coin_purse": "\U0001F45B",  # 👛
-    "large_coin_purse":  "\U0001F45B",  # 👛
+    "small_coin_purse":  "\U0001F4B0",  # 💰
+    "medium_coin_purse": "\U0001F4B0",  # 💰
+    "large_coin_purse":  "\U0001F4B0",  # 💰
     "fishing_net": "\U0001F3A3",     # 🎣
     "fishing_rod": "\U0001F3A3",     # 🎣
     "cooked_fish": "\U0001F956",     # 🍖
     "treasure_map": "\U0001F4DC",    # 📜
     "dagger":      "\U0001F5E1\uFE0F", # 🗡️
     "iron_helmet":     "\U0001FA96",    # 🪖
-    "iron_chestplate": "\U0001F6E1\uFE0F",  # 🛡️
-    "iron_leggings":   "\U0001F455",    # 👕 (closest available)
+    "iron_chestplate": "\U0001F455",    # 👕
+    "iron_leggings":   "\U0001F456",    # 👖
     "seaweed":         "\U0001F33F",    # 🌿
+    "cannonball":      "\U0001F4A3",    # 💣
 }
 
 WALKABLE_TILES = {
@@ -277,6 +278,7 @@ CAVE_EMOJI = {
     "cave_chest_medium":  "\U0001F4E6",            # 📦 medium chest
     "cave_chest_large":   "\U0001F381",            # 🎁 large chest
     "cave_rock":          "\U0001FAA8",            # 🪨
+    "iron_ore_deposit":   "\U0001F7EB",            # 🟫 (overridable with :iron_ore:)
     "cave_bat":           "\U0001F987",            # 🦇
     "cave_spider":        "\U0001F577\uFE0F",      # 🕷️
     "cave_golem":         "\U0001F5FF",            # 🗿 (moai — rock golem)
@@ -472,7 +474,7 @@ SHOP_CATALOG = [
     {
         "id": "small_coin_purse",
         "name": "Small Coin Purse",
-        "emoji": "\U0001F45B",
+        "emoji": "\U0001F4B0",
         "price": 100,
         "equip_slot": "coin_purse",
         "description": "Increases coin capacity to 200 coins.",
@@ -480,16 +482,16 @@ SHOP_CATALOG = [
     {
         "id": "medium_coin_purse",
         "name": "Medium Coin Purse",
-        "emoji": "\U0001F45B",
-        "price": 250,
+        "emoji": "\U0001F4B0",
+        "price": 200,
         "equip_slot": "coin_purse",
         "description": "Increases coin capacity to 500 coins.",
     },
     {
         "id": "large_coin_purse",
         "name": "Large Coin Purse",
-        "emoji": "\U0001F45B",
-        "price": 600,
+        "emoji": "\U0001F4B0",
+        "price": 500,
         "equip_slot": "coin_purse",
         "description": "Increases coin capacity to 1000 coins.",
     },
@@ -580,6 +582,9 @@ CAVE_ENCOUNTER_RATES = {
     "cave_golem":  0.04,
 }
 
+# Per-level iron ore deposit spawn probability (fraction of rock tiles replaced)
+CAVE_ORE_RATES: dict[int, float] = {1: 0.05, 2: 0.15, 3: 0.30}
+
 # Per-level cave encounter rates: {level: {enemy_type: chance}}
 CAVE_LEVEL_ENCOUNTER_RATES = {
     1: {"cave_bat": 0.07, "cave_spider": 0.07},
@@ -637,8 +642,9 @@ ITEM_SELL_PRICES = {
     "medium_pouch":      108,
     "large_pouch":       210,
     "small_coin_purse":  60,
-    "medium_coin_purse": 150,
-    "large_coin_purse":  360,
+    "medium_coin_purse": 120,
+    "large_coin_purse":  300,
+    "cannonball":        10,
 }
 
 # --- World Map Image ---
@@ -714,6 +720,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("torch",        "torch"),
         ("fishing_net",  "net"),
         ("iron_ore",     "iron_ore"),
+        ("iron_ingot",   "iron_ingot"),
         ("fishing_rod",  "fishing_pole"),
         ("poison_sac",   "poison_sac"),
         ("cooked_fish",  "cooked_fish"),
@@ -734,3 +741,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     # Island chest uses the same custom :chest: emoji
     if "chest" in cache:
         _renderer._ISLAND_TERRAIN_EMOJI["island_chest"] = cache["chest"]
+
+    # Iron ore deposit uses the same :iron_ore: custom emoji
+    if "iron_ore" in cache:
+        CAVE_EMOJI["iron_ore_deposit"] = cache["iron_ore"]

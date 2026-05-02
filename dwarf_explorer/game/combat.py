@@ -285,9 +285,11 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = Fa
 
 def apply_victory(player) -> str:
     """Give XP and gold for winning. Returns message."""
+    from dwarf_explorer.config import COIN_PURSE_CAPACITY
     _hp, _atk, _defn, xp, gold = ENEMY_STATS[player.combat_enemy_type]
     name = _enemy_name(player.combat_enemy_type)
-    player.gold += gold
+    cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+    player.gold = min(player.gold + gold, cap)
     player.xp += xp
     return f"🎉 You defeated the **{name}**! +{xp} XP  +{gold}g"
 
