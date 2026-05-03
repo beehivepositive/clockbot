@@ -335,8 +335,23 @@ async def _next_slot_index(db: Database, user_id: int) -> int:
     return row["next_idx"] if row else 0
 
 
-async def add_to_inventory(db: Database, user_id: int, item_id: str, quantity: int = 1) -> None:
-    """Add quantity of item_id, filling existing stacks first, then creating new slots (max 81)."""
+async def get_inventory_slot_count(db: Database, user_id: int) -> int:
+    """Return the number of occupied inventory slots for a user."""
+    row = await db.fetch_one(
+        "SELECT COUNT(*) AS cnt FROM inventory WHERE user_id = ?", (user_id,)
+    )
+    return row["cnt"] if row else 0
+
+
+async def add_to_inventory(
+    db: Database, user_id: int, item_id: str, quantity: int = 1,
+    max_slots: int | None = None,
+) -> int:
+    """Add quantity of item_id, filling existing stacks first, then creating new slots.
+
+    If max_slots is given, no new slots are created beyond that count.
+    Returns the leftover quantity that could not be stored (0 = all fit).
+    """
     remaining = quantity
     # Fill existing stacks that have room
     rows = await db.fetch_all(
@@ -351,8 +366,12 @@ async def add_to_inventory(db: Database, user_id: int, item_id: str, quantity: i
             add = min(space, remaining)
             await db.execute("UPDATE inventory SET quantity = quantity + ? WHERE id = ?", (add, row["id"]))
             remaining -= add
-    # Create new slots for any overflow
+    # Create new slots for any overflow, respecting the slot cap
     while remaining > 0:
+        if max_slots is not None:
+            used = await get_inventory_slot_count(db, user_id)
+            if used >= max_slots:
+                break   # inventory full — return whatever is left
         add = min(MAX_STACK_SIZE, remaining)
         next_idx = await _next_slot_index(db, user_id)
         await db.execute(
@@ -360,6 +379,7 @@ async def add_to_inventory(db: Database, user_id: int, item_id: str, quantity: i
             (user_id, item_id, add, next_idx),
         )
         remaining -= add
+    return remaining  # 0 means everything fit
 
 
 async def remove_from_inventory(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:

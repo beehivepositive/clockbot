@@ -167,7 +167,12 @@ def action_flee(arena: dict, player, rng: random.Random) -> tuple[str, bool]:
     player.combat_moves_left = 0
 
     if rng.random() < chance:
-        return "🏃 You dash away and escape!", True
+        # Successful escape — enemy lands a parting blow for half their attack
+        _hp, enemy_atk, _, _, _ = ENEMY_STATS.get(player.combat_enemy_type, (0, 6, 0, 0, 0))
+        player_def = getattr(player, "defense", 5)
+        flee_dmg = max(1, enemy_atk // 2 - player_def)
+        player.hp = max(1, player.hp - flee_dmg)  # fleeing can't kill you
+        return f"🏃 You escape, but take a parting blow for **{flee_dmg}** damage! ({player.hp} HP)", True
     return "🏃 You try to flee but can't get away!", False
 
 

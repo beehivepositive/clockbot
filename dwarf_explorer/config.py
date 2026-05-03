@@ -821,7 +821,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("fishing_rod",  "fishing_pole"),
         ("poison_sac",   "poison_sac"),
         ("cooked_fish",  "cooked_fish"),
-        ("flint",        "flint~1"),
+        ("flint",        "flint~1"),   # try numbered variant first
+        ("flint",        "flint"),      # then plain name (whichever exists wins)
         # Pouches — try specific names first, fallback to generic "pouch"
         ("small_pouch",  "small_pouch"),
         ("medium_pouch", "medium_pouch"),

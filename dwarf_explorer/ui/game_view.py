@@ -39,6 +39,7 @@ from dwarf_explorer.database.repositories import (
     equip_item, unequip_item,
     get_inventory,
     add_to_inventory,
+    get_inventory_slot_count,
     remove_from_inventory,
     swap_inventory_slots,
     create_drop_box,
@@ -1305,6 +1306,39 @@ def _inv_capacity(player: Player) -> tuple[int, int]:
     return POUCH_SIZES.get(player.pouch, POUCH_SIZES[None])
 
 
+async def _give_items_or_drop(
+    db, guild_id: int, user_id: int, player: "Player",
+    loot: list[tuple[str, int]],
+) -> tuple[list[str], str]:
+    """Give loot to player, dropping overflow as a drop box if inventory is full.
+
+    Returns (gained_descriptions, overflow_msg).
+    gained_descriptions: list of strings like "3 iron ore"
+    overflow_msg: empty string or a sentence about items dropped on the ground.
+    """
+    rows, cols = _inv_capacity(player)
+    max_slots = rows * cols
+    gained: list[str] = []
+    overflow: list[tuple[str, int]] = []
+
+    for item_id, qty in loot:
+        leftover = await add_to_inventory(db, user_id, item_id, qty, max_slots=max_slots)
+        added = qty - leftover
+        if added > 0:
+            gained.append(f"{added} {item_id.replace('_', ' ')}")
+        if leftover > 0:
+            overflow.append((item_id, leftover))
+
+    drop_msg = ""
+    if overflow:
+        wx = player.world_x
+        wy = player.world_y
+        await create_drop_box(db, wx, wy, overflow)
+        names = ", ".join(f"{q} {i.replace('_', ' ')}" for i, q in overflow)
+        drop_msg = f" 🎒 Inventory full! {names} left in a 📦 at the cave entrance."
+    return gained, drop_msg
+
+
 def _inv_action_btn(
     items: list[dict], selected: int, equipped: dict,
     cursor_mode: str = "inventory", equipped_cursor: int = 0,
@@ -2180,6 +2214,13 @@ async def _finish_combat(
             extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
 
     if player.hp <= 0:
+        # Drop all inventory items at the death location before resetting
+        inv_rows = await get_inventory(db, user_id)
+        if inv_rows:
+            death_items = [(r["item_id"], r["quantity"]) for r in inv_rows]
+            await create_drop_box(db, player.world_x, player.world_y, death_items)
+            await db.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
+            extra_msg += " 📦 Your belongings lie where you fell."
         msg = apply_death_reset(player)
         player.in_canoe = False
         player.in_ocean = False
@@ -2534,38 +2575,33 @@ async def handle_mine(
     )
     cave_level = cave_meta["cave_level"] if cave_meta else 1
 
-    loot = []
+    # Build raw loot list, then give with overflow handling
+    raw_loot: list[tuple[str, int]] = []
     if tile.terrain == "gold_ore_deposit":
         ore_count = rng.randint(2, 6)
-        await add_to_inventory(db, user_id, "gold_ore", ore_count)
-        loot.append(f"{ore_count} gold ore")
+        raw_loot.append(("gold_ore", ore_count))
     elif tile.terrain == "iron_ore_deposit":
         ore_count = rng.randint(3, 9)
-        # Luck ring bonus: +1 ore
         if player.accessory == "ring_of_luck":
             ore_count += 1
-        await add_to_inventory(db, user_id, "iron_ore", ore_count)
-        loot.append(f"{ore_count} iron ore")
+        raw_loot.append(("iron_ore", ore_count))
     else:
         rock_count = rng.randint(1, 3)
-        await add_to_inventory(db, user_id, "rock", rock_count)
-        loot.append(f"{rock_count} rock{'s' if rock_count > 1 else ''}")
+        raw_loot.append(("rock", rock_count))
         if rng.random() < 0.33:
-            await add_to_inventory(db, user_id, "flint", 1)
-            loot.append("flint")
-        # Iron ore chance from regular rocks (level-dependent)
+            raw_loot.append(("flint", 1))
         iron_chance = {1: 0.15, 2: 0.15, 3: 0.15}.get(cave_level, 0.15)
         if rng.random() < iron_chance:
-            await add_to_inventory(db, user_id, "iron_ore", 1)
-            loot.append("iron ore")
-        # Gold ore chance from regular rocks (level 2: 1%, level 3: 5%)
+            raw_loot.append(("iron_ore", 1))
         gold_chance = {2: 0.01, 3: 0.05}.get(cave_level, 0.0)
         if gold_chance > 0 and rng.random() < gold_chance:
-            await add_to_inventory(db, user_id, "gold_ore", 1)
-            loot.append("gold ore")
+            raw_loot.append(("gold_ore", 1))
+
+    gained, drop_msg = await _give_items_or_drop(db, guild_id, user_id, player, raw_loot)
+    loot_str = ", ".join(gained) if gained else "nothing"
 
     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-    content = render_grid(grid, player, f"You mine the rock! Got: {', '.join(loot)}.")
+    content = render_grid(grid, player, f"You mine the rock! Got: {loot_str}.{drop_msg}")
     view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
