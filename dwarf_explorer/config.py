@@ -138,6 +138,12 @@ ITEM_EMOJI = {
     "arrow":                "\U0001F3F9",           # 🏹
     "star_fragment":        "⭐",               # ⭐
     "chronolite":           "\U0001F4A0",           # 💠 cyan diamond
+    "wyvern_scale":         "\U0001F409",           # 🐉 dragon scale
+    "wyvern_helmet":        "\U0001FA96",           # 🪖
+    "wyvern_chestplate":    "\U0001F455",           # 👕
+    "wyvern_leggings":      "\U0001F456",           # 👖
+    "iron_shield":          "\U0001F6E1️",     # 🛡️
+    "wyvern_shield":        "\U0001F6E1️",     # 🛡️
 }
 
 WALKABLE_TILES = {
@@ -244,9 +250,9 @@ SHRINE_SACRIFICES = {
         "label": "⏱️ Time (3 chronolite)",
     },
     "defense": {
-        "item": "iron_ingot",  "qty": 30,
+        "item": "wyvern_scale", "qty": 20,
         "result": "enchanted_gem_defense",
-        "label": "🛡️ Defense (30 iron ingots)",
+        "label": "🛡️ Defense (20 wyvern scales)",
     },
     "sight": {
         "item": "gem",         "qty": 5,
@@ -603,6 +609,11 @@ ITEM_EQUIP_SLOTS = {
     "medium_coin_purse": "coin_purse",
     "large_coin_purse":  "coin_purse",
     "iron_boots":          "boots",
+    "wyvern_helmet":       "head",
+    "wyvern_chestplate":   "chest",
+    "wyvern_leggings":     "legs",
+    "iron_shield":         "hand",
+    "wyvern_shield":       "hand",
     "gold_ring":           "accessory",
     "ring_of_strength":    "accessory",
     "ring_of_time":        "accessory",
@@ -640,6 +651,11 @@ EQUIP_BONUSES = {
     "iron_leggings":   {"defense": 4},
     "sword":        {"attack": 12},
     "iron_boots":          {"defense": 2},
+    "wyvern_helmet":       {"defense": 5},
+    "wyvern_chestplate":   {"defense": 8},
+    "wyvern_leggings":     {"defense": 6},
+    "iron_shield":         {"defense": 4},
+    "wyvern_shield":       {"defense": 7},
     "gold_ring":           {},
     "ring_of_strength":    {"attack": 5},
     "ring_of_time":        {},    # +1 combat move — handled in combat code
@@ -760,6 +776,12 @@ ITEM_SELL_PRICES = {
     "arrow":             3,
     "star_fragment":     50,
     "chronolite":        75,
+    "wyvern_scale":      40,
+    "wyvern_helmet":     80,
+    "wyvern_chestplate": 120,
+    "wyvern_leggings":   100,
+    "iron_shield":       55,
+    "wyvern_shield":     130,
 }
 
 # --- World Map Image ---

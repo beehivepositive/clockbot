@@ -392,7 +392,7 @@ def render_bank(
     Bank vault view shows the vault grid.
     """
     BANK_COLS = 7
-    BANK_ROWS = 4
+    BANK_ROWS = 9
     BANK_TOTAL = BANK_COLS * BANK_ROWS
 
     if view == "player":

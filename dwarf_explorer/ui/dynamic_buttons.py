@@ -37,7 +37,9 @@ from dwarf_explorer.ui.game_view import (
     handle_forge_iron, handle_forge_gold, handle_forge_gold_ring, handle_forge_close,
     handle_anvil_dagger, handle_anvil_sword, handle_anvil_close,
     handle_anvil_helmet, handle_anvil_chestplate, handle_anvil_leggings,
-    handle_anvil_cannonball, handle_anvil_iron_boots,
+    handle_anvil_cannonball, handle_anvil_iron_boots, handle_anvil_iron_shield,
+    handle_anvil_wyvern_helmet, handle_anvil_wyvern_chestplate,
+    handle_anvil_wyvern_leggings, handle_anvil_wyvern_shield,
     handle_shrine_enchant, handle_shrine_cancel,
     handle_combat_consume, handle_combat_consume_cancel,
     handle_inv_eat,
@@ -224,6 +226,16 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_anvil_cannonball(interaction, gid, uid)
             elif act == "anvil_iron_boots":
                 await handle_anvil_iron_boots(interaction, gid, uid)
+            elif act == "anvil_iron_shield":
+                await handle_anvil_iron_shield(interaction, gid, uid)
+            elif act == "anvil_wyvern_helmet":
+                await handle_anvil_wyvern_helmet(interaction, gid, uid)
+            elif act == "anvil_wyvern_chestplate":
+                await handle_anvil_wyvern_chestplate(interaction, gid, uid)
+            elif act == "anvil_wyvern_leggings":
+                await handle_anvil_wyvern_leggings(interaction, gid, uid)
+            elif act == "anvil_wyvern_shield":
+                await handle_anvil_wyvern_shield(interaction, gid, uid)
             elif act == "anvil_close":
                 await handle_anvil_close(interaction, gid, uid)
             # Shrine

@@ -1175,14 +1175,19 @@ class AnvilView(discord.ui.View):
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
         for label, act, style, row in [
-            ("🗡️ Dagger (1 ingot)",       "anvil_dagger",      discord.ButtonStyle.primary, 0),
-            ("⚔️ Sword (2 ingots)",       "anvil_sword",       discord.ButtonStyle.primary, 0),
-            ("🪖 Helmet (2 ingots)",      "anvil_helmet",      discord.ButtonStyle.primary, 0),
-            ("🛡️ Chestplate (4 ingots)",  "anvil_chestplate",  discord.ButtonStyle.primary, 1),
-            ("👖 Leggings (3 ingots)",    "anvil_leggings",    discord.ButtonStyle.primary, 1),
-            ("💣 Cannonball (4 ingots)",  "anvil_cannonball",  discord.ButtonStyle.primary, 1),
-            ("🥾 Iron Boots (2 ingots)",  "anvil_iron_boots",  discord.ButtonStyle.primary, 2),
-            ("❌ Close",                  "anvil_close",        discord.ButtonStyle.danger,  2),
+            ("🗡️ Dagger (1 ingot)",            "anvil_dagger",           discord.ButtonStyle.primary, 0),
+            ("⚔️ Sword (2 ingots)",            "anvil_sword",            discord.ButtonStyle.primary, 0),
+            ("🪖 Helmet (2 ingots)",           "anvil_helmet",           discord.ButtonStyle.primary, 0),
+            ("🛡️ Chestplate (4 ingots)",       "anvil_chestplate",       discord.ButtonStyle.primary, 0),
+            ("👖 Leggings (3 ingots)",         "anvil_leggings",         discord.ButtonStyle.primary, 0),
+            ("🥾 Iron Boots (2 ingots)",       "anvil_iron_boots",       discord.ButtonStyle.primary, 1),
+            ("💣 Cannonball (4 ingots)",       "anvil_cannonball",       discord.ButtonStyle.primary, 1),
+            ("🛡️ Iron Shield (4 ingots)",      "anvil_iron_shield",      discord.ButtonStyle.primary, 1),
+            ("🐉 Wyvern Helmet (2 scales)",    "anvil_wyvern_helmet",    discord.ButtonStyle.success,  2),
+            ("🐉 Wyvern Chestplate (4 scales)","anvil_wyvern_chestplate",discord.ButtonStyle.success,  2),
+            ("🐉 Wyvern Leggings (3 scales)",  "anvil_wyvern_leggings",  discord.ButtonStyle.success,  2),
+            ("🐉 Wyvern Shield (4 scales)",    "anvil_wyvern_shield",    discord.ButtonStyle.success,  2),
+            ("❌ Close",                        "anvil_close",             discord.ButtonStyle.danger,   3),
         ]:
             self.add_item(discord.ui.Button(
                 style=style, label=label,
@@ -2273,6 +2278,14 @@ async def _finish_combat(
         if drop_rng.random() < 0.50:
             await add_to_inventory(db, user_id, "poison_sac", 1)
             extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
+
+    # Wyvern scale drop on victory
+    if won and player.combat_enemy_type == "cave_wyvern":
+        drop_rng = _random.Random(hash((user_id, player.cave_x, player.cave_y, "wyvern_scale")))
+        if drop_rng.random() < 0.60:
+            scale_count = drop_rng.randint(1, 3)
+            await add_to_inventory(db, user_id, "wyvern_scale", scale_count)
+            extra_msg += f" 🐉 The wyvern dropped **{scale_count} Wyvern Scale{'s' if scale_count > 1 else ''}**!"
 
     # Temporal Echo victory: mark boss defeated and give 2 chronolite directly
     if won and player.combat_enemy_type == "temporal_echo" and player.in_cave:
@@ -5383,6 +5396,66 @@ async def handle_anvil_iron_boots(interaction: discord.Interaction, guild_id: in
     await _anvil_craft(interaction, guild_id, user_id, "iron_boots", 2, "Iron Boots", "+2 defense, equip to boots")
 
 
+async def handle_anvil_iron_shield(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_craft(interaction, guild_id, user_id, "iron_shield", 4, "Iron Shield", "+4 defense, equip to hand")
+
+
+async def _anvil_wyvern_upgrade(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    base_item: str, scale_cost: int, result_item: str, name: str, stat_desc: str,
+) -> None:
+    """Upgrade an iron armor/shield piece to wyvern using scales."""
+    db = await get_database(guild_id)
+    base_row = await db.fetch_one(
+        "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id=?",
+        (user_id, base_item),
+    )
+    scale_row = await db.fetch_one(
+        "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id='wyvern_scale'",
+        (user_id,),
+    )
+    base_qty = (base_row["total"] or 0) if base_row else 0
+    scale_qty = (scale_row["total"] or 0) if scale_row else 0
+
+    if base_qty >= 1 and scale_qty >= scale_cost:
+        await remove_from_inventory(db, user_id, base_item, 1)
+        await remove_from_inventory(db, user_id, "wyvern_scale", scale_cost)
+        await add_to_inventory(db, user_id, result_item, 1)
+        msg = f"🐉 You forge a **{name}**! ({stat_desc})"
+    elif base_qty < 1:
+        base_name = base_item.replace("_", " ")
+        msg = f"🐉 You need a **{base_name}** to upgrade."
+    else:
+        msg = f"🐉 You need {scale_cost} wyvern scales to upgrade (have {scale_qty})."
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+    )
+
+
+async def handle_anvil_wyvern_helmet(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_wyvern_upgrade(interaction, guild_id, user_id,
+                                "iron_helmet", 2, "wyvern_helmet",
+                                "Wyvern Helmet", "+5 defense, equip to head")
+
+
+async def handle_anvil_wyvern_chestplate(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_wyvern_upgrade(interaction, guild_id, user_id,
+                                "iron_chestplate", 4, "wyvern_chestplate",
+                                "Wyvern Chestplate", "+8 defense, equip to chest")
+
+
+async def handle_anvil_wyvern_leggings(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_wyvern_upgrade(interaction, guild_id, user_id,
+                                "iron_leggings", 3, "wyvern_leggings",
+                                "Wyvern Leggings", "+6 defense, equip to legs")
+
+
+async def handle_anvil_wyvern_shield(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
+    await _anvil_wyvern_upgrade(interaction, guild_id, user_id,
+                                "iron_shield", 4, "wyvern_shield",
+                                "Wyvern Shield", "+7 defense, equip to hand")
+
+
 async def handle_anvil_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -6673,15 +6746,17 @@ async def _open_shop(
                                             view=ShopView(guild_id, user_id, "shop"))
 
 
-def _shop_nav_bounds(state: dict, player_items: list) -> int:
+def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:
     """Return total navigable slots in current shop view."""
     view_mode = state.get("shop_view", "shop")
-    inv_cols = 7
     if view_mode == "player":
-        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
-        return max(1, len(visible))
+        # Use full grid slot count so up/down steps of inv_cols land on the right row
+        return max(1, inv_rows * inv_cols)
     else:
-        return max(1, len(SHOP_CATALOG))
+        cols = 7
+        cat_len = max(1, len(SHOP_CATALOG))
+        # Round up to full rows so wrapping aligns with the rendered grid
+        return ((cat_len + cols - 1) // cols) * cols
 
 
 async def _shop_nav(
@@ -6695,7 +6770,7 @@ async def _shop_nav(
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
     sel = state.get("selected", 0)
-    total = _shop_nav_bounds(state, player_items)
+    total = _shop_nav_bounds(state, player_items, inv_rows, inv_cols)
     cols = inv_cols if state.get("shop_view") == "player" else 7
     new_sel = (sel + delta_col + delta_row * cols) % total
     new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
@@ -6981,7 +7056,7 @@ async def _bank_nav(
         # Bank vault — simple grid nav
         vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
         cols = 7
-        total = max(1, 28)
+        total = max(1, 9 * 7)  # 63 slots (9×7)
         cursor_mode = "inventory"
         sel = (sel + delta_col + delta_row * cols) % total
 
