@@ -66,6 +66,13 @@ from dwarf_explorer.game.combat import (
     action_move, action_attack, action_flee, action_use_potion,
     resolve_enemy_turn, apply_victory, apply_death_reset,
     render_arena, ARENA_SIZE,
+    resolve_echo_deposits,
+)
+from dwarf_explorer.world.rift import (
+    create_rift, get_rift_for_sundial,
+    RIFT_SPAWN_X, RIFT_SPAWN_Y, RIFT_BOSS_Y,
+    RIFT_BOSS_SPAWN_X, RIFT_BOSS_SPAWN_Y,
+    RIFT_ENTRANCE_X, RIFT_ENTRANCE_Y,
 )
 from dwarf_explorer.world.generator import load_viewport, load_single_tile
 from dwarf_explorer.world.ocean import load_ocean_viewport, load_ocean_single_tile
@@ -1664,7 +1671,7 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
             tile = await load_cave_single_tile(
                 player.cave_id, player.cave_x + dx, player.cave_y + dy, db
             )
-            if tile.terrain in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit"):
+            if tile.terrain in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"):
                 mine_dirs.add(direction)
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs), grid=grid)
 
@@ -2033,16 +2040,70 @@ async def _move_steps(
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_cave:
-        # Determine cave level for encounter rate lookup
-        cave_level_row = await db.fetch_one(
-            "SELECT cave_level FROM caves WHERE cave_id = ?", (player.cave_id,)
+        # Determine cave metadata (level, type, boss defeated)
+        cave_meta_row = await db.fetch_one(
+            "SELECT cave_level, cave_type, boss_defeated FROM caves WHERE cave_id = ?",
+            (player.cave_id,)
         )
-        cave_level = cave_level_row["cave_level"] if cave_level_row else 1
+        cave_level = cave_meta_row["cave_level"] if cave_meta_row else 1
+        is_rift = cave_meta_row and cave_meta_row["cave_type"] == "rift"
+        rift_boss_defeated = cave_meta_row and bool(cave_meta_row["boss_defeated"])
         enc_rates = CAVE_LEVEL_ENCOUNTER_RATES.get(cave_level, CAVE_ENCOUNTER_RATES)
 
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
+
+            # ── Rift exit: stepping onto the rift_entrance portal exits to overworld ──
+            if is_rift and target.terrain == "rift_entrance":
+                player.in_cave = False
+                player.cave_id = None
+                player.cave_x = player.cave_y = 0
+                await update_player_cave_state(db, user_id, False, None, 0, 0)
+                grid = await load_viewport(player.world_x, player.world_y, seed, db)
+                return (
+                    render_grid(grid, player,
+                        "🌀 The portal swirls shut behind you. You're back at the sundial."),
+                    _game_view(guild_id, user_id, player, grid=grid),
+                )
+
+            # ── Rift boss trigger: entering the boss room spawns the Temporal Echo ──
+            if (is_rift and not rift_boss_defeated
+                    and target.terrain in ("rift_floor", "rift_deposit")
+                    and ny >= RIFT_BOSS_Y):
+                # Move player to the target tile first
+                player.cave_x, player.cave_y = nx, ny
+                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+
+                enemy_type = "temporal_echo"
+                grid = await load_cave_viewport(player.cave_id, nx, ny, db)
+                arena_rng = _random.Random(hash((user_id, player.cave_id, "echo")))
+                arena, _ex, _ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+
+                # Place echo at its designated spawn location in the arena
+                # (arena is 9×9 centred on player; echo's world position is boss spawn)
+                arena["echo_deposits"] = set()
+                arena["echo_rewind_counter"] = 0
+                arena["echo_deposit_move"] = 1  # first turn spawns on move 1
+                arena["golem_slam_used"] = arena.get("golem_slam_used", False)
+
+                player.in_combat = True
+                player.combat_enemy_type = enemy_type
+                player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+                player.combat_enemy_x = _ex
+                player.combat_enemy_y = _ey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = (
+                    COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
+                )
+                _ui_state[user_id] = {"type": "combat", "arena": arena}
+                await save_combat_state(db, user_id, player)
+                content = render_arena(arena, player)
+                view = CombatView(guild_id, user_id,
+                                  trapped=arena["player_trapped"],
+                                  moves_left=player.combat_moves_left)
+                return content, view
 
             # Handle stairdown: descend to child cave (generated lazily on first visit)
             if target.terrain == "cave_stairdown":
@@ -2213,6 +2274,17 @@ async def _finish_combat(
             await add_to_inventory(db, user_id, "poison_sac", 1)
             extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
 
+    # Temporal Echo victory: mark boss defeated and give 2 chronolite directly
+    if won and player.combat_enemy_type == "temporal_echo" and player.in_cave:
+        await db.execute(
+            "UPDATE caves SET boss_defeated=1 WHERE cave_id=?", (player.cave_id,)
+        )
+        await add_to_inventory(db, user_id, "chronolite", 2)
+        extra_msg += (
+            " ⏪ The Echo collapses into shards of frozen time! "
+            "💠 You collect **2 Chronolite**. The rift deposits are now yours to mine."
+        )
+
     if player.hp <= 0:
         # Drop all inventory items at the death location before resetting
         inv_rows = await get_inventory(db, user_id)
@@ -2282,6 +2354,17 @@ async def _after_player_action(
 ) -> None:
     """Called after a player action. Run enemy turn if moves exhausted, or re-render."""
     arena["combat_log"].append(msg)
+
+    # Temporal Echo: check if deposits should spawn this move
+    deposit_msg = resolve_echo_deposits(arena, player)
+    if deposit_msg:
+        arena["combat_log"].append(deposit_msg)
+        # If deposit landed on player and they're now dead, handle immediately
+        if player.hp <= 0:
+            content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                                 " ".join(arena["combat_log"][-4:]))
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
     is_naval = arena.get("naval", False)
 
@@ -2550,9 +2633,39 @@ async def handle_mine(
         return
 
     tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
-    if tile.terrain not in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit"):
+    if tile.terrain not in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"):
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "That rock has already been mined.")
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Rift deposit: only minable after boss is defeated ──
+    if tile.terrain == "rift_deposit":
+        cave_meta = await db.fetch_one(
+            "SELECT boss_defeated FROM caves WHERE cave_id=?", (player.cave_id,)
+        )
+        if not cave_meta or not cave_meta["boss_defeated"]:
+            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            content = render_grid(grid, player,
+                "💠 This Chronolite formation is protected by the Echo's power. "
+                "Defeat the Temporal Echo first.")
+            view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+        # Mine the deposit
+        rng_rift = _random.Random(hash((user_id, nx, ny, "rift")))
+        ore_count = rng_rift.randint(2, 4) + (1 if player.accessory == "ring_of_luck" else 0)
+        await db.execute(
+            "UPDATE cave_tiles SET tile_type='rift_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
+            (player.cave_id, nx, ny),
+        )
+        gained, drop_msg = await _give_items_or_drop(db, guild_id, user_id, player,
+                                                      [("chronolite", ore_count)])
+        loot_str = ", ".join(gained) if gained else "nothing"
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        content = render_grid(grid, player,
+            f"💠 You shatter the deposit! Got: {loot_str}.{drop_msg}")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
@@ -3661,6 +3774,10 @@ async def handle_ocean_fish(
     elif roll < 0.51:
         await add_to_inventory(db, user_id, "map_fragment", 1)
         msg = "🎣 You reel in something unusual — a **map fragment**!"
+    elif roll < 0.516 and player.in_high_seas:
+        # 0.6% chance (high seas only) — Star Fragment
+        await add_to_inventory(db, user_id, "star_fragment", 1)
+        msg = "🎣 ⭐ Something otherworldly on the line — a **Star Fragment**! The sundial calls to you."
     else:
         msg = "🎣 You cast your line... the fish got away."
 
@@ -4320,6 +4437,41 @@ async def handle_interact(
             await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
             grid = await load_village_viewport(vid, vx, vy, db)
             content = render_grid(grid, player, "You enter the village.")
+
+        elif tile.structure == "sundial":
+            # ── Sundial: consume a Star Fragment to open / enter the Temporal Rift ──
+            has_frag = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='star_fragment' LIMIT 1",
+                (user_id,),
+            )
+            if not has_frag or has_frag["quantity"] < 1:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player,
+                    "🕛 **Sundial Ruins** — an ancient portal frozen in time. "
+                    "You sense it needs a ⭐ **Star Fragment** to open. "
+                    "Fish in the high seas and hope the ocean yields one.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+
+            # Consume one star fragment
+            await remove_from_inventory(db, user_id, "star_fragment", 1)
+
+            # Create (or retrieve) the rift linked to this sundial
+            cave_id, _, _ = await create_rift(wx, wy, db)
+
+            # Enter rift at spawn tile
+            player.in_cave = True
+            player.cave_id = cave_id
+            player.cave_x, player.cave_y = RIFT_SPAWN_X, RIFT_SPAWN_Y
+            await update_player_cave_state(db, user_id, True, cave_id, RIFT_SPAWN_X, RIFT_SPAWN_Y)
+            grid = await load_cave_viewport(cave_id, RIFT_SPAWN_X, RIFT_SPAWN_Y, db)
+            content = render_grid(grid, player,
+                "🌀 The sundial pulses — the Star Fragment dissolves into light. "
+                "A rift tears open and pulls you through...")
+            view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         elif tile.structure == "shrine":
             # ── Shrine: imbue a held gem with a sacrifice to create enchanted gems ──

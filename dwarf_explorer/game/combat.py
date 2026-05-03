@@ -208,6 +208,51 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = Fa
             player.hp = max(0, player.hp - dmg)
             return f"({player.hp}/{player.max_hp} HP)"
 
+    # ── Temporal Echo: custom AI ──────────────────────────────────────────────
+    if enemy_type == "temporal_echo":
+        ex, ey = player.combat_enemy_x, player.combat_enemy_y
+        px, py = player.combat_player_x, player.combat_player_y
+
+        # 1. Clear old deposits (gives window at start of player's next round)
+        arena["echo_deposits"] = set()
+
+        # 2. Rewind — regain HP every 2 turns
+        arena["echo_rewind_counter"] = arena.get("echo_rewind_counter", 0) + 1
+        if arena["echo_rewind_counter"] % 2 == 0:
+            rewind_hp = 30
+            max_hp = ENEMY_STATS["temporal_echo"][0]
+            old_hp = player.combat_enemy_hp
+            player.combat_enemy_hp = min(player.combat_enemy_hp + rewind_hp, max_hp)
+            actual = player.combat_enemy_hp - old_hp
+            if actual > 0:
+                msgs.append(
+                    f"⏪ The Echo **rewinds**, restoring **{actual}** HP!"
+                    f" ({player.combat_enemy_hp}/{max_hp} HP)"
+                )
+
+        # 3. Move toward player
+        new_ex, new_ey = _step_toward(ex, ey, px, py, arena["grid"], (px, py))
+        player.combat_enemy_x = new_ex
+        player.combat_enemy_y = new_ey
+
+        # 4. Attack if adjacent
+        if _adjacent(new_ex, new_ey, px, py):
+            dmg = max(1, atk - player.defense // 2)
+            player.hp = max(0, player.hp - dmg)
+            msgs.append(
+                f"👻 The Echo strikes for **{dmg}** damage! ({player.hp}/{player.max_hp} HP)"
+            )
+
+        if not msgs:
+            msgs.append("👻 The Echo shifts through time, watching you...")
+
+        if not naval and arena.get("poison_turns", 0) > 0:
+            player.hp = max(0, player.hp - 2)
+            arena["poison_turns"] -= 1
+            msgs.append(f"🟢 Poison deals **2** damage. ({player.hp}/{player.max_hp} HP)")
+
+        return " ".join(msgs)
+
     # Enemy gets 1 action (cave_bat gets 2 for hit-and-run feel)
     num_actions = 2 if enemy_type == "cave_bat" else 1
 
@@ -344,6 +389,8 @@ def render_arena(arena: dict, player) -> str:
         rows.append(ship_art)
         rows.append("")
 
+    echo_deposits: set[tuple[int, int]] = arena.get("echo_deposits", set())
+
     for row_y in range(ARENA_SIZE):
         cells: list[str] = []
         for col_x in range(ARENA_SIZE):
@@ -351,6 +398,8 @@ def render_arena(arena: dict, player) -> str:
                 cells.append(ENTITY_EMOJI["player"])
             elif col_x == ex and row_y == ey:
                 cells.append(enemy_emoji)
+            elif (col_x, row_y) in echo_deposits:
+                cells.append("💠")  # chronolite deposit hazard
             elif (col_x, row_y) in objects:
                 cells.append(ARENA_EMOJI.get(objects[(col_x, row_y)], "🕸️"))
             else:
@@ -375,6 +424,13 @@ def render_arena(arena: dict, player) -> str:
         rows.append("🕸️ **You are trapped in a cobweb!** Use 🕸️ Free to escape.")
     if not is_naval and arena.get("poison_turns", 0) > 0:
         rows.append(f"🟢 Poisoned ({arena['poison_turns']} turns remaining)")
+    if player.combat_enemy_type == "temporal_echo":
+        next_spawn = arena.get("echo_deposit_move", 1)
+        deposit_active = bool(arena.get("echo_deposits"))
+        if deposit_active:
+            rows.append(f"💠 Chronolite ring active — next spawn on move **{next_spawn}**")
+        else:
+            rows.append(f"💠 Ring cleared — deposits will spawn on your move **{next_spawn}**")
 
     if arena["combat_log"]:
         rows.append("")
@@ -382,6 +438,68 @@ def render_arena(arena: dict, player) -> str:
             rows.append(f"> {line}")
 
     return "\n".join(rows)
+
+
+# ── Temporal Echo deposit mechanics ───────────────────────────────────────────
+
+def resolve_echo_deposits(arena: dict, player) -> str:
+    """Called after each player action when fighting the temporal_echo.
+
+    Spawns a ring of Chronolite deposits around the Echo on the designated
+    player move (1 or 3, alternating each echo turn).  Deposits are stored
+    in arena["echo_deposits"] and rendered as 💠 tiles in the arena grid.
+
+    If the player is standing on a newly-spawned deposit tile, they take
+    instant damage.  Deposits persist until the Echo's next turn clears them.
+
+    Returns a message string (empty string if no spawn this move).
+    """
+    if player.combat_enemy_type != "temporal_echo":
+        return ""
+
+    moves_default = COMBAT_MOVES_DEFAULT + (
+        1 if getattr(player, "accessory", None) == "ring_of_time" else 0
+    )
+    # Which sequential move are we on? (1=first, 2=second, 3=third …)
+    moves_taken = moves_default - player.combat_moves_left
+    spawn_move = arena.get("echo_deposit_move", 1)
+
+    if moves_taken != spawn_move:
+        return ""
+
+    # Spawn ring of deposits at Manhattan distance 2 from the echo
+    ex, ey = player.combat_enemy_x, player.combat_enemy_y
+    px, py = player.combat_player_x, player.combat_player_y
+
+    deposits: set[tuple[int, int]] = set()
+    for ddx in range(-3, 4):
+        for ddy in range(-3, 4):
+            if abs(ddx) + abs(ddy) == 2:
+                nx, ny = ex + ddx, ey + ddy
+                if 0 <= nx < ARENA_SIZE and 0 <= ny < ARENA_SIZE:
+                    deposits.add((nx, ny))
+
+    # Always include the player's current tile (punishes staying still)
+    deposits.add((px, py))
+
+    arena["echo_deposits"] = deposits
+
+    # Flip spawn move for next echo turn (1 → 3 → 1 → …)
+    arena["echo_deposit_move"] = 3 if spawn_move == 1 else 1
+
+    move_word = "first" if spawn_move == 1 else "third"
+
+    # Damage if player is on a deposit
+    if (px, py) in deposits:
+        dmg = 10
+        player.hp = max(0, player.hp - dmg)
+        return (
+            f"💠 Chronolite materialises on you! **{dmg}** damage! "
+            f"({player.hp}/{player.max_hp} HP) "
+            f"[ring spawned on your {move_word} move]"
+        )
+
+    return f"💠 Chronolite ring crystallises around the Echo! [{move_word} move spawn]"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -237,6 +237,9 @@ class Database:
                     ocean_y INTEGER NOT NULL,
                     PRIMARY KEY (ocean_x, ocean_y)
                 )""",
+                # Rift support: cave type marker and boss-defeated flag
+                "ALTER TABLE caves ADD COLUMN cave_type TEXT NOT NULL DEFAULT 'cave'",
+                "ALTER TABLE caves ADD COLUMN boss_defeated INTEGER NOT NULL DEFAULT 0",
             ]
             for mig_sql in migrations:
                 try:

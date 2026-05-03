@@ -423,6 +423,22 @@ def _generate_structures_sync(
                 overrides.append((hx, hy, 'harbor'))
                 break
 
+    # --- Sundial (1 per world): plains/grass, far from spawn and villages ---
+    sundial_placed = False
+    for _ in range(1500):
+        if sundial_placed:
+            break
+        x = rng.randint(10, WORLD_SIZE - 11)
+        y = rng.randint(10, WORLD_SIZE - 11)
+        if _near_spawn(x, y):
+            continue
+        if get_biome(x, y, seed) not in ('plains', 'grass'):
+            continue
+        if any(abs(x - vx) + abs(y - vy) < 30 for vx, vy in village_centers):
+            continue
+        overrides.append((x, y, 'sundial'))
+        sundial_placed = True
+
     cave_groups = _group_caves(cave_positions, rng)
     return overrides, cave_groups
 

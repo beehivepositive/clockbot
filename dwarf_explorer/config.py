@@ -1,4 +1,4 @@
-CHUNK_SIZE = 7
+﻿CHUNK_SIZE = 7
 WORLD_CHUNKS = 64
 WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 448
 
@@ -56,7 +56,8 @@ STRUCTURE_EMOJI = {
     "player_house": "\U0001F3E0",   # 🏠
     "harbor": "\U0001F6A2",         # 🚢 harbor/dock
     "shipwreck": "\u2693",          # ⚓ shipwreck
-    "island": "\U0001F3DD\uFE0F",  # 🏝️ high-seas island
+    "island": "\U0001F3DD️",  # 🏝️ high-seas island
+    "sundial": "\U0001F55B",        # 🕛 sundial ruins (rift portal)
 }
 
 ENTITY_EMOJI = {
@@ -70,6 +71,8 @@ ENTITY_EMOJI = {
     "shark": "\U0001F988",           # 🦈
     "crab": "\U0001F980",            # 🦀
     "sea_serpent": "\U0001F40D",     # 🐍
+    # Rift boss
+    "temporal_echo": "\U0001F47B",   # 👻 ghostly temporal apparition
 }
 
 ITEM_EMOJI = {
@@ -133,6 +136,8 @@ ITEM_EMOJI = {
     "enchanted_gem_luck":     "\U0001F4AB",         # 💫
     "flint_and_steel":      "\U0001F525",           # 🔥
     "arrow":                "\U0001F3F9",           # 🏹
+    "star_fragment":        "⭐",               # ⭐
+    "chronolite":           "\U0001F4A0",           # 💠 cyan diamond
 }
 
 WALKABLE_TILES = {
@@ -144,6 +149,7 @@ WALKABLE_TILES = {
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
     "drop_box",      # item drop box — walkable, interact to pick up
+    "sundial",       # sundial ruins — walkable (interact with star_fragment to open rift)
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
 }
 
@@ -158,7 +164,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
                    "island_chest", "island_dock", "island_sapling"}
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "sundial"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -182,6 +188,8 @@ ENEMY_STATS = {
     "shark":       (35, 15,  1, 20, 12),
     "crab":        (20,  8,  4, 12,  8),
     "sea_serpent": (60, 22,  4, 50, 30),
+    # Rift boss
+    "temporal_echo": (200, 25, 5, 150, 0),  # high HP, no gold — drops chronolite instead
 }
 
 # Player defaults
@@ -207,6 +215,8 @@ ENEMY_ABILITIES = {
     "shark":       {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
     "crab":        {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
     "sea_serpent": {"cobweb": False, "poison": True,  "hit_run": False, "roar": False, "slam": True},
+    # Rift boss — custom AI, these flags are unused
+    "temporal_echo": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
 }
 
 ARENA_EMOJI = {
@@ -229,9 +239,9 @@ SHRINE_SACRIFICES = {
         "label": "⚔️ Strength (63 iron ore)",
     },
     "time": {
-        "item": "cooked_fish", "qty": 20,
+        "item": "chronolite",  "qty": 3,
         "result": "enchanted_gem_time",
-        "label": "⏱️ Time (20 cooked fish)",
+        "label": "⏱️ Time (3 chronolite)",
     },
     "defense": {
         "item": "iron_ingot",  "qty": 30,
@@ -348,9 +358,15 @@ CAVE_EMOJI = {
     "cave_stairdown":     "\U0001F53D",            # 🔽 descend deeper
     "cave_stairup":       "\U0001F53C",            # 🔼 ascend
     "player_house_cave":  "\U0001F3E0",            # 🏠 player-built house in cave
+    # Rift tiles (temporal rift pocket dimension)
+    "rift_wall":          "\U0001F7E6",            # 🟦 blue wall
+    "rift_floor":         "\U0001F535",            # 🔵 blue circle floor
+    "rift_deposit":       "\U0001F4A0",            # 💠 chronolite deposit (mineable after boss)
+    "rift_entrance":      "\U0001F300",            # 🌀 swirling portal (exit)
 }
 
-CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave"}
+CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
+                 "rift_floor", "rift_entrance", "rift_deposit"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
@@ -742,6 +758,8 @@ ITEM_SELL_PRICES = {
     "enchanted_gem_luck":     80,
     "flint_and_steel":   15,
     "arrow":             3,
+    "star_fragment":     50,
+    "chronolite":        75,
 }
 
 # --- World Map Image ---
