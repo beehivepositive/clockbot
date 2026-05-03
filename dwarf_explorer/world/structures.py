@@ -119,30 +119,33 @@ def _precompute_costs(
     """Build a WORLD_SIZE×WORLD_SIZE cost grid for A* plus the narrow_river set.
 
     Rivers are now *crossable* at moderate cost so paths can ford/bridge them:
-      - narrow_river (hw=0 sub-tributaries, 0 cardinal river neighbours): 6.0
-      - wide river (has cardinal river neighbours): 25.0
+      - narrow_river (≤2 cardinal river neighbours — all 1-tile-wide streams): 3.0
+      - wide river (3+ cardinal river neighbours): 80.0
     Ocean / shallow_water remain impassable (9999).
 
     narrow_river tiles are returned so the caller can upgrade DB river→ford/bridge.
     Indexed as grid[y][x].
     """
-    # Detect narrow (isolated) river tiles — no cardinal river neighbours
-    narrow_river: set[tuple[int, int]] = set()
-    for rx, ry in river_tiles:
-        if sum(
+    # Classify river tiles by neighbor count — ≤2 means a 1-tile-wide stream
+    river_neighbor_count: dict[tuple[int, int], int] = {
+        (rx, ry): sum(
             1 for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
             if (rx + ddx, ry + ddy) in river_tiles
-        ) == 0:
-            narrow_river.add((rx, ry))
+        )
+        for rx, ry in river_tiles
+    }
+    narrow_river: set[tuple[int, int]] = {
+        t for t, c in river_neighbor_count.items() if c <= 2
+    }
 
     grid: list[list[float]] = []
     for y in range(WORLD_SIZE):
         row: list[float] = []
         for x in range(WORLD_SIZE):
             if (x, y) in narrow_river:
-                row.append(6.0)    # fordable sub-tributary
+                row.append(3.0)    # thin tributary — paths cross freely
             elif (x, y) in river_tiles:
-                row.append(80.0)   # crossable but expensive — skimming the bank is never worth it
+                row.append(80.0)   # wide river — avoid; force a bridge
             else:
                 biome = get_biome(x, y, seed)
                 if biome in _WATER_BIOMES:
@@ -337,7 +340,7 @@ def _generate_structures_sync(
             found += 1
 
     # --- Caves (10-16 tiles): walkable tile adjacent to mountain ---
-    cave_count = rng.randint(10, 16)
+    cave_count = rng.randint(22, 30)
     found = 0
     cave_positions: list[tuple[int, int]] = []
     for _ in range(2000):
@@ -682,7 +685,7 @@ async def place_structures(seed: int, db) -> None:
         if sum(
             1 for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
             if (rx + ddx, ry + ddy) in river_tiles
-        ) == 0
+        ) <= 2
     }
 
     # 6. Generate paths — A* crosses rivers at moderate cost
