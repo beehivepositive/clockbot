@@ -7054,12 +7054,26 @@ async def _bank_nav(
                 else:
                     sel = new_sel % total
     else:
-        # Bank vault — simple grid nav
-        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        # Bank vault — grid nav with gold row above
+        bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         cols = 7
-        total = max(1, 9 * 7)  # 63 slots (9×7)
-        cursor_mode = "inventory"
-        sel = (sel + delta_col + delta_row * cols) % total
+        vault_total = 9 * 7  # 63 slots (9×7)
+        if cursor_mode == "gold":
+            if delta_row > 0:  # down → enter vault grid
+                cursor_mode = "inventory"
+                sel = 0
+            # up/left/right on gold row: do nothing
+        else:
+            cursor_mode = "inventory"
+            if delta_row < 0 and sel < cols and bank_gold > 0:
+                # Up from top row → gold row
+                cursor_mode = "gold"
+            elif delta_row < 0:
+                sel = (sel - cols) % vault_total
+            elif delta_row > 0:
+                sel = (sel + cols) % vault_total
+            else:
+                sel = (sel + delta_col) % vault_total
 
     new_state = {**state, "selected": sel, "qty": 1, "cursor_mode": cursor_mode,
                  "equipped_cursor": eq_cur}
@@ -7103,10 +7117,16 @@ async def handle_bank_qty_inc(
     cursor_mode = state.get("cursor_mode", "inventory")
     from dwarf_explorer.game.renderer import _build_slot_map
     if bv == "bank":
-        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
-        slot_map = _build_slot_map(vault_items, 28)
-        item = slot_map.get(sel)
-        max_qty = item["quantity"] if item else 1
+        if cursor_mode == "gold":
+            bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
+            cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+            remaining_cap = max(0, cap - player.gold)
+            max_qty = max(1, min(bank_gold, remaining_cap))
+        else:
+            vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+            slot_map = _build_slot_map(vault_items, 9 * 7)
+            item = slot_map.get(sel)
+            max_qty = item["quantity"] if item else 1
     elif cursor_mode == "gold":
         max_qty = max(player.gold, 1)
     else:
@@ -7138,10 +7158,16 @@ async def handle_bank_qty_dec(
     cursor_mode = state.get("cursor_mode", "inventory")
     from dwarf_explorer.game.renderer import _build_slot_map
     if bv == "bank":
-        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
-        slot_map = _build_slot_map(vault_items, 28)
-        item = slot_map.get(sel)
-        max_qty = item["quantity"] if item else 1
+        if cursor_mode == "gold":
+            bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
+            cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+            remaining_cap = max(0, cap - player.gold)
+            max_qty = max(1, min(bank_gold, remaining_cap))
+        else:
+            vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+            slot_map = _build_slot_map(vault_items, 9 * 7)
+            item = slot_map.get(sel)
+            max_qty = item["quantity"] if item else 1
     elif cursor_mode == "gold":
         max_qty = max(player.gold, 1)
     else:
@@ -7172,10 +7198,16 @@ async def handle_bank_qty_modal(
     from dwarf_explorer.game.renderer import _build_slot_map
     inv_rows, inv_cols = _inv_capacity(player)
     if bv == "bank":
-        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
-        slot_map = _build_slot_map(vault_items, 28)
-        item = slot_map.get(sel)
-        max_qty = item["quantity"] if item else 1
+        if cursor_mode == "gold":
+            bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
+            cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+            remaining_cap = max(0, cap - player.gold)
+            max_qty = max(1, min(bank_gold, remaining_cap))
+        else:
+            vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+            slot_map = _build_slot_map(vault_items, 9 * 7)
+            item = slot_map.get(sel)
+            max_qty = item["quantity"] if item else 1
     elif cursor_mode == "gold":
         max_qty = max(player.gold, 1)
     else:
@@ -7331,15 +7363,54 @@ async def handle_bank_withdraw(
     state = _ui_state.get(user_id, {"selected": 0, "bank_view": "bank", "qty": 1})
     sel = state.get("selected", 0)
     qty = max(1, state.get("qty", 1))
+    cursor_mode = state.get("cursor_mode", "inventory")
     bank_items = await get_bank_items(db, user_id)
     inv_rows, inv_cols = _inv_capacity(player)
-    from dwarf_explorer.game.renderer import _build_slot_map
-    # Vault view excludes gold_coin row (shown separately as bank gold)
-    vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
-    slot_map = _build_slot_map(vault_items, 28)
-    item = slot_map.get(sel)
     player_items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
+
+    # ── Gold withdrawal ────────────────────────────────────────────────────────
+    if cursor_mode == "gold":
+        bank_gold_row = await db.fetch_one(
+            "SELECT quantity FROM bank_items WHERE user_id=? AND item_id='gold_coin'", (user_id,)
+        )
+        bank_gold = bank_gold_row["quantity"] if bank_gold_row else 0
+        cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
+        remaining_cap = max(0, cap - player.gold)
+        actual_qty = min(qty, bank_gold, remaining_cap)
+        if actual_qty > 0:
+            new_bank = bank_gold - actual_qty
+            if new_bank <= 0:
+                await db.execute(
+                    "DELETE FROM bank_items WHERE user_id=? AND item_id='gold_coin'", (user_id,)
+                )
+            else:
+                await db.execute(
+                    "UPDATE bank_items SET quantity=? WHERE user_id=? AND item_id='gold_coin'",
+                    (new_bank, user_id),
+                )
+            await db.execute("UPDATE players SET gold=gold+? WHERE user_id=?", (actual_qty, user_id))
+            player = await get_or_create_player(db, user_id, interaction.user.display_name)
+            suffix = f"\n*Withdrew {actual_qty}g from bank.*"
+            if actual_qty < qty:
+                suffix += f" *(purse holds {cap}g max)*"
+        elif remaining_cap <= 0:
+            suffix = "\n*(Purse is full — can't hold more gold)*"
+        else:
+            suffix = "\n*(No gold in bank)*"
+        bank_items_new = await get_bank_items(db, user_id)
+        new_state = {**state, "qty": 1}
+        _ui_state[user_id] = new_state
+        content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=BankView(guild_id, user_id, "bank"))
+        return
+
+    # ── Item withdrawal ────────────────────────────────────────────────────────
+    from dwarf_explorer.game.renderer import _build_slot_map
+    vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+    slot_map = _build_slot_map(vault_items, 9 * 7)
+    item = slot_map.get(sel)
     if item is None:
         suffix = "\n*(Empty slot)*"
         content = _bank_render(state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix

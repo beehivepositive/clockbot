@@ -537,9 +537,14 @@ async def get_bank_items(db: Database, user_id: int) -> list[dict]:
         (user_id,),
     )
     # Split oversized stacks into MAX_STACK_SIZE chunks so the vault grid respects limits.
+    # gold_coin is never split — it has no cap in the bank.
     result = []
     slot_idx = 0
     for r in rows:
+        if r["item_id"] == "gold_coin":
+            result.append({"item_id": "gold_coin", "quantity": r["quantity"], "slot_index": slot_idx})
+            slot_idx += 1
+            continue
         remaining = r["quantity"]
         while remaining > 0:
             stack_qty = min(MAX_STACK_SIZE, remaining)

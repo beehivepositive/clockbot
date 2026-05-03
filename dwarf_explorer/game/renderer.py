@@ -463,7 +463,10 @@ def render_bank(
         vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
         bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         lines = [f"\U0001F3E6 **Bank Vault** ({BANK_COLS}×{BANK_ROWS})"]
-        lines.append(f"\U0001FA99 Bank gold: **{bank_gold}**")
+        gold_marker = " ◀︎" if cursor_mode == "gold" else ""
+        lines.append(f"\U0001FA99 Bank gold: **{bank_gold}**{gold_marker}")
+        if cursor_mode == "gold":
+            lines.append(f"Cursor: 🪙 **Bank Gold** ×{bank_gold}  |  📥 Withdraw qty: **{qty}**")
         lines.append("")
 
         slot_map = _build_slot_map(vault_items, BANK_TOTAL)
@@ -472,24 +475,26 @@ def render_bank(
             item = slot_map.get(i)
             if item is not None:
                 slots.append(_fmt_slot(item["item_id"], item["quantity"],
-                                       cursor_on=(i == selected), is_selected=False))
+                                       cursor_on=(i == selected and cursor_mode != "gold"),
+                                       is_selected=False))
             else:
-                if i == selected:
+                if i == selected and cursor_mode != "gold":
                     slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(BANK_ROWS):
             lines.append("".join(slots[row * BANK_COLS: row * BANK_COLS + BANK_COLS]))
 
-        lines.append("")
-        item = slot_map.get(selected)
-        if item:
-            lines.append(
-                f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
-                f"  |  📥 Withdraw qty: **{qty}**"
-            )
-        else:
-            lines.append("Cursor: *(empty slot)*")
+        if cursor_mode != "gold":
+            lines.append("")
+            item = slot_map.get(selected)
+            if item:
+                lines.append(
+                    f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}"
+                    f"  |  📥 Withdraw qty: **{qty}**"
+                )
+            else:
+                lines.append("Cursor: *(empty slot)*")
 
     return "\n".join(lines)
 
