@@ -6925,10 +6925,11 @@ async def handle_shop_sell(
         return
     actual_qty = min(qty, item["quantity"])
     await remove_from_inventory(db, user_id, item_id, actual_qty)
-    player.gold += price * actual_qty
+    earned = price * actual_qty
+    _apply_gold_cap(player, earned)
     await update_player_stats(db, user_id, gold=player.gold)
     player_items = await get_inventory(db, user_id)
-    suffix = f"\n*Sold {actual_qty}× {item_id.replace('_', ' ').title()} for {price * actual_qty}g!*"
+    suffix = f"\n*Sold {actual_qty}× {item_id.replace('_', ' ').title()} for {earned}g!*"
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
@@ -7481,7 +7482,7 @@ async def handle_chest_take(
         else:
             if item_id == "gold_coin":
                 qty = chest_inv[sel]["quantity"]
-                player.gold += qty
+                _apply_gold_cap(player, qty)
                 await update_player_stats(db, user_id, gold=player.gold)
                 await remove_from_chest(db, chest_id, item_id, qty)
                 suffix = f"\n*Collected {qty} gold!*"
@@ -7569,7 +7570,7 @@ async def handle_chest_lootall(
         item_id = chest_item["item_id"]
         qty = chest_item["quantity"]
         if item_id == "gold_coin":
-            player.gold += qty
+            _apply_gold_cap(player, qty)
             await remove_from_chest(db, chest_id, item_id, qty)
             taken.append(f"{qty} gold")
             continue
