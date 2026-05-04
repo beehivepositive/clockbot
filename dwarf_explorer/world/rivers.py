@@ -457,10 +457,10 @@ def _generate_rivers_sync(
                 edge = rng.randint(0, 3)
                 if edge == _skip_trib_edge:
                     continue   # never start from the ocean-facing world edge
-                if edge == 0:   csx, csy = float(rng.randint(m, WORLD_SIZE-m)), 2.0
-                elif edge == 1: csx, csy = float(rng.randint(m, WORLD_SIZE-m)), float(WORLD_SIZE-3)
-                elif edge == 2: csx, csy = 2.0, float(rng.randint(m, WORLD_SIZE-m))
-                else:           csx, csy = float(WORLD_SIZE-3), float(rng.randint(m, WORLD_SIZE-m))
+                if edge == 0:   csx, csy = float(rng.randint(m, WORLD_SIZE-m)), 0.0
+                elif edge == 1: csx, csy = float(rng.randint(m, WORLD_SIZE-m)), float(WORLD_SIZE-1)
+                elif edge == 2: csx, csy = 0.0, float(rng.randint(m, WORLD_SIZE-m))
+                else:           csx, csy = float(WORLD_SIZE-1), float(rng.randint(m, WORLD_SIZE-m))
                 if get_biome(int(csx), int(csy), seed) not in _COAST_BIOMES:
                     sx, sy = csx, csy
                     break

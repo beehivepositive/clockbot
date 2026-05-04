@@ -457,13 +457,18 @@ def _fill_diagonal_gaps(
     path: list[tuple[int, int]],
     seed: int,
     river_tiles: set[tuple[int, int]],
+    narrow_river: set[tuple[int, int]] | None = None,
 ) -> list[tuple[int, int]]:
     """Return corner tiles for diagonal steps to eliminate checkerboard gaps.
 
-    Skips adding a corner tile if it is a river tile AND both step tiles are
-    dry land — that combination means the path is skirting the river bank,
-    not crossing it, and the corner would become a spurious bridge fragment.
+    Skips adding a corner tile if it is a WIDE river tile AND both step tiles
+    are dry land — that combination means the path is skirting a wide river
+    bank, not crossing it, and the corner would become a spurious bridge
+    fragment.  Narrow tributary tiles (1-tile-wide streams, ≤2 river
+    neighbours) are always included so the tributary gets tiled over when
+    the A* path hops across it diagonally.
     """
+    narrow = narrow_river if narrow_river is not None else set()
     fillers: list[tuple[int, int]] = []
     for i in range(len(path) - 1):
         x, y = path[i]
@@ -473,9 +478,9 @@ def _fill_diagonal_gaps(
             step_dry = (x, y) not in river_tiles and (nx, ny) not in river_tiles
             for fx, fy in ((x + dx, y), (x, y + dy)):
                 if 0 <= fx < WORLD_SIZE and 0 <= fy < WORLD_SIZE:
-                    # Dry-to-dry diagonal that clips a river corner → skip;
-                    # genuine crossings (at least one step tile is river) keep their corners.
-                    if step_dry and (fx, fy) in river_tiles:
+                    # Dry-to-dry diagonal clipping a WIDE river bank → skip.
+                    # Narrow tributary crossings are kept so they get converted.
+                    if step_dry and (fx, fy) in river_tiles and (fx, fy) not in narrow:
                         continue
                     fillers.append((fx, fy))
     return fillers
@@ -636,7 +641,7 @@ def _generate_village_paths_sync(
             if (px, py) not in path_tiles:
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
-        for px, py in _fill_diagonal_gaps(cl, seed, river_tiles):
+        for px, py in _fill_diagonal_gaps(cl, seed, river_tiles, narrow_river):
             if (px, py) not in path_tiles:
                 path_tiles.add((px, py))
                 overrides.append((px, py, "path"))
