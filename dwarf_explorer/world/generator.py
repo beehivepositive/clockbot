@@ -254,6 +254,23 @@ async def find_walkable_near(seed: int, db, px: int, py: int) -> tuple[int, int]
     return await find_walkable_spawn(seed, db)
 
 
+async def find_village_spawn(db) -> tuple[int, int, int, int, int] | None:
+    """Return (world_x, world_y, village_id, entry_x, entry_y) for a starter village.
+
+    Queries the first available village entrance so new players spawn inside a
+    settlement rather than the empty wilderness.  Returns None if no villages
+    exist yet (shouldn't happen after init_world, but safe to guard).
+    """
+    row = await db.fetch_one(
+        "SELECT world_x, world_y, village_id, entry_x, entry_y "
+        "FROM village_entrances ORDER BY village_id LIMIT 1"
+    )
+    if row:
+        return (row["world_x"], row["world_y"], row["village_id"],
+                row["entry_x"], row["entry_y"])
+    return None
+
+
 async def init_world(seed: int, db) -> None:
     """Generate and store all world features (rivers + structures) for a new world."""
     from dwarf_explorer.world.rivers import generate_rivers

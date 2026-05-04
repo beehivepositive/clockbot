@@ -32,7 +32,7 @@ TERRAIN_EMOJI = {
     "dense_forest": "\U0001F333",    # 🌳
     "hills": "\u26F0\uFE0F",        # ⛰️
     "mountain": "\U0001F3D4\uFE0F", # 🏔️
-    "snow": "\u2744\uFE0F\U0001F3D4\uFE0F",  # ❄️🏔️ snowy mountains — impassable
+    "snow": "❄️",           # snowy mountains — impassable
     "path": "\U0001F7EB",           # 🟫
     "void": "\u2B1B",               # ⬛
     "river_landing": "\u26F5",      # ⛵ canoe launch point

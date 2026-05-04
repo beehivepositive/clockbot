@@ -12,7 +12,7 @@ from dwarf_explorer.database.repositories import (
     is_world_initialized, mark_world_initialized,
     reset_world_seed,
 )
-from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near
+from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
 from dwarf_explorer.ui.dynamic_buttons import GameButton
@@ -58,20 +58,62 @@ class DwarfExplorer(commands.Cog):
             except Exception:
                 pass  # Non-fatal: map will be generated on demand if this fails
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
-            # Relocate player if default spawn is on water (river may flow through it)
-            sx, sy = await find_walkable_spawn(seed, db)
-            if (sx, sy) != (player.world_x, player.world_y):
-                await update_player_stats(db, user_id, world_x=sx, world_y=sy)
-                player.world_x, player.world_y = sx, sy
+            # Fresh player: spawn inside the first available village
+            if player.xp == 0 and player.level == 1 and not player.in_village:
+                vs = await find_village_spawn(db)
+                if vs:
+                    vwx, vwy, vid, vex, vey = vs
+                    await update_player_stats(
+                        db, user_id, world_x=vwx, world_y=vwy,
+                        in_village=1, village_id=vid,
+                        village_x=vex, village_y=vey,
+                        village_wx=vwx, village_wy=vwy,
+                    )
+                    player.world_x, player.world_y = vwx, vwy
+                    player.in_village = True
+                    player.village_id = vid
+                    player.village_x = vex
+                    player.village_y = vey
+                    player.village_wx = vwx
+                    player.village_wy = vwy
+                else:
+                    # No village yet — fall back to nearest walkable tile
+                    sx, sy = await find_walkable_spawn(seed, db)
+                    if (sx, sy) != (player.world_x, player.world_y):
+                        await update_player_stats(db, user_id, world_x=sx, world_y=sy)
+                        player.world_x, player.world_y = sx, sy
+            else:
+                # Returning player: relocate if standing on impassable terrain
+                sx, sy = await find_walkable_spawn(seed, db)
+                if (sx, sy) != (player.world_x, player.world_y):
+                    await update_player_stats(db, user_id, world_x=sx, world_y=sy)
+                    player.world_x, player.world_y = sx, sy
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
             await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
-            # Relocate player if their current tile is impassable (river grew over it,
-            # death-reset landed on bad terrain, etc.)
-            if not player.in_cave and not player.in_village and not player.in_house:
+            # Fresh player joining an existing world: spawn inside a village
+            if player.xp == 0 and player.level == 1 and not player.in_village:
+                vs = await find_village_spawn(db)
+                if vs:
+                    vwx, vwy, vid, vex, vey = vs
+                    await update_player_stats(
+                        db, user_id, world_x=vwx, world_y=vwy,
+                        in_village=1, village_id=vid,
+                        village_x=vex, village_y=vey,
+                        village_wx=vwx, village_wy=vwy,
+                    )
+                    player.world_x, player.world_y = vwx, vwy
+                    player.in_village = True
+                    player.village_id = vid
+                    player.village_x = vex
+                    player.village_y = vey
+                    player.village_wx = vwx
+                    player.village_wy = vwy
+            elif not player.in_cave and not player.in_village and not player.in_house:
+                # Returning player: relocate if on impassable terrain
                 sx, sy = await find_walkable_near(seed, db, player.world_x, player.world_y)
                 if (sx, sy) != (player.world_x, player.world_y):
                     await update_player_stats(db, user_id, world_x=sx, world_y=sy)
