@@ -235,13 +235,13 @@ class DwarfExplorer(commands.Cog):
                 pass
 
         # ── 3. Wipe all regular player data (preserve admin account) ─────────
-        await db.execute("DELETE FROM players   WHERE user_id != ?", (ADMIN_PLAYER_ID,))
-        await db.execute("DELETE FROM inventory  WHERE user_id != ?", (ADMIN_PLAYER_ID,))
-        await db.execute("DELETE FROM equipment  WHERE user_id != ?", (ADMIN_PLAYER_ID,))
-        try:
-            await db.execute("DELETE FROM bank_items WHERE user_id != ?", (ADMIN_PLAYER_ID,))
-        except Exception:
-            pass
+        # Child tables must be deleted BEFORE players to avoid FK constraint errors.
+        for tbl in ("inventory", "equipment", "bank_items", "player_quests", "treasure_maps"):
+            try:
+                await db.execute(f"DELETE FROM {tbl} WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+            except Exception:
+                pass
+        await db.execute("DELETE FROM players WHERE user_id != ?", (ADMIN_PLAYER_ID,))
 
         # ── 4. Generate new world ─────────────────────────────────────────────
         seed = await reset_world_seed(db)
