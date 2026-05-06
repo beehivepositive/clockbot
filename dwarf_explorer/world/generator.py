@@ -254,21 +254,24 @@ async def find_walkable_near(seed: int, db, px: int, py: int) -> tuple[int, int]
     return await find_walkable_spawn(seed, db)
 
 
-async def find_village_spawn(db) -> tuple[int, int, int, int, int] | None:
+async def find_village_spawn(seed: int, db) -> tuple[int, int, int, int, int] | None:
     """Return (world_x, world_y, village_id, entry_x, entry_y) for a starter village.
 
-    Queries the first available village entrance so new players spawn inside a
-    settlement rather than the empty wilderness.  Returns None if no villages
-    exist yet (shouldn't happen after init_world, but safe to guard).
+    Village interiors are created on-demand (only when a player first enters).
+    So we find a 'village' overworld tile from tile_overrides and eagerly
+    create the interior now so new players can spawn directly inside.
+    Returns None if no village tiles exist yet.
     """
+    from dwarf_explorer.world.villages import get_or_create_village
     row = await db.fetch_one(
-        "SELECT world_x, world_y, village_id, entry_x, entry_y "
-        "FROM village_entrances ORDER BY village_id LIMIT 1"
+        "SELECT world_x, world_y FROM tile_overrides "
+        "WHERE tile_type = 'village' ORDER BY world_x LIMIT 1"
     )
-    if row:
-        return (row["world_x"], row["world_y"], row["village_id"],
-                row["entry_x"], row["entry_y"])
-    return None
+    if not row:
+        return None
+    wx, wy = row["world_x"], row["world_y"]
+    village_id, entry_x, entry_y = await get_or_create_village(seed, wx, wy, db)
+    return (wx, wy, village_id, entry_x, entry_y)
 
 
 async def init_world(seed: int, db) -> None:

@@ -13,9 +13,47 @@ from dwarf_explorer.database.repositories import (
     reset_world_seed,
 )
 from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn
+from dwarf_explorer.world.villages import load_village_viewport
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
 from dwarf_explorer.ui.dynamic_buttons import GameButton
+
+
+async def _place_in_village(db, seed: int, user_id: int, player) -> None:
+    """Place a fresh player inside the first available village.
+
+    Eagerly creates the village interior (get_or_create_village) so the
+    interior tiles exist before the player's state is saved.  Falls back
+    to find_walkable_spawn if no village tile exists in tile_overrides.
+    """
+    vs = await find_village_spawn(seed, db)
+    if vs:
+        vwx, vwy, vid, vex, vey = vs
+        await update_player_stats(
+            db, user_id, world_x=vwx, world_y=vwy,
+            in_village=1, village_id=vid,
+            village_x=vex, village_y=vey,
+            village_wx=vwx, village_wy=vwy,
+        )
+        player.world_x, player.world_y = vwx, vwy
+        player.in_village = True
+        player.village_id = vid
+        player.village_x = vex
+        player.village_y = vey
+        player.village_wx = vwx
+        player.village_wy = vwy
+    else:
+        sx, sy = await find_walkable_spawn(seed, db)
+        if (sx, sy) != (player.world_x, player.world_y):
+            await update_player_stats(db, user_id, world_x=sx, world_y=sy)
+            player.world_x, player.world_y = sx, sy
+
+
+async def _player_grid(player, seed: int, db):
+    """Load the correct viewport for the player's current location."""
+    if player.in_village:
+        return await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    return await load_viewport(player.world_x, player.world_y, seed, db)
 
 
 class DwarfExplorer(commands.Cog):
@@ -58,67 +96,27 @@ class DwarfExplorer(commands.Cog):
             except Exception:
                 pass  # Non-fatal: map will be generated on demand if this fails
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
-            # Fresh player: spawn inside the first available village
             if player.xp == 0 and player.level == 1 and not player.in_village:
-                vs = await find_village_spawn(db)
-                if vs:
-                    vwx, vwy, vid, vex, vey = vs
-                    await update_player_stats(
-                        db, user_id, world_x=vwx, world_y=vwy,
-                        in_village=1, village_id=vid,
-                        village_x=vex, village_y=vey,
-                        village_wx=vwx, village_wy=vwy,
-                    )
-                    player.world_x, player.world_y = vwx, vwy
-                    player.in_village = True
-                    player.village_id = vid
-                    player.village_x = vex
-                    player.village_y = vey
-                    player.village_wx = vwx
-                    player.village_wy = vwy
-                else:
-                    # No village yet — fall back to nearest walkable tile
-                    sx, sy = await find_walkable_spawn(seed, db)
-                    if (sx, sy) != (player.world_x, player.world_y):
-                        await update_player_stats(db, user_id, world_x=sx, world_y=sy)
-                        player.world_x, player.world_y = sx, sy
+                await _place_in_village(db, seed, user_id, player)
             else:
-                # Returning player: relocate if standing on impassable terrain
                 sx, sy = await find_walkable_spawn(seed, db)
                 if (sx, sy) != (player.world_x, player.world_y):
                     await update_player_stats(db, user_id, world_x=sx, world_y=sy)
                     player.world_x, player.world_y = sx, sy
-            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            grid = await _player_grid(player, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
             await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
-            # Fresh player joining an existing world: spawn inside a village
             if player.xp == 0 and player.level == 1 and not player.in_village:
-                vs = await find_village_spawn(db)
-                if vs:
-                    vwx, vwy, vid, vex, vey = vs
-                    await update_player_stats(
-                        db, user_id, world_x=vwx, world_y=vwy,
-                        in_village=1, village_id=vid,
-                        village_x=vex, village_y=vey,
-                        village_wx=vwx, village_wy=vwy,
-                    )
-                    player.world_x, player.world_y = vwx, vwy
-                    player.in_village = True
-                    player.village_id = vid
-                    player.village_x = vex
-                    player.village_y = vey
-                    player.village_wx = vwx
-                    player.village_wy = vwy
+                await _place_in_village(db, seed, user_id, player)
             elif not player.in_cave and not player.in_village and not player.in_house:
-                # Returning player: relocate if on impassable terrain
                 sx, sy = await find_walkable_near(seed, db, player.world_x, player.world_y)
                 if (sx, sy) != (player.world_x, player.world_y):
                     await update_player_stats(db, user_id, world_x=sx, world_y=sy)
                     player.world_x, player.world_y = sx, sy
-            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            grid = await _player_grid(player, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
             await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
@@ -284,7 +282,7 @@ class DwarfExplorer(commands.Cog):
                 await update_player_stats(db, ADMIN_PLAYER_ID, world_x=sx, world_y=sy)
                 player.world_x, player.world_y = sx, sy
 
-        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        grid = await _player_grid(player, seed, db)
         content = render_grid(grid, player)
         view = GameView(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
