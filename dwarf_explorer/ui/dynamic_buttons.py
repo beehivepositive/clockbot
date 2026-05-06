@@ -4,6 +4,7 @@ import re
 
 import discord
 
+from dwarf_explorer.config import ADMIN_PLAYER_ID, ADMIN_DISCORD_ID
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import get_or_create_player
 from dwarf_explorer.ui.game_view import (
@@ -112,6 +113,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
         return cls(int(match.group("gid")), int(match.group("uid")), match.group("action"))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Admin account buttons are owned by the ADMIN_DISCORD_ID user
+        if self.user_id == ADMIN_PLAYER_ID:
+            if interaction.user.id != ADMIN_DISCORD_ID:
+                await interaction.response.send_message(
+                    "This is the admin account. Use `/explore` for your own game.", ephemeral=True
+                )
+                return False
+            return True
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
                 "This isn't your game! Use `/explore` to start your own.", ephemeral=True

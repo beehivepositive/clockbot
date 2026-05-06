@@ -81,6 +81,7 @@ class Player:
     combat_moves_left: int = COMBAT_MOVES_DEFAULT
     # Equipment & sprint
     sprinting: bool = False
+    village_spawned: bool = False
     hand_1: str | None = None
     hand_2: str | None = None
     head: str | None = None

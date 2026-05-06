@@ -9,6 +9,12 @@ VIEWPORT_CENTER = 4  # 0-indexed center of 9x9 grid
 SPAWN_X = WORLD_SIZE // 2  # 112
 SPAWN_Y = WORLD_SIZE // 2
 
+# Admin account — persists across /newworld resets.
+# ADMIN_PLAYER_ID is the DB user_id for the persistent admin character (never a
+# real Discord snowflake).  ADMIN_DISCORD_ID is the Discord user who owns it.
+ADMIN_PLAYER_ID  = 1
+ADMIN_DISCORD_ID = 926541705279315988
+
 # Fixed world seed — all servers share the same world layout
 WORLD_SEED = 902599462
 

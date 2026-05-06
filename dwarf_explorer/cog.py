@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world, update_player_message,
@@ -185,6 +185,44 @@ class DwarfExplorer(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         db = await get_database(interaction.guild.id)
 
+        # ── 1. Preserve admin account ─────────────────────────────────────────
+        # If no admin account exists yet, create one from the designated user's data.
+        admin_row = await db.fetch_one(
+            "SELECT user_id FROM players WHERE user_id = ?", (ADMIN_PLAYER_ID,)
+        )
+        if not admin_row:
+            src = await db.fetch_one(
+                "SELECT * FROM players WHERE user_id = ?", (ADMIN_DISCORD_ID,)
+            )
+            if src:
+                cols = [k for k in src.keys() if k != "user_id"]
+                placeholders = ", ".join("?" for _ in cols)
+                vals = tuple(src[c] for c in cols)
+                await db.execute(
+                    f"INSERT OR REPLACE INTO players (user_id, {', '.join(cols)}) "
+                    f"VALUES (?, {placeholders})",
+                    (ADMIN_PLAYER_ID, *vals),
+                )
+                # Copy inventory
+                await db.execute(
+                    "INSERT INTO inventory (user_id, item_id, quantity, slot_index) "
+                    "SELECT ?, item_id, quantity, slot_index FROM inventory WHERE user_id = ?",
+                    (ADMIN_PLAYER_ID, ADMIN_DISCORD_ID),
+                )
+                # Copy equipment
+                await db.execute(
+                    "INSERT INTO equipment (user_id, slot, item_id) "
+                    "SELECT ?, slot, item_id FROM equipment WHERE user_id = ?",
+                    (ADMIN_PLAYER_ID, ADMIN_DISCORD_ID),
+                )
+                # Copy bank
+                await db.execute(
+                    "INSERT OR IGNORE INTO bank_items (user_id, item_id, quantity) "
+                    "SELECT ?, item_id, quantity FROM bank_items WHERE user_id = ?",
+                    (ADMIN_PLAYER_ID, ADMIN_DISCORD_ID),
+                )
+
+        # ── 2. Wipe all world data ────────────────────────────────────────────
         for table in [
             "tile_overrides", "cave_tiles", "cave_entrances", "cave_deep_entrances",
             "caves", "village_tiles", "village_entrances", "villages",
@@ -196,17 +234,16 @@ class DwarfExplorer(commands.Cog):
             except Exception:
                 pass
 
-        await db.execute(
-            "UPDATE players SET world_x=112, world_y=112,"
-            " in_cave=0, cave_id=NULL, cave_x=0, cave_y=0,"
-            " in_village=0, village_id=NULL, village_x=0, village_y=0,"
-            " in_house=0, house_id=NULL, house_x=0, house_y=0,"
-            " in_combat=0, in_canoe=0,"
-            " in_ocean=0, in_high_seas=0, in_ship=0, in_island=0,"
-            " ocean_x=0, ocean_y=0, ship_x=0, ship_y=0,"
-            " island_ox=0, island_oy=0"
-        )
-        # Generate a fresh random seed for the new world
+        # ── 3. Wipe all regular player data (preserve admin account) ─────────
+        await db.execute("DELETE FROM players   WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+        await db.execute("DELETE FROM inventory  WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+        await db.execute("DELETE FROM equipment  WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+        try:
+            await db.execute("DELETE FROM bank_items WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+        except Exception:
+            pass
+
+        # ── 4. Generate new world ─────────────────────────────────────────────
         seed = await reset_world_seed(db)
         await init_world(seed, db)
         await mark_world_initialized(db, interaction.guild.id)
@@ -216,8 +253,44 @@ class DwarfExplorer(commands.Cog):
         invalidate_map_cache(interaction.guild.id)
 
         await interaction.followup.send(
-            f"New world generated (seed `{seed}`)! Use `/explore` to start playing.", ephemeral=True
+            f"New world generated (seed `{seed}`)! All player data has been reset. "
+            f"Use `/explore` to start playing.", ephemeral=True
         )
+
+
+    @app_commands.command(name="adminexplore", description="Access your persistent admin character.")
+    async def adminexplore(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "You don't have access to the admin account.", ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+        seed = await get_or_create_world(db, guild_id)
+
+        player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        # Relocate if standing on impassable terrain in the new world
+        if not player.in_cave and not player.in_village and not player.in_house:
+            sx, sy = await find_walkable_near(seed, db, player.world_x, player.world_y)
+            if (sx, sy) != (player.world_x, player.world_y):
+                await update_player_stats(db, ADMIN_PLAYER_ID, world_x=sx, world_y=sy)
+                player.world_x, player.world_y = sx, sy
+
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player)
+        view = GameView(guild_id, ADMIN_PLAYER_ID)
+        await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
+
+        msg = await interaction.original_response()
+        await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
 async def setup(bot: commands.Bot) -> None:
