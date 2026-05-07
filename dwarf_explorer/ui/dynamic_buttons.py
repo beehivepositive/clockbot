@@ -67,6 +67,8 @@ from dwarf_explorer.ui.game_view import (
     handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
     handle_qswap, handle_qswap_pass,
     handle_npc_quest,
+    handle_tavern_buy, handle_tavern_close,
+    handle_heal_accept, handle_heal_decline,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -478,6 +480,17 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_house_deco_sel(interaction, gid, uid, int(act[10:]))
             elif act.startswith("hdsp_") and act[5:].isdigit():
                 await interaction.response.defer()  # decoration page padding spacer
+            # Tavern buy menu
+            elif act.startswith("tavern_buy_"):
+                item_id = act[len("tavern_buy_"):]
+                await handle_tavern_buy(interaction, gid, uid, item_id)
+            elif act == "tavern_close":
+                await handle_tavern_close(interaction, gid, uid)
+            # Hospital heal confirm
+            elif act == "heal_accept":
+                await handle_heal_accept(interaction, gid, uid)
+            elif act == "heal_decline":
+                await handle_heal_decline(interaction, gid, uid)
 
         except discord.NotFound:
             await interaction.followup.send(

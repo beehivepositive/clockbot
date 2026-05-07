@@ -1315,6 +1315,50 @@ class HouseDecorationView(discord.ui.View):
         ))
 
 
+# ── Tavern buy view ───────────────────────────────────────────────────────────
+
+class TavernBuyView(discord.ui.View):
+    """One button per menu item + a close button."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        from dwarf_explorer.config import TAVERN_MENU
+        gid, uid = guild_id, user_id
+        for item in TAVERN_MENU:
+            label = f"{item['name']} {item['price']}🪙"
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary, label=label,
+                custom_id=_custom_id(gid, uid, f"tavern_buy_{item['id']}"),
+                row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Leave",
+            custom_id=_custom_id(gid, uid, "tavern_close"), row=1,
+        ))
+
+
+# ── Heal confirm view ─────────────────────────────────────────────────────────
+
+class HealConfirmView(discord.ui.View):
+    """Accept / decline the healer's offer."""
+
+    def __init__(self, guild_id: int, user_id: int, cost: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label=f"✅ Pay {cost}🪙",
+            custom_id=_custom_id(gid, uid, "heal_accept"),
+            row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="❌ No thanks",
+            custom_id=_custom_id(gid, uid, "heal_decline"),
+            row=0,
+        ))
+
+
 # ── Gold cap helper ───────────────────────────────────────────────────────────
 
 def _apply_gold_cap(player: Player, amount: int) -> int:
@@ -1455,7 +1499,7 @@ async def _resolve_cave_combat(
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 # NPC tiles that can offer quests — player must be adjacent to trigger the NPC button
-_QUEST_NPC_TILES = {"b_priest"}
+_QUEST_NPC_TILES = {"b_priest", "b_tavern_npc"}
 
 
 def _compute_context_labels(
@@ -1551,7 +1595,8 @@ def _compute_context_labels(
         # Cave exit / building door / village buildings (enter)
         elif t in ("cave_entrance", "b_door"):
             center_label, center_enabled = "🚪", True
-        elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
+        elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop",
+                    "vil_blacksmith", "vil_tavern", "vil_hospital"):
             center_label, center_enabled = "🚪", True
         # Building NPCs (on-tile)
         elif t == "b_bank_npc":
@@ -1568,6 +1613,16 @@ def _compute_context_labels(
             center_label, center_enabled = "⛩️", True
         elif t == "b_safe":
             center_label, center_enabled = "🔒", True
+        elif t == "b_barkeep":
+            center_label, center_enabled = "🍺 Order", True
+        elif t == "b_tavern_npc":
+            center_label, center_enabled = "📋 Quest", True
+        elif t == "b_healer":
+            center_label, center_enabled = "💊 Heal", True
+        elif t == "b_bar_counter":
+            center_label, center_enabled = "🍺", True
+        elif t == "b_medicine_shelf":
+            center_label, center_enabled = "💬", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
         elif t == "vil_dock":
@@ -4154,6 +4209,78 @@ async def handle_interact(
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "An anvil. Stand adjacent to it and use the ⚒️ Smith button.")
 
+            elif htile.terrain == "b_barkeep" and player.house_type == "tavern":
+                # ── Tavern barkeep — open tavern buy menu ──────────────────────
+                from dwarf_explorer.config import TAVERN_MENU
+                grid = await _load_house_grid()
+                menu_lines = "\n".join(
+                    f"🍺 **{item['name']}** — {item['price']}🪙"
+                    + (f" (+{item['hp']} HP)" if item.get("hp") else "")
+                    for item in TAVERN_MENU
+                )
+                _ui_state[user_id] = {
+                    **_ui_state.get(user_id, {}),
+                    "type": "tavern_menu",
+                    "tavern_sel": 0,
+                }
+                content = render_grid(grid, player,
+                    f"\"What'll it be, stranger?\"\n{menu_lines}\n\nUse the buttons below to order.")
+                view = TavernBuyView(guild_id, user_id)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+
+            elif htile.terrain == "b_tavern_npc" and player.house_type == "tavern":
+                # ── Tavern quest NPC ───────────────────────────────────────────
+                from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
+                grid = await _load_house_grid()
+                bounty_pool = await get_or_refresh_bounty_pool(db, seed)
+                if bounty_pool:
+                    await handle_open_quest_pool(
+                        interaction, guild_id, user_id,
+                        pool=bounty_pool,
+                        source_label="Tavern Notice Board",
+                        source_type="village_npc",
+                    )
+                    return
+                content = render_grid(grid, player,
+                    "\"No work posted today. Check back another time.\"")
+
+            elif htile.terrain == "b_healer" and player.house_type == "hospital":
+                # ── Hospital healer — pay to heal ──────────────────────────────
+                from dwarf_explorer.config import HEAL_COST_PER_HP, HEAL_MINIMUM_COST
+                grid = await _load_house_grid()
+                max_hp = getattr(player, "max_hp", 100)
+                missing = max_hp - player.hp
+                if missing <= 0:
+                    content = render_grid(grid, player,
+                        "\"You look in fine health! Nothing for me to do here.\"")
+                else:
+                    cost = max(HEAL_MINIMUM_COST, missing * HEAL_COST_PER_HP)
+                    _ui_state[user_id] = {
+                        **_ui_state.get(user_id, {}),
+                        "type": "heal_confirm",
+                        "heal_cost": cost,
+                    }
+                    content = render_grid(grid, player,
+                        f"\"I can restore you to full health for **{cost}🪙**.\"\n"
+                        f"You are missing **{missing} HP**. You have **{player.gold}🪙**.")
+                    view = HealConfirmView(guild_id, user_id, cost)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+
+            elif htile.terrain == "b_medicine_shelf":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player,
+                    "Rows of dried herbs and tinctures line the shelves.")
+
+            elif htile.terrain == "b_barrel":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A barrel of ale. The smell is inviting.")
+
+            elif htile.terrain == "b_bar_counter":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "The bar counter. Step up and speak with the barkeep.")
+
             else:
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "Nothing to interact with here.")
@@ -4164,7 +4291,8 @@ async def handle_interact(
     elif player.in_village:
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
 
-        if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith"):
+        if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
+                              "vil_blacksmith", "vil_tavern", "vil_hospital"):
             result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
             if result:
                 house_id, btype, hx, hy = result
@@ -4179,7 +4307,11 @@ async def handle_interact(
                     db, user_id, True, house_id, hx, hy,
                     player.village_x, player.village_y, btype,
                 )
-                labels = {"house": "house", "church": "church", "bank": "bank", "shop": "shop", "blacksmith": "blacksmith"}
+                labels = {
+                    "house": "house", "church": "church", "bank": "bank",
+                    "shop": "shop", "blacksmith": "blacksmith",
+                    "tavern": "tavern", "hospital": "hospital",
+                }
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
             else:
@@ -8300,3 +8432,101 @@ async def handle_qswap_pass(
     content = _render_merchant(catalog, state.get("selected", 0), player)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=MerchantView(guild_id, user_id))
+
+
+# ── Tavern handlers ───────────────────────────────────────────────────────────
+
+async def handle_tavern_buy(
+    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+) -> None:
+    """Buy a single food/drink item from the tavern barkeep."""
+    from dwarf_explorer.config import TAVERN_MENU
+    from dwarf_explorer.database.repositories import add_to_inventory
+
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    item = next((i for i in TAVERN_MENU if i["id"] == item_id), None)
+    if item is None:
+        await interaction.response.defer()
+        return
+
+    cost = item["price"]
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+    if player.gold < cost:
+        content = render_grid(grid, player,
+            f"\"You don't have enough coin for that.\" (need {cost}🪙, have {player.gold}🪙)")
+    else:
+        player.gold -= cost
+        await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+        await add_to_inventory(db, user_id, item_id, 1)
+        content = render_grid(grid, player,
+            f"\"Enjoy your {item['name']}!\" 🍺 Bought 1× {item['name']} for {cost}🪙.")
+
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=TavernBuyView(guild_id, user_id),
+    )
+
+
+async def handle_tavern_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close the tavern menu and return to the building view."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "You step away from the bar.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+# ── Hospital handlers ─────────────────────────────────────────────────────────
+
+async def handle_heal_accept(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player accepts the healer's offer — deduct gold, restore HP."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    cost = state.get("heal_cost", 0)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+    max_hp = getattr(player, "max_hp", 100)
+    if player.gold < cost:
+        content = render_grid(grid, player,
+            f"\"I'm afraid you don't have the coin.\" (need {cost}🪙, have {player.gold}🪙)")
+    elif player.hp >= max_hp:
+        content = render_grid(grid, player, "\"You are already in perfect health!\"")
+    else:
+        player.gold -= cost
+        player.hp = max_hp
+        await db.execute("UPDATE players SET gold=?, hp=? WHERE user_id=?",
+                         (player.gold, player.hp, user_id))
+        content = render_grid(grid, player,
+            f"✨ The healer tends your wounds. You are fully restored! (-{cost}🪙)")
+
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+async def handle_heal_decline(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player declines the healer's offer."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "\"Come back if you change your mind.\"")
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )

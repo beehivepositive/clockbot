@@ -1,4 +1,4 @@
-﻿CHUNK_SIZE = 7
+CHUNK_SIZE = 7
 WORLD_CHUNKS = 64
 WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 448
 
@@ -151,6 +151,12 @@ ITEM_EMOJI = {
     "iron_shield":          "\U0001F6E1️",     # 🛡️
     "wyvern_shield":        "\U0001F6E1️",     # 🛡️
     "merchant_parcel":      "\U0001F4E6",           # 📦 delivery parcel
+    # Tavern food & drink
+    "bread":                "\U0001F35E",           # 🍞
+    "ale":                  "\U0001F37A",           # 🍺
+    "meat_stew":            "\U0001F372",           # 🍲
+    # Hospital quest ingredient
+    "healing_herb":         "\U0001F33F",           # 🌿
 }
 
 WALKABLE_TILES = {
@@ -236,13 +242,26 @@ ARENA_EMOJI = {
     "cobweb": "\U0001F578\uFE0F",   # 🕸️
 }
 
-FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35}
+FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35, "bread": 20, "meat_stew": 40}
 
 # Consumable items: shown in combat food menu
 CONSUMABLE_ITEMS = {
     "fish":        {"hp": 15,  "desc": "+15 HP"},
     "cooked_fish": {"hp": 35,  "desc": "+35 HP"},
+    "bread":      {"hp": 20,  "desc": "+20 HP"},
+    "meat_stew":  {"hp": 40,  "desc": "+40 HP"},
 }
+
+# Tavern food/drink menu (price in gold)
+TAVERN_MENU = [
+    {"id": "bread",     "name": "Bread",     "price": 4,  "hp": 20},
+    {"id": "ale",       "name": "Ale",       "price": 6,  "hp": 0},
+    {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 40},
+]
+
+# Hospital heal cost: gold per missing HP (minimum 5 gold)
+HEAL_COST_PER_HP = 2
+HEAL_MINIMUM_COST = 5
 
 # Shrine enchantment sacrifices: type → {item, qty, result, label}
 SHRINE_SACRIFICES = {
@@ -411,6 +430,8 @@ VILLAGE_EMOJI = {
     "vil_bank":         "\U0001F3E6",        # 🏦
     "vil_shop":         "\U0001F3EA",        # 🏪
     "vil_blacksmith":   "\u2692\uFE0F",      # ⚒️
+    "vil_tavern":       "🍻",        # 🍻  tavern
+    "vil_hospital":     "🏥",        # 🏥  hospital / healer
     "vil_elder":        "\U0001F9D3",        # 🧓  village elder NPC (quest giver)
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
@@ -447,6 +468,14 @@ BUILDING_EMOJI = {
     "b_anvil":            "\U0001F528",       # 🔨
     "b_blacksmith_npc":   "\U0001F9D1",       # 🧑
     "b_forge":            "\U0001F525",       # 🔥
+    # Tavern unique
+    "b_bar_counter":     "🟫",       # 🟫  wood bar counter
+    "b_barrel":          "🛢️", # 🛢️  barrel
+    "b_barkeep":         "🧑",       # 🧑  barkeep NPC
+    "b_tavern_npc":      "🧑",       # 🧑  tavern quest NPC
+    # Hospital unique
+    "b_healer":          "🧑",       # 🧑  healer NPC
+    "b_medicine_shelf":  "🌿",       # 🌿  herb/medicine shelf
     # Player-house chests
     "ph_chest_small":     "\U0001F4E6",       # 📦
     "ph_chest_medium":    "\U0001F5C4\uFE0F", # 🗄️
@@ -456,6 +485,7 @@ BUILDING_EMOJI = {
 VILLAGE_WALKABLE = {
     "vil_grass", "vil_path", "vil_garden",
     "vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
+    "vil_tavern", "vil_hospital",
     "vil_dock",  # harbor-village boarding point — walkable, triggers ocean
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
@@ -464,6 +494,7 @@ BUILDING_WALKABLE = {
     "b_floor", "b_floor_wood", "b_door",
     "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
     "b_pew", "b_table", "b_stove", "b_bed",
+    "b_barkeep", "b_tavern_npc", "b_healer", "b_barrel", "b_bar_counter", "b_medicine_shelf",
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
@@ -790,6 +821,10 @@ ITEM_SELL_PRICES = {
     "wyvern_leggings":   100,
     "iron_shield":       55,
     "wyvern_shield":     130,
+    "bread":             2,
+    "ale":               3,
+    "meat_stew":         5,
+    "healing_herb":      8,
 }
 
 # --- World Map Image ---

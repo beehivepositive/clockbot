@@ -13,6 +13,88 @@ from dwarf_explorer.world.terrain import get_coast_boundary
 _VILLAGE_SEED_OFFSET  = 7000
 _BUILDING_SEED_OFFSET = 8000
 
+# Building tile types that paths must not overwrite
+_PROTECTED_TILES = {
+    "vil_well", "vil_house", "vil_church", "vil_bank", "vil_shop",
+    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_tree",
+}
+
+
+# ── Path helpers ──────────────────────────────────────────────────────────────
+
+def _draw_path(
+    grid: list[list[str]],
+    sx: int, sy: int, ex: int, ey: int,
+    W: int, H: int, rng: random.Random,
+    meander_chance: float = 0.25,
+) -> None:
+    """Draw a meandering path from (sx,sy) toward (ex,ey).
+
+    The path walks primarily toward the target but occasionally steps
+    perpendicular, creating an organic winding road feel.
+    """
+    px, py = sx, sy
+    for _ in range(W + H + 10):
+        if px == ex and py == ey:
+            break
+        dx, dy = ex - px, ey - py
+        if dx == 0 and dy == 0:
+            break
+
+        # Primary direction
+        if abs(dx) >= abs(dy):
+            step = (1 if dx > 0 else -1, 0)
+        else:
+            step = (0, 1 if dy > 0 else -1)
+
+        # Random meander — take a perpendicular step
+        if rng.random() < meander_chance and (abs(dx) + abs(dy)) > 3:
+            if abs(dx) >= abs(dy):
+                step = (0, rng.choice([-1, 1]))
+            else:
+                step = (rng.choice([-1, 1]), 0)
+
+        nx, ny = px + step[0], py + step[1]
+        if 1 <= nx < W - 1 and 1 <= ny < H - 1:
+            if grid[ny][nx] not in _PROTECTED_TILES:
+                grid[ny][nx] = "vil_path"
+            px, py = nx, ny
+        else:
+            # Fall back to primary direction
+            pdx = 1 if dx > 0 else -1 if dx < 0 else 0
+            pdy = 1 if dy > 0 else -1 if dy < 0 else 0
+            nx2, ny2 = px + pdx, py + pdy
+            if 1 <= nx2 < W - 1 and 1 <= ny2 < H - 1:
+                if grid[ny2][nx2] not in _PROTECTED_TILES:
+                    grid[ny2][nx2] = "vil_path"
+                px, py = nx2, ny2
+            else:
+                break
+
+
+def _connect_to_road(
+    grid: list[list[str]], bx: int, by: int,
+    cx: int, cy: int, W: int, H: int,
+    occupied: set[tuple[int, int]],
+) -> None:
+    """Walk a short spur from a building tile toward the nearest path."""
+    px, py = bx, by
+    for _ in range(max(W, H)):
+        if grid[py][px] == "vil_path":
+            break
+        if abs(px - cx) >= abs(py - cy):
+            step = 1 if cx > px else -1
+            npx, npy = px + step, py
+        else:
+            step = 1 if cy > py else -1
+            npx, npy = px, py + step
+        if not (1 <= npx < W - 1 and 1 <= npy < H - 1):
+            break
+        t = grid[npy][npx]
+        if t not in _PROTECTED_TILES:
+            grid[npy][npx] = "vil_path"
+        px, py = npx, npy
+
 
 # ── Village interior generation ───────────────────────────────────────────────
 
@@ -20,59 +102,95 @@ def _generate_village_interior(
     village_id: int, seed: int, world_x: int, world_y: int,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
            list[tuple[int, int, str]]]:
-    """Generate village interior with single-tile buildings.
+    """Generate village interior with meandering triangular road network.
+
+    Roads radiate from the central well in 4 asymmetric directions and are
+    connected by cross-paths, creating organic triangular cells.  Buildings
+    are placed adjacent to paths.
 
     Returns (width, height, tiles, entry_pos, buildings).
-    buildings: list of (vil_x, vil_y, building_type)
     """
     rng = random.Random(seed + _VILLAGE_SEED_OFFSET + village_id + world_x * 997 + world_y * 1009)
 
-    W = rng.randint(VILLAGE_MIN_SIZE, VILLAGE_MAX_SIZE)
-    H = rng.randint(VILLAGE_MIN_SIZE, VILLAGE_MAX_SIZE)
+    W = H = 16  # fixed village size
 
     grid: list[list[str]] = [["vil_grass"] * W for _ in range(H)]
 
-    cx, cy = W // 2, H // 2
+    cx, cy = W // 2, H // 2  # centre (8, 8)
 
-    # ── Main roads ────────────────────────────────────────────────────────────
-    for x in range(1, W - 1):
-        grid[cy][x] = "vil_path"
-    for y in range(1, H - 1):
-        grid[y][cx] = "vil_path"
-
-    # ── Well ─────────────────────────────────────────────────────────────────
+    # ── Well at centre ────────────────────────────────────────────────────────
     grid[cy][cx] = "vil_well"
 
+    # ── Spoke endpoints — slightly off-cardinal for an organic feel ───────────
+    # Four spokes with random offsets so the road network isn't a plain cross
+    offset = lambda lo, hi: rng.randint(lo, hi)  # noqa: E731
+    spoke_targets = [
+        (cx + offset(-3, 3), 2),           # north spoke
+        (W - 3,  cy + offset(-3, 3)),      # east spoke
+        (cx + offset(-3, 3), H - 3),       # south spoke
+        (2,      cy + offset(-3, 3)),      # west spoke
+    ]
+    # Optionally add a 5th diagonal spoke for more triangular cells
+    if rng.random() < 0.6:
+        spoke_targets.append((W - 4, 2 + offset(0, 2)))          # NE corner
+    if rng.random() < 0.4:
+        spoke_targets.append((2 + offset(0, 2), H - 4))          # SW corner
+
+    # Draw spokes from centre to each endpoint
+    for tx, ty in spoke_targets:
+        _draw_path(grid, cx, cy, tx, ty, W, H, rng, meander_chance=0.20)
+
+    # ── Cross-connectors between adjacent spoke tips (triangular cells) ───────
+    n, e, s, w = spoke_targets[:4]
+    pairs_to_connect = []
+    if rng.random() < 0.75:
+        pairs_to_connect.append((n, e))
+    if rng.random() < 0.75:
+        pairs_to_connect.append((s, w))
+    if rng.random() < 0.50:
+        pairs_to_connect.append((n, w))
+    if rng.random() < 0.50:
+        pairs_to_connect.append((e, s))
+
+    for (ax, ay), (bx2, by2) in pairs_to_connect:
+        _draw_path(grid, ax, ay, bx2, by2, W, H, rng, meander_chance=0.30)
+
+    # ── Occupied tracking ─────────────────────────────────────────────────────
     occupied: set[tuple[int, int]] = set()
-    # roads, border, well
-    for x in range(W): occupied.add((x, cy)); occupied.add((x, 0)); occupied.add((x, H - 1))
-    for y in range(H): occupied.add((cx, y)); occupied.add((0, y)); occupied.add((W - 1, y))
-    occupied.add((cx, cy))
+    for x in range(W):
+        occupied.add((x, 0)); occupied.add((x, H - 1))
+    for y in range(H):
+        occupied.add((0, y)); occupied.add((W - 1, y))
+    occupied.add((cx, cy))  # well
+    for y in range(H):
+        for x in range(W):
+            if grid[y][x] in ("vil_path", "vil_well"):
+                occupied.add((x, y))
 
     buildings: list[tuple[int, int, str]] = []
 
-    # ── Required special buildings (church, bank, shop, blacksmith) ────────
-    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith"]
+    # ── Required special buildings ────────────────────────────────────────────
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital"]
     rng.shuffle(required)
     for btype in required:
-        for _ in range(200):
+        for _ in range(300):
             bx = rng.randint(2, W - 3)
             by = rng.randint(2, H - 3)
             if (bx, by) in occupied:
                 continue
-            # Require a path tile adjacent to building for access
-            adj = [(bx+1,by),(bx-1,by),(bx,by+1),(bx,by-1)]
-            if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path" for ax, ay in adj):
+            # Must be adjacent to a path tile
+            adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+            if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
+                       for ax, ay in adj):
                 continue
             grid[by][bx] = btype
             occupied.add((bx, by))
             buildings.append((bx, by, btype))
-            # Ensure connecting path to road
             _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
             break
 
-    # ── Houses (3-5 single tiles) ────────────────────────────────────────────
-    house_count = rng.randint(3, 5)
+    # ── Houses (2-4) ──────────────────────────────────────────────────────────
+    house_count = rng.randint(2, 4)
     for _ in range(300):
         if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
             break
@@ -80,8 +198,9 @@ def _generate_village_interior(
         by = rng.randint(2, H - 3)
         if (bx, by) in occupied:
             continue
-        adj = [(bx+1,by),(bx-1,by),(bx,by+1),(bx,by-1)]
-        if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] in ("vil_path","vil_grass") for ax, ay in adj):
+        adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+        if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] in ("vil_path", "vil_grass")
+                   for ax, ay in adj):
             continue
         grid[by][bx] = "vil_house"
         occupied.add((bx, by))
@@ -102,14 +221,14 @@ def _generate_village_interior(
                 occupied.update(g_set)
                 break
 
-    # ── Trees at corners ─────────────────────────────────────────────────────
-    for tx, ty in [(1, 1), (W-2, 1), (1, H-2), (W-2, H-2)]:
+    # ── Trees ─────────────────────────────────────────────────────────────────
+    for tx, ty in [(1, 1), (W - 2, 1), (1, H - 2), (W - 2, H - 2)]:
         if (tx, ty) not in occupied:
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
 
-    # ── Entry (bottom-centre path tile) ──────────────────────────────────────
-    entry_x, entry_y = cx, H - 2
+    # ── Entry (bottom spoke path tile — south spoke endpoint) ─────────────────
+    entry_x, entry_y = s[0], s[1]
     grid[entry_y][entry_x] = "vil_path"
 
     tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
@@ -180,15 +299,12 @@ def _generate_harbor_village_interior(
 
     # ── Occupied tracking ─────────────────────────────────────────────────────
     occupied: set[tuple[int, int]] = set()
-    # Mark all vil_water tiles as occupied
     for yr in range(H):
         for xr in range(W):
             if grid[yr][xr] == "vil_water":
                 occupied.add((xr, yr))
-    # Border
     for x in range(W): occupied.add((x, 0)); occupied.add((x, H - 1))
     for y in range(H): occupied.add((0, y)); occupied.add((W - 1, y))
-    # Roads
     for x in range(W): occupied.add((x, cy))
     for y in range(H): occupied.add((cx, y))
     occupied.add((cx, cy))
@@ -196,12 +312,12 @@ def _generate_harbor_village_interior(
     buildings: list[tuple[int, int, str]] = []
 
     # ── Required buildings ────────────────────────────────────────────────────
-    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith"]
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(200):
             bx = rng.randint(2, W - 3)
-            by = rng.randint(2, H - 3)   # land area only
+            by = rng.randint(2, H - 3)
             if (bx, by) in occupied:
                 continue
             adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
@@ -243,57 +359,27 @@ def _generate_harbor_village_interior(
     return W, H, tiles, (entry_x, entry_y), (dock_x, dock_y), buildings
 
 
-def _connect_to_road(
-    grid: list[list[str]], bx: int, by: int,
-    cx: int, cy: int, W: int, H: int,
-    occupied: set[tuple[int, int]],
-) -> None:
-    """Draw a short path from building tile toward the nearest road axis."""
-    px, py = bx, by
-    for _ in range(max(W, H)):
-        if grid[py][px] == "vil_path":
-            break
-        if abs(px - cx) >= abs(py - cy):
-            step = 1 if cx > px else -1
-            npx, npy = px + step, py
-        else:
-            step = 1 if cy > py else -1
-            npx, npy = px, py + step
-        if not (1 <= npx < W - 1 and 1 <= npy < H - 1):
-            break
-        t = grid[npy][npx]
-        if t not in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_well", "vil_tree"):
-            grid[npy][npx] = "vil_path"
-        px, py = npx, npy
-
-
 # ── Building interior generation ─────────────────────────────────────────────
 
 def _house_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
     tiles: dict[tuple[int,int], str] = {}
-    # Walls + floor
     for y in range(H):
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
-    # Door bottom centre
     tiles[(W//2, H-1)] = "b_door"
-    # Bed corner
     bx = 1 if rng.random() < 0.5 else W - 2
     tiles[(bx, 1)] = "b_bed"
-    # Stove opposite corner
     sx = W - 2 if bx == 1 else 1
     tiles[(sx, 1)] = "b_stove"
-    # Table + chairs middle (never place chair on the tile above the door)
     tx, ty = W//2, H//2
     tiles[(tx, ty)] = "b_table"
     door_x, door_y = W//2, H-1
     for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
         ccx, ccy = tx+cdx, ty+cdy
         if (ccx, ccy) == (door_x, door_y - 1):
-            continue  # would block the door
+            continue
         if 1 <= ccx < W-1 and 1 <= ccy < H-1 and tiles[(ccx,ccy)] == "b_floor":
             tiles[(ccx, ccy)] = "b_chair"
-    # Bookshelf
     for x in range(1, W-1):
         if tiles[(x, 1)] == "b_floor":
             tiles[(x, 1)] = "b_bookshelf"
@@ -307,18 +393,15 @@ def _church_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int],
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    # Altar at far end
     tiles[(W//2, 1)] = "b_altar"
     for dx in [-1, 0, 1]:
         cx = W//2 + dx
         if 0 < cx < W-1:
             tiles[(cx, 2)] = "b_candle"
-    # Pews in rows
     for row in range(3, H-2, 2):
         for col in range(2, W-2):
             if tiles[(col, row)] == "b_floor":
                 tiles[(col, row)] = "b_pew"
-    # Priest NPC near altar
     tiles[(W//2, 3)] = "b_priest"
     return tiles
 
@@ -329,12 +412,9 @@ def _bank_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], s
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    # Counter along back wall (row 2) — full width minus corners
     for x in range(2, W-2):
         tiles[(x, 2)] = "b_counter"
-    # NPC stands in front of the counter (row 3) — accessible to the player
     tiles[(W//2, 3)] = "b_bank_npc"
-    # Safes behind the counter against the back wall
     tiles[(1, 1)] = "b_safe"
     tiles[(W-2, 1)] = "b_safe"
     return tiles
@@ -346,12 +426,9 @@ def _shop_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], s
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    # Counter along back
     for x in range(2, W-2):
         tiles[(x, 1)] = "b_shop_counter"
-    # NPC behind counter
     tiles[(W//2, 1)] = "b_shop_npc"
-    # Shelves along sides
     for y in range(2, H-2):
         if tiles[(1, y)] == "b_floor":
             tiles[(1, y)] = "b_shelf"
@@ -366,12 +443,110 @@ def _blacksmith_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,i
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    # Forge (fire) at back
     tiles[(W//2, 1)] = "b_forge"
-    # Anvil in centre
     tiles[(W//2, H//2)] = "b_anvil"
-    # NPC near anvil
     tiles[(W//2 - 1, H//2)] = "b_blacksmith_npc"
+    return tiles
+
+
+def _tavern_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+    """Tavern with a bar along the back wall, tables/chairs, and quest NPCs."""
+    tiles: dict[tuple[int,int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
+    # Door at bottom centre
+    tiles[(W//2, H-1)] = "b_door"
+
+    # ── Bar counter along the back wall ───────────────────────────────────────
+    # Row 2: bar counter tiles (barrier); row 1: barrels behind bar
+    for x in range(2, W-2):
+        tiles[(x, 2)] = "b_bar_counter"
+    # Barrels in back corners
+    tiles[(1, 1)] = "b_barrel"
+    tiles[(W-2, 1)] = "b_barrel"
+    # Barkeep NPC stands at row 3 (in front of bar, facing patrons)
+    tiles[(W//2, 3)] = "b_barkeep"
+
+    # ── Table clusters (2 groups) ─────────────────────────────────────────────
+    # Group 1: left side of room
+    t1x, t1y = W//4, H//2
+    if tiles.get((t1x, t1y)) == "b_floor":
+        tiles[(t1x, t1y)] = "b_table"
+        for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
+            cx2, cy2 = t1x+cdx, t1y+cdy
+            if 1 <= cx2 < W-1 and 1 <= cy2 < H-1 and tiles[(cx2,cy2)] == "b_floor":
+                tiles[(cx2, cy2)] = "b_chair"
+        # Quest NPC 1 adjacent to this table
+        for cdx, cdy in [(1,0),(0,1),(-1,0),(0,-1)]:
+            nx2, ny2 = t1x+cdx*2, t1y+cdy
+            if 1 <= nx2 < W-1 and 1 <= ny2 < H-1 and tiles[(nx2,ny2)] == "b_floor":
+                tiles[(nx2, ny2)] = "b_tavern_npc"
+                break
+
+    # Group 2: right side of room
+    t2x, t2y = (3*W)//4, H//2 + 1
+    if tiles.get((t2x, t2y)) == "b_floor":
+        tiles[(t2x, t2y)] = "b_table"
+        for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
+            cx2, cy2 = t2x+cdx, t2y+cdy
+            if 1 <= cx2 < W-1 and 1 <= cy2 < H-1 and tiles[(cx2,cy2)] == "b_floor":
+                tiles[(cx2, cy2)] = "b_chair"
+        # Quest NPC 2 adjacent to this table
+        for cdx, cdy in [(1,0),(0,1),(-1,0),(0,-1)]:
+            nx2, ny2 = t2x+cdx*2, t2y+cdy
+            if 1 <= nx2 < W-1 and 1 <= ny2 < H-1 and tiles[(nx2,ny2)] == "b_floor":
+                tiles[(nx2, ny2)] = "b_tavern_npc"
+                break
+
+    # Extra table near back
+    if H > 9:
+        t3x, t3y = W//2, H - 4
+        if tiles.get((t3x, t3y)) == "b_floor":
+            tiles[(t3x, t3y)] = "b_table"
+            for cdx, cdy in [(-1,0),(1,0)]:
+                cx2, cy2 = t3x+cdx, t3y
+                if 1 <= cx2 < W-1 and tiles[(cx2,cy2)] == "b_floor":
+                    tiles[(cx2, cy2)] = "b_chair"
+
+    return tiles
+
+
+def _hospital_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+    """Hospital with a healer NPC, patient beds, and medicine shelf."""
+    tiles: dict[tuple[int,int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
+    # Door at bottom centre
+    tiles[(W//2, H-1)] = "b_door"
+
+    # ── Healer NPC near centre ─────────────────────────────────────────────────
+    # Table at row 2 centre (desk), healer stands at row 3
+    tiles[(W//2, 2)] = "b_table"
+    tiles[(W//2 - 1, 2)] = "b_chair"
+    tiles[(W//2, 3)] = "b_healer"
+
+    # ── Medicine shelf along back wall ────────────────────────────────────────
+    for x in range(2, W-2):
+        tiles[(x, 1)] = "b_medicine_shelf"
+
+    # ── Patient beds along sides ──────────────────────────────────────────────
+    bed_rows = list(range(4, H-2, 2))
+    for by_r in bed_rows:
+        if tiles.get((1, by_r)) == "b_floor":
+            tiles[(1, by_r)] = "b_bed"
+        if tiles.get((W-2, by_r)) == "b_floor":
+            tiles[(W-2, by_r)] = "b_bed"
+
+    # Candle beside each bed
+    for by_r in bed_rows:
+        if by_r + 1 < H - 1:
+            if tiles.get((1, by_r + 1)) == "b_floor":
+                tiles[(1, by_r + 1)] = "b_candle"
+            if tiles.get((W-2, by_r + 1)) == "b_floor":
+                tiles[(W-2, by_r + 1)] = "b_candle"
+
     return tiles
 
 
@@ -393,6 +568,12 @@ def _generate_building_interior(
     elif building_type in ("vil_blacksmith", "blacksmith"):
         W, H = rng.randint(7, 9), rng.randint(6, 8)
         tiles_dict = _blacksmith_interior(rng, W, H)
+    elif building_type in ("vil_tavern", "tavern"):
+        W, H = rng.randint(11, 13), rng.randint(10, 12)
+        tiles_dict = _tavern_interior(rng, W, H)
+    elif building_type in ("vil_hospital", "hospital"):
+        W, H = rng.randint(9, 11), rng.randint(9, 11)
+        tiles_dict = _hospital_interior(rng, W, H)
     else:  # house
         W, H = rng.randint(7, 11), rng.randint(6, 9)
         tiles_dict = _house_interior(rng, W, H)
@@ -403,6 +584,17 @@ def _generate_building_interior(
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
+_CANONICAL_BUILDING_TYPE = {
+    "vil_house":       "house",
+    "vil_church":      "church",
+    "vil_bank":        "bank",
+    "vil_shop":        "shop",
+    "vil_blacksmith":  "blacksmith",
+    "vil_tavern":      "tavern",
+    "vil_hospital":    "hospital",
+}
+
 
 async def get_or_create_village(
     seed: int, world_x: int, world_y: int, db,
@@ -438,9 +630,7 @@ async def get_or_create_village(
 
     # Generate interiors for each building
     for bx, by, btype in buildings:
-        canonical = {"vil_house": "house", "vil_church": "church",
-                     "vil_bank": "bank", "vil_shop": "shop",
-                     "vil_blacksmith": "blacksmith"}.get(btype, "house")
+        canonical = _CANONICAL_BUILDING_TYPE.get(btype, "house")
         hcursor = await db.execute(
             "INSERT INTO houses (village_id, building_type, width, height) VALUES (?, ?, 1, 1)",
             (village_id, canonical),
@@ -469,17 +659,13 @@ async def get_or_create_village(
 async def get_or_create_harbor_village(
     seed: int, world_x: int, world_y: int, db,
 ) -> tuple[int, int, int, int, int]:
-    """Return (village_id, entry_local_x, entry_local_y, dock_x, dock_y).
-
-    Dock is always at (W//2, H-2) = (8, 14) for harbor villages.
-    """
+    """Return (village_id, entry_local_x, entry_local_y, dock_x, dock_y)."""
     row = await db.fetch_one(
         "SELECT village_id, entry_x, entry_y FROM village_entrances "
         "WHERE world_x = ? AND world_y = ?",
         (world_x, world_y),
     )
     if row:
-        # Recompute dock position from the world seed (edge-aware, deterministic)
         _edge, _ = get_coast_boundary(seed)
         _W, _H, _cx = 16, 16, 8
         _dock = {0: (_cx, _H - 2), 1: (_cx, 1), 2: (1, _H // 2), 3: (_W - 2, _H // 2)}
@@ -508,11 +694,8 @@ async def get_or_create_harbor_village(
         (village_id, entry[0], entry[1], world_x, world_y),
     )
 
-    # Generate building interiors
     for bx, by, btype in buildings:
-        canonical = {"vil_house": "house", "vil_church": "church",
-                     "vil_bank": "bank", "vil_shop": "shop",
-                     "vil_blacksmith": "blacksmith"}.get(btype, "house")
+        canonical = _CANONICAL_BUILDING_TYPE.get(btype, "house")
         hcursor = await db.execute(
             "INSERT INTO houses (village_id, building_type, width, height) VALUES (?, ?, 1, 1)",
             (village_id, canonical),
