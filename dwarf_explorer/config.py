@@ -242,21 +242,21 @@ ARENA_EMOJI = {
     "cobweb": "\U0001F578\uFE0F",   # 🕸️
 }
 
-FOOD_HP_RESTORE = {"fish": 15, "cooked_fish": 35, "bread": 20, "meat_stew": 40}
+FOOD_HP_RESTORE = {"fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20}
 
 # Consumable items: shown in combat food menu
 CONSUMABLE_ITEMS = {
-    "fish":        {"hp": 15,  "desc": "+15 HP"},
-    "cooked_fish": {"hp": 35,  "desc": "+35 HP"},
-    "bread":      {"hp": 20,  "desc": "+20 HP"},
-    "meat_stew":  {"hp": 40,  "desc": "+40 HP"},
+    "fish":        {"hp": 5,   "desc": "+5 HP"},
+    "cooked_fish": {"hp": 15,  "desc": "+15 HP"},
+    "bread":       {"hp": 10,  "desc": "+10 HP"},
+    "meat_stew":   {"hp": 20,  "desc": "+20 HP"},
 }
 
 # Tavern food/drink menu (price in gold)
 TAVERN_MENU = [
-    {"id": "bread",     "name": "Bread",     "price": 4,  "hp": 20},
+    {"id": "bread",     "name": "Bread",     "price": 4,  "hp": 10},
     {"id": "ale",       "name": "Ale",       "price": 6,  "hp": 0},
-    {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 40},
+    {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 20},
 ]
 
 # Hospital heal cost: gold per missing HP (minimum 5 gold)

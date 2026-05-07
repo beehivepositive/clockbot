@@ -502,65 +502,72 @@ def _blacksmith_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,i
     return tiles
 
 
+def _place_table_cluster(
+    tiles: dict, rng: random.Random,
+    tx: int, ty: int, W: int, H: int,
+    with_npc: bool = False,
+) -> None:
+    """Place a table with surrounding chairs and optionally a quest NPC nearby."""
+    if tiles.get((tx, ty)) != "b_floor":
+        return
+    tiles[(tx, ty)] = "b_table"
+    for cdx, cdy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+        cx2, cy2 = tx + cdx, ty + cdy
+        if 1 <= cx2 < W - 1 and 1 <= cy2 < H - 1 and tiles.get((cx2, cy2)) == "b_floor":
+            tiles[(cx2, cy2)] = "b_chair"
+    if with_npc:
+        # Place quest NPC on a floor tile 2 steps away from the table
+        dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        rng.shuffle(dirs)
+        for cdx, cdy in dirs:
+            nx2, ny2 = tx + cdx * 2, ty + cdy
+            if 1 <= nx2 < W - 1 and 1 <= ny2 < H - 1 and tiles.get((nx2, ny2)) == "b_floor":
+                tiles[(nx2, ny2)] = "b_tavern_npc"
+                break
+
+
 def _tavern_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
-    """Tavern with a bar along the back wall, tables/chairs, and quest NPCs."""
+    """Tavern with bar, 3-4 table clusters, and 4-6 quest NPCs (patrons)."""
     tiles: dict[tuple[int,int], str] = {}
     for y in range(H):
         for x in range(W):
-            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
-    # Door at bottom centre
-    tiles[(W//2, H-1)] = "b_door"
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W - 1 or y == 0 or y == H - 1) else "b_floor"
+    tiles[(W // 2, H - 1)] = "b_door"
 
-    # ── Bar counter along the back wall ───────────────────────────────────────
-    # Row 2: bar counter tiles (barrier); row 1: barrels behind bar
-    for x in range(2, W-2):
+    # ── Bar counter along back wall ───────────────────────────────────────────
+    for x in range(2, W - 2):
         tiles[(x, 2)] = "b_bar_counter"
-    # Barrels in back corners
     tiles[(1, 1)] = "b_barrel"
-    tiles[(W-2, 1)] = "b_barrel"
-    # Barkeep NPC stands at row 3 (in front of bar, facing patrons)
-    tiles[(W//2, 3)] = "b_barkeep"
+    tiles[(W - 2, 1)] = "b_barrel"
+    # Barkeep in the centre of row 3
+    tiles[(W // 2, 3)] = "b_barkeep"
 
-    # ── Table clusters (2 groups) ─────────────────────────────────────────────
-    # Group 1: left side of room
-    t1x, t1y = W//4, H//2
-    if tiles.get((t1x, t1y)) == "b_floor":
-        tiles[(t1x, t1y)] = "b_table"
-        for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
-            cx2, cy2 = t1x+cdx, t1y+cdy
-            if 1 <= cx2 < W-1 and 1 <= cy2 < H-1 and tiles[(cx2,cy2)] == "b_floor":
-                tiles[(cx2, cy2)] = "b_chair"
-        # Quest NPC 1 adjacent to this table
-        for cdx, cdy in [(1,0),(0,1),(-1,0),(0,-1)]:
-            nx2, ny2 = t1x+cdx*2, t1y+cdy
-            if 1 <= nx2 < W-1 and 1 <= ny2 < H-1 and tiles[(nx2,ny2)] == "b_floor":
-                tiles[(nx2, ny2)] = "b_tavern_npc"
-                break
+    # ── Table clusters spread across the floor ────────────────────────────────
+    # Positions chosen to spread evenly across the space below the bar
+    floor_top = 4          # first usable row below bar/barkeep
+    floor_bot = H - 2      # last usable row above door wall
 
-    # Group 2: right side of room
-    t2x, t2y = (3*W)//4, H//2 + 1
-    if tiles.get((t2x, t2y)) == "b_floor":
-        tiles[(t2x, t2y)] = "b_table"
-        for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
-            cx2, cy2 = t2x+cdx, t2y+cdy
-            if 1 <= cx2 < W-1 and 1 <= cy2 < H-1 and tiles[(cx2,cy2)] == "b_floor":
-                tiles[(cx2, cy2)] = "b_chair"
-        # Quest NPC 2 adjacent to this table
-        for cdx, cdy in [(1,0),(0,1),(-1,0),(0,-1)]:
-            nx2, ny2 = t2x+cdx*2, t2y+cdy
-            if 1 <= nx2 < W-1 and 1 <= ny2 < H-1 and tiles[(nx2,ny2)] == "b_floor":
-                tiles[(nx2, ny2)] = "b_tavern_npc"
-                break
+    cluster_positions = [
+        (W // 4,       (floor_top + floor_bot) // 2,       True),   # left-centre, NPC
+        ((3 * W) // 4, (floor_top + floor_bot) // 2,       True),   # right-centre, NPC
+        (W // 2,       floor_top + 1,                       True),   # centre-top, NPC
+        (W // 4,       floor_bot - 2,                       True),   # left-bottom, NPC
+        ((3 * W) // 4, floor_bot - 2,                       False),  # right-bottom, chairs only
+    ]
+    for tx, ty, with_npc in cluster_positions:
+        _place_table_cluster(tiles, rng, tx, ty, W, H, with_npc=with_npc)
 
-    # Extra table near back
-    if H > 9:
-        t3x, t3y = W//2, H - 4
-        if tiles.get((t3x, t3y)) == "b_floor":
-            tiles[(t3x, t3y)] = "b_table"
-            for cdx, cdy in [(-1,0),(1,0)]:
-                cx2, cy2 = t3x+cdx, t3y
-                if 1 <= cx2 < W-1 and tiles[(cx2,cy2)] == "b_floor":
-                    tiles[(cx2, cy2)] = "b_chair"
+    # ── Lone patrons (1-3 extra b_tavern_npc on spare floor tiles) ───────────
+    extra_npcs = rng.randint(1, 3)
+    placed = 0
+    attempts = 0
+    while placed < extra_npcs and attempts < 200:
+        attempts += 1
+        ex = rng.randint(2, W - 3)
+        ey = rng.randint(floor_top, floor_bot - 1)
+        if tiles.get((ex, ey)) == "b_floor":
+            tiles[(ex, ey)] = "b_tavern_npc"
+            placed += 1
 
     return tiles
 

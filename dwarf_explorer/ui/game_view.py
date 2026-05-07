@@ -1678,6 +1678,10 @@ def _compute_context_labels(
         action_label, action_enabled = "🛒 Shop", True
     elif "b_bank_npc" in adj_terrains:
         action_label, action_enabled = "🏦 Bank", True
+    elif "b_barkeep" in adj_terrains:
+        action_label, action_enabled = "🍺 Order", True
+    elif "b_healer" in adj_terrains:
+        action_label, action_enabled = "💊 Heal", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
     elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
@@ -4230,15 +4234,18 @@ async def handle_interact(
                 return
 
             elif htile.terrain == "b_tavern_npc" and player.house_type == "tavern":
-                # ── Tavern quest NPC ───────────────────────────────────────────
+                # ── Tavern quest NPC — each NPC at a unique position offers a different quest
                 from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
                 grid = await _load_house_grid()
                 bounty_pool = await get_or_refresh_bounty_pool(db, seed)
                 if bounty_pool:
+                    # Use the NPC's tile position to deterministically pick a unique quest
+                    idx = (player.house_x * 7 + player.house_y * 13) % len(bounty_pool)
+                    pool = bounty_pool[idx:idx + 1]
                     await handle_open_quest_pool(
                         interaction, guild_id, user_id,
-                        pool=bounty_pool,
-                        source_label="Tavern Notice Board",
+                        pool=pool,
+                        source_label="Tavern Regular",
                         source_type="village_npc",
                     )
                     return
@@ -5004,6 +5011,41 @@ async def handle_action(
 
         if "b_bank_npc" in adj_terrains:
             return await _open_bank(interaction, guild_id, user_id, player, db)
+
+        if "b_barkeep" in adj_terrains:
+            from dwarf_explorer.config import TAVERN_MENU
+            menu_lines = "\n".join(
+                f"🍺 **{item['name']}** — {item['price']}🪙"
+                + (f" (+{item['hp']} HP)" if item.get("hp") else "")
+                for item in TAVERN_MENU
+            )
+            content = render_grid(grid, player,
+                f"\"What'll it be, stranger?\"\n{menu_lines}")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=TavernBuyView(guild_id, user_id),
+            )
+            return
+
+        if "b_healer" in adj_terrains:
+            from dwarf_explorer.config import HEAL_COST_PER_HP, HEAL_MINIMUM_COST
+            max_hp = getattr(player, "max_hp", 100)
+            missing = max_hp - player.hp
+            if missing <= 0:
+                content = render_grid(grid, player, "\"You look in fine health! Nothing for me to do here.\"")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            else:
+                cost = max(HEAL_MINIMUM_COST, missing * HEAL_COST_PER_HP)
+                _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "heal_confirm", "heal_cost": cost}
+                content = render_grid(grid, player,
+                    f"\"I can restore you to full health for **{cost}🪙**.\"\n"
+                    f"Missing **{missing} HP** · You have **{player.gold}🪙**")
+                await interaction.response.edit_message(
+                    embed=_embed(content), content=None,
+                    view=HealConfirmView(guild_id, user_id, cost),
+                )
+            return
 
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
@@ -8151,46 +8193,55 @@ async def handle_npc_quest(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    # Determine which NPC tile the player is adjacent to
-    if player.in_village:
+    # Determine which NPC tile the player is adjacent to and load the right grid
+    if player.in_house:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    elif player.in_village:
         grid = await load_village_viewport(
             player.village_id, player.village_x, player.village_y, db
         )
     else:
-        # NPC quest button shouldn't fire outside a village, but handle gracefully
         await interaction.response.defer()
         return
 
     vc = len(grid) // 2
-    adj_terrains: set[str] = set()
+    # Build a map of adjacent terrain → (world_x, world_y) of that tile
+    adj_npc: dict[str, tuple[int, int]] = {}
     for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
         nr, nc = vc + dr, vc + dc
         if 0 <= nr < len(grid) and 0 <= nc < len(grid[nr]):
-            t = grid[nr][nc].terrain if grid[nr][nc] else None
-            if t:
-                adj_terrains.add(t)
-
-    # Pick source label based on which NPC tile is adjacent
-    source_label = "Priest"
-    if "b_priest" in adj_terrains:
-        source_label = "Priest"
+            tile = grid[nr][nc]
+            if tile and tile.terrain in _QUEST_NPC_TILES:
+                adj_npc[tile.terrain] = (tile.world_x, tile.world_y)
 
     village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
     bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
-    # Show only 1 quest at a time from NPCs
-    combined_pool = (village_pool + bounty_pool)[:1]
 
-    if combined_pool:
+    if "b_priest" in adj_npc:
+        # Priest offers a village quest (index 0 — always the current village quest)
+        pool = village_pool[:1]
+        source_label = "Priest"
+    elif "b_tavern_npc" in adj_npc:
+        # Each tavern NPC at a unique position offers a different bounty quest
+        nx, ny = adj_npc["b_tavern_npc"]
+        idx = (nx * 7 + ny * 13) % max(1, len(bounty_pool)) if bounty_pool else 0
+        pool = bounty_pool[idx:idx + 1]
+        source_label = "Tavern Regular"
+    else:
+        # Fallback: combined pool first entry
+        pool = (village_pool + bounty_pool)[:1]
+        source_label = "Villager"
+
+    if pool:
         await handle_open_quest_pool(
             interaction, guild_id, user_id,
-            pool=combined_pool,
+            pool=pool,
             source_label=source_label,
             source_type="village_npc",
         )
         return
 
-    # No quests available — show a contextual message
-    content = render_grid(grid, player, f"📋 The {source_label} has no work available right now.")
+    content = render_grid(grid, player, f"📋 {source_label} has no work available right now.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
