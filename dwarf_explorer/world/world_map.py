@@ -110,6 +110,14 @@ def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
         ar = 4
         pts = [(cx, cy - ar), (cx - ar, cy + ar), (cx + ar, cy + ar)]
         draw.polygon(pts, fill=color, outline=white)
+    elif style == "arrow_left":
+        ar = 4
+        pts = [(cx - ar, cy), (cx + ar, cy - ar), (cx + ar, cy + ar)]
+        draw.polygon(pts, fill=color, outline=white)
+    elif style == "arrow_right":
+        ar = 4
+        pts = [(cx + ar, cy), (cx - ar, cy - ar), (cx - ar, cy + ar)]
+        draw.polygon(pts, fill=color, outline=white)
     else:  # dot
         draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color, outline=white)
 
@@ -155,7 +163,7 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
             ("__player__", "You",           (255, 0,   0),   "dot_red"),
             ("__other__",  "Other Player",  (60,  120, 255), "dot_blue"),
             ("__quest__",  "Quest Target",  (255, 140, 0),   "filled_diamond"),
-            ("__ocean__",  "Ocean Quest",   (255, 140, 0),   "arrow_down"),
+            ("__ocean__",  "Ocean Quest ▸",  (255, 140, 0),   "arrow_right"),
         ]
     )
 
@@ -218,11 +226,16 @@ def _composite_players_sync(
     quest_markers: list | None = None,
     ocean_quest_markers: list | None = None,
     harbor_positions: list | None = None,
+    coast_edge: int = 0,
 ) -> io.BytesIO:
-    """Load the cached base PNG and stamp player/quest dots on top."""
+    """Load the cached base PNG and stamp player/quest dots on top.
+
+    coast_edge: 0=south, 1=north, 2=west, 3=east — which edge the ocean is on.
+    """
     from PIL import Image, ImageDraw
 
     scale = MAP_PIXEL_SCALE
+    map_w = WORLD_SIZE * scale
     map_h = WORLD_SIZE * scale
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
@@ -234,18 +247,39 @@ def _composite_players_sync(
             cy_q = qy * scale + scale // 2
             _draw_icon(draw, cx_q, cy_q, "filled_diamond", (255, 140, 0))
 
-    # Ocean quest edge arrows — drawn at south edge near harbor positions
+    # Ocean quest edge markers — arrow + diamond at the ocean-facing edge
     if ocean_quest_markers:
-        _arrow_color = (255, 140, 0)
-        if harbor_positions:
-            for hx, hy in harbor_positions:
-                cx_h = hx * scale + scale // 2
-                _draw_icon(draw, cx_h, map_h - 6, "arrow_down", _arrow_color)
-                _draw_icon(draw, cx_h, map_h - 14, "filled_diamond", _arrow_color)
-        else:
-            cx_h = (WORLD_SIZE // 2) * scale + scale // 2
-            _draw_icon(draw, cx_h, map_h - 6, "arrow_down", _arrow_color)
-            _draw_icon(draw, cx_h, map_h - 14, "filled_diamond", _arrow_color)
+        _ac = (255, 140, 0)
+        # Arrow style points toward the ocean edge
+        _astyle = {0: "arrow_down", 1: "arrow_up", 2: "arrow_left", 3: "arrow_right"}
+        astyle = _astyle.get(coast_edge, "arrow_down")
+        # Candidate positions: use harbor tile coords to find the right column/row;
+        # fall back to centre of the map edge
+        candidates = harbor_positions or []
+        mid = (WORLD_SIZE // 2) * scale + scale // 2
+        if not candidates:
+            # synthetic centre candidate
+            if coast_edge in (0, 1):
+                candidates = [(WORLD_SIZE // 2, 0)]
+            else:
+                candidates = [(0, WORLD_SIZE // 2)]
+        for hx, hy in candidates:
+            if coast_edge == 0:          # south edge
+                px = hx * scale + scale // 2
+                _draw_icon(draw, px, map_h - 14, "filled_diamond", _ac)
+                _draw_icon(draw, px, map_h - 5,  astyle, _ac)
+            elif coast_edge == 1:        # north edge
+                px = hx * scale + scale // 2
+                _draw_icon(draw, px, 14, "filled_diamond", _ac)
+                _draw_icon(draw, px, 5,  astyle, _ac)
+            elif coast_edge == 2:        # west edge
+                py = hy * scale + scale // 2
+                _draw_icon(draw, 14, py, "filled_diamond", _ac)
+                _draw_icon(draw, 5,  py, astyle, _ac)
+            elif coast_edge == 3:        # east edge
+                py = hy * scale + scale // 2
+                _draw_icon(draw, map_w - 14, py, "filled_diamond", _ac)
+                _draw_icon(draw, map_w - 5,  py, astyle, _ac)
 
     # Other players (blue)
     for ox, oy, _ in other_players:
@@ -338,11 +372,21 @@ def _composite_ocean_sync(
     player_ox: int, player_oy: int,
     ocean_quest_markers: list | None = None,
     has_wilderness_quests: bool = False,
+    coast_edge: int = 0,
 ) -> io.BytesIO:
+    """coast_edge is the same value as for the wilderness map (0=south etc.).
+    The exit from the ocean is on the *opposite* side of the ocean grid:
+      coast_edge 0 (ocean south of wilderness): exit at oy=0, arrow UP
+      coast_edge 1 (ocean north of wilderness): exit at oy=OCEAN_SIZE-1, arrow DOWN
+      coast_edge 2 (ocean west of wilderness):  exit at ox=OCEAN_SIZE-1, arrow RIGHT
+      coast_edge 3 (ocean east of wilderness):  exit at ox=0, arrow LEFT
+    """
     from PIL import Image, ImageDraw
     from dwarf_explorer.config import OCEAN_SIZE
 
     scale = MAP_PIXEL_SCALE
+    map_w = OCEAN_SIZE * scale
+    map_h = OCEAN_SIZE * scale
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
 
@@ -353,12 +397,23 @@ def _composite_ocean_sync(
             cy_q = oy * scale + scale // 2
             _draw_icon(draw, cx_q, cy_q, "filled_diamond", (255, 140, 0))
 
-    # Wilderness quest arrow — green upward arrow at north edge (oy=0 = shore)
+    # Wilderness exit marker — green arrow at the exit edge of the ocean grid
     if has_wilderness_quests:
-        _exit_color = (200, 255, 100)
-        cx_e = (OCEAN_SIZE // 2) * scale + scale // 2
-        _draw_icon(draw, cx_e, 14, "filled_diamond", (255, 140, 0))
-        _draw_icon(draw, cx_e, 5,  "arrow_up",       _exit_color)
+        _ec = (200, 255, 100)
+        _dc = (255, 140, 0)
+        mid = (OCEAN_SIZE // 2) * scale + scale // 2
+        if coast_edge == 0:          # exit: north edge (oy=0), go up
+            _draw_icon(draw, mid, 14, "filled_diamond", _dc)
+            _draw_icon(draw, mid, 5,  "arrow_up",   _ec)
+        elif coast_edge == 1:        # exit: south edge (oy=max), go down
+            _draw_icon(draw, mid, map_h - 14, "filled_diamond", _dc)
+            _draw_icon(draw, mid, map_h - 5,  "arrow_down", _ec)
+        elif coast_edge == 2:        # exit: east edge (ox=max), go right
+            _draw_icon(draw, map_w - 14, mid, "filled_diamond", _dc)
+            _draw_icon(draw, map_w - 5,  mid, "arrow_right", _ec)
+        elif coast_edge == 3:        # exit: west edge (ox=0), go left
+            _draw_icon(draw, 14, mid, "filled_diamond", _dc)
+            _draw_icon(draw, 5,  mid, "arrow_left", _ec)
 
     # Current player (red)
     cx_p = player_ox * scale + scale // 2
@@ -398,10 +453,13 @@ async def generate_world_map(
 
     harbor_positions = [(wx, wy) for wx, wy, tt in overrides if tt == "harbor"]
 
+    from dwarf_explorer.world.terrain import get_coast_boundary
+    coast_edge, _ = get_coast_boundary(seed)
+
     return await asyncio.to_thread(
         _composite_players_sync, base_png, player_x, player_y,
         other_players or [], quest_markers or [],
-        ocean_quest_markers or [], harbor_positions,
+        ocean_quest_markers or [], harbor_positions, coast_edge,
     )
 
 
@@ -422,7 +480,10 @@ async def generate_ocean_map(
     else:
         _, _, base_png = _OCEAN_BASE_CACHE[guild_id]
 
+    from dwarf_explorer.world.terrain import get_coast_boundary
+    coast_edge, _ = get_coast_boundary(seed)
+
     return await asyncio.to_thread(
         _composite_ocean_sync, base_png, player_ox, player_oy,
-        ocean_quest_markers or [], has_wilderness_quests,
+        ocean_quest_markers or [], has_wilderness_quests, coast_edge,
     )
