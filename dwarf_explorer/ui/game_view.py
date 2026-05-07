@@ -61,6 +61,7 @@ from dwarf_explorer.database.repositories import (
     get_nearby_players,
     get_all_overworld_players,
     get_player_quest_markers,
+    get_player_ocean_quest_markers,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -1454,7 +1455,7 @@ async def _resolve_cave_combat(
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 # NPC tiles that can offer quests — player must be adjacent to trigger the NPC button
-_QUEST_NPC_TILES = {"vil_elder", "b_blacksmith_npc", "b_priest"}
+_QUEST_NPC_TILES = {"b_priest"}
 
 
 def _compute_context_labels(
@@ -7818,23 +7819,30 @@ async def handle_map(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
+    from dwarf_explorer.database.repositories import get_player_ocean_quest_markers
+
     if player.in_high_seas:
-        from dwarf_explorer.config import OCEAN_SIZE
-        pct_x = int(player.ocean_x / OCEAN_SIZE * 100)
-        pct_y = int(player.ocean_y / OCEAN_SIZE * 100)
-        await interaction.followup.send(
-            f"🌊 **High Seas** — You are at ocean position "
-            f"({player.ocean_x}, {player.ocean_y}) — "
-            f"{pct_x}% east, {pct_y}% south of the ocean grid.\n"
-            f"Sail north (↑) toward y=0 to return to shore and dock.",
-            ephemeral=True,
+        ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
+        overworld_qmarks = await get_player_quest_markers(db, user_id)
+        from dwarf_explorer.world.world_map import generate_ocean_map
+        buf = await generate_ocean_map(
+            seed, guild_id,
+            player.ocean_x, player.ocean_y,
+            ocean_quest_markers=ocean_qmarks,
+            has_wilderness_quests=bool(overworld_qmarks),
         )
+        file = discord.File(buf, filename="ocean_map.png")
+        await interaction.followup.send(file=file, ephemeral=True)
         return
 
     other_players = await get_all_overworld_players(db, user_id)
     qmarks = await get_player_quest_markers(db, user_id)
+    ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
     from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(seed, db, guild_id, player.world_x, player.world_y, other_players, quest_markers=qmarks)
+    buf = await generate_world_map(
+        seed, db, guild_id, player.world_x, player.world_y,
+        other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
+    )
     file = discord.File(buf, filename="world_map.png")
     await interaction.followup.send(file=file, ephemeral=True)
 
@@ -8022,42 +8030,35 @@ async def handle_npc_quest(
         return
 
     vc = len(grid) // 2
-    adj_terrains: dict[str, str] = {}
+    adj_terrains: set[str] = set()
     for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
         nr, nc = vc + dr, vc + dc
         if 0 <= nr < len(grid) and 0 <= nc < len(grid[nr]):
             t = grid[nr][nc].terrain if grid[nr][nc] else None
             if t:
-                adj_terrains[t] = t
+                adj_terrains.add(t)
 
-    # Pick source based on which NPC tile is adjacent
-    source_label = "NPC"
-    source_type = "village_npc"
-    if "vil_elder" in adj_terrains:
-        source_label = "Village Elder"
-        source_type = "village_npc"
-    elif "b_blacksmith_npc" in adj_terrains:
-        source_label = "Blacksmith"
-        source_type = "village_npc"
-    elif "b_priest" in adj_terrains:
+    # Pick source label based on which NPC tile is adjacent
+    source_label = "Priest"
+    if "b_priest" in adj_terrains:
         source_label = "Priest"
-        source_type = "village_npc"
 
     village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
     bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
-    combined_pool = village_pool + bounty_pool
+    # Show only 1 quest at a time from NPCs
+    combined_pool = (village_pool + bounty_pool)[:1]
 
     if combined_pool:
         await handle_open_quest_pool(
             interaction, guild_id, user_id,
             pool=combined_pool,
             source_label=source_label,
-            source_type=source_type,
+            source_type="village_npc",
         )
         return
 
     # No quests available — show a contextual message
-    content = render_grid(grid, player, f"📋 {source_label} has no work available right now.")
+    content = render_grid(grid, player, f"📋 The {source_label} has no work available right now.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -8096,7 +8097,7 @@ async def handle_qpool_nav(
     from dwarf_explorer.ui.quest_view import QuestPoolView, render_quest_pool
     pool   = state["pool"]
     active = await get_active_quests(db, user_id)
-    avail  = [q for q in pool if q.get("id") not in {a["quest_id"] for a in active}]
+    avail  = [q for q in pool if (q.get("id") or q.get("quest_id")) not in {a["quest_id"] for a in active}]
     sel    = (state.get("selected", 0) + delta) % max(1, len(avail))
     _ui_state[user_id]["selected"] = sel
     content = await render_quest_pool(pool, active, sel, state["source_label"])
@@ -8123,7 +8124,7 @@ async def handle_qpool_accept(
     )
     pool   = state["pool"]
     active = await get_active_quests(db, user_id)
-    avail  = [q for q in pool if q.get("id") not in {a["quest_id"] for a in active}]
+    avail  = [q for q in pool if (q.get("id") or q.get("quest_id")) not in {a["quest_id"] for a in active}]
     sel    = state.get("selected", 0)
     if not avail or sel >= len(avail):
         await interaction.response.edit_message(
@@ -8144,7 +8145,7 @@ async def handle_qpool_accept(
     src_type  = state.get("source_type", "village_npc")
     bounty_wx = q.get("location_x") if src_type == "bounty" else None
     bounty_wy = q.get("location_y") if src_type == "bounty" else None
-    ok = await accept_quest(db, user_id, q["id"], source_type=src_type,
+    ok = await accept_quest(db, user_id, q.get("id") or q.get("quest_id"), source_type=src_type,
                             bounty_wx=bounty_wx, bounty_wy=bounty_wy)
     if ok:
         if q.get("quest_subtype") == "delivery":

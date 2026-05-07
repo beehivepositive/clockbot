@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -246,9 +247,16 @@ class DwarfExplorer(commands.Cog):
         await init_world(seed, db)
         await mark_world_initialized(db, interaction.guild.id)
 
-        # Bust the cached world map so the next /map renders the new world
-        from dwarf_explorer.world.world_map import invalidate_map_cache
+        # Invalidate and pre-generate both world maps in the background
+        from dwarf_explorer.world.world_map import (
+            invalidate_map_cache, invalidate_ocean_map_cache,
+            generate_world_map, generate_ocean_map,
+        )
         invalidate_map_cache(interaction.guild.id)
+        invalidate_ocean_map_cache(interaction.guild.id)
+        # Pre-generate base maps now so the first /map is instant
+        asyncio.ensure_future(generate_world_map(seed, db, interaction.guild.id, 0, 0))
+        asyncio.ensure_future(generate_ocean_map(seed, interaction.guild.id, 0, 0))
 
         await interaction.followup.send(
             f"New world generated (seed `{seed}`)! All player data has been reset. "

@@ -1123,3 +1123,21 @@ async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int
             if r["location_x"] is not None and r["location_y"] is not None:
                 markers.append((r["location_x"], r["location_y"], r["quest_subtype"]))
     return markers
+
+
+async def get_player_ocean_quest_markers(db, user_id: int) -> list[tuple[int, int, str]]:
+    """Return [(ocean_x, ocean_y, target_id)] for active quests located in the ocean."""
+    rows = await db.fetch_all(
+        "SELECT pq.bounty_wx, pq.bounty_wy, q.target_id, q.location_x, q.location_y "
+        "FROM player_quests pq JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id = ? AND pq.status = 'active' "
+        "AND q.location_type = 'ocean'",
+        (user_id,),
+    )
+    markers = []
+    for r in rows:
+        ox = r["bounty_wx"] if r["bounty_wx"] is not None else r["location_x"]
+        oy = r["bounty_wy"] if r["bounty_wy"] is not None else r["location_y"]
+        if ox is not None and oy is not None:
+            markers.append((ox, oy, r["target_id"]))
+    return markers
