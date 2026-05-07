@@ -268,7 +268,7 @@ def _connect_to_road(
         if not (1 <= npx < W - 1 and 1 <= npy < H - 1):
             break
         t = grid[npy][npx]
-        if t not in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_well", "vil_tree"):
+        if t not in ("vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_well", "vil_tree", "vil_elder"):
             grid[npy][npx] = "vil_path"
         px, py = npx, npy
 
