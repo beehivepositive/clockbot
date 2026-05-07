@@ -499,8 +499,8 @@ BUILDING_WALKABLE = {
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 
-VILLAGE_MIN_SIZE = 16
-VILLAGE_MAX_SIZE = 16
+VILLAGE_MIN_SIZE = 32
+VILLAGE_MAX_SIZE = 32
 
 # --- Items & Equipment ---
 

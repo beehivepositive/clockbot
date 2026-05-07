@@ -98,69 +98,121 @@ def _connect_to_road(
 
 # ── Village interior generation ───────────────────────────────────────────────
 
+def _extend_to_edge(
+    grid: list[list[str]], px: int, py: int,
+    W: int, H: int, direction: str,
+) -> tuple[int, int]:
+    """Punch a straight path segment from (px,py) to the map border in `direction`.
+
+    direction: "N" | "S" | "E" | "W"
+    Returns the border tile reached.
+    """
+    dx, dy = {"N": (0, -1), "S": (0, 1), "E": (1, 0), "W": (-1, 0)}[direction]
+    x, y = px, py
+    while True:
+        nx, ny = x + dx, y + dy
+        if nx < 0 or nx >= W or ny < 0 or ny >= H:
+            break
+        if grid[ny][nx] not in _PROTECTED_TILES:
+            grid[ny][nx] = "vil_path"
+        x, y = nx, ny
+    return x, y
+
+
 def _generate_village_interior(
     village_id: int, seed: int, world_x: int, world_y: int,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
            list[tuple[int, int, str]]]:
-    """Generate village interior with meandering triangular road network.
+    """Generate a 32×32 village with a triangular, meandering road network.
 
-    Roads radiate from the central well in 4 asymmetric directions and are
-    connected by cross-paths, creating organic triangular cells.  Buildings
-    are placed adjacent to paths.
+    Four cardinal spokes radiate from the central well with slight random
+    offsets.  Two or three optional diagonal spokes and multiple cross-
+    connectors between adjacent tip-pairs create triangular cells.  The south
+    spoke is always extended straight to the bottom border (entry point).
+    1-3 other spokes may also exit their respective edges for extra road exits.
 
     Returns (width, height, tiles, entry_pos, buildings).
     """
     rng = random.Random(seed + _VILLAGE_SEED_OFFSET + village_id + world_x * 997 + world_y * 1009)
 
-    W = H = 16  # fixed village size
+    W = H = 32
 
     grid: list[list[str]] = [["vil_grass"] * W for _ in range(H)]
 
-    cx, cy = W // 2, H // 2  # centre (8, 8)
+    cx, cy = W // 2, H // 2  # centre (16, 16)
 
     # ── Well at centre ────────────────────────────────────────────────────────
     grid[cy][cx] = "vil_well"
 
-    # ── Spoke endpoints — slightly off-cardinal for an organic feel ───────────
-    # Four spokes with random offsets so the road network isn't a plain cross
-    offset = lambda lo, hi: rng.randint(lo, hi)  # noqa: E731
-    spoke_targets = [
-        (cx + offset(-3, 3), 2),           # north spoke
-        (W - 3,  cy + offset(-3, 3)),      # east spoke
-        (cx + offset(-3, 3), H - 3),       # south spoke
-        (2,      cy + offset(-3, 3)),      # west spoke
-    ]
-    # Optionally add a 5th diagonal spoke for more triangular cells
-    if rng.random() < 0.6:
-        spoke_targets.append((W - 4, 2 + offset(0, 2)))          # NE corner
-    if rng.random() < 0.4:
-        spoke_targets.append((2 + offset(0, 2), H - 4))          # SW corner
+    # ── Cardinal spoke inner endpoints ────────────────────────────────────────
+    # Each spoke wanders from the well toward a point near (but not at) its
+    # respective edge, then is optionally extended straight to the border.
+    off = lambda lo, hi: rng.randint(lo, hi)  # noqa: E731
+    n_inner = (cx + off(-5, 5), 4)
+    e_inner = (W - 5, cy + off(-5, 5))
+    s_inner = (cx + off(-5, 5), H - 5)
+    w_inner = (4, cy + off(-5, 5))
 
-    # Draw spokes from centre to each endpoint
-    for tx, ty in spoke_targets:
+    # Draw the four cardinal spokes (meandering)
+    for tx, ty in (n_inner, e_inner, s_inner, w_inner):
         _draw_path(grid, cx, cy, tx, ty, W, H, rng, meander_chance=0.20)
 
-    # ── Cross-connectors between adjacent spoke tips (triangular cells) ───────
-    n, e, s, w = spoke_targets[:4]
-    pairs_to_connect = []
-    if rng.random() < 0.75:
-        pairs_to_connect.append((n, e))
-    if rng.random() < 0.75:
-        pairs_to_connect.append((s, w))
+    # ── Diagonal / intermediate spokes ───────────────────────────────────────
+    diagonals = []
+    if rng.random() < 0.70:
+        t = (W - 6, 4 + off(0, 3))        # NE
+        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
+        diagonals.append(t)
     if rng.random() < 0.50:
-        pairs_to_connect.append((n, w))
-    if rng.random() < 0.50:
-        pairs_to_connect.append((e, s))
+        t = (4 + off(0, 3), H - 6)        # SW
+        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
+        diagonals.append(t)
+    if rng.random() < 0.40:
+        t = (4 + off(0, 3), 4 + off(0, 3))  # NW
+        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
+        diagonals.append(t)
+    if rng.random() < 0.40:
+        t = (W - 6, H - 6)                # SE
+        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
+        diagonals.append(t)
 
-    for (ax, ay), (bx2, by2) in pairs_to_connect:
-        _draw_path(grid, ax, ay, bx2, by2, W, H, rng, meander_chance=0.30)
+    # ── Cross-connectors between adjacent spoke tips (creates triangular loops)
+    candidates = [
+        (n_inner, e_inner, 0.80),
+        (s_inner, w_inner, 0.80),
+        (n_inner, w_inner, 0.60),
+        (e_inner, s_inner, 0.60),
+        (n_inner, s_inner, 0.40),   # north-south direct connector
+        (e_inner, w_inner, 0.40),   # east-west direct connector
+    ]
+    for (ax, ay), (bx2, by2), prob in candidates:
+        if rng.random() < prob:
+            _draw_path(grid, ax, ay, bx2, by2, W, H, rng, meander_chance=0.30)
+
+    # ── Extend spokes to the map border ──────────────────────────────────────
+    # South spoke ALWAYS exits the bottom edge (this becomes the player entry).
+    sx, sy = _extend_to_edge(grid, s_inner[0], s_inner[1], W, H, "S")
+    # Other spokes randomly exit their edge
+    if rng.random() < 0.60:
+        _extend_to_edge(grid, n_inner[0], n_inner[1], W, H, "N")
+    if rng.random() < 0.50:
+        _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
+    if rng.random() < 0.50:
+        _extend_to_edge(grid, w_inner[0], w_inner[1], W, H, "W")
 
     # ── Occupied tracking ─────────────────────────────────────────────────────
     occupied: set[tuple[int, int]] = set()
+    # Borders (but NOT the edge tiles we just paved — they count as path)
     for x in range(W):
-        occupied.add((x, 0)); occupied.add((x, H - 1))
+        if grid[0][x] != "vil_path":
+            occupied.add((x, 0))
+        if grid[H - 1][x] != "vil_path":
+            occupied.add((x, H - 1))
     for y in range(H):
-        occupied.add((0, y)); occupied.add((W - 1, y))
+        if grid[y][0] != "vil_path":
+            occupied.add((0, y))
+        if grid[y][W - 1] != "vil_path":
+            occupied.add((W - 1, y))
     occupied.add((cx, cy))  # well
     for y in range(H):
         for x in range(W):
@@ -170,15 +222,15 @@ def _generate_village_interior(
     buildings: list[tuple[int, int, str]] = []
 
     # ── Required special buildings ────────────────────────────────────────────
-    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital"]
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
+                "vil_tavern", "vil_hospital"]
     rng.shuffle(required)
     for btype in required:
-        for _ in range(300):
+        for _ in range(400):
             bx = rng.randint(2, W - 3)
             by = rng.randint(2, H - 3)
             if (bx, by) in occupied:
                 continue
-            # Must be adjacent to a path tile
             adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
             if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
                        for ax, ay in adj):
@@ -189,9 +241,9 @@ def _generate_village_interior(
             _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
             break
 
-    # ── Houses (2-4) ──────────────────────────────────────────────────────────
-    house_count = rng.randint(2, 4)
-    for _ in range(300):
+    # ── Houses (4-8) ──────────────────────────────────────────────────────────
+    house_count = rng.randint(4, 8)
+    for _ in range(500):
         if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
             break
         bx = rng.randint(2, W - 3)
@@ -208,10 +260,10 @@ def _generate_village_interior(
         _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
 
     # ── Garden patches ────────────────────────────────────────────────────────
-    for _ in range(rng.randint(2, 4)):
-        for _ in range(60):
-            gw = rng.randint(2, 3)
-            gh = rng.randint(2, 3)
+    for _ in range(rng.randint(4, 7)):
+        for _ in range(80):
+            gw = rng.randint(2, 4)
+            gh = rng.randint(2, 4)
             gx = rng.randint(2, W - gw - 2)
             gy = rng.randint(2, H - gh - 2)
             g_set = {(gx + dx, gy + dy) for dy in range(gh) for dx in range(gw)}
@@ -221,15 +273,16 @@ def _generate_village_interior(
                 occupied.update(g_set)
                 break
 
-    # ── Trees ─────────────────────────────────────────────────────────────────
+    # ── Corner trees ─────────────────────────────────────────────────────────
     for tx, ty in [(1, 1), (W - 2, 1), (1, H - 2), (W - 2, H - 2)]:
         if (tx, ty) not in occupied:
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
 
-    # ── Entry (bottom spoke path tile — south spoke endpoint) ─────────────────
-    entry_x, entry_y = s[0], s[1]
-    grid[entry_y][entry_x] = "vil_path"
+    # ── Entry at the bottom border (south spoke exit) ─────────────────────────
+    # Player enters the village at this border tile.
+    # The tile above it (sy-1) should already be path from the spoke.
+    entry_x, entry_y = sx, sy
 
     tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
     return W, H, tiles, (entry_x, entry_y), buildings
