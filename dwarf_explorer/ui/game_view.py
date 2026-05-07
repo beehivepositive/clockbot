@@ -128,26 +128,30 @@ class GameView(discord.ui.View):
     """Main game view.
 
     Layout:
-      Row 0: [Sprint/🥾] [⬆️] [Action] [🗺️ Map] [Edit (owner only)]
-      Row 1: [⬅️] [Center/Interact] [➡️] [🎒 Inv] [❓ Help]
+      Row 0: [🗺️ Map] [🎒 Inv] [📋 Quests] [❓ Help] [Edit (owner only)]
+      Row 1: [Sprint/sp] [⬆️] [Action]
+      Row 2: [⬅️] [Center/Interact] [➡️]
+      Row 3: [sp] [⬇️] [NPC/Quest context]
 
     center_label / center_enabled — on-tile contextual button (Enter cave, Chop, Harvest…)
     action_label / action_enabled — adjacent-tile contextual button (Forge, Smith, Fish…)
     edit_enabled                  — show ⚒️ Edit at row-0 col-4 (player house owners only)
+    npc_label / npc_enabled       — bottom-right NPC/quest context button
     """
 
     def __init__(self, guild_id: int, user_id: int, boots_equipped: bool = False,
                  sprinting: bool = False, mine_dirs: frozenset[str] = frozenset(),
                  center_label: str = "", center_enabled: bool = False,
                  action_label: str = "", action_enabled: bool = False,
-                 edit_enabled: bool = False):
+                 edit_enabled: bool = False,
+                 npc_label: str = "", npc_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
         self._build_buttons(boots_equipped, sprinting, mine_dirs,
                             center_label, center_enabled,
                             action_label, action_enabled,
-                            edit_enabled)
+                            edit_enabled, npc_label, npc_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -169,7 +173,8 @@ class GameView(discord.ui.View):
                        mine_dirs: frozenset[str],
                        center_label: str, center_enabled: bool,
                        action_label: str, action_enabled: bool,
-                       edit_enabled: bool) -> None:
+                       edit_enabled: bool,
+                       npc_label: str = "", npc_enabled: bool = False) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
         # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
@@ -265,11 +270,25 @@ class GameView(discord.ui.View):
         # ── Row 3: spacer | ⬇️ | spacer ──────────────────────────────────────
         sp5_btn  = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
+            label="​", disabled=True,
             custom_id=_custom_id(self.guild_id, self.user_id, "sp5"),
             row=3,
         )
-        down_btn = self._dir_btn("down", "\u2B07\uFE0F", 3, "down" in mine_dirs)
+        down_btn = self._dir_btn("down", "⬇️", 3, "down" in mine_dirs)
+        if npc_enabled and npc_label:
+            npc_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji=npc_label,
+                custom_id=_custom_id(self.guild_id, self.user_id, "npc_quest"),
+                row=3,
+            )
+        else:
+            npc_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="​", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sp_npc"),
+                row=3,
+            )
 
         row0 = [map_btn, inventory_btn, quest_btn, help_btn]
         if edit_btn is not None:
@@ -278,7 +297,7 @@ class GameView(discord.ui.View):
             *row0,                                   # row 0
             sp1_btn, up_btn, action_btn,             # row 1
             left_btn, center_btn, right_btn,         # row 2
-            sp5_btn, down_btn,                       # row 3
+            sp5_btn, down_btn, npc_btn,              # row 3
         ]:
             self.add_item(btn)
 
@@ -1434,16 +1453,22 @@ async def _resolve_cave_combat(
 
 # ── Movement ──────────────────────────────────────────────────────────────────
 
+# NPC tiles that can offer quests — player must be adjacent to trigger the NPC button
+_QUEST_NPC_TILES = {"vil_elder", "b_blacksmith_npc", "b_priest"}
+
+
 def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
-) -> tuple[str, bool, str, bool, bool]:
-    """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled).
+) -> tuple[str, bool, str, bool, bool, str, bool]:
+    """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
+               npc_label, npc_enabled).
 
-    center = on-tile interaction (interact button at row-1 center)
-    action = adjacent-tile interaction (action button at row-0 col-2)
+    center = on-tile interaction (interact button at row-2 center)
+    action = adjacent-tile interaction (action button at row-1 col-2)
     edit   = ⚒️ Edit button at row-0 col-4 (player-house owners only)
+    npc    = bottom-right contextual button; lights up when adjacent to a quest NPC
     """
     vc = 4  # VIEWPORT_CENTER
 
@@ -1452,7 +1477,7 @@ def _compute_context_labels(
     edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled, edit_enabled
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
@@ -1615,7 +1640,12 @@ def _compute_context_labels(
     if _in_ph and center_tile and center_tile.terrain in PH_CHEST_TYPES:
         center_label, center_enabled = BUILDING_EMOJI.get(center_tile.terrain, "📦"), True
 
-    return center_label, center_enabled, action_label, action_enabled, edit_enabled
+    # ── NPC quest button: bottom-right, lights up when adjacent to a quest NPC ─
+    npc_label, npc_enabled = "", False
+    if adj_terrains & _QUEST_NPC_TILES:
+        npc_label, npc_enabled = "📋", True
+
+    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -1654,6 +1684,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
     edit_enabled = False
+    npc_label, npc_enabled = "", False
 
     if grid is not None:
         hand_items: set[str] = set()
@@ -1661,7 +1692,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             hand_items.add(player.hand_1)
         if player.hand_2:
             hand_items.add(player.hand_2)
-        center_label, center_enabled, action_label, action_enabled, edit_enabled = \
+        center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled = \
             _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
@@ -1672,7 +1703,9 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     center_enabled=center_enabled,
                     action_label=action_label,
                     action_enabled=action_enabled,
-                    edit_enabled=edit_enabled)
+                    edit_enabled=edit_enabled,
+                    npc_label=npc_label,
+                    npc_enabled=npc_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -4153,22 +4186,8 @@ async def handle_interact(
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif vtile.terrain == "vil_well":
-            # Village elder / notice board — offer quest pool
-            from dwarf_explorer.game.quests import get_or_refresh_village_pool, get_or_refresh_bounty_pool
-            village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
-            bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
-            combined_pool = village_pool + bounty_pool
-            if combined_pool:
-                await handle_open_quest_pool(
-                    interaction, guild_id, user_id,
-                    pool=combined_pool,
-                    source_label="Village Notice Board",
-                    source_type="village_npc",
-                )
-                return
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-            content = render_grid(grid, player,
-                "⛲ The notice board is bare. Check back tomorrow for new work.")
+            content = render_grid(grid, player, "⛲ The well gurgles softly.")
 
         elif vtile.terrain == "vil_dock":
             # ── Board the boat from the harbour dock → wilderness ocean ───────
@@ -7975,6 +7994,70 @@ async def handle_quest_close(
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── NPC quest button ─────────────────────────────────────────────────────────
+
+async def handle_npc_quest(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Triggered when the player clicks the NPC quest button (bottom-right).
+    Detects which quest NPC is adjacent and opens the appropriate quest pool.
+    """
+    from dwarf_explorer.game.quests import get_or_refresh_village_pool, get_or_refresh_bounty_pool
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # Determine which NPC tile the player is adjacent to
+    if player.in_village:
+        grid = await load_village_viewport(
+            player.village_id, player.village_x, player.village_y, db
+        )
+    else:
+        # NPC quest button shouldn't fire outside a village, but handle gracefully
+        await interaction.response.defer()
+        return
+
+    vc = len(grid) // 2
+    adj_terrains: dict[str, str] = {}
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nr, nc = vc + dr, vc + dc
+        if 0 <= nr < len(grid) and 0 <= nc < len(grid[nr]):
+            t = grid[nr][nc].terrain if grid[nr][nc] else None
+            if t:
+                adj_terrains[t] = t
+
+    # Pick source based on which NPC tile is adjacent
+    source_label = "NPC"
+    source_type = "village_npc"
+    if "vil_elder" in adj_terrains:
+        source_label = "Village Elder"
+        source_type = "village_npc"
+    elif "b_blacksmith_npc" in adj_terrains:
+        source_label = "Blacksmith"
+        source_type = "village_npc"
+    elif "b_priest" in adj_terrains:
+        source_label = "Priest"
+        source_type = "village_npc"
+
+    village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
+    bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
+    combined_pool = village_pool + bounty_pool
+
+    if combined_pool:
+        await handle_open_quest_pool(
+            interaction, guild_id, user_id,
+            pool=combined_pool,
+            source_label=source_label,
+            source_type=source_type,
+        )
+        return
+
+    # No quests available — show a contextual message
+    content = render_grid(grid, player, f"📋 {source_label} has no work available right now.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 

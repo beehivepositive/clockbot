@@ -40,8 +40,11 @@ def _generate_village_interior(
     for y in range(1, H - 1):
         grid[y][cx] = "vil_path"
 
-    # ── Well ──────────────────────────────────────────────────────────────────
+    # ── Well + Elder ──────────────────────────────────────────────────────────
     grid[cy][cx] = "vil_well"
+    # Village elder NPC: stands one tile above the well (off the horizontal road)
+    if cy - 1 >= 1:
+        grid[cy - 1][cx] = "vil_elder"
 
     occupied: set[tuple[int, int]] = set()
     # roads, border, well
@@ -176,6 +179,9 @@ def _generate_harbor_village_interior(
 
     grid[dock_y][dock_x] = "vil_dock"
     grid[cy][cx] = "vil_well"
+    # Village elder NPC: stands one tile above the well
+    if cy - 1 >= 1:
+        grid[cy - 1][cx] = "vil_elder"
     grid[entry_y][entry_x] = "vil_path"
 
     # ── Occupied tracking ─────────────────────────────────────────────────────

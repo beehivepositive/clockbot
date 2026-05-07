@@ -66,6 +66,7 @@ from dwarf_explorer.ui.game_view import (
     handle_open_quest_pool, handle_qpool_nav, handle_qpool_accept, handle_qpool_close,
     handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
     handle_qswap, handle_qswap_pass,
+    handle_npc_quest,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -98,6 +99,8 @@ _IGNORED_ACTIONS = {
     "inv_sp1", "inv_sp2", "inv_sp3", "inv_sp4", "inv_sp5", "inv_sp6",
     "inv_sp_r0c", "inv_sp_r0d",
     # Quest spacers (qsp_*)  — caught dynamically below
+    # NPC button spacer
+    "sp_npc",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
@@ -435,6 +438,9 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_qpool_accept(interaction, gid, uid)
             elif act == "qpool_close":
                 await handle_qpool_close(interaction, gid, uid)
+            # NPC quest button (bottom-right)
+            elif act == "npc_quest":
+                await handle_npc_quest(interaction, gid, uid)
             # Merchant quest offer
             elif act == "merch_quest":
                 await handle_merchant_quest_offer(interaction, gid, uid)

@@ -411,6 +411,7 @@ VILLAGE_EMOJI = {
     "vil_bank":         "\U0001F3E6",        # 🏦
     "vil_shop":         "\U0001F3EA",        # 🏪
     "vil_blacksmith":   "\u2692\uFE0F",      # ⚒️
+    "vil_elder":        "\U0001F9D3",        # 🧓  village elder NPC (quest giver)
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
