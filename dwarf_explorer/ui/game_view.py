@@ -60,6 +60,7 @@ from dwarf_explorer.database.repositories import (
     mark_treasure_found,
     get_nearby_players,
     get_all_overworld_players,
+    get_player_quest_markers,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -184,6 +185,12 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "inventory"),
             row=0,
         )
+        quest_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Quests", emoji="📋",
+            custom_id=_custom_id(self.guild_id, self.user_id, "quests"),
+            row=0,
+        )
         help_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Help", emoji="\u2753",
@@ -264,7 +271,7 @@ class GameView(discord.ui.View):
         )
         down_btn = self._dir_btn("down", "\u2B07\uFE0F", 3, "down" in mine_dirs)
 
-        row0 = [map_btn, inventory_btn, help_btn]
+        row0 = [map_btn, inventory_btn, quest_btn, help_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
@@ -1115,6 +1122,7 @@ class MerchantView(discord.ui.View):
             ("◀",       "merch_prev",  discord.ButtonStyle.secondary),
             ("▶",       "merch_next",  discord.ButtonStyle.secondary),
             ("🪙 Buy",  "merch_buy",   discord.ButtonStyle.success),
+            ("📋 Quest", "merch_quest", discord.ButtonStyle.primary),
             ("👋 Leave", "merch_close", discord.ButtonStyle.danger),
         ]:
             self.add_item(discord.ui.Button(
@@ -2201,7 +2209,8 @@ async def _move_steps(
             if not allowed:
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
                 nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
-                return render_grid(grid, player, reason, other_players=nearby), _game_view(guild_id, user_id, player, grid=grid)
+                qmarks = await get_player_quest_markers(db, user_id)
+                return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
             # 0.2% travelling merchant encounter
@@ -2238,7 +2247,8 @@ async def _move_steps(
                     return content, view
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
-        return render_grid(grid, player, other_players=nearby), _game_view(guild_id, user_id, player, grid=grid)
+        qmarks = await get_player_quest_markers(db, user_id)
+        return render_grid(grid, player, other_players=nearby, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def handle_move(
@@ -2271,6 +2281,13 @@ async def _finish_combat(
     player.in_combat = False
     _ui_state.pop(user_id, None)
     await clear_combat_state(db, user_id)
+
+    # Quest kill progress tracking
+    if won and player.combat_enemy_type:
+        from dwarf_explorer.game.quests import increment_kill_progress
+        completed_quests = await increment_kill_progress(db, user_id, player.combat_enemy_type)
+        for title in completed_quests:
+            extra_msg += f" 📋 Quest ready to complete: **{title}**!"
 
     # Spider poison sac drop on victory
     if won and player.combat_enemy_type in ("cave_spider", "spider"):
@@ -2357,7 +2374,8 @@ async def _finish_combat(
         return render_grid(grid, player, extra_msg), BoatView(guild_id, user_id,
                                                               dock_available=(harbor_adj is not None))
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player, grid=grid)
+    qmarks = await get_player_quest_markers(db, user_id)
+    return render_grid(grid, player, extra_msg, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def _after_player_action(
@@ -3043,7 +3061,9 @@ async def handle_ocean_move(
             await update_player_ocean_state(db, user_id, False, 0, 0)
             await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
             grid = await load_village_viewport(vid, dock_x, dock_y, db)
-            content = render_grid(grid, player, "⚓ You sail back into the harbour.")
+            delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
+            _hs_msg = f"⚓ You sail back into the harbour.{' ' + delivery_msg if delivery_msg else ''}"
+            content = render_grid(grid, player, _hs_msg)
             await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=_game_view(guild_id, user_id, player, grid=grid),
@@ -3170,7 +3190,9 @@ async def handle_ocean_move(
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_village_state(db, user_id, True, vid, vx, vy, nx, ny)
         grid = await load_village_viewport(vid, vx, vy, db)
-        content = render_grid(grid, player, "⚓ You sail into the harbour.")
+        delivery_msg = await _complete_delivery_quests_for_village(db, user_id, nx, ny)
+        _harbour_msg = f"⚓ You sail into the harbour.{' ' + delivery_msg if delivery_msg else ''}"
+        content = render_grid(grid, player, _harbour_msg)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
@@ -3219,7 +3241,9 @@ async def handle_ocean_dock(
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_village_state(db, user_id, True, vid, vx, vy, hwx, hwy)
         grid = await load_village_viewport(vid, vx, vy, db)
-        content = render_grid(grid, player, "⚓ You dock at the harbour and step ashore.")
+        delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
+        _dock_msg = f"⚓ You dock at the harbour and step ashore.{' ' + delivery_msg if delivery_msg else ''}"
+        content = render_grid(grid, player, _dock_msg)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
@@ -3247,7 +3271,9 @@ async def handle_ocean_dock(
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
         grid = await load_village_viewport(vid, dock_x, dock_y, db)
-        content = render_grid(grid, player, "⚓ You dock at the harbour and step ashore.")
+        delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
+        _hs_dock_msg = f"⚓ You dock at the harbour and step ashore.{' ' + delivery_msg if delivery_msg else ''}"
+        content = render_grid(grid, player, _hs_dock_msg)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
@@ -3897,6 +3923,32 @@ async def handle_merchant_close(
     )
 
 
+# ── Village entry helpers ─────────────────────────────────────────────────────
+
+async def _complete_delivery_quests_for_village(
+    db, user_id: int, village_wx: int, village_wy: int
+) -> str:
+    """Auto-complete delivery quests whose destination matches this village.
+
+    Returns a bonus notification string (empty if nothing completed).
+    """
+    from dwarf_explorer.game.quests import get_completable_delivery_quests, complete_quest
+    from dwarf_explorer.database.repositories import give_quest_reward as _give_qr
+    completable = await get_completable_delivery_quests(db, user_id, village_wx, village_wy)
+    if not completable:
+        return ""
+    msgs: list[str] = []
+    for pq in completable:
+        reward = await complete_quest(db, user_id, pq["id"])
+        if reward:
+            reward_str = await _give_qr(db, user_id,
+                                        reward["gold"], reward["xp"], reward.get("item"))
+            msgs.append(f"\U0001F4CB Quest **{pq['title']}** complete! {reward_str}")
+            # Remove the delivery parcel that was granted on quest accept
+            await remove_from_inventory(db, user_id, "merchant_parcel", 1)
+    return " ".join(msgs)
+
+
 # ── Interact ──────────────────────────────────────────────────────────────────
 
 async def handle_interact(
@@ -4101,8 +4153,22 @@ async def handle_interact(
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif vtile.terrain == "vil_well":
+            # Village elder / notice board — offer quest pool
+            from dwarf_explorer.game.quests import get_or_refresh_village_pool, get_or_refresh_bounty_pool
+            village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
+            bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
+            combined_pool = village_pool + bounty_pool
+            if combined_pool:
+                await handle_open_quest_pool(
+                    interaction, guild_id, user_id,
+                    pool=combined_pool,
+                    source_label="Village Notice Board",
+                    source_type="village_npc",
+                )
+                return
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-            content = render_grid(grid, player, "A stone well. The water is cool and clear.")
+            content = render_grid(grid, player,
+                "⛲ The notice board is bare. Check back tomorrow for new work.")
 
         elif vtile.terrain == "vil_dock":
             # ── Board the boat from the harbour dock → wilderness ocean ───────
@@ -4449,7 +4515,9 @@ async def handle_interact(
             player.village_wx, player.village_wy = wx, wy
             await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
             grid = await load_village_viewport(vid, vx, vy, db)
-            content = render_grid(grid, player, "You enter the village.")
+            delivery_msg = await _complete_delivery_quests_for_village(db, user_id, wx, wy)
+            _entry_msg = f"You enter the village.{' ' + delivery_msg if delivery_msg else ''}"
+            content = render_grid(grid, player, _entry_msg)
 
         elif tile.structure == "sundial":
             # ── Sundial: consume a Star Fragment to open / enter the Temporal Rift ──
@@ -4876,6 +4944,46 @@ async def handle_action(
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
+
+        # ── Drop-box pickup ──────────────────────────────────────────────────
+        cur_tile = await load_single_tile(wx, wy, seed, db)
+        if cur_tile.structure == "drop_box" or (
+            cur_tile.terrain == "drop_box"
+        ):
+            picked = await pickup_drop_box(db, wx, wy, user_id)
+            grid = await load_viewport(wx, wy, seed, db)
+            if picked:
+                names = ", ".join(f"{q}× {iid}" for iid, q in picked)
+                msg = f"📦 Picked up: {names}"
+            else:
+                msg = "📦 The box is empty."
+            content = render_grid(grid, player, msg)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        # ── Investigation quest completion (ruins / shrine tiles) ────────────
+        struct = cur_tile.structure
+        if struct in ("ruins", "shrine"):
+            from dwarf_explorer.game.quests import get_completable_investigation_quests, complete_quest
+            from dwarf_explorer.database.repositories import give_quest_reward
+            completable = await get_completable_investigation_quests(db, user_id, struct, wx, wy)
+            if completable:
+                q = completable[0]
+                reward = await complete_quest(db, user_id, q["pq_id"])
+                reward_str = ""
+                if reward:
+                    reward_str = await give_quest_reward(
+                        db, user_id, reward["gold"], reward["xp"], reward.get("item")
+                    )
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(
+                    grid, player,
+                    f"📜 Quest complete: **{q['title']}**! You investigate the {struct}. {reward_str}"
+                )
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
         grid = await load_viewport(wx, wy, seed, db)
         content = render_grid(grid, player, "Nothing to interact with nearby.")
@@ -7705,8 +7813,9 @@ async def handle_map(
         return
 
     other_players = await get_all_overworld_players(db, user_id)
+    qmarks = await get_player_quest_markers(db, user_id)
     from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(seed, db, guild_id, player.world_x, player.world_y, other_players)
+    buf = await generate_world_map(seed, db, guild_id, player.world_x, player.world_y, other_players, quest_markers=qmarks)
     file = discord.File(buf, filename="world_map.png")
     await interaction.followup.send(file=file, ephemeral=True)
 
@@ -7762,3 +7871,348 @@ async def handle_help_back(
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Quest handlers ────────────────────────────────────────────────────────────
+
+async def handle_quests(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open the quest log."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=QuestView(guild_id, user_id))
+
+
+async def handle_quest_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    from dwarf_explorer.game.quests import get_active_quests
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    quests = await get_active_quests(db, user_id)
+    current = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    new_idx = (current + delta) % max(1, len(quests))
+    _ui_state[user_id] = {"type": "quest_log", "quest_index": new_idx}
+    content = await render_quest_list(db, user_id, new_idx, in_village=player.in_village)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=QuestView(guild_id, user_id))
+
+
+async def handle_quest_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Show confirmation prompt before cancelling."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
+    content += "\n\n⚠️ *Abandon this quest? All progress will be lost.*"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=QuestView(guild_id, user_id, quest_index=idx,
+                                                           confirm_cancel=True))
+
+
+async def handle_quest_cancel_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    from dwarf_explorer.game.quests import get_active_quests, cancel_quest
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    quests = await get_active_quests(db, user_id)
+    if quests and idx < len(quests):
+        pq = quests[idx]
+        await cancel_quest(db, user_id, pq["pq_id"])
+        if pq.get("quest_subtype") == "delivery":
+            await remove_from_inventory(db, user_id, "merchant_parcel", 1)
+        _ui_state[user_id] = {"type": "quest_log", "quest_index": 0}
+        content = "✖ Quest abandoned.\n\n"
+        content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
+    else:
+        content = "No quest to cancel."
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=QuestView(guild_id, user_id))
+
+
+async def handle_quest_cancel_back(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=QuestView(guild_id, user_id, quest_index=idx))
+
+
+async def handle_quest_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    _ui_state.pop(user_id, None)
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if player.in_village:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    elif player.in_cave:
+        from dwarf_explorer.world.caves import load_cave_viewport
+        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    else:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Quest pool (village / bounty board) ──────────────────────────────────────
+
+async def handle_open_quest_pool(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    pool: list, source_label: str, source_type: str,
+) -> None:
+    """Open the quest pool offer list (called from interact handler)."""
+    from dwarf_explorer.game.quests import get_active_quests
+    from dwarf_explorer.ui.quest_view import QuestPoolView, render_quest_pool
+    db = await get_database(guild_id)
+    active_quests = await get_active_quests(db, user_id)
+    _ui_state[user_id] = {
+        "type": "quest_pool", "pool": pool, "selected": 0,
+        "source_label": source_label, "source_type": source_type,
+    }
+    content = await render_quest_pool(pool, active_quests, 0, source_label)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=QuestPoolView(guild_id, user_id, quest_count=len(pool)),
+    )
+
+
+async def handle_qpool_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    db = await get_database(guild_id)
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "quest_pool":
+        await interaction.response.defer()
+        return
+    from dwarf_explorer.game.quests import get_active_quests
+    from dwarf_explorer.ui.quest_view import QuestPoolView, render_quest_pool
+    pool   = state["pool"]
+    active = await get_active_quests(db, user_id)
+    avail  = [q for q in pool if q.get("id") not in {a["quest_id"] for a in active}]
+    sel    = (state.get("selected", 0) + delta) % max(1, len(avail))
+    _ui_state[user_id]["selected"] = sel
+    content = await render_quest_pool(pool, active, sel, state["source_label"])
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=QuestPoolView(guild_id, user_id, quest_count=len(avail), selected=sel),
+    )
+
+
+async def handle_qpool_accept(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "quest_pool":
+        await interaction.response.defer()
+        return
+    from dwarf_explorer.game.quests import (
+        get_active_quests, accept_quest, MAX_PLAYER_QUESTS, get_active_quest_count
+    )
+    from dwarf_explorer.ui.quest_view import (
+        QuestPoolView, render_quest_pool, QuestView, render_quest_list
+    )
+    pool   = state["pool"]
+    active = await get_active_quests(db, user_id)
+    avail  = [q for q in pool if q.get("id") not in {a["quest_id"] for a in active}]
+    sel    = state.get("selected", 0)
+    if not avail or sel >= len(avail):
+        await interaction.response.edit_message(
+            embed=_embed("No quest selected."), content=None,
+            view=QuestPoolView(guild_id, user_id, 0),
+        )
+        return
+    q = avail[sel]
+    count = await get_active_quest_count(db, user_id)
+    if count >= MAX_PLAYER_QUESTS:
+        content = (f"⚠️ Your quest log is full "
+                   f"({MAX_PLAYER_QUESTS}/{MAX_PLAYER_QUESTS}). Abandon a quest first.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=QuestPoolView(guild_id, user_id, len(avail), sel),
+        )
+        return
+    src_type  = state.get("source_type", "village_npc")
+    bounty_wx = q.get("location_x") if src_type == "bounty" else None
+    bounty_wy = q.get("location_y") if src_type == "bounty" else None
+    ok = await accept_quest(db, user_id, q["id"], source_type=src_type,
+                            bounty_wx=bounty_wx, bounty_wy=bounty_wy)
+    if ok:
+        if q.get("quest_subtype") == "delivery":
+            await add_to_inventory(db, user_id, "merchant_parcel", 1)
+        _ui_state[user_id] = {"type": "quest_log", "quest_index": 0}
+        content = f"✅ Quest accepted: **{q['title']}**\n\n"
+        content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=QuestView(guild_id, user_id))
+    else:
+        await interaction.response.edit_message(
+            embed=_embed("Could not accept quest (already accepted or log full)."), content=None,
+            view=QuestPoolView(guild_id, user_id, len(avail), sel),
+        )
+
+
+async def handle_qpool_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    await handle_quest_close(interaction, guild_id, user_id)
+
+
+# ── Merchant quest offer ──────────────────────────────────────────────────────
+
+async def handle_merchant_quest_offer(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Called when player presses the Quest button inside a merchant encounter."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    merch_quest = state.get("merch_quest")
+    if merch_quest is None:
+        from dwarf_explorer.game.quests import generate_merchant_quest
+        merch_quest = await generate_merchant_quest(db, seed, player.world_x, player.world_y)
+        if merch_quest is None:
+            await interaction.response.edit_message(
+                embed=_embed("\U0001f9d1 The merchant shrugs. 'No deliveries today.'"),
+                content=None, view=MerchantView(guild_id, user_id),
+            )
+            return
+        _ui_state[user_id]["merch_quest"] = merch_quest
+    from dwarf_explorer.game.quests import get_active_quest_count, MAX_PLAYER_QUESTS, get_active_quests
+    from dwarf_explorer.ui.quest_view import QuestOfferView, render_quest_offer, QuestSwapView, render_quest_swap
+    count = await get_active_quest_count(db, user_id)
+    if count >= MAX_PLAYER_QUESTS:
+        active  = await get_active_quests(db, user_id)
+        content = await render_quest_swap(active, merch_quest)
+        _ui_state[user_id]["type"] = "merch_swap"
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=QuestSwapView(guild_id, user_id, len(active)),
+        )
+    else:
+        content = render_quest_offer(merch_quest, "Travelling Merchant")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=QuestOfferView(guild_id, user_id),
+        )
+
+
+async def handle_quest_offer_accept(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    merch_quest = state.get("merch_quest")
+    if not merch_quest:
+        await interaction.response.defer()
+        return
+    from dwarf_explorer.game.quests import accept_quest
+    ok = await accept_quest(db, user_id, merch_quest["id"], source_type="merchant")
+    if ok:
+        await add_to_inventory(db, user_id, "merchant_parcel", 1)
+        _ui_state.pop(user_id, None)
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player,
+                              f"\U0001f4cb Quest accepted: **{merch_quest['title']}**")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+    else:
+        await interaction.response.edit_message(
+            embed=_embed("Quest log full."), content=None,
+            view=MerchantView(guild_id, user_id),
+        )
+
+
+async def handle_quest_offer_decline(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    state.pop("merch_quest", None)
+    state["type"] = "merchant"
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    catalog = state.get("catalog", [])
+    content = _render_merchant(catalog, state.get("selected", 0), player)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=MerchantView(guild_id, user_id))
+
+
+async def handle_qswap(
+    interaction: discord.Interaction, guild_id: int, user_id: int, quest_slot: int
+) -> None:
+    """Cancel active quest at slot, then accept merchant quest."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    merch_quest = state.get("merch_quest")
+    if not merch_quest:
+        await interaction.response.defer()
+        return
+    from dwarf_explorer.game.quests import get_active_quests, cancel_quest, accept_quest
+    active = await get_active_quests(db, user_id)
+    if quest_slot >= len(active):
+        await interaction.response.defer()
+        return
+    pq = active[quest_slot]
+    await cancel_quest(db, user_id, pq["pq_id"])
+    if pq.get("quest_subtype") == "delivery":
+        await remove_from_inventory(db, user_id, "merchant_parcel", 1)
+    ok = await accept_quest(db, user_id, merch_quest["id"], source_type="merchant")
+    if ok:
+        await add_to_inventory(db, user_id, "merchant_parcel", 1)
+        _ui_state.pop(user_id, None)
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player,
+                              f"\U0001f4cb Quest accepted: **{merch_quest['title']}**")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+    else:
+        await interaction.response.defer()
+
+
+async def handle_qswap_pass(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    state.pop("merch_quest", None)
+    state["type"] = "merchant"
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    catalog = state.get("catalog", [])
+    content = _render_merchant(catalog, state.get("selected", 0), player)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=MerchantView(guild_id, user_id))

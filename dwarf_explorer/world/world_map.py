@@ -178,6 +178,7 @@ def _composite_players_sync(
     base_png: bytes,
     player_x: int, player_y: int,
     other_players: list,
+    quest_markers: list | None = None,
 ) -> io.BytesIO:
     """Load the cached base PNG and stamp player position dots on top."""
     from PIL import Image, ImageDraw
@@ -185,6 +186,13 @@ def _composite_players_sync(
     scale = MAP_PIXEL_SCALE
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
+
+    # Quest markers — orange diamonds (visible only to the quest holder)
+    if quest_markers:
+        for qx, qy, _ in quest_markers:
+            cx_q = qx * scale + scale // 2
+            cy_q = qy * scale + scale // 2
+            _draw_icon(draw, cx_q, cy_q, "filled_diamond", (255, 140, 0))
 
     # Other players (blue)
     for ox, oy, _ in other_players:
@@ -211,12 +219,15 @@ async def generate_world_map(
     seed: int, db, guild_id: int,
     player_x: int, player_y: int,
     other_players: list | None = None,
+    quest_markers: list | None = None,
 ) -> io.BytesIO:
     """Return a BytesIO PNG of the world map with player dots composited on top.
 
     The base terrain+overrides image is rendered once and cached per guild for
     up to 1 hour (or until the seed/override count changes).  Only the fast
     player-dot composite step runs on every call.
+
+    quest_markers: list of (world_x, world_y, target_id) drawn as orange diamonds.
     """
     rows = await db.fetch_all("SELECT world_x, world_y, tile_type FROM tile_overrides")
     overrides = [(r["world_x"], r["world_y"], r["tile_type"]) for r in rows]
@@ -229,5 +240,6 @@ async def generate_world_map(
         _, _, _, base_png = _BASE_CACHE[guild_id]
 
     return await asyncio.to_thread(
-        _composite_players_sync, base_png, player_x, player_y, other_players or []
+        _composite_players_sync, base_png, player_x, player_y,
+        other_players or [], quest_markers or [],
     )

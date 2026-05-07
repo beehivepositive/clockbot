@@ -240,6 +240,21 @@ class Database:
                 # Rift support: cave type marker and boss-defeated flag
                 "ALTER TABLE caves ADD COLUMN cave_type TEXT NOT NULL DEFAULT 'cave'",
                 "ALTER TABLE caves ADD COLUMN boss_defeated INTEGER NOT NULL DEFAULT 0",
+                # Quest system enhancements
+                "ALTER TABLE quests ADD COLUMN source_type TEXT NOT NULL DEFAULT 'village_npc'",
+                "ALTER TABLE quests ADD COLUMN quest_subtype TEXT NOT NULL DEFAULT 'kill'",
+                "ALTER TABLE quests ADD COLUMN location_type TEXT NOT NULL DEFAULT 'overworld'",
+                "ALTER TABLE player_quests ADD COLUMN bounty_wx INTEGER DEFAULT NULL",
+                "ALTER TABLE player_quests ADD COLUMN bounty_wy INTEGER DEFAULT NULL",
+                "ALTER TABLE player_quests ADD COLUMN source_type TEXT NOT NULL DEFAULT 'village_npc'",
+                """CREATE TABLE IF NOT EXISTS quest_pool (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type  TEXT    NOT NULL,
+    source_key   TEXT    NOT NULL,
+    quest_id     INTEGER NOT NULL REFERENCES quests(id),
+    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at   TEXT    NOT NULL
+)""",
             ]
             for mig_sql in migrations:
                 try:

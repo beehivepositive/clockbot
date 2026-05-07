@@ -37,7 +37,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
 
 def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "",
                 other_players: list[tuple[int, int, str]] | None = None,
-                cursor_pos: tuple[int, int] | None = None) -> str:
+                cursor_pos: tuple[int, int] | None = None,
+                quest_markers: list[tuple[int, int, str]] | None = None) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -50,6 +51,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 
     other_players: list of (world_x, world_y, display_name) for nearby players.
     Only rendered in overworld view.
+
+    quest_markers: list of (world_x, world_y, target_id) for personal quest
+    location markers. Rendered as enemy or investigation emoji in wilderness view.
     """
     if player.in_ship:
         location = "ship"
@@ -75,6 +79,17 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
             row = oy - player.world_y + vp_center
             if 0 <= col < vp_size and 0 <= row < vp_size:
                 _other_pos.add((col, row))
+
+    # Build personal quest-marker viewport positions (overworld only)
+    # target_id is an enemy type (wolf/bear/…) or structure type (ruins/shrine/…)
+    _quest_vp: dict[tuple[int, int], str] = {}
+    if quest_markers and location == "wilderness":
+        for qx, qy, target_id in quest_markers:
+            col = qx - player.world_x + vp_center
+            row = qy - player.world_y + vp_center
+            if 0 <= col < vp_size and 0 <= row < vp_size:
+                emoji = ENTITY_EMOJI.get(target_id, "\U0001F50D")  # 🔍 fallback
+                _quest_vp[(col, row)] = emoji
 
     # Cave visibility pre-computation
     torch_on   = False
@@ -110,6 +125,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                         row_emojis.append(ENTITY_EMOJI["player"])
                 elif (col_x, row_y) in _other_pos:
                     row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
+                elif (col_x, row_y) in _quest_vp:
+                    row_emojis.append(_quest_vp[(col_x, row_y)])
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor

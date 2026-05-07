@@ -61,6 +61,11 @@ from dwarf_explorer.ui.game_view import (
     handle_house_delete, handle_house_edit_close,
     handle_house_deco_nav, handle_house_deco_sel, handle_house_deco_place,
     handle_house_deco_cancel,
+    handle_quests, handle_quest_nav, handle_quest_cancel,
+    handle_quest_cancel_confirm, handle_quest_cancel_back, handle_quest_close,
+    handle_open_quest_pool, handle_qpool_nav, handle_qpool_accept, handle_qpool_close,
+    handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
+    handle_qswap, handle_qswap_pass,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -92,6 +97,7 @@ _IGNORED_ACTIONS = {
     # Inventory spacers (all inv_sp*)
     "inv_sp1", "inv_sp2", "inv_sp3", "inv_sp4", "inv_sp5", "inv_sp6",
     "inv_sp_r0c", "inv_sp_r0d",
+    # Quest spacers (qsp_*)  — caught dynamically below
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
@@ -402,6 +408,45 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             # Inventory unequip
             elif act == "inv_unequip":
                 await handle_inv_unequip(interaction, gid, uid)
+            # Quest spacer buttons
+            elif act.startswith("qsp_"):
+                await interaction.response.defer()
+            # Quests
+            elif act == "quests":
+                await handle_quests(interaction, gid, uid)
+            elif act == "quest_prev":
+                await handle_quest_nav(interaction, gid, uid, -1)
+            elif act == "quest_next":
+                await handle_quest_nav(interaction, gid, uid, +1)
+            elif act == "quest_cancel":
+                await handle_quest_cancel(interaction, gid, uid)
+            elif act == "quest_cancel_confirm":
+                await handle_quest_cancel_confirm(interaction, gid, uid)
+            elif act == "quest_cancel_back":
+                await handle_quest_cancel_back(interaction, gid, uid)
+            elif act == "quest_close":
+                await handle_quest_close(interaction, gid, uid)
+            # Quest pool (village / bounty board)
+            elif act == "qpool_prev":
+                await handle_qpool_nav(interaction, gid, uid, -1)
+            elif act == "qpool_next":
+                await handle_qpool_nav(interaction, gid, uid, +1)
+            elif act == "qpool_accept":
+                await handle_qpool_accept(interaction, gid, uid)
+            elif act == "qpool_close":
+                await handle_qpool_close(interaction, gid, uid)
+            # Merchant quest offer
+            elif act == "merch_quest":
+                await handle_merchant_quest_offer(interaction, gid, uid)
+            elif act == "quest_offer_accept":
+                await handle_quest_offer_accept(interaction, gid, uid)
+            elif act == "quest_offer_decline":
+                await handle_quest_offer_decline(interaction, gid, uid)
+            # Quest swap (merchant offer when at max quests)
+            elif act.startswith("qswap_") and act[6:].isdigit():
+                await handle_qswap(interaction, gid, uid, int(act[6:]))
+            elif act == "qswap_pass":
+                await handle_qswap_pass(interaction, gid, uid)
             # Player house edit
             elif act in _HEDIT_MOVE_ACTIONS:
                 direction = act[6:]  # strip "hedit_"

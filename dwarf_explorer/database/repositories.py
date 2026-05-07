@@ -1040,3 +1040,86 @@ async def mark_treasure_found(db: Database, user_id: int) -> None:
     await db.execute(
         "UPDATE treasure_maps SET found=1 WHERE user_id=?", (user_id,)
     )
+
+
+# --- Quest helpers ---
+
+async def give_quest_reward(
+    db: Database, user_id: int, gold: int, xp: int, item_id: str | None = None
+) -> str:
+    """Grant gold, xp and optional item for a completed quest.  Returns a summary string."""
+    from dwarf_explorer.config import COIN_PURSE_CAPACITY
+    from dwarf_explorer.game.player import Player
+
+    # Grant gold (respecting cap)
+    if gold > 0:
+        player_row = await db.fetch_one("SELECT gold, coin_purse FROM players WHERE user_id=?", (user_id,))
+        if player_row:
+            eq_row = await db.fetch_one(
+                "SELECT item_id FROM equipment WHERE user_id=? AND slot='coin_purse'", (user_id,)
+            )
+            purse = eq_row["item_id"] if eq_row else None
+            cap = COIN_PURSE_CAPACITY.get(purse, COIN_PURSE_CAPACITY[None])
+            current = player_row["gold"]
+            new_gold = min(current + gold, cap)
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (new_gold, user_id))
+
+    # Grant XP (and level-up)
+    if xp > 0:
+        await db.execute(
+            "UPDATE players SET xp = xp + ? WHERE user_id=?", (xp, user_id)
+        )
+        # Simple level-up check (100 * level^1.5 xp per level)
+        import math
+        row = await db.fetch_one("SELECT xp, level FROM players WHERE user_id=?", (user_id,))
+        if row:
+            new_xp   = row["xp"]
+            lvl      = row["level"]
+            required = int(100 * (lvl ** 1.5))
+            while new_xp >= required:
+                lvl += 1
+                required = int(100 * (lvl ** 1.5))
+            if lvl > row["level"]:
+                await db.execute(
+                    "UPDATE players SET level=?, max_hp=max_hp+10, hp=hp+10 WHERE user_id=?",
+                    (lvl, user_id),
+                )
+
+    # Grant item
+    if item_id:
+        await add_to_inventory(db, user_id, item_id, 1)
+
+    parts = []
+    if gold:
+        parts.append(f"+{gold}🪙")
+    if xp:
+        parts.append(f"+{xp}xp")
+    if item_id:
+        from dwarf_explorer.config import ITEM_EMOJI
+        emoji = ITEM_EMOJI.get(item_id, "📦")
+        parts.append(f"+1 {emoji}")
+    return " ".join(parts) or "nothing"
+
+
+async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int, int, str]]:
+    """Return [(world_x, world_y, enemy_type)] for all active bounty quests with markers."""
+    rows = await db.fetch_all(
+        "SELECT pq.bounty_wx, pq.bounty_wy, q.target_id, q.location_x, q.location_y, "
+        "q.quest_subtype, q.location_type "
+        "FROM player_quests pq JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id = ? AND pq.status = 'active' "
+        "AND (pq.bounty_wx IS NOT NULL OR q.location_x IS NOT NULL)",
+        (user_id,),
+    )
+    markers = []
+    for r in rows:
+        # Bounty quests: use personal bounty_wx/wy, fall back to quest location
+        if r["quest_subtype"] == "kill" and r["location_type"] == "overworld":
+            wx = r["bounty_wx"] if r["bounty_wx"] is not None else r["location_x"]
+            wy = r["bounty_wy"] if r["bounty_wy"] is not None else r["location_y"]
+            if wx is not None and wy is not None:
+                markers.append((wx, wy, r["target_id"]))
+        elif r["quest_subtype"] in ("investigation", "delivery"):
+            if r["location_x"] is not None and r["location_y"] is not None:
+                markers.append((r["location_x"], r["location_y"], r["quest_subtype"]))
+    return markers

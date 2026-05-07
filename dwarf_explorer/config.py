@@ -150,6 +150,7 @@ ITEM_EMOJI = {
     "wyvern_leggings":      "\U0001F456",           # 👖
     "iron_shield":          "\U0001F6E1️",     # 🛡️
     "wyvern_shield":        "\U0001F6E1️",     # 🛡️
+    "merchant_parcel":      "\U0001F4E6",           # 📦 delivery parcel
 }
 
 WALKABLE_TILES = {

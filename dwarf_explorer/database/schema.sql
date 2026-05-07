@@ -76,19 +76,22 @@ CREATE TABLE IF NOT EXISTS inventory (
     slot_index   INTEGER NOT NULL DEFAULT 0
 );
 
--- Quest definitions
+-- Quest definitions (generated dynamically; rows persist until all referencing player_quests are gone)
 CREATE TABLE IF NOT EXISTS quests (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    quest_type   TEXT    NOT NULL,
-    title        TEXT    NOT NULL,
-    description  TEXT    NOT NULL,
-    target_id    TEXT    NOT NULL,
-    target_count INTEGER NOT NULL DEFAULT 1,
-    reward_gold  INTEGER NOT NULL DEFAULT 0,
-    reward_xp    INTEGER NOT NULL DEFAULT 0,
-    reward_item  TEXT,
-    location_x   INTEGER,
-    location_y   INTEGER
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    quest_type    TEXT    NOT NULL,          -- human-readable type label
+    title         TEXT    NOT NULL,
+    description   TEXT    NOT NULL,
+    target_id     TEXT    NOT NULL,          -- enemy_type or item_id
+    target_count  INTEGER NOT NULL DEFAULT 1,
+    reward_gold   INTEGER NOT NULL DEFAULT 0,
+    reward_xp     INTEGER NOT NULL DEFAULT 0,
+    reward_item   TEXT,
+    location_x    INTEGER,                   -- world_x of target area / destination
+    location_y    INTEGER,                   -- world_y of target area / destination
+    source_type   TEXT    NOT NULL DEFAULT 'village_npc',  -- 'village_npc'|'bounty'|'merchant'
+    quest_subtype TEXT    NOT NULL DEFAULT 'kill',          -- 'kill'|'fetch'|'investigation'|'delivery'
+    location_type TEXT    NOT NULL DEFAULT 'overworld'      -- 'overworld'|'ocean'
 );
 
 -- Player quest progress
@@ -97,10 +100,23 @@ CREATE TABLE IF NOT EXISTS player_quests (
     user_id      INTEGER NOT NULL REFERENCES players(user_id),
     quest_id     INTEGER NOT NULL REFERENCES quests(id),
     progress     INTEGER NOT NULL DEFAULT 0,
-    status       TEXT    NOT NULL DEFAULT 'active',
+    status       TEXT    NOT NULL DEFAULT 'active',   -- 'active'|'completed'|'cancelled'
     accepted_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
+    bounty_wx    INTEGER DEFAULT NULL,   -- personal marker world_x (bounty quests only)
+    bounty_wy    INTEGER DEFAULT NULL,   -- personal marker world_y (bounty quests only)
+    source_type  TEXT    NOT NULL DEFAULT 'village_npc',
     UNIQUE(user_id, quest_id)
+);
+
+-- Available quest pool per source (refreshed every 24h)
+CREATE TABLE IF NOT EXISTS quest_pool (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type  TEXT    NOT NULL,  -- 'village_npc' | 'bounty'
+    source_key   TEXT    NOT NULL,  -- village_id (str) | 'overworld' | 'ocean'
+    quest_id     INTEGER NOT NULL REFERENCES quests(id),
+    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at   TEXT    NOT NULL
 );
 
 -- Caves
