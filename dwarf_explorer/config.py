@@ -259,6 +259,13 @@ TAVERN_MENU = [
     {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 20},
 ]
 
+# Mill food menu (cheaper than tavern, basic staples)
+MILL_MENU = [
+    {"id": "bread",     "name": "Bread",     "price": 3,  "hp": 10},
+    {"id": "meat_stew", "name": "Meat Stew", "price": 8,  "hp": 20},
+    {"id": "healing_herb", "name": "Healing Herb", "price": 12, "hp": 0},
+]
+
 # Hospital heal cost: gold per missing HP (minimum 5 gold)
 HEAL_COST_PER_HP = 2
 HEAL_MINIMUM_COST = 5
@@ -433,6 +440,10 @@ VILLAGE_EMOJI = {
     "vil_tavern":       "🍻",        # 🍻  tavern
     "vil_hospital":     "🏥",        # 🏥  hospital / healer
     "vil_elder":        "\U0001F9D3",        # 🧓  village elder NPC (quest giver)
+    "vil_villager":     "\U0001F9D1",        # 🧑  walking villager NPC
+    "vil_guard":        "\U0001F482",        # 💂  guard NPC
+    "vil_notice_board": "\U0001F4CB",        # 📋  outdoor bounty/notice board
+    "vil_mill":         "\u2699\uFE0F",      # ⚙️  grain mill
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
@@ -476,6 +487,14 @@ BUILDING_EMOJI = {
     # Hospital unique
     "b_healer":          "🧑",       # 🧑  healer NPC
     "b_medicine_shelf":  "🌿",       # 🌿  herb/medicine shelf
+    # House furnishings (also used by mil/other interiors)
+    "b_chest":          "\U0001F4E6",        # 📦  small storage chest
+    "b_resident":       "\U0001F9D3",        # 🧓  house resident NPC
+    "b_pet":            "\U0001F431",        # 🐱  house cat
+    # Mill unique
+    "b_millstone":      "\U0001FAA8",        # 🪨  millstone / grinder
+    "b_miller_npc":     "\U0001F9D1",        # 🧑  miller NPC
+    "b_grain_sack":     "\U0001F6F1",        # 🛱  grain sack (drum shape)
     # Player-house chests
     "ph_chest_small":     "\U0001F4E6",       # 📦
     "ph_chest_medium":    "\U0001F5C4\uFE0F", # 🗄️
@@ -487,6 +506,10 @@ VILLAGE_WALKABLE = {
     "vil_house", "vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
     "vil_tavern", "vil_hospital",
     "vil_dock",  # harbor-village boarding point — walkable, triggers ocean
+    "vil_villager",     # walkable NPC (interact for gossip)
+    "vil_guard",        # walkable NPC (interact for guard dialogue)
+    "vil_notice_board", # outdoor bounty board — walkable, interact to see quests
+    "vil_mill",         # enterable mill building
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
 
@@ -496,6 +519,8 @@ BUILDING_WALKABLE = {
     "b_pew", "b_table", "b_stove", "b_bed",
     "b_barkeep", "b_tavern_npc", "b_healer", "b_barrel", "b_bar_counter", "b_medicine_shelf",
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
+    "b_chest", "b_resident", "b_pet",
+    "b_millstone", "b_miller_npc", "b_grain_sack",
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 

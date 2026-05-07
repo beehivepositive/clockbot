@@ -1337,6 +1337,28 @@ class TavernBuyView(discord.ui.View):
         ))
 
 
+# ── Mill buy view ─────────────────────────────────────────────────────────────
+
+class MillBuyView(discord.ui.View):
+    """One button per mill menu item + a close button."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        from dwarf_explorer.config import MILL_MENU
+        gid, uid = guild_id, user_id
+        for item in MILL_MENU:
+            label = f"{item['name']} {item['price']}🪙"
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary, label=label,
+                custom_id=_custom_id(gid, uid, f"mill_buy_{item['id']}"),
+                row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Leave",
+            custom_id=_custom_id(gid, uid, "mill_close"), row=1,
+        ))
+
+
 # ── Heal confirm view ─────────────────────────────────────────────────────────
 
 class HealConfirmView(discord.ui.View):
@@ -1596,8 +1618,14 @@ def _compute_context_labels(
         elif t in ("cave_entrance", "b_door"):
             center_label, center_enabled = "🚪", True
         elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop",
-                    "vil_blacksmith", "vil_tavern", "vil_hospital"):
+                    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill"):
             center_label, center_enabled = "🚪", True
+        elif t == "vil_notice_board":
+            center_label, center_enabled = "📋 Board", True
+        elif t == "vil_villager":
+            center_label, center_enabled = "💬 Talk", True
+        elif t == "vil_guard":
+            center_label, center_enabled = "💬 Talk", True
         # Building NPCs (on-tile)
         elif t == "b_bank_npc":
             center_label, center_enabled = "🏦", True
@@ -1623,6 +1651,14 @@ def _compute_context_labels(
             center_label, center_enabled = "🍺", True
         elif t == "b_medicine_shelf":
             center_label, center_enabled = "💬", True
+        elif t == "b_miller_npc":
+            center_label, center_enabled = "🛒 Buy", True
+        elif t == "b_resident":
+            center_label, center_enabled = "💬 Talk", True
+        elif t == "b_pet":
+            center_label, center_enabled = "🐱", True
+        elif t == "b_millstone":
+            center_label, center_enabled = "⚙️", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
         elif t == "vil_dock":
@@ -1682,6 +1718,8 @@ def _compute_context_labels(
         action_label, action_enabled = "🍺 Order", True
     elif "b_healer" in adj_terrains:
         action_label, action_enabled = "💊 Heal", True
+    elif "b_miller_npc" in adj_terrains:
+        action_label, action_enabled = "🛒 Mill", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
     elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
@@ -4237,7 +4275,12 @@ async def handle_interact(
                 # ── Tavern quest NPC — each NPC at a unique position offers a different quest
                 from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
                 grid = await _load_house_grid()
-                bounty_pool = await get_or_refresh_bounty_pool(db, seed)
+                bounty_pool = await get_or_refresh_bounty_pool(
+                    db, seed,
+                    village_id=player.village_id,
+                    village_wx=player.world_x,
+                    village_wy=player.world_y,
+                )
                 if bounty_pool:
                     # Use the NPC's tile position to deterministically pick a unique quest
                     idx = (player.house_x * 7 + player.house_y * 13) % len(bounty_pool)
@@ -4288,6 +4331,58 @@ async def handle_interact(
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "The bar counter. Step up and speak with the barkeep.")
 
+            elif htile.terrain == "b_miller_npc" and player.house_type == "mill":
+                # ── Mill — open mill buy menu ──────────────────────────────────
+                from dwarf_explorer.config import MILL_MENU
+                grid = await _load_house_grid()
+                menu_lines = "\n".join(
+                    f"⚙️ **{item['name']}** — {item['price']}🪙"
+                    + (f" (+{item['hp']} HP)" if item.get("hp") else "")
+                    for item in MILL_MENU
+                )
+                _ui_state[user_id] = {
+                    **_ui_state.get(user_id, {}),
+                    "type": "mill_menu",
+                }
+                content = render_grid(grid, player,
+                    f"\"Fresh ground today, good prices.\"\n{menu_lines}\n\nUse the buttons below to buy.")
+                view = MillBuyView(guild_id, user_id)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+
+            elif htile.terrain == "b_resident":
+                # ── House resident NPC — random gossip ───────────────────────
+                grid = await _load_house_grid()
+                _gossip = [
+                    "\"Have you tried the stew at the tavern? Best in the region.\"",
+                    "\"The old ruins to the north give me the creeps...\"",
+                    "\"The mill's been running all night. Something's not right.\"",
+                    "\"My cat keeps bringing in dead rats. I think it's proud.\"",
+                    "\"Trade's been slow lately. Bandits on the roads, they say.\"",
+                    "\"The blacksmith's been forging day and night. Wonder what for.\"",
+                    "\"I heard someone found a map fragment near the old shrine.\"",
+                    "\"Don't wander off after dark. Strange things move in the forest.\"",
+                ]
+                import hashlib
+                _gidx = int(hashlib.md5(f"{player.house_id}{player.house_x}{player.house_y}".encode()).hexdigest(), 16) % len(_gossip)
+                content = render_grid(grid, player, _gossip[_gidx])
+
+            elif htile.terrain == "b_pet":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "🐱 The cat blinks slowly at you.")
+
+            elif htile.terrain == "b_millstone":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A heavy millstone — grain goes in, flour comes out.")
+
+            elif htile.terrain == "b_grain_sack":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A sack of grain, waiting to be milled.")
+
+            elif htile.terrain == "b_chest":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A small wooden chest. It's locked tight.")
+
             else:
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "Nothing to interact with here.")
@@ -4299,7 +4394,7 @@ async def handle_interact(
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
 
         if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
-                              "vil_blacksmith", "vil_tavern", "vil_hospital"):
+                              "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill"):
             result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
             if result:
                 house_id, btype, hx, hy = result
@@ -4317,7 +4412,7 @@ async def handle_interact(
                 labels = {
                     "house": "house", "church": "church", "bank": "bank",
                     "shop": "shop", "blacksmith": "blacksmith",
-                    "tavern": "tavern", "hospital": "hospital",
+                    "tavern": "tavern", "hospital": "hospital", "mill": "mill",
                 }
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
@@ -4328,6 +4423,57 @@ async def handle_interact(
         elif vtile.terrain == "vil_well":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
             content = render_grid(grid, player, "⛲ The well gurgles softly.")
+
+        elif vtile.terrain == "vil_notice_board":
+            # ── Outdoor bounty board — shows same pool as tavern NPCs ──────────
+            from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
+            bounty_pool = await get_or_refresh_bounty_pool(
+                db, seed,
+                village_id=player.village_id,
+                village_wx=player.world_x,
+                village_wy=player.world_y,
+            )
+            if bounty_pool:
+                await handle_open_quest_pool(
+                    interaction, guild_id, user_id,
+                    pool=bounty_pool,
+                    source_label="Notice Board",
+                    source_type="village_npc",
+                )
+                return
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            content = render_grid(grid, player, "📋 The notice board is bare. Check back later.")
+
+        elif vtile.terrain == "vil_villager":
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            _vil_gossip = [
+                "\"Beautiful day, isn't it?\"",
+                "\"Watch yourself on the roads at night.\"",
+                "\"The mill grinds the finest flour in the region.\"",
+                "\"I heard adventurers have been clearing out the old cave.\"",
+                "\"My daughter says she saw something large in the forest last week.\"",
+                "\"The church blesses travellers on request.\"",
+                "\"Best bread in the land — straight from our miller.\"",
+                "\"Trade caravans are rare these days. Dangerous roads.\"",
+                "\"Stick to the paths and you'll be fine.\"",
+                "\"The well water is the sweetest you'll find anywhere.\"",
+            ]
+            import hashlib as _hs
+            _vidx = int(_hs.md5(f"v{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16) % len(_vil_gossip)
+            content = render_grid(grid, player, _vil_gossip[_vidx])
+
+        elif vtile.terrain == "vil_guard":
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            _guard_lines = [
+                "\"Move along, stranger. Keep your weapons sheathed in the village.\"",
+                "\"We've had trouble with wolves on the north road. Stay sharp.\"",
+                "\"The village is under our protection. Cause no trouble.\"",
+                "\"Check the notice board near the well for posted work.\"",
+                "\"Travellers welcome. Troublemakers are not.\"",
+            ]
+            import hashlib as _hg
+            _gidx2 = int(_hg.md5(f"g{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16) % len(_guard_lines)
+            content = render_grid(grid, player, _guard_lines[_gidx2])
 
         elif vtile.terrain == "vil_dock":
             # ── Board the boat from the harbour dock → wilderness ocean ───────
@@ -5045,6 +5191,21 @@ async def handle_action(
                     embed=_embed(content), content=None,
                     view=HealConfirmView(guild_id, user_id, cost),
                 )
+            return
+
+        if "b_miller_npc" in adj_terrains:
+            from dwarf_explorer.config import MILL_MENU
+            menu_lines = "\n".join(
+                f"⚙️ **{item['name']}** — {item['price']}🪙"
+                + (f" (+{item['hp']} HP)" if item.get("hp") else "")
+                for item in MILL_MENU
+            )
+            content = render_grid(grid, player,
+                f"\"Fresh ground today, good prices.\"\n{menu_lines}")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=MillBuyView(guild_id, user_id),
+            )
             return
 
         content = render_grid(grid, player, "Nothing to interact with nearby.")
@@ -8215,7 +8376,12 @@ async def handle_npc_quest(
                 adj_npc[tile.terrain] = (tile.world_x, tile.world_y)
 
     village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
-    bounty_pool  = await get_or_refresh_bounty_pool(db, seed)
+    bounty_pool  = await get_or_refresh_bounty_pool(
+        db, seed,
+        village_id=player.village_id,
+        village_wx=player.world_x,
+        village_wy=player.world_y,
+    )
 
     if "b_priest" in adj_npc:
         # Priest offers a village quest (index 0 — always the current village quest)
@@ -8577,6 +8743,56 @@ async def handle_heal_decline(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "\"Come back if you change your mind.\"")
     _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+# ── Mill handlers ─────────────────────────────────────────────────────────────
+
+async def handle_mill_buy(
+    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+) -> None:
+    """Buy a food item from the mill."""
+    from dwarf_explorer.config import MILL_MENU
+    from dwarf_explorer.database.repositories import add_to_inventory
+
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    item = next((i for i in MILL_MENU if i["id"] == item_id), None)
+    if item is None:
+        await interaction.response.defer()
+        return
+
+    cost = item["price"]
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+    if player.gold < cost:
+        content = render_grid(grid, player,
+            f"\"Sorry, that'll cost you {cost}🪙 and you've only got {player.gold}🪙.\"")
+    else:
+        player.gold -= cost
+        await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+        await add_to_inventory(db, user_id, item_id, 1)
+        content = render_grid(grid, player,
+            f"⚙️ Bought 1× {item['name']} for {cost}🪙.")
+
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=MillBuyView(guild_id, user_id),
+    )
+
+
+async def handle_mill_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close the mill menu and return to the building view."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "\"Come back when you need provisions.\"")
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),

@@ -16,7 +16,8 @@ _BUILDING_SEED_OFFSET = 8000
 # Building tile types that paths must not overwrite
 _PROTECTED_TILES = {
     "vil_well", "vil_house", "vil_church", "vil_bank", "vil_shop",
-    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_tree",
+    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill", "vil_tree",
+    "vil_notice_board",
 }
 
 
@@ -223,7 +224,7 @@ def _generate_village_interior(
 
     # ── Required special buildings ────────────────────────────────────────────
     required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
-                "vil_tavern", "vil_hospital"]
+                "vil_tavern", "vil_hospital", "vil_mill"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(400):
@@ -241,9 +242,28 @@ def _generate_village_interior(
             _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
             break
 
-    # ── Houses (4-8) ──────────────────────────────────────────────────────────
-    house_count = rng.randint(4, 8)
-    for _ in range(500):
+    # ── Notice board — near the well ─────────────────────────────────────────
+    # Try to place it adjacent to the well (within 3 tiles on a path tile)
+    for dist in range(2, 5):
+        for ndx, ndy in [(dist, 0), (-dist, 0), (0, dist), (0, -dist),
+                         (dist, 1), (-dist, 1), (1, dist), (1, -dist)]:
+            nx_b, ny_b = cx + ndx, cy + ndy
+            if not (1 <= nx_b < W - 1 and 1 <= ny_b < H - 1):
+                continue
+            if (nx_b, ny_b) in occupied:
+                continue
+            if grid[ny_b][nx_b] in ("vil_path", "vil_grass"):
+                grid[ny_b][nx_b] = "vil_notice_board"
+                occupied.add((nx_b, ny_b))
+                buildings.append((nx_b, ny_b, "vil_notice_board"))
+                break
+        else:
+            continue
+        break  # placed
+
+    # ── Houses (5-9) ──────────────────────────────────────────────────────────
+    house_count = rng.randint(5, 9)
+    for _ in range(600):
         if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
             break
         bx = rng.randint(2, W - 3)
@@ -278,6 +298,40 @@ def _generate_village_interior(
         if (tx, ty) not in occupied:
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
+
+    # ── Outside NPCs: villagers + guards ─────────────────────────────────────
+    # Villagers wander near path/grass tiles
+    villager_count = rng.randint(4, 8)
+    placed_v = 0
+    for _ in range(600):
+        if placed_v >= villager_count:
+            break
+        vx = rng.randint(2, W - 3)
+        vy = rng.randint(2, H - 3)
+        if (vx, vy) in occupied:
+            continue
+        if grid[vy][vx] not in ("vil_path", "vil_grass"):
+            continue
+        grid[vy][vx] = "vil_villager"
+        occupied.add((vx, vy))
+        placed_v += 1
+
+    # Guards near the village entry path
+    guard_count = rng.randint(1, 3)
+    placed_g = 0
+    # Try to place guards within 4 tiles of the south-spoke entry
+    for _ in range(400):
+        if placed_g >= guard_count:
+            break
+        gx = rng.randint(max(2, sx - 4), min(W - 3, sx + 4))
+        gy = rng.randint(max(2, sy - 8), min(H - 3, sy + 2))
+        if (gx, gy) in occupied:
+            continue
+        if grid[gy][gx] not in ("vil_path", "vil_grass"):
+            continue
+        grid[gy][gx] = "vil_guard"
+        occupied.add((gx, gy))
+        placed_g += 1
 
     # ── Entry at the bottom border (south spoke exit) ─────────────────────────
     # Player enters the village at this border tile.
@@ -420,23 +474,66 @@ def _house_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], 
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
     tiles[(W//2, H-1)] = "b_door"
-    bx = 1 if rng.random() < 0.5 else W - 2
+
+    # Bed — one side, stove — opposite side
+    bed_left = rng.random() < 0.5
+    bx = 1 if bed_left else W - 2
     tiles[(bx, 1)] = "b_bed"
-    sx = W - 2 if bx == 1 else 1
+    sx = W - 2 if bed_left else 1
     tiles[(sx, 1)] = "b_stove"
-    tx, ty = W//2, H//2
+
+    # Chest next to bed (30% chance on the other adjacent wall tile)
+    cx2 = bx + 1 if bed_left else bx - 1
+    if 1 <= cx2 < W - 1 and rng.random() < 0.30:
+        tiles[(cx2, 1)] = "b_chest"
+
+    # Table in middle with chairs around it
+    tx, ty = W // 2, H // 2
     tiles[(tx, ty)] = "b_table"
-    door_x, door_y = W//2, H-1
-    for cdx, cdy in [(0,-1),(0,1),(-1,0),(1,0)]:
-        ccx, ccy = tx+cdx, ty+cdy
-        if (ccx, ccy) == (door_x, door_y - 1):
+    door_x = W // 2
+    for cdx, cdy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+        ccx, ccy = tx + cdx, ty + cdy
+        if ccy == H - 2:          # don't block path to door
             continue
-        if 1 <= ccx < W-1 and 1 <= ccy < H-1 and tiles[(ccx,ccy)] == "b_floor":
+        if 1 <= ccx < W-1 and 1 <= ccy < H-1 and tiles[(ccx, ccy)] == "b_floor":
             tiles[(ccx, ccy)] = "b_chair"
-    for x in range(1, W-1):
+
+    # Bookshelf on back wall (first free slot)
+    for x in range(1, W - 1):
         if tiles[(x, 1)] == "b_floor":
             tiles[(x, 1)] = "b_bookshelf"
             break
+
+    # Candle beside stove
+    if tiles.get((sx, 2)) == "b_floor":
+        tiles[(sx, 2)] = "b_candle"
+
+    # Resident NPC — placed on a free floor tile near the centre
+    placed_resident = False
+    for cdx, cdy in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1)]:
+        rx, ry = tx + cdx, ty + cdy
+        if 1 <= rx < W-1 and 1 <= ry < H-1 and tiles.get((rx, ry)) == "b_floor":
+            tiles[(rx, ry)] = "b_resident"
+            placed_resident = True
+            break
+    # Fallback — any free floor tile in lower half
+    if not placed_resident:
+        for fy in range(H // 2, H - 1):
+            for fx in range(1, W - 1):
+                if tiles.get((fx, fy)) == "b_floor":
+                    tiles[(fx, fy)] = "b_resident"
+                    placed_resident = True
+                    break
+            if placed_resident:
+                break
+
+    # Pet cat — 50% chance, placed on a floor tile near the door
+    if rng.random() < 0.50:
+        for fx in range(1, W - 1):
+            if tiles.get((fx, H - 2)) == "b_floor":
+                tiles[(fx, H - 2)] = "b_pet"
+                break
+
     return tiles
 
 
@@ -610,6 +707,41 @@ def _hospital_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int
     return tiles
 
 
+def _mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int, int], str]:
+    """Grain mill: two large millstones, grain sacks along walls, miller NPC."""
+    tiles: dict[tuple[int, int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
+    tiles[(W // 2, H - 1)] = "b_door"
+
+    # Two millstones side by side in the upper half
+    mx = W // 2
+    tiles[(mx - 1, 2)] = "b_millstone"
+    tiles[(mx + 1, 2)] = "b_millstone"
+    # Miller NPC stands between the millstones at row 3
+    tiles[(mx, 3)] = "b_miller_npc"
+
+    # Grain sacks lining the lower walls
+    for y in range(5, H - 2):
+        if tiles.get((1, y)) == "b_floor":
+            tiles[(1, y)] = "b_grain_sack"
+        if tiles.get((W - 2, y)) == "b_floor":
+            tiles[(W - 2, y)] = "b_grain_sack"
+
+    # Shelf on back wall
+    for x in range(2, W - 2):
+        if tiles.get((x, 1)) == "b_floor":
+            tiles[(x, 1)] = "b_shelf"
+
+    # Candle on back wall
+    tiles[(1, 1)] = "b_candle"
+    if W > 6:
+        tiles[(W - 2, 1)] = "b_candle"
+
+    return tiles
+
+
 def _generate_building_interior(
     house_id: int, seed: int, village_id: int,
     building_type: str, door_vx: int, door_vy: int,
@@ -634,6 +766,9 @@ def _generate_building_interior(
     elif building_type in ("vil_hospital", "hospital"):
         W, H = rng.randint(9, 11), rng.randint(9, 11)
         tiles_dict = _hospital_interior(rng, W, H)
+    elif building_type in ("vil_mill", "mill"):
+        W, H = rng.randint(8, 10), rng.randint(8, 10)
+        tiles_dict = _mill_interior(rng, W, H)
     else:  # house
         W, H = rng.randint(7, 11), rng.randint(6, 9)
         tiles_dict = _house_interior(rng, W, H)
@@ -653,6 +788,7 @@ _CANONICAL_BUILDING_TYPE = {
     "vil_blacksmith":  "blacksmith",
     "vil_tavern":      "tavern",
     "vil_hospital":    "hospital",
+    "vil_mill":        "mill",
 }
 
 

@@ -305,12 +305,13 @@ def _bounty_location(rng: random.Random, location_type: str) -> tuple[int, int]:
     return wx, wy
 
 
-def _direction_from_center(wx: int, wy: int) -> str:
-    """Return a compass-direction adjective based on where (wx, wy) lies relative to the world centre."""
-    cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
-    dx = wx - cx   # positive = east
-    dy = wy - cy   # positive = south (y grows downward)
+def _direction_from_point(wx: int, wy: int, ref_x: int, ref_y: int) -> str:
+    """Return a compass-direction adjective for (wx, wy) relative to reference point (ref_x, ref_y)."""
+    dx = wx - ref_x   # positive = east
+    dy = wy - ref_y   # positive = south (y grows downward)
     adx, ady = abs(dx), abs(dy)
+    if adx == 0 and ady == 0:
+        return "nearby"
     # Pure cardinal if one axis dominates by 2:1
     if ady > adx * 2:
         return "southern" if dy > 0 else "northern"
@@ -330,9 +331,9 @@ _DIRECTIONAL_WORDS = [
 ]
 
 
-def _patch_direction(desc: str, wx: int, wy: int) -> str:
-    """Replace the first directional word in *desc* with the actual direction."""
-    actual = _direction_from_center(wx, wy)
+def _patch_direction(desc: str, wx: int, wy: int, ref_x: int, ref_y: int) -> str:
+    """Replace the first directional word in *desc* with the actual direction from ref_x/ref_y."""
+    actual = _direction_from_point(wx, wy, ref_x, ref_y)
     for word in _DIRECTIONAL_WORDS:
         if word in desc:
             return desc.replace(word, actual, 1)
@@ -404,16 +405,23 @@ def _build_village_investigation(rng: random.Random, tmpl: dict, loc_x: int | No
     }
 
 
-def _build_bounty(rng: random.Random, tmpl: dict) -> dict:
+def _build_bounty(
+    rng: random.Random, tmpl: dict,
+    ref_x: int | None = None, ref_y: int | None = None,
+) -> dict:
     count = rng.randint(*tmpl["count_range"])
     desc  = _pick(rng, tmpl["descriptions"])
     gold  = tmpl["reward_gold_base"] + count * 8
     xp    = tmpl["reward_xp_base"] + count * 30
     loc_type = tmpl.get("location_type", "overworld")
     lx, ly   = _bounty_location(rng, loc_type)
-    # Patch any directional word in the description to match the actual location
+    # Patch any directional word in the description to match the actual location.
+    # Use the village as the reference point so the direction makes sense from
+    # the player's perspective.  Fall back to world centre if not provided.
     if loc_type == "overworld":
-        desc = _patch_direction(desc, lx, ly)
+        rx = ref_x if ref_x is not None else WORLD_SIZE // 2
+        ry = ref_y if ref_y is not None else WORLD_SIZE // 2
+        desc = _patch_direction(desc, lx, ly, rx, ry)
     return {
         "quest_type": f"Bounty: {count} {_ENEMY_NAMES.get(tmpl['target_id'], tmpl['target_id'])}",
         "title": tmpl["title_fmt"],
@@ -529,29 +537,44 @@ async def get_or_refresh_village_pool(db, village_id: int, seed: int) -> list[di
     return quests_out
 
 
-async def get_or_refresh_bounty_pool(db, seed: int) -> list[dict]:
-    """Return the current overworld bounty pool, refreshing if expired.
+async def get_or_refresh_bounty_pool(
+    db, seed: int,
+    village_id: int | None = None,
+    village_wx: int | None = None,
+    village_wy: int | None = None,
+) -> list[dict]:
+    """Return the bounty pool for a specific village, refreshing if expired.
 
-    Returns up to 3 bounty quest dicts.
+    When village_id is provided the pool is stored per-village so that
+    directional descriptions ("northern road") are computed relative to that
+    village's world position rather than the world centre.
+
+    Falls back to a global pool when called without a village_id (e.g. from
+    the world map bounty board).
     """
-    pool = await _load_pool(db, "bounty", "overworld")
+    source_key = f"bounty_v{village_id}" if village_id is not None else "overworld"
+    pool = await _load_pool(db, "bounty", source_key)
     if pool is not None:
         return pool
 
-    rng = random.Random(seed ^ 0xB0BBBBBB ^ int(_now_utc().timestamp() // (POOL_TTL_HOURS * 3600)))
+    # Mix village coords into RNG so each village gets a different set of quests
+    rng_seed = seed ^ 0xB0BBBBBB ^ int(_now_utc().timestamp() // (POOL_TTL_HOURS * 3600))
+    if village_id is not None:
+        rng_seed ^= village_id * 0x1337
+    rng = random.Random(rng_seed)
     all_bounties = _BOUNTY_TEMPLATES[:]
     rng.shuffle(all_bounties)
 
     quests_out: list[dict] = []
     expires = _expires_str()
     for tmpl in all_bounties[:3]:
-        q = _build_bounty(rng, tmpl)
+        q = _build_bounty(rng, tmpl, ref_x=village_wx, ref_y=village_wy)
         qid = await _insert_quest(db, q)
         q["id"] = qid
         quests_out.append(q)
         await db.execute(
             "INSERT INTO quest_pool (source_type, source_key, quest_id, expires_at) VALUES (?,?,?,?)",
-            ("bounty", "overworld", qid, expires),
+            ("bounty", source_key, qid, expires),
         )
     return quests_out
 
