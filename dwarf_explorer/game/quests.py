@@ -305,6 +305,40 @@ def _bounty_location(rng: random.Random, location_type: str) -> tuple[int, int]:
     return wx, wy
 
 
+def _direction_from_center(wx: int, wy: int) -> str:
+    """Return a compass-direction adjective based on where (wx, wy) lies relative to the world centre."""
+    cx, cy = WORLD_SIZE // 2, WORLD_SIZE // 2
+    dx = wx - cx   # positive = east
+    dy = wy - cy   # positive = south (y grows downward)
+    adx, ady = abs(dx), abs(dy)
+    # Pure cardinal if one axis dominates by 2:1
+    if ady > adx * 2:
+        return "southern" if dy > 0 else "northern"
+    if adx > ady * 2:
+        return "eastern" if dx > 0 else "western"
+    # Diagonal
+    ns = "south" if dy > 0 else "north"
+    ew = "east" if dx > 0 else "west"
+    return f"{ns}{ew}ern"
+
+
+# Words we may need to swap out; ordered longest-first so sub-words don't match first
+_DIRECTIONAL_WORDS = [
+    "northeastern", "northwestern", "southeastern", "southwestern",
+    "northern", "southern", "eastern", "western",
+    "north", "south", "east", "west",
+]
+
+
+def _patch_direction(desc: str, wx: int, wy: int) -> str:
+    """Replace the first directional word in *desc* with the actual direction."""
+    actual = _direction_from_center(wx, wy)
+    for word in _DIRECTIONAL_WORDS:
+        if word in desc:
+            return desc.replace(word, actual, 1)
+    return desc
+
+
 # ── Quest record constructors ──────────────────────────────────────────────────
 
 def _build_village_kill(rng: random.Random, tmpl: dict) -> dict:
@@ -377,6 +411,9 @@ def _build_bounty(rng: random.Random, tmpl: dict) -> dict:
     xp    = tmpl["reward_xp_base"] + count * 30
     loc_type = tmpl.get("location_type", "overworld")
     lx, ly   = _bounty_location(rng, loc_type)
+    # Patch any directional word in the description to match the actual location
+    if loc_type == "overworld":
+        desc = _patch_direction(desc, lx, ly)
     return {
         "quest_type": f"Bounty: {count} {_ENEMY_NAMES.get(tmpl['target_id'], tmpl['target_id'])}",
         "title": tmpl["title_fmt"],

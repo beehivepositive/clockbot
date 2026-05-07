@@ -253,17 +253,19 @@ def _composite_players_sync(
         # Arrow style points toward the ocean edge
         _astyle = {0: "arrow_down", 1: "arrow_up", 2: "arrow_left", 3: "arrow_right"}
         astyle = _astyle.get(coast_edge, "arrow_down")
-        # Candidate positions: use harbor tile coords to find the right column/row;
-        # fall back to centre of the map edge
+        # Candidate positions: use one harbor tile (the middle one) to place the
+        # single edge indicator — we only want ONE marker regardless of how many
+        # harbors exist.
         candidates = harbor_positions or []
-        mid = (WORLD_SIZE // 2) * scale + scale // 2
         if not candidates:
             # synthetic centre candidate
             if coast_edge in (0, 1):
                 candidates = [(WORLD_SIZE // 2, 0)]
             else:
                 candidates = [(0, WORLD_SIZE // 2)]
-        for hx, hy in candidates:
+        # Pick the middle harbour so the arrow sits near the centre of the coastline
+        single = [candidates[len(candidates) // 2]]
+        for hx, hy in single:
             if coast_edge == 0:          # south edge
                 px = hx * scale + scale // 2
                 _draw_icon(draw, px, map_h - 14, "filled_diamond", _ac)
