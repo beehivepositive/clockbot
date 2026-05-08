@@ -296,14 +296,25 @@ def _group_caves(
 
 def _generate_structures_sync(
     seed: int,
+    forced_river_village: tuple[int, int] | None = None,
 ) -> tuple[list[tuple[int, int, str]], list[list[tuple[int, int]]]]:
     rng = random.Random(seed + _STRUCTURE_SEED_OFFSET)
     overrides: list[tuple[int, int, str]] = []
     village_centers: list[tuple[int, int]] = []
 
+    # --- Forced river village (placed first so all other structures respect it) ---
+    if forced_river_village:
+        fx, fy = forced_river_village
+        village_centers.append((fx, fy))
+        overrides.append((fx, fy, 'village'))
+        for ry in range(fy - 1, fy + 2):
+            for rx in range(fx - 1, fx + 2):
+                if (rx, ry) != (fx, fy) and 0 <= rx < WORLD_SIZE and 0 <= ry < WORLD_SIZE:
+                    overrides.append((rx, ry, 'path'))
+
     # --- Villages (7-10): plains/grass, single tile, minimum 40 tiles apart ---
     village_count = rng.randint(7, 10)
-    found = 0
+    found = len(village_centers)  # river village counts toward the total
     for _ in range(800):
         if found >= village_count:
             break
@@ -658,11 +669,66 @@ def _generate_village_paths_sync(
     return overrides
 
 
+def _find_river_village_pos(
+    seed: int,
+    river_tiles: set[tuple[int, int]],
+) -> tuple[int, int] | None:
+    """Find the best tile directly adjacent to a river to place the guaranteed village.
+
+    Iterates all river tiles, collects non-river cardinal neighbours, scores them
+    by biome preference, and returns the best candidate.  No distance-to-other-
+    villages check here — this runs before any other villages are placed.
+    """
+    _BAD_BIOMES = {"deep_water", "shallow_water", "mountain", "snow", "sand"}
+    _PREF = {"plains": 0, "grass": 1, "forest": 2, "hills": 3}
+
+    candidates: list[tuple[int, int, int]] = []  # (score, x, y)
+    seen: set[tuple[int, int]] = set()
+    for rx, ry in river_tiles:
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nx, ny = rx + dx, ry + dy
+            if (nx, ny) in seen or (nx, ny) in river_tiles:
+                continue
+            seen.add((nx, ny))
+            if not (5 <= nx < WORLD_SIZE - 5 and 5 <= ny < WORLD_SIZE - 5):
+                continue
+            if _near_spawn(nx, ny):
+                continue
+            biome = get_biome(nx, ny, seed)
+            if biome in _BAD_BIOMES:
+                continue
+            score = _PREF.get(biome, 10)
+            candidates.append((score, nx, ny))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])
+    # Among equal-score tiles pick a deterministic one via seed hash
+    best_score = candidates[0][0]
+    best = [(x, y) for s, x, y in candidates if s == best_score]
+    rng = random.Random(seed ^ 0xF00DFACE)
+    rng.shuffle(best)
+    return best[0]
+
+
 async def place_structures(seed: int, db) -> None:
     from dwarf_explorer.world.caves import create_cave_system
 
-    # 1. Base structures (villages, shrines, caves, ruins, harbors)
-    overrides, cave_groups = await asyncio.to_thread(_generate_structures_sync, seed)
+    # 0. Find the guaranteed river-adjacent village position BEFORE anything
+    #    else is placed — rivers are already in the DB from generate_rivers().
+    river_rows_pre = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
+    )
+    river_tiles_pre = {(r["world_x"], r["world_y"]) for r in river_rows_pre}
+    forced_river_village = await asyncio.to_thread(
+        _find_river_village_pos, seed, river_tiles_pre
+    )
+
+    # 1. Base structures — river village is injected as the first village so
+    #    all subsequent random villages respect the 40-tile separation from it.
+    overrides, cave_groups = await asyncio.to_thread(
+        _generate_structures_sync, seed, forced_river_village
+    )
     if overrides:
         await db.executemany(
             "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
@@ -722,53 +788,3 @@ async def place_structures(seed: int, db) -> None:
                     " WHERE world_x=? AND world_y=? AND tile_type='river'",
                     narrow_cross,
                 )
-
-    # ── Guarantee at least one river-adjacent village ─────────────────────────
-    # Only pure 'river' tiles count — bridges are converted river crossings and
-    # may be surrounded by path tiles which would block village placement.
-    river_rows2 = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
-    )
-    vil_rows2 = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'village'"
-    )
-    river_set2 = {(r["world_x"], r["world_y"]) for r in river_rows2}
-    vil_set2   = {(r["world_x"], r["world_y"]) for r in vil_rows2}
-    river_village_exists = any(
-        (vx + dx, vy + dy) in river_set2
-        for vx, vy in vil_set2
-        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
-    )
-    if not river_village_exists and river_set2:
-        # Pre-fetch ALL occupied positions so we don't silently collide with
-        # path tiles (INSERT OR IGNORE would succeed but place nothing, then
-        # placed_rv=True would fool us into thinking we placed a village).
-        occupied_rows = await db.fetch_all(
-            "SELECT world_x, world_y FROM tile_overrides"
-        )
-        occupied = {(r["world_x"], r["world_y"]) for r in occupied_rows}
-
-        rng_rv = random.Random(seed ^ 0xB4DBEEF)
-        # Build candidates: every non-occupied tile directly adjacent to a river tile
-        adjacent_to_river: list[tuple[int, int]] = list({
-            (rx + dx, ry + dy)
-            for rx, ry in river_set2
-            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
-            if (rx + dx, ry + dy) not in occupied
-            and (rx + dx, ry + dy) not in river_set2
-        })
-        rng_rv.shuffle(adjacent_to_river)
-        for nx, ny in adjacent_to_river:
-            if not (5 <= nx < WORLD_SIZE-5 and 5 <= ny < WORLD_SIZE-5):
-                continue
-            if _near_spawn(nx, ny):
-                continue
-            if any(abs(nx-vx)+abs(ny-vy) < 30 for vx, vy in vil_set2):
-                continue
-            biome = get_biome(nx, ny, seed)
-            if biome in ('plains', 'grass', 'forest', 'hills'):
-                await db.execute(
-                    "INSERT INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
-                    (nx, ny)
-                )
-                break  # done — one river village guaranteed
