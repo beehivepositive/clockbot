@@ -724,38 +724,41 @@ async def place_structures(seed: int, db) -> None:
                 )
 
     # ── Guarantee at least one river-adjacent village ─────────────────────────
-    # Fetch ALL river-family tiles (river + bridge, since road crossings convert
-    # river→bridge; we still want those to count as "next to water").
+    # Only pure 'river' tiles count — bridges are converted river crossings and
+    # may be surrounded by path tiles which would block village placement.
     river_rows2 = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type IN ('river', 'bridge')"
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
     )
     vil_rows2 = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'village'"
     )
     river_set2 = {(r["world_x"], r["world_y"]) for r in river_rows2}
     vil_set2   = {(r["world_x"], r["world_y"]) for r in vil_rows2}
-    # Also check diagonal neighbours — a village one step diagonally from a
-    # river is effectively "by the river" for the interior water-edge feature.
     river_village_exists = any(
         (vx + dx, vy + dy) in river_set2
         for vx, vy in vil_set2
-        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]
+        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
     )
     if not river_village_exists and river_set2:
-        cx2, cy2 = WORLD_SIZE // 2, WORLD_SIZE // 2
+        # Pre-fetch ALL occupied positions so we don't silently collide with
+        # path tiles (INSERT OR IGNORE would succeed but place nothing, then
+        # placed_rv=True would fool us into thinking we placed a village).
+        occupied_rows = await db.fetch_all(
+            "SELECT world_x, world_y FROM tile_overrides"
+        )
+        occupied = {(r["world_x"], r["world_y"]) for r in occupied_rows}
+
         rng_rv = random.Random(seed ^ 0xB4DBEEF)
-        # Build a broad candidate list: tiles adjacent to ANY river/bridge tile
-        adjacent_to_river: list[tuple[int, int]] = []
-        for rx, ry in river_set2:
-            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
-                nx, ny = rx+dx, ry+dy
-                if (nx, ny) not in river_set2:
-                    adjacent_to_river.append((nx, ny))
+        # Build candidates: every non-occupied tile directly adjacent to a river tile
+        adjacent_to_river: list[tuple[int, int]] = list({
+            (rx + dx, ry + dy)
+            for rx, ry in river_set2
+            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
+            if (rx + dx, ry + dy) not in occupied
+            and (rx + dx, ry + dy) not in river_set2
+        })
         rng_rv.shuffle(adjacent_to_river)
-        placed_rv = False
         for nx, ny in adjacent_to_river:
-            if placed_rv:
-                break
             if not (5 <= nx < WORLD_SIZE-5 and 5 <= ny < WORLD_SIZE-5):
                 continue
             if _near_spawn(nx, ny):
@@ -765,7 +768,7 @@ async def place_structures(seed: int, db) -> None:
             biome = get_biome(nx, ny, seed)
             if biome in ('plains', 'grass', 'forest', 'hills'):
                 await db.execute(
-                    "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
+                    "INSERT INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
                     (nx, ny)
                 )
-                placed_rv = True
+                break  # done — one river village guaranteed
