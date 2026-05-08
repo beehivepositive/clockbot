@@ -216,6 +216,47 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
     return buf.getvalue()
 
 
+# ── Avatar helper ─────────────────────────────────────────────────────────────
+
+def _paste_avatar(
+    img,
+    avatar_bytes: bytes,
+    cx: int, cy: int,
+    size: int,
+    border_color: tuple,
+):
+    """Paste a circular cropped avatar centred at (cx, cy) with a coloured border.
+
+    Falls back silently if the image can't be decoded.
+    """
+    try:
+        from PIL import Image, ImageDraw
+        av = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize(
+            (size, size), Image.LANCZOS
+        )
+        # Circular mask for the avatar
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
+
+        border = 2
+        # Draw border circle on the base image
+        base_draw = ImageDraw.Draw(img)
+        bx0 = cx - size // 2 - border
+        by0 = cy - size // 2 - border
+        bx1 = cx + size // 2 + border
+        by1 = cy + size // 2 + border
+        base_draw.ellipse([bx0, by0, bx1, by1], fill=border_color)
+
+        # Composite the circular avatar
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        overlay.paste(av, (cx - size // 2, cy - size // 2), mask)
+        base_rgba = img.convert("RGBA")
+        img = Image.alpha_composite(base_rgba, overlay).convert("RGB")
+    except Exception:
+        pass  # fall back to whatever was drawn before (the border circle)
+    return img
+
+
 # ── Wilderness player-dot compositor ─────────────────────────────────────────
 
 def _composite_players_sync(
@@ -226,10 +267,14 @@ def _composite_players_sync(
     ocean_quest_markers: list | None = None,
     harbor_positions: list | None = None,
     coast_edge: int = 0,
+    player_avatar: bytes | None = None,
+    other_avatars: list[bytes | None] | None = None,
 ) -> io.BytesIO:
     """Load the cached base PNG and stamp player/quest dots on top.
 
     coast_edge: 0=south, 1=north, 2=west, 3=east — which edge the ocean is on.
+    player_avatar: PNG/JPEG bytes for the current player's profile picture.
+    other_avatars: parallel list to other_players with avatar bytes (or None).
     """
     from PIL import Image, ImageDraw
 
@@ -282,18 +327,29 @@ def _composite_players_sync(
                 _draw_icon(draw, map_w - 14, py, "filled_diamond", _ac)
                 _draw_icon(draw, map_w - 5,  py, astyle, _ac)
 
-    # Other players (blue)
-    for ox, oy, _ in other_players:
+    # Other players — avatar (16 px) or blue dot fallback
+    _other_avs = other_avatars or []
+    for i, player_entry in enumerate(other_players):
+        ox, oy = player_entry[0], player_entry[1]
         cx_o = ox * scale + scale // 2
         cy_o = oy * scale + scale // 2
-        draw.ellipse([cx_o - 3, cy_o - 3, cx_o + 3, cy_o + 3],
-                     fill=(60, 120, 255), outline=(255, 255, 255))
+        av_bytes = _other_avs[i] if i < len(_other_avs) else None
+        if av_bytes:
+            img = _paste_avatar(img, av_bytes, cx_o, cy_o, 16, (60, 120, 255))
+            draw = ImageDraw.Draw(img)  # re-acquire draw after img replace
+        else:
+            draw.ellipse([cx_o - 4, cy_o - 4, cx_o + 4, cy_o + 4],
+                         fill=(60, 120, 255), outline=(255, 255, 255))
 
-    # Current player (red)
+    # Current player — avatar (20 px) or red dot fallback
     cx_p = player_x * scale + scale // 2
     cy_p = player_y * scale + scale // 2
-    draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3],
-                 fill=(255, 0, 0), outline=(255, 255, 255))
+    if player_avatar:
+        img = _paste_avatar(img, player_avatar, cx_p, cy_p, 20, (255, 50, 50))
+        draw = ImageDraw.Draw(img)
+    else:
+        draw.ellipse([cx_p - 5, cy_p - 5, cx_p + 5, cy_p + 5],
+                     fill=(255, 0, 0), outline=(255, 255, 255))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -436,11 +492,15 @@ async def generate_world_map(
     other_players: list | None = None,
     quest_markers: list | None = None,
     ocean_quest_markers: list | None = None,
+    player_avatar: bytes | None = None,
+    other_avatars: list[bytes | None] | None = None,
 ) -> io.BytesIO:
     """Return a BytesIO PNG of the wilderness world map with player dots composited.
 
     quest_markers: [(world_x, world_y, target_id)] — orange diamonds on map.
     ocean_quest_markers: if non-empty, draws edge arrows toward ocean (harbors).
+    player_avatar: PNG/JPEG bytes for the current player's profile picture.
+    other_avatars: parallel list to other_players with avatar bytes (or None).
     """
     rows = await db.fetch_all("SELECT world_x, world_y, tile_type FROM tile_overrides")
     overrides = [(r["world_x"], r["world_y"], r["tile_type"]) for r in rows]
@@ -461,6 +521,7 @@ async def generate_world_map(
         _composite_players_sync, base_png, player_x, player_y,
         other_players or [], quest_markers or [],
         ocean_quest_markers or [], harbor_positions, coast_edge,
+        player_avatar, other_avatars,
     )
 
 

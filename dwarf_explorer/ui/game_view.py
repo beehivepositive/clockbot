@@ -8352,10 +8352,37 @@ async def handle_map(
     other_players = await get_all_overworld_players(db, user_id)
     qmarks = await get_player_quest_markers(db, user_id)
     ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
+
+    # Fetch avatar bytes for current player
+    player_avatar: bytes | None = None
+    try:
+        member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
+        asset = member.guild_avatar or member.avatar
+        if asset:
+            player_avatar = await asset.with_size(32).read()
+    except Exception:
+        pass
+
+    # Fetch avatar bytes for other players (parallel list to other_players)
+    other_avatars: list[bytes | None] = []
+    for op in other_players:
+        op_uid = op[3] if len(op) > 3 else None
+        av: bytes | None = None
+        if op_uid:
+            try:
+                op_member = interaction.guild.get_member(op_uid) or await interaction.guild.fetch_member(op_uid)
+                op_asset = op_member.guild_avatar or op_member.avatar
+                if op_asset:
+                    av = await op_asset.with_size(32).read()
+            except Exception:
+                pass
+        other_avatars.append(av)
+
     from dwarf_explorer.world.world_map import generate_world_map
     buf = await generate_world_map(
         seed, db, guild_id, player.world_x, player.world_y,
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
+        player_avatar=player_avatar, other_avatars=other_avatars,
     )
     file = discord.File(buf, filename="world_map.png")
     await interaction.followup.send(file=file, ephemeral=True)
