@@ -74,6 +74,9 @@ from dwarf_explorer.ui.game_view import (
     handle_farmer_buy, handle_farmer_close,
     handle_embark,
     handle_feed_cat,
+    handle_plant,
+    handle_plant_choice,
+    handle_plant_cancel,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -507,6 +510,13 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_embark(interaction, gid, uid)
             elif act == "feed_cat":
                 await handle_feed_cat(interaction, gid, uid)
+            elif act == "plant":
+                await handle_plant(interaction, gid, uid)
+            elif act == "plant_cancel":
+                await handle_plant_cancel(interaction, gid, uid)
+            elif act.startswith("plant_choice_"):
+                seed_type = act[len("plant_choice_"):]
+                await handle_plant_choice(interaction, gid, uid, seed_type)
             # Farmer shop
             elif act.startswith("farmer_buy_"):
                 item_id = act[len("farmer_buy_"):]

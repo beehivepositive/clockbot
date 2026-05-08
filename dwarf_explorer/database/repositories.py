@@ -228,15 +228,15 @@ async def get_nearby_players(
 
 async def get_all_overworld_players(
     db: Database, exclude_user_id: int
-) -> list[tuple[int, int, str]]:
-    """Return [(world_x, world_y, display_name)] for all overworld players."""
+) -> list[tuple[int, int, str, int]]:
+    """Return [(world_x, world_y, display_name, user_id)] for all overworld players."""
     rows = await db.fetch_all(
-        "SELECT world_x, world_y, display_name FROM players"
+        "SELECT world_x, world_y, display_name, user_id FROM players"
         " WHERE user_id != ? AND in_cave = 0 AND in_village = 0 AND in_house = 0"
         " AND COALESCE(in_ocean, 0) = 0",
         (exclude_user_id,),
     )
-    return [(r["world_x"], r["world_y"], r["display_name"]) for r in rows]
+    return [(r["world_x"], r["world_y"], r["display_name"], r["user_id"]) for r in rows]
 
 
 # --- Caves ---
@@ -890,6 +890,16 @@ async def set_tile_override(db: Database, world_x: int, world_y: int, tile_type:
     await db.execute(
         "INSERT OR REPLACE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
         (world_x, world_y, tile_type),
+    )
+
+
+async def set_village_tile(
+    db: Database, village_id: int, local_x: int, local_y: int, tile_type: str
+) -> None:
+    """Update a village tile's type (used for farmland, crops, etc.)."""
+    await db.execute(
+        "UPDATE village_tiles SET tile_type=? WHERE village_id=? AND local_x=? AND local_y=?",
+        (tile_type, village_id, local_x, local_y),
     )
 
 

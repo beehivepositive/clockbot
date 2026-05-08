@@ -17,7 +17,11 @@ _BUILDING_SEED_OFFSET = 8000
 _PROTECTED_TILES = {
     "vil_well", "vil_house", "vil_church", "vil_bank", "vil_shop",
     "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_lumber_mill", "vil_farmhouse",
-    "vil_tree", "vil_fence", "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",
+    "vil_tree", "vil_fence", "vil_fence_gate",
+    "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",
+    "vil_farmland",
+    "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
+    "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
 }
 
 
@@ -397,33 +401,116 @@ def _generate_village_interior(
             nx_e, ny_e = _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
             sx, sy = nx_e, ny_e
 
-    # ── Animal pen for farmhouse ──────────────────────────────────────────────
+    # ── Animal pen + farmland for farmhouse ──────────────────────────────────
     farm_pos = next(((bx, by) for bx, by, bt in buildings if bt == "vil_farmhouse"), None)
     if farm_pos:
         from dwarf_explorer.config import FARM_ANIMALS
-        animal = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS) - 1)]
         fx, fy = farm_pos
-        # Try all 4 cardinal directions at distances 1-4 for the pen top-left corner
+
+        # ── 7×5 animal pen ────────────────────────────────────────────────────
+        PEN_W, PEN_H = 7, 5
+        UNWALKABLE_VIL = {"vil_water", "void"}
         pen_placed = False
-        for dist in range(1, 5):
+        pen_direction = None
+        pen_corner = None
+
+        for dist in range(1, 8):
             for pdx, pdy in [(1,0),(-1,0),(0,1),(0,-1)]:
-                # Top-left of 3x3 pen, offset by dist in direction, minus 1 to center on farmhouse
-                px0 = fx + pdx * dist - 1
-                py0 = fy + pdy * dist - 1
-                pen_cells = {(px0+dx, py0+dy) for dy in range(3) for dx in range(3)}
+                # Top-left of pen centred on farmhouse along that direction
+                px0 = fx + pdx * dist - PEN_W // 2
+                py0 = fy + pdy * dist - PEN_H // 2
+                pen_cells = {(px0+dx, py0+dy) for dy in range(PEN_H) for dx in range(PEN_W)}
                 if pen_cells & occupied:
                     continue
-                if not all(0 < px < W-1 and 0 < py < H-1 for px, py in pen_cells):
+                if not all(1 < px < W-2 and 1 < py < H-2 for px, py in pen_cells):
                     continue
-                for px, py in pen_cells:
-                    if px == px0 or px == px0+2 or py == py0 or py == py0+2:
-                        grid[py][px] = "vil_fence"
-                    else:
-                        grid[py][px] = animal
-                occupied.update(pen_cells)
+                # Don't place pen so close it overlaps farmhouse cardinal neighbours
                 pen_placed = True
+                pen_direction = (pdx, pdy)
+                pen_corner = (px0, py0)
                 break
             if pen_placed:
+                break
+
+        if pen_placed and pen_corner:
+            px0, py0 = pen_corner
+            # Place fence perimeter
+            perimeter: list[tuple[int,int]] = []
+            for dx in range(PEN_W):
+                for dy in range(PEN_H):
+                    if dx == 0 or dx == PEN_W-1 or dy == 0 or dy == PEN_H-1:
+                        perimeter.append((px0+dx, py0+dy))
+            corners = {
+                (px0, py0), (px0+PEN_W-1, py0),
+                (px0, py0+PEN_H-1), (px0+PEN_W-1, py0+PEN_H-1),
+            }
+            for px, py in perimeter:
+                grid[py][px] = "vil_fence"
+
+            # Select gate: non-corner perimeter tile not adjacent to farmhouse
+            # and not adjacent to unwalkable tiles
+            def _adj_unwalkable(gx: int, gy: int) -> bool:
+                for ddx, ddy in [(0,1),(0,-1),(1,0),(-1,0)]:
+                    nx_, ny_ = gx+ddx, gy+ddy
+                    if 0 <= nx_ < W and 0 <= ny_ < H:
+                        if grid[ny_][nx_] in UNWALKABLE_VIL:
+                            return True
+                return False
+
+            gate_candidates = [
+                (px, py) for (px, py) in perimeter
+                if (px, py) not in corners
+                and abs(px - fx) + abs(py - fy) > 1      # not adjacent to farmhouse
+                and not _adj_unwalkable(px, py)
+            ]
+            if gate_candidates:
+                gate_pos = rng.choice(gate_candidates)
+                grid[gate_pos[1]][gate_pos[0]] = "vil_fence_gate"
+
+            # Place 3-6 mixed animals inside pen
+            interior = [
+                (px0+dx, py0+dy)
+                for dx in range(1, PEN_W-1)
+                for dy in range(1, PEN_H-1)
+            ]
+            rng.shuffle(interior)
+            animal_count = rng.randint(3, 6)
+            placed_animals = 0
+            for apos in interior:
+                if placed_animals >= animal_count:
+                    break
+                animal_type = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS)-1)]
+                grid[apos[1]][apos[0]] = animal_type
+                placed_animals += 1
+
+            pen_cells_final = {(px0+dx, py0+dy) for dy in range(PEN_H) for dx in range(PEN_W)}
+            occupied.update(pen_cells_final)
+
+        # ── Farmland patch (4-6 × 3-5) on a different side from the pen ──────
+        farm_dir = pen_direction or (1, 0)
+        # Try to place farmland on the orthogonal or opposite sides from the pen
+        candidate_dirs = [(1,0),(-1,0),(0,1),(0,-1)]
+        if farm_dir in candidate_dirs:
+            candidate_dirs.remove(farm_dir)
+
+        LAND_W = rng.randint(4, 6)
+        LAND_H = rng.randint(3, 5)
+        farmland_placed = False
+        for fdx, fdy in candidate_dirs:
+            for dist2 in range(1, 7):
+                lx0 = fx + fdx * dist2 - LAND_W // 2
+                ly0 = fy + fdy * dist2 - LAND_H // 2
+                land_cells = {(lx0+dx, ly0+dy) for dy in range(LAND_H) for dx in range(LAND_W)}
+                if land_cells & occupied:
+                    continue
+                if not all(1 < lx < W-2 and 1 < ly < H-2 for lx, ly in land_cells):
+                    continue
+                for lx, ly in land_cells:
+                    grid[ly][lx] = "vil_farmland"
+                occupied.update(land_cells)
+                farmland_placed = True
+                break
+            if farmland_placed:
                 break
 
     # ── Entry at the bottom border (south spoke exit) ─────────────────────────

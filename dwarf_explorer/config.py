@@ -82,6 +82,14 @@ ENTITY_EMOJI = {
 }
 
 ITEM_EMOJI = {
+    # Farming & crops
+    "wheat_seed":  "\U0001F330",     # 🌰
+    "carrot_seed": "\U0001F955",     # 🥕 (seed placeholder)
+    "potato_seed": "\U0001F954",     # 🥔 (seed placeholder)
+    "wheat":       "\U0001F33E",     # 🌾
+    "carrot":      "\U0001F955",     # 🥕
+    "potato":      "\U0001F954",     # 🥔
+    "hoe":         "\U0001FAB0",     # 🪰  (overridable with :hoe:)
     "wood": "\U0001FAB5",            # 🪵
     "stone": "\U0001FAA8",           # 🪨
     "gem": "\U0001F48E",             # 💎
@@ -159,6 +167,22 @@ ITEM_EMOJI = {
     "healing_herb":         "\U0001F33F",           # 🌿
     "plank":            "🪵",       # 🪵  wooden plank
     "canoe":            "🛶",       # 🛶  canoe
+}
+
+# Maps seed item_id → crop progression for village farmland
+FARM_CROPS: dict[str, dict] = {
+    "wheat_seed":  {
+        "planted": "vil_seeds_wheat",  "mature": "vil_crop_wheat",
+        "yield": "wheat",  "yield_qty": 2,  "emoji": "🌾",
+    },
+    "carrot_seed": {
+        "planted": "vil_seeds_carrot", "mature": "vil_crop_carrot",
+        "yield": "carrot", "yield_qty": 2,  "emoji": "🥕",
+    },
+    "potato_seed": {
+        "planted": "vil_seeds_potato", "mature": "vil_crop_potato",
+        "yield": "potato", "yield_qty": 2,  "emoji": "🥔",
+    },
 }
 
 WALKABLE_TILES = {
@@ -265,10 +289,13 @@ FARM_ANIMALS = ["vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep"]
 
 # Farmer shop catalog (price in gold)
 FARMER_SHOP = [
-    {"id": "seed",        "name": "Seeds",  "price": 2},
-    {"id": "dry_grass",   "name": "Hay",    "price": 1},
-    {"id": "plant_fiber", "name": "Fiber",  "price": 3},
-    {"id": "healing_herb","name": "Herb",   "price": 8},
+    {"id": "wheat_seed",  "name": "Wheat Seeds",  "price": 3},
+    {"id": "carrot_seed", "name": "Carrot Seeds", "price": 3},
+    {"id": "potato_seed", "name": "Potato Seeds", "price": 3},
+    {"id": "hoe",         "name": "Hoe",          "price": 20},
+    {"id": "dry_grass",   "name": "Hay",          "price": 1},
+    {"id": "plant_fiber", "name": "Fiber",        "price": 3},
+    {"id": "healing_herb","name": "Herb",         "price": 8},
 ]
 
 # Hospital heal cost: gold per missing HP (minimum 5 gold)
@@ -449,7 +476,16 @@ VILLAGE_EMOJI = {
     "vil_guard":        "\U0001F482",        # 💂  guard NPC
     "vil_lumber_mill":  "⚙️",      # ⚙️  waterwheel lumber mill
     "vil_farmhouse":    "🏡",        # 🏡  farmhouse
-    "vil_fence":        "🟫",        # 🟫  fence post
+    "vil_fence":        "🟫",        # 🟫  fence post (overridable with :fence:)
+    "vil_fence_gate":   "🚪",        # 🚪  fence gate — walkable (overridable with :fence_gate:)
+    # Farmland tiles
+    "vil_farmland":     "🟤",        # 🟤  bare farmland (overridable with :farmland:)
+    "vil_seeds_wheat":  "🟤",        # 🟤  planted wheat seeds (overridable with :farmland_seeds:)
+    "vil_seeds_carrot": "🟤",        # 🟤  planted carrot seeds
+    "vil_seeds_potato": "🟤",        # 🟤  planted potato seeds
+    "vil_crop_wheat":   "🌾",        # 🌾  ripe wheat
+    "vil_crop_carrot":  "🥕",        # 🥕  ripe carrot
+    "vil_crop_potato":  "🥔",        # 🥔  ripe potato
     "vil_cow":          "🐄",        # 🐄  cow
     "vil_pig":          "🐖",        # 🐖  pig
     "vil_chicken":      "🐓",        # 🐓  chicken
@@ -524,6 +560,11 @@ VILLAGE_WALKABLE = {
     "vil_guard",        # walkable NPC (interact for guard dialogue)
     "vil_lumber_mill",  # enterable lumber mill building
     "vil_farmhouse",    # enterable farmhouse building
+    "vil_fence_gate",   # walkable fence gate
+    # Farmland & crop tiles (all walkable)
+    "vil_farmland",
+    "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
+    "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
     # Note: vil_fence/animals are solid obstacles (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
@@ -701,6 +742,7 @@ ITEM_EQUIP_SLOTS = {
     "ring_of_sight":       "accessory",
     "ring_of_luck":        "accessory",
     "flint_and_steel":     "hand",
+    "hoe":                 "hand",
 }
 
 # Items that occupy both hand slots
@@ -744,6 +786,7 @@ EQUIP_BONUSES = {
     "ring_of_luck":        {},    # better drops — handled in drop code
     "flint_and_steel":     {},
     "arrow":               {},
+    "hoe":                 {},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 1×7 when no pouch equipped
@@ -866,6 +909,13 @@ ITEM_SELL_PRICES = {
     "ale":               3,
     "meat_stew":         5,
     "healing_herb":      8,
+    "wheat_seed":        1,
+    "carrot_seed":       1,
+    "potato_seed":       1,
+    "wheat":             3,
+    "carrot":            3,
+    "potato":            3,
+    "hoe":               12,
 }
 
 # --- World Map Image ---
@@ -928,6 +978,12 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (SHIP_EMOJI,     "ship_chest_cargo",    "chest"),
         (BUILDING_EMOJI, "b_forge",           "forge"),
         (VILLAGE_EMOJI,  "vil_grass",         "grass"),
+        (VILLAGE_EMOJI,  "vil_fence",         "fence"),
+        (VILLAGE_EMOJI,  "vil_fence_gate",    "fence_gate"),
+        (VILLAGE_EMOJI,  "vil_farmland",      "farmland"),
+        (VILLAGE_EMOJI,  "vil_seeds_wheat",   "farmland_seeds"),
+        (VILLAGE_EMOJI,  "vil_seeds_carrot",  "farmland_seeds"),
+        (VILLAGE_EMOJI,  "vil_seeds_potato",  "farmland_seeds"),
     ]
 
     for d, tile_key, emoji_name in _replace:

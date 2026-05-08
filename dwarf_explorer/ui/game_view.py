@@ -15,7 +15,7 @@ from dwarf_explorer.config import (
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
     COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
-    FARM_ANIMALS, FARMER_SHOP,
+    FARM_ANIMALS, FARMER_SHOP, FARM_CROPS,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
@@ -49,6 +49,7 @@ from dwarf_explorer.database.repositories import (
     bank_deposit,
     bank_withdraw,
     set_tile_override,
+    set_village_tile,
     get_or_create_chest,
     get_or_create_ph_chest,
     get_chest_items,
@@ -148,7 +149,8 @@ class GameView(discord.ui.View):
                  edit_enabled: bool = False,
                  npc_label: str = "", npc_enabled: bool = False,
                  embark_enabled: bool = False,
-                 feed_enabled: bool = False):
+                 feed_enabled: bool = False,
+                 plant_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -156,7 +158,7 @@ class GameView(discord.ui.View):
                             center_label, center_enabled,
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
-                            embark_enabled, feed_enabled)
+                            embark_enabled, feed_enabled, plant_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -181,7 +183,8 @@ class GameView(discord.ui.View):
                        edit_enabled: bool,
                        npc_label: str = "", npc_enabled: bool = False,
                        embark_enabled: bool = False,
-                       feed_enabled: bool = False) -> None:
+                       feed_enabled: bool = False,
+                       plant_enabled: bool = False) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
         # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
@@ -274,12 +277,19 @@ class GameView(discord.ui.View):
                 row=2,
             )
 
-        # ── Row 3: embark/feed/spacer | ⬇️ | NPC ───────────────────────────
+        # ── Row 3: feed/plant/embark/spacer | ⬇️ | NPC ───────────────────────
         if feed_enabled:
             sp5_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
                 emoji="🐟",
                 custom_id=_custom_id(self.guild_id, self.user_id, "feed_cat"),
+                row=3,
+            )
+        elif plant_enabled:
+            sp5_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji="🌱",
+                custom_id=_custom_id(self.guild_id, self.user_id, "plant"),
                 row=3,
             )
         elif embark_enabled:
@@ -1383,22 +1393,24 @@ class HealConfirmView(discord.ui.View):
 # ── Farmer shop view ─────────────────────────────────────────────────────────
 
 class FarmerShopView(discord.ui.View):
-    """One button per farmer shop item + a close button."""
+    """One button per farmer shop item + a close button (max 4 items per row)."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
         from dwarf_explorer.config import FARMER_SHOP
         gid, uid = guild_id, user_id
-        for item in FARMER_SHOP:
+        _items_per_row = 4
+        for idx, item in enumerate(FARMER_SHOP):
             label = f"{item['name']} {item['price']}🪙"
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary, label=label,
                 custom_id=_custom_id(gid, uid, f"farmer_buy_{item['id']}"),
-                row=0,
+                row=idx // _items_per_row,
             ))
+        close_row = (len(FARMER_SHOP) // _items_per_row) + 1
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.danger, label="❌ Leave",
-            custom_id=_custom_id(gid, uid, "farmer_close"), row=1,
+            custom_id=_custom_id(gid, uid, "farmer_close"), row=close_row,
         ))
 
 
@@ -1576,18 +1588,22 @@ _QUEST_NPC_TILES = {
 }
 
 
+_VIL_SEEDS_TILES = {"vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato"}
+_VIL_CROP_TILES  = {"vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato"}
+
 def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
-) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool]:
+) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-               npc_label, npc_enabled, embark_enabled, feed_enabled).
+               npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled).
 
     center = on-tile interaction (interact button at row-2 center)
     action = adjacent-tile interaction (action button at row-1 col-2)
     edit   = ⚒️ Edit button at row-0 col-4 (player-house owners only)
     npc    = bottom-right contextual button; lights up when adjacent to a quest NPC
+    plant  = bottom-left button; lights up when standing on vil_farmland in village
     """
     vc = 4  # VIEWPORT_CENTER
 
@@ -1596,7 +1612,7 @@ def _compute_context_labels(
     edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
@@ -1623,7 +1639,7 @@ def _compute_context_labels(
             elif t == "ship_chest_cargo":
                 from dwarf_explorer.config import SHIP_EMOJI
                 center_label, center_enabled = SHIP_EMOJI.get("ship_chest_cargo", "📦"), True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Island tile context
         if player.in_island:
@@ -1643,7 +1659,7 @@ def _compute_context_labels(
                         local_adj.add(_adj.terrain)
             if "fishing_rod" in hand_items and "island_void" in local_adj:
                 action_label, action_enabled = "🎣 Fish", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
@@ -1715,6 +1731,13 @@ def _compute_context_labels(
             center_label, center_enabled = "⛲", True
         elif t == "vil_dock":
             center_label, center_enabled = "⚓ Board", True
+        # Village farmland interactions
+        elif t in _VIL_SEEDS_TILES and "watering_can" in hand_items:
+            center_label, center_enabled = "💧 Water", True
+        elif t in _VIL_CROP_TILES:
+            center_label, center_enabled = "🌾 Harvest", True
+        elif t == "vil_grass" and "hoe" in hand_items:
+            center_label, center_enabled = "🟤 Till", True
         # Tool × terrain interactions
         elif t in ("forest", "dense_forest") and "axe" in hand_items:
             center_label, center_enabled = "🪓", True
@@ -1736,6 +1759,8 @@ def _compute_context_labels(
             center_label, center_enabled = "⛏️", True
         elif t in ("grass", "plains") and "knife" in hand_items:
             center_label, center_enabled = "✂️", True
+        elif t in ("grass", "plains") and "hoe" in hand_items:
+            center_label, center_enabled = "🟤 Till", True
         # Item-based interactions (lower priority)
         elif t == "drop_box":
             center_label, center_enabled = "🤲", True
@@ -1828,7 +1853,13 @@ def _compute_context_labels(
                     feed_enabled = True
                     break
 
-    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled, feed_enabled
+    # ── Plant seeds: bottom-left button when standing on vil_farmland in village ─
+    plant_enabled = False
+    if player.in_village and not player.in_house:
+        if center_tile and center_tile.terrain == "vil_farmland":
+            plant_enabled = True
+
+    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -1870,6 +1901,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
     edit_enabled = False
     npc_label, npc_enabled = "", False
 
+    plant_enabled = False
     if grid is not None:
         hand_items: set[str] = set()
         if player.hand_1:
@@ -1877,7 +1909,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
         if player.hand_2:
             hand_items.add(player.hand_2)
         (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-         npc_label, npc_enabled, embark_enabled, feed_enabled) = \
+         npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled) = \
             _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
@@ -1892,7 +1924,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     npc_label=npc_label,
                     npc_enabled=npc_enabled,
                     embark_enabled=embark_enabled,
-                    feed_enabled=feed_enabled)
+                    feed_enabled=feed_enabled,
+                    plant_enabled=plant_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -3089,6 +3122,124 @@ async def handle_feed_cat(
 
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Plant seeds view (choose seed type) ───────────────────────────────────────
+
+class PlantSeedView(discord.ui.View):
+    """Choose which seed type to plant on vil_farmland."""
+
+    def __init__(self, guild_id: int, user_id: int, seed_types: list[str]):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        for stype in seed_types:
+            crop = FARM_CROPS.get(stype, {})
+            emoji = crop.get("emoji", "🌱")
+            name = stype.replace("_", " ").title()
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"{emoji} {name}",
+                custom_id=_custom_id(gid, uid, f"plant_choice_{stype}"),
+                row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "plant_cancel"), row=1,
+        ))
+
+
+async def handle_plant(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Bottom-left plant button: plant seeds on vil_farmland."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_village or player.in_house:
+        await interaction.response.defer()
+        return
+
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    vc_ = VIEWPORT_CENTER
+    center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
+    if center_t != "vil_farmland":
+        content = render_grid(grid, player, "You're not standing on farmland.")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    # Check inventory for seed types
+    inv_items = await get_inventory(db, user_id)
+    seed_types_held = [
+        it["item_id"] for it in inv_items
+        if it["item_id"] in FARM_CROPS and it["qty"] > 0
+    ]
+    if not seed_types_held:
+        content = render_grid(grid, player, "🌱 You have no seeds to plant.")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    if len(seed_types_held) == 1:
+        # Plant directly
+        stype = seed_types_held[0]
+        crop = FARM_CROPS[stype]
+        await remove_from_inventory(db, user_id, stype, 1)
+        await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        content = render_grid(grid, player, f"🌱 You plant {stype.replace('_',' ')} in the soil. Water it to grow!")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    # Multiple seed types — show selection menu
+    seed_types_unique = list(dict.fromkeys(seed_types_held))  # deduplicated, preserves order
+    content = render_grid(grid, player, "🌱 Which seeds do you want to plant?")
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=PlantSeedView(guild_id, user_id, seed_types_unique))
+
+
+async def handle_plant_choice(
+    interaction: discord.Interaction, guild_id: int, user_id: int, seed_type: str
+) -> None:
+    """Confirm a specific seed choice from PlantSeedView."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_village or player.in_house:
+        await interaction.response.defer()
+        return
+
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    crop = FARM_CROPS.get(seed_type)
+    if not crop:
+        content = render_grid(grid, player, "Unknown seed type.")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    inv_items = await get_inventory(db, user_id)
+    has_seed = any(it["item_id"] == seed_type and it["qty"] > 0 for it in inv_items)
+    vc_ = VIEWPORT_CENTER
+    center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
+
+    if not has_seed:
+        content = render_grid(grid, player, f"🌱 You don't have any {seed_type.replace('_',' ')}.")
+    elif center_t != "vil_farmland":
+        content = render_grid(grid, player, "You're no longer standing on farmland.")
+    else:
+        await remove_from_inventory(db, user_id, seed_type, 1)
+        await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        content = render_grid(grid, player, f"🌱 You plant {seed_type.replace('_',' ')} in the soil. Water it to grow!")
+
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_plant_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel seed selection."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    content = render_grid(grid, player, "Planting cancelled.")
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
 
 async def handle_canoe_sail(
@@ -5159,6 +5310,12 @@ async def handle_interact(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "🌱 You plant a seed in the farmland.")
 
+        elif terrain in ("grass", "plains") and "hoe" in hand_items:
+            # Hoe creates farmland from grass/plains (no shovel required)
+            await set_tile_override(db, wx, wy, "farmland")
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🟤 You till the soil into farmland.")
+
         elif terrain in ("grass", "plains", "sand") and "shovel" in hand_items and terrain != "sapling":
             # Create farmland from soft terrain
             await set_tile_override(db, wx, wy, "farmland")
@@ -5350,6 +5507,54 @@ async def handle_action(
         if "b_farmer_npc" in adj_terrains:
             content = render_grid(grid, player, "🌾 **Farmer's Market** — Fresh produce and seeds.")
             view = FarmerShopView(guild_id, user_id)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        # ── Village farmland / crop / hoe interactions ────────────────────────
+        vc2 = VIEWPORT_CENTER
+        center_vt = grid[vc2][vc2].terrain if len(grid) > vc2 and len(grid[vc2]) > vc2 else None
+        hand_items_v: set[str] = set()
+        if player.hand_1: hand_items_v.add(player.hand_1)
+        if player.hand_2: hand_items_v.add(player.hand_2)
+
+        if center_vt in _VIL_SEEDS_TILES and "watering_can" in hand_items_v:
+            # Water seeds → mature crop
+            crop_info = next(
+                (c for c in FARM_CROPS.values() if c["planted"] == center_vt), None
+            )
+            if crop_info:
+                await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop_info["mature"])
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                content = render_grid(grid, player, f"💧 You water the seeds. A {crop_info['emoji']} crop sprouts!")
+            else:
+                content = render_grid(grid, player, "💧 You water the soil.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        if center_vt in _VIL_CROP_TILES:
+            # Harvest ripe crop
+            crop_info = next(
+                (c for c in FARM_CROPS.values() if c["mature"] == center_vt), None
+            )
+            if crop_info:
+                await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
+                qty = _random.randint(1, crop_info["yield_qty"] + 1)
+                await add_to_inventory(db, user_id, crop_info["yield"], qty)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}.")
+            else:
+                content = render_grid(grid, player, "You harvest the crop.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        if center_vt == "vil_grass" and "hoe" in hand_items_v:
+            # Till grass → farmland
+            await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            content = render_grid(grid, player, "🟤 You till the soil into farmland.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
