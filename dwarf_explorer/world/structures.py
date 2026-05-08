@@ -541,6 +541,7 @@ def _generate_village_paths_sync(
     seed: int,
     nodes: list[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
+    river_village_pos: tuple[int, int] | None = None,
 ) -> list[tuple[int, int, str]]:
     """Connect villages and harbors into a road network.
 
@@ -564,6 +565,15 @@ def _generate_village_paths_sync(
 
     # Pre-build cost grid once — rivers crossable at moderate cost
     cost_grid, narrow_river = _precompute_costs(seed, river_tiles)
+
+    # If there's a river village, make river tiles near it impassable so A*
+    # is forced to route along the bank and bridge somewhere further away.
+    _RIVER_VILLAGE_NO_CROSS_RADIUS = 12
+    if river_village_pos:
+        rvx, rvy = river_village_pos
+        for rx, ry in river_tiles:
+            if math.hypot(rx - rvx, ry - rvy) <= _RIVER_VILLAGE_NO_CROSS_RADIUS:
+                cost_grid[ry][rx] = 9_999.0
 
     def _river_cross_weight(a: tuple[int, int], b: tuple[int, int]) -> float:
         """Euclidean distance, ×8 if the straight line crosses many river tiles.
@@ -762,7 +772,7 @@ async def place_structures(seed: int, db) -> None:
     # 6. Generate paths — A* crosses rivers at moderate cost
     if nodes:
         path_overrides = await asyncio.to_thread(
-            _generate_village_paths_sync, seed, nodes, river_tiles,
+            _generate_village_paths_sync, seed, nodes, river_tiles, forced_river_village,
         )
         if path_overrides:
             await db.executemany(
