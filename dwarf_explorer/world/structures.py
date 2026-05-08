@@ -724,41 +724,48 @@ async def place_structures(seed: int, db) -> None:
                 )
 
     # ── Guarantee at least one river-adjacent village ─────────────────────────
+    # Fetch ALL river-family tiles (river + bridge, since road crossings convert
+    # river→bridge; we still want those to count as "next to water").
     river_rows2 = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type IN ('river', 'bridge')"
     )
     vil_rows2 = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'village'"
     )
     river_set2 = {(r["world_x"], r["world_y"]) for r in river_rows2}
     vil_set2   = {(r["world_x"], r["world_y"]) for r in vil_rows2}
+    # Also check diagonal neighbours — a village one step diagonally from a
+    # river is effectively "by the river" for the interior water-edge feature.
     river_village_exists = any(
         (vx + dx, vy + dy) in river_set2
         for vx, vy in vil_set2
-        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
+        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]
     )
     if not river_village_exists and river_set2:
         cx2, cy2 = WORLD_SIZE // 2, WORLD_SIZE // 2
         rng_rv = random.Random(seed ^ 0xB4DBEEF)
-        candidates = list(river_set2)
-        rng_rv.shuffle(candidates)
-        placed_rv = False
-        for rx, ry in candidates:
-            if placed_rv:
-                break
+        # Build a broad candidate list: tiles adjacent to ANY river/bridge tile
+        adjacent_to_river: list[tuple[int, int]] = []
+        for rx, ry in river_set2:
             for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
                 nx, ny = rx+dx, ry+dy
-                if not (5 <= nx < WORLD_SIZE-5 and 5 <= ny < WORLD_SIZE-5):
-                    continue
-                if abs(nx-cx2)+abs(ny-cy2) < 20:
-                    continue
-                if any(abs(nx-vx)+abs(ny-vy) < 30 for vx, vy in vil_set2):
-                    continue
-                biome = get_biome(nx, ny, seed)
-                if biome in ('plains', 'grass', 'forest'):
-                    await db.execute(
-                        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
-                        (nx, ny)
-                    )
-                    placed_rv = True
-                    break
+                if (nx, ny) not in river_set2:
+                    adjacent_to_river.append((nx, ny))
+        rng_rv.shuffle(adjacent_to_river)
+        placed_rv = False
+        for nx, ny in adjacent_to_river:
+            if placed_rv:
+                break
+            if not (5 <= nx < WORLD_SIZE-5 and 5 <= ny < WORLD_SIZE-5):
+                continue
+            if _near_spawn(nx, ny):
+                continue
+            if any(abs(nx-vx)+abs(ny-vy) < 30 for vx, vy in vil_set2):
+                continue
+            biome = get_biome(nx, ny, seed)
+            if biome in ('plains', 'grass', 'forest', 'hills'):
+                await db.execute(
+                    "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
+                    (nx, ny)
+                )
+                placed_rv = True
