@@ -15,6 +15,7 @@ from dwarf_explorer.config import (
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
     COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
+    FARM_ANIMALS, FARMER_SHOP,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
@@ -1337,28 +1338,6 @@ class TavernBuyView(discord.ui.View):
         ))
 
 
-# ── Mill buy view ─────────────────────────────────────────────────────────────
-
-class MillBuyView(discord.ui.View):
-    """One button per mill menu item + a close button."""
-
-    def __init__(self, guild_id: int, user_id: int):
-        super().__init__(timeout=None)
-        from dwarf_explorer.config import MILL_MENU
-        gid, uid = guild_id, user_id
-        for item in MILL_MENU:
-            label = f"{item['name']} {item['price']}🪙"
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.primary, label=label,
-                custom_id=_custom_id(gid, uid, f"mill_buy_{item['id']}"),
-                row=0,
-            ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.danger, label="❌ Leave",
-            custom_id=_custom_id(gid, uid, "mill_close"), row=1,
-        ))
-
-
 # ── Heal confirm view ─────────────────────────────────────────────────────────
 
 class HealConfirmView(discord.ui.View):
@@ -1378,6 +1357,48 @@ class HealConfirmView(discord.ui.View):
             label="❌ No thanks",
             custom_id=_custom_id(gid, uid, "heal_decline"),
             row=0,
+        ))
+
+
+# ── Farmer shop view ─────────────────────────────────────────────────────────
+
+class FarmerShopView(discord.ui.View):
+    """One button per farmer shop item + a close button."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        from dwarf_explorer.config import FARMER_SHOP
+        gid, uid = guild_id, user_id
+        for item in FARMER_SHOP:
+            label = f"{item['name']} {item['price']}🪙"
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary, label=label,
+                custom_id=_custom_id(gid, uid, f"farmer_buy_{item['id']}"),
+                row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Leave",
+            custom_id=_custom_id(gid, uid, "farmer_close"), row=1,
+        ))
+
+
+# ── Lumber convert view ────────────────────────────────────────────────────────
+
+class LumberConvertView(discord.ui.View):
+    """Confirm converting logs → planks."""
+
+    def __init__(self, guild_id: int, user_id: int, log_count: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label=f"✅ Convert {log_count} logs → {log_count*2} planks",
+            custom_id=_custom_id(gid, uid, "lumber_convert"),
+            row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "lumber_convert_cancel"), row=0,
         ))
 
 
@@ -1521,7 +1542,7 @@ async def _resolve_cave_combat(
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 # NPC tiles that can offer quests — player must be adjacent to trigger the NPC button
-_QUEST_NPC_TILES = {"b_priest", "b_tavern_npc"}
+_QUEST_NPC_TILES = {"b_priest", "b_tavern_npc", "b_farmer_npc"}
 
 
 def _compute_context_labels(
@@ -1618,10 +1639,9 @@ def _compute_context_labels(
         elif t in ("cave_entrance", "b_door"):
             center_label, center_enabled = "🚪", True
         elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop",
-                    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill"):
+                    "vil_blacksmith", "vil_tavern", "vil_hospital",
+                    "vil_lumber_mill", "vil_farmhouse"):
             center_label, center_enabled = "🚪", True
-        elif t == "vil_notice_board":
-            center_label, center_enabled = "📋 Board", True
         elif t == "vil_villager":
             center_label, center_enabled = "💬 Talk", True
         elif t == "vil_guard":
@@ -1651,14 +1671,18 @@ def _compute_context_labels(
             center_label, center_enabled = "🍺", True
         elif t == "b_medicine_shelf":
             center_label, center_enabled = "💬", True
-        elif t == "b_miller_npc":
-            center_label, center_enabled = "🛒 Buy", True
         elif t == "b_resident":
             center_label, center_enabled = "💬 Talk", True
+        elif t == "b_lumber_npc":
+            center_label, center_enabled = "🪵 Convert", True
+        elif t == "b_saw":
+            center_label, center_enabled = "⚙️ Saw", True
+        elif t == "b_waterwheel":
+            center_label, center_enabled = "⚙️ Wheel", True
+        elif t == "b_farmer_npc":
+            center_label, center_enabled = "🌾 Shop", True
         elif t == "b_pet":
             center_label, center_enabled = "🐱", True
-        elif t == "b_millstone":
-            center_label, center_enabled = "⚙️", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
         elif t == "vil_dock":
@@ -1718,8 +1742,16 @@ def _compute_context_labels(
         action_label, action_enabled = "🍺 Order", True
     elif "b_healer" in adj_terrains:
         action_label, action_enabled = "💊 Heal", True
-    elif "b_miller_npc" in adj_terrains:
-        action_label, action_enabled = "🛒 Mill", True
+    elif "b_farmer_npc" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "🌾 Farmer", True
+    elif "b_lumber_npc" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "🪵 Mill", True
+    elif "b_resident" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "💬 Chat", True
+    elif "vil_villager" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "💬 Talk", True
+    elif "vil_guard" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "💬 Talk", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
     elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
@@ -4331,24 +4363,42 @@ async def handle_interact(
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "The bar counter. Step up and speak with the barkeep.")
 
-            elif htile.terrain == "b_miller_npc" and player.house_type == "mill":
-                # ── Mill — open mill buy menu ──────────────────────────────────
-                from dwarf_explorer.config import MILL_MENU
+            elif htile.terrain == "b_lumber_npc":
                 grid = await _load_house_grid()
-                menu_lines = "\n".join(
-                    f"⚙️ **{item['name']}** — {item['price']}🪙"
-                    + (f" (+{item['hp']} HP)" if item.get("hp") else "")
-                    for item in MILL_MENU
+                inv_items = await get_inventory(db, user_id)
+                log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
+                if log_count > 0:
+                    _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
+                    content = render_grid(grid, player,
+                        "Bring me logs and I'll turn them into planks. " +
+                        f"You have **{log_count} logs**. Convert to **{log_count*2} planks**?")
+                    view = LumberConvertView(guild_id, user_id, log_count)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+                else:
+                    content = render_grid(grid, player, "\"Bring me logs and I'll turn them into planks.\"")
+
+            elif htile.terrain == "b_saw":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A massive saw blade, driven by the waterwheel.")
+
+            elif htile.terrain == "b_waterwheel":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "The waterwheel spins steadily, powered by the river current.")
+
+            elif htile.terrain == "b_farmer_npc":
+                grid = await _load_house_grid()
+                shop_lines = "\n".join(
+                    f"🌾 {item['name']} {item['price']}🪙"
+                    for item in FARMER_SHOP
                 )
-                _ui_state[user_id] = {
-                    **_ui_state.get(user_id, {}),
-                    "type": "mill_menu",
-                }
-                content = render_grid(grid, player,
-                    f"\"Fresh ground today, good prices.\"\n{menu_lines}\n\nUse the buttons below to buy.")
-                view = MillBuyView(guild_id, user_id)
+                _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "farmer_shop"}
+                intro = "Fresh from the farm."
+                content = render_grid(grid, player, intro + "\n" + shop_lines)
+                view = FarmerShopView(guild_id, user_id)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
+
 
             elif htile.terrain == "b_resident":
                 # ── House resident NPC — random gossip ───────────────────────
@@ -4369,15 +4419,13 @@ async def handle_interact(
 
             elif htile.terrain == "b_pet":
                 grid = await _load_house_grid()
-                content = render_grid(grid, player, "🐱 The cat blinks slowly at you.")
-
-            elif htile.terrain == "b_millstone":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "A heavy millstone — grain goes in, flour comes out.")
-
-            elif htile.terrain == "b_grain_sack":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "A sack of grain, waiting to be milled.")
+                hand_items_pet = set()
+                if player.hand_1: hand_items_pet.add(player.hand_1)
+                if player.hand_2: hand_items_pet.add(player.hand_2)
+                if hand_items_pet & {"fish", "cooked_fish"}:
+                    content = render_grid(grid, player, "🐱 The cat sniffs your fish eagerly, then devours it whole. It purrs loudly.")
+                else:
+                    content = render_grid(grid, player, "🐱 The cat blinks slowly at you.")
 
             elif htile.terrain == "b_chest":
                 grid = await _load_house_grid()
@@ -4423,26 +4471,6 @@ async def handle_interact(
         elif vtile.terrain == "vil_well":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
             content = render_grid(grid, player, "⛲ The well gurgles softly.")
-
-        elif vtile.terrain == "vil_notice_board":
-            # ── Outdoor bounty board — shows same pool as tavern NPCs ──────────
-            from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
-            bounty_pool = await get_or_refresh_bounty_pool(
-                db, seed,
-                village_id=player.village_id,
-                village_wx=player.world_x,
-                village_wy=player.world_y,
-            )
-            if bounty_pool:
-                await handle_open_quest_pool(
-                    interaction, guild_id, user_id,
-                    pool=bounty_pool,
-                    source_label="Notice Board",
-                    source_type="village_npc",
-                )
-                return
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-            content = render_grid(grid, player, "📋 The notice board is bare. Check back later.")
 
         elif vtile.terrain == "vil_villager":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
@@ -5191,21 +5219,6 @@ async def handle_action(
                     embed=_embed(content), content=None,
                     view=HealConfirmView(guild_id, user_id, cost),
                 )
-            return
-
-        if "b_miller_npc" in adj_terrains:
-            from dwarf_explorer.config import MILL_MENU
-            menu_lines = "\n".join(
-                f"⚙️ **{item['name']}** — {item['price']}🪙"
-                + (f" (+{item['hp']} HP)" if item.get("hp") else "")
-                for item in MILL_MENU
-            )
-            content = render_grid(grid, player,
-                f"\"Fresh ground today, good prices.\"\n{menu_lines}")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=MillBuyView(guild_id, user_id),
-            )
             return
 
         content = render_grid(grid, player, "Nothing to interact with nearby.")
@@ -8393,6 +8406,9 @@ async def handle_npc_quest(
         idx = (nx * 7 + ny * 13) % max(1, len(bounty_pool)) if bounty_pool else 0
         pool = bounty_pool[idx:idx + 1]
         source_label = "Tavern Regular"
+    elif "b_farmer_npc" in adj_npc:
+        pool = village_pool[:1]
+        source_label = "Farmer"
     else:
         # Fallback: combined pool first entry
         pool = (village_pool + bounty_pool)[:1]
@@ -8749,50 +8765,84 @@ async def handle_heal_decline(
     )
 
 
-# ── Mill handlers ─────────────────────────────────────────────────────────────
+# ── Lumber convert handlers ─────────────────────────────────────────────────
 
-async def handle_mill_buy(
-    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+async def handle_lumber_convert_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Buy a food item from the mill."""
-    from dwarf_explorer.config import MILL_MENU
-    from dwarf_explorer.database.repositories import add_to_inventory
-
+    """Convert all logs in inventory to planks (2 planks per log)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    inv_items = await get_inventory(db, user_id)
+    log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    if log_count <= 0:
+        content = render_grid(grid, player, '"No logs to convert."')
+    else:
+        plank_count = log_count * 2
+        await remove_from_inventory(db, user_id, "log", log_count)
+        await add_to_inventory(db, user_id, "plank", plank_count)
+        content = render_grid(grid, player,
+            f"🪵 Converted **{log_count} logs** into **{plank_count} planks**!")
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
 
-    item = next((i for i in MILL_MENU if i["id"] == item_id), None)
+
+async def handle_lumber_convert_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel lumber conversion."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "Come back when you're ready.")
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+# ── Farmer shop handlers ────────────────────────────────────────────────────
+
+async def handle_farmer_buy(
+    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+) -> None:
+    """Buy an item from the farmer shop."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    item = next((i for i in FARMER_SHOP if i["id"] == item_id), None)
     if item is None:
         await interaction.response.defer()
         return
-
     cost = item["price"]
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-
     if player.gold < cost:
         content = render_grid(grid, player,
-            f"\"Sorry, that'll cost you {cost}🪙 and you've only got {player.gold}🪙.\"")
+            f"That'll be {cost}🪙 and you've only got {player.gold}🪙.")
     else:
         player.gold -= cost
         await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
         await add_to_inventory(db, user_id, item_id, 1)
         content = render_grid(grid, player,
-            f"⚙️ Bought 1× {item['name']} for {cost}🪙.")
-
+            f"🌾 Bought 1× {item['name']} for {cost}🪙.")
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
-        view=MillBuyView(guild_id, user_id),
+        view=FarmerShopView(guild_id, user_id),
     )
 
 
-async def handle_mill_close(
+async def handle_farmer_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Close the mill menu and return to the building view."""
+    """Close the farmer shop."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(grid, player, "\"Come back when you need provisions.\"")
+    content = render_grid(grid, player, "Come back any time!")
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),

@@ -722,3 +722,43 @@ async def place_structures(seed: int, db) -> None:
                     " WHERE world_x=? AND world_y=? AND tile_type='river'",
                     narrow_cross,
                 )
+
+    # ── Guarantee at least one river-adjacent village ─────────────────────────
+    river_rows2 = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
+    )
+    vil_rows2 = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'village'"
+    )
+    river_set2 = {(r["world_x"], r["world_y"]) for r in river_rows2}
+    vil_set2   = {(r["world_x"], r["world_y"]) for r in vil_rows2}
+    river_village_exists = any(
+        (vx + dx, vy + dy) in river_set2
+        for vx, vy in vil_set2
+        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]
+    )
+    if not river_village_exists and river_set2:
+        cx2, cy2 = WORLD_SIZE // 2, WORLD_SIZE // 2
+        rng_rv = random.Random(seed ^ 0xB4DBEEF)
+        candidates = list(river_set2)
+        rng_rv.shuffle(candidates)
+        placed_rv = False
+        for rx, ry in candidates:
+            if placed_rv:
+                break
+            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nx, ny = rx+dx, ry+dy
+                if not (5 <= nx < WORLD_SIZE-5 and 5 <= ny < WORLD_SIZE-5):
+                    continue
+                if abs(nx-cx2)+abs(ny-cy2) < 20:
+                    continue
+                if any(abs(nx-vx)+abs(ny-vy) < 30 for vx, vy in vil_set2):
+                    continue
+                biome = get_biome(nx, ny, seed)
+                if biome in ('plains', 'grass', 'forest'):
+                    await db.execute(
+                        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'village')",
+                        (nx, ny)
+                    )
+                    placed_rv = True
+                    break

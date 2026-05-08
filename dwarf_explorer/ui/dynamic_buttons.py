@@ -69,7 +69,8 @@ from dwarf_explorer.ui.game_view import (
     handle_npc_quest,
     handle_tavern_buy, handle_tavern_close,
     handle_heal_accept, handle_heal_decline,
-    handle_mill_buy, handle_mill_close,
+    handle_lumber_convert_confirm, handle_lumber_convert_cancel,
+    handle_farmer_buy, handle_farmer_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -492,12 +493,17 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_heal_accept(interaction, gid, uid)
             elif act == "heal_decline":
                 await handle_heal_decline(interaction, gid, uid)
-            # Mill buy menu
-            elif act.startswith("mill_buy_"):
-                item_id = act[len("mill_buy_"):]
-                await handle_mill_buy(interaction, gid, uid, item_id)
-            elif act == "mill_close":
-                await handle_mill_close(interaction, gid, uid)
+            # Lumber convert
+            elif act == "lumber_convert":
+                await handle_lumber_convert_confirm(interaction, gid, uid)
+            elif act == "lumber_convert_cancel":
+                await handle_lumber_convert_cancel(interaction, gid, uid)
+            # Farmer shop
+            elif act.startswith("farmer_buy_"):
+                item_id = act[len("farmer_buy_"):]
+                await handle_farmer_buy(interaction, gid, uid, item_id)
+            elif act == "farmer_close":
+                await handle_farmer_close(interaction, gid, uid)
 
         except discord.NotFound:
             await interaction.followup.send(

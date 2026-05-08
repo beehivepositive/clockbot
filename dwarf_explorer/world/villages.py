@@ -16,8 +16,8 @@ _BUILDING_SEED_OFFSET = 8000
 # Building tile types that paths must not overwrite
 _PROTECTED_TILES = {
     "vil_well", "vil_house", "vil_church", "vil_bank", "vil_shop",
-    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill", "vil_tree",
-    "vil_notice_board",
+    "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_lumber_mill", "vil_farmhouse",
+    "vil_tree", "vil_fence", "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",
 }
 
 
@@ -122,6 +122,7 @@ def _extend_to_edge(
 
 def _generate_village_interior(
     village_id: int, seed: int, world_x: int, world_y: int,
+    river_side: str | None = None,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
            list[tuple[int, int, str]]]:
     """Generate a 32×32 village with a triangular, meandering road network.
@@ -224,7 +225,7 @@ def _generate_village_interior(
 
     # ── Required special buildings ────────────────────────────────────────────
     required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
-                "vil_tavern", "vil_hospital", "vil_mill"]
+                "vil_tavern", "vil_hospital", "vil_farmhouse"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(400):
@@ -241,25 +242,6 @@ def _generate_village_interior(
             buildings.append((bx, by, btype))
             _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
             break
-
-    # ── Notice board — near the well ─────────────────────────────────────────
-    # Try to place it adjacent to the well (within 3 tiles on a path tile)
-    for dist in range(2, 5):
-        for ndx, ndy in [(dist, 0), (-dist, 0), (0, dist), (0, -dist),
-                         (dist, 1), (-dist, 1), (1, dist), (1, -dist)]:
-            nx_b, ny_b = cx + ndx, cy + ndy
-            if not (1 <= nx_b < W - 1 and 1 <= ny_b < H - 1):
-                continue
-            if (nx_b, ny_b) in occupied:
-                continue
-            if grid[ny_b][nx_b] in ("vil_path", "vil_grass"):
-                grid[ny_b][nx_b] = "vil_notice_board"
-                occupied.add((nx_b, ny_b))
-                buildings.append((nx_b, ny_b, "vil_notice_board"))
-                break
-        else:
-            continue
-        break  # placed
 
     # ── Houses (5-9) ──────────────────────────────────────────────────────────
     house_count = rng.randint(5, 9)
@@ -332,6 +314,79 @@ def _generate_village_interior(
         grid[gy][gx] = "vil_guard"
         occupied.add((gx, gy))
         placed_g += 1
+
+    # ── River-side water edge (river villages only) ──────────────────────────
+    if river_side:
+        if river_side == "S":
+            for x in range(W):
+                grid[H-1][x] = "vil_water"
+                occupied.add((x, H-1))
+                if rng.random() < 0.70:
+                    grid[H-2][x] = "vil_water"
+                    occupied.add((x, H-2))
+        elif river_side == "N":
+            for x in range(W):
+                grid[0][x] = "vil_water"
+                occupied.add((x, 0))
+                if rng.random() < 0.70:
+                    grid[1][x] = "vil_water"
+                    occupied.add((x, 1))
+        elif river_side == "E":
+            for y in range(H):
+                grid[y][W-1] = "vil_water"
+                occupied.add((W-1, y))
+                if rng.random() < 0.70:
+                    grid[y][W-2] = "vil_water"
+                    occupied.add((W-2, y))
+        elif river_side == "W":
+            for y in range(H):
+                grid[y][0] = "vil_water"
+                occupied.add((0, y))
+                if rng.random() < 0.70:
+                    grid[y][1] = "vil_water"
+                    occupied.add((1, y))
+
+        # ── Lumber mill placement (river village only) ────────────────────────
+        for _ in range(300):
+            if river_side == "S":
+                lx = rng.randint(2, W-3)
+                ly = rng.randint(H-6, H-4)
+            elif river_side == "N":
+                lx = rng.randint(2, W-3)
+                ly = rng.randint(2, 5)
+            elif river_side == "E":
+                lx = rng.randint(W-6, W-4)
+                ly = rng.randint(2, H-3)
+            else:  # W
+                lx = rng.randint(2, 5)
+                ly = rng.randint(2, H-3)
+            if (lx, ly) not in occupied and grid[ly][lx] not in _PROTECTED_TILES:
+                grid[ly][lx] = "vil_lumber_mill"
+                occupied.add((lx, ly))
+                buildings.append((lx, ly, "vil_lumber_mill"))
+                _connect_to_road(grid, lx, ly, cx, cy, W, H, occupied)
+                break
+
+    # ── Animal pen for farmhouse ──────────────────────────────────────────────
+    farm_pos = next(((bx, by) for bx, by, bt in buildings if bt == "vil_farmhouse"), None)
+    if farm_pos:
+        from dwarf_explorer.config import FARM_ANIMALS
+        animal = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS)-1)]
+        fx, fy = farm_pos
+        for pdx, pdy in [(1,0),(-1,0),(0,1),(0,-1),(2,0),(-2,0),(0,2),(0,-2)]:
+            px0, py0 = fx+pdx, fy+pdy
+            pen_cells = {(px0+dx, py0+dy) for dy in range(3) for dx in range(3)}
+            if pen_cells & occupied:
+                continue
+            if not all(0 < px < W-1 and 0 < py < H-1 for px,py in pen_cells):
+                continue
+            for px, py in pen_cells:
+                if px == px0 or px == px0+2 or py == py0 or py == py0+2:
+                    grid[py][px] = "vil_fence"
+                else:
+                    grid[py][px] = animal
+            occupied.update(pen_cells)
+            break
 
     # ── Entry at the bottom border (south spoke exit) ─────────────────────────
     # Player enters the village at this border tile.
@@ -503,10 +558,6 @@ def _house_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], 
         if tiles[(x, 1)] == "b_floor":
             tiles[(x, 1)] = "b_bookshelf"
             break
-
-    # Candle beside stove
-    if tiles.get((sx, 2)) == "b_floor":
-        tiles[(sx, 2)] = "b_candle"
 
     # Resident NPC — placed on a free floor tile near the centre
     placed_resident = False
@@ -707,37 +758,66 @@ def _hospital_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int
     return tiles
 
 
-def _mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int, int], str]:
-    """Grain mill: two large millstones, grain sacks along walls, miller NPC."""
-    tiles: dict[tuple[int, int], str] = {}
+def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+    """Lumber mill: waterwheel on left wall, saw in centre, lumber NPC."""
+    tiles: dict[tuple[int,int], str] = {}
     for y in range(H):
         for x in range(W):
             tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
-    tiles[(W // 2, H - 1)] = "b_door"
+    tiles[(W//2, H-1)] = "b_door"
 
-    # Two millstones side by side in the upper half
-    mx = W // 2
-    tiles[(mx - 1, 2)] = "b_millstone"
-    tiles[(mx + 1, 2)] = "b_millstone"
-    # Miller NPC stands between the millstones at row 3
-    tiles[(mx, 3)] = "b_miller_npc"
+    # Left wall becomes water (river-facing)
+    for y in range(H):
+        tiles[(0, y)] = "b_water"
 
-    # Grain sacks lining the lower walls
-    for y in range(5, H - 2):
-        if tiles.get((1, y)) == "b_floor":
-            tiles[(1, y)] = "b_grain_sack"
-        if tiles.get((W - 2, y)) == "b_floor":
-            tiles[(W - 2, y)] = "b_grain_sack"
+    # Waterwheel visible through left wall
+    tiles[(1, H//2)] = "b_waterwheel"
 
-    # Shelf on back wall
-    for x in range(2, W - 2):
-        if tiles.get((x, 1)) == "b_floor":
-            tiles[(x, 1)] = "b_shelf"
+    # Saw in centre
+    tiles[(W//2, H//2)] = "b_saw"
 
-    # Candle on back wall
-    tiles[(1, 1)] = "b_candle"
-    if W > 6:
-        tiles[(W - 2, 1)] = "b_candle"
+    # Lumber NPC near saw
+    npc_x = min(W//2 + 1, W-2)
+    tiles[(npc_x, H//2)] = "b_lumber_npc"
+
+    # Log shelf on right side
+    for y in range(2, H-2):
+        if tiles.get((W-2, y)) == "b_floor":
+            tiles[(W-2, y)] = "b_shelf"
+
+    # Candle
+    if tiles.get((2, 1)) == "b_floor":
+        tiles[(2, 1)] = "b_candle"
+
+    return tiles
+
+
+def _farmhouse_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+    """Farmhouse: farmer NPC, table, chairs, seed shelves."""
+    tiles: dict[tuple[int,int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
+    tiles[(W//2, H-1)] = "b_door"
+
+    # Seed shelves on back wall
+    for dx in [-1, 0, 1]:
+        sx = W//2 + dx
+        if 0 < sx < W-1:
+            tiles[(sx, 1)] = "b_shelf"
+
+    # Table and chairs in the middle
+    tiles[(W//2, H//2)] = "b_table"
+    tiles[(W//2-1, H//2)] = "b_chair"
+    if W//2+1 < W-1:
+        tiles[(W//2+1, H//2)] = "b_chair"
+
+    # Farmer NPC below the table
+    farmer_y = min(H//2 + 1, H-2)
+    tiles[(W//2, farmer_y)] = "b_farmer_npc"
+
+    # Stove in upper-left corner
+    tiles[(1, 1)] = "b_stove"
 
     return tiles
 
@@ -766,9 +846,12 @@ def _generate_building_interior(
     elif building_type in ("vil_hospital", "hospital"):
         W, H = rng.randint(9, 11), rng.randint(9, 11)
         tiles_dict = _hospital_interior(rng, W, H)
-    elif building_type in ("vil_mill", "mill"):
-        W, H = rng.randint(8, 10), rng.randint(8, 10)
-        tiles_dict = _mill_interior(rng, W, H)
+    elif building_type in ("vil_lumber_mill", "lumber_mill"):
+        W, H = rng.randint(9, 11), rng.randint(8, 10)
+        tiles_dict = _lumber_mill_interior(rng, W, H)
+    elif building_type in ("vil_farmhouse", "farmhouse"):
+        W, H = rng.randint(7, 10), rng.randint(6, 8)
+        tiles_dict = _farmhouse_interior(rng, W, H)
     else:  # house
         W, H = rng.randint(7, 11), rng.randint(6, 9)
         tiles_dict = _house_interior(rng, W, H)
@@ -781,14 +864,15 @@ def _generate_building_interior(
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 _CANONICAL_BUILDING_TYPE = {
-    "vil_house":       "house",
-    "vil_church":      "church",
-    "vil_bank":        "bank",
-    "vil_shop":        "shop",
-    "vil_blacksmith":  "blacksmith",
-    "vil_tavern":      "tavern",
-    "vil_hospital":    "hospital",
-    "vil_mill":        "mill",
+    "vil_house":        "house",
+    "vil_church":       "church",
+    "vil_bank":         "bank",
+    "vil_shop":         "shop",
+    "vil_blacksmith":   "blacksmith",
+    "vil_tavern":       "tavern",
+    "vil_hospital":     "hospital",
+    "vil_lumber_mill":  "lumber_mill",
+    "vil_farmhouse":    "farmhouse",
 }
 
 
@@ -807,8 +891,19 @@ async def get_or_create_village(
     cursor = await db.execute("INSERT INTO villages (width, height) VALUES (1, 1)")
     village_id = cursor.lastrowid
 
+    # Detect if this village is adjacent to a river
+    river_side = None
+    for ddx, ddy, side in [(0,-1,"N"),(0,1,"S"),(1,0,"E"),(-1,0,"W")]:
+        adj_river = await db.fetch_one(
+            "SELECT 1 FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='river'",
+            (world_x+ddx, world_y+ddy),
+        )
+        if adj_river:
+            river_side = side
+            break
+
     W, H, tiles, entry, buildings = await asyncio.to_thread(
-        _generate_village_interior, village_id, seed, world_x, world_y
+        _generate_village_interior, village_id, seed, world_x, world_y, river_side
     )
     await db.execute(
         "UPDATE villages SET width = ?, height = ? WHERE village_id = ?",

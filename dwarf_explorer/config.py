@@ -157,6 +157,7 @@ ITEM_EMOJI = {
     "meat_stew":            "\U0001F372",           # 🍲
     # Hospital quest ingredient
     "healing_herb":         "\U0001F33F",           # 🌿
+    "plank":            "🪵",       # 🪵  wooden plank
 }
 
 WALKABLE_TILES = {
@@ -259,11 +260,15 @@ TAVERN_MENU = [
     {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 20},
 ]
 
-# Mill food menu (cheaper than tavern, basic staples)
-MILL_MENU = [
-    {"id": "bread",     "name": "Bread",     "price": 3,  "hp": 10},
-    {"id": "meat_stew", "name": "Meat Stew", "price": 8,  "hp": 20},
-    {"id": "healing_herb", "name": "Healing Herb", "price": 12, "hp": 0},
+# Farm animal types for farmhouse enclosures
+FARM_ANIMALS = ["vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep"]
+
+# Farmer shop catalog (price in gold)
+FARMER_SHOP = [
+    {"id": "seed",        "name": "Seeds",  "price": 2},
+    {"id": "dry_grass",   "name": "Hay",    "price": 1},
+    {"id": "plant_fiber", "name": "Fiber",  "price": 3},
+    {"id": "healing_herb","name": "Herb",   "price": 8},
 ]
 
 # Hospital heal cost: gold per missing HP (minimum 5 gold)
@@ -442,8 +447,14 @@ VILLAGE_EMOJI = {
     "vil_elder":        "\U0001F9D3",        # 🧓  village elder NPC (quest giver)
     "vil_villager":     "\U0001F9D1",        # 🧑  walking villager NPC
     "vil_guard":        "\U0001F482",        # 💂  guard NPC
-    "vil_notice_board": "\U0001F4CB",        # 📋  outdoor bounty/notice board
-    "vil_mill":         "\u2699\uFE0F",      # ⚙️  grain mill
+    "vil_lumber_mill":  "⚙️",      # ⚙️  waterwheel lumber mill
+    "vil_farmhouse":    "🏡",        # 🏡  farmhouse
+    "vil_fence":        "🟫",        # 🟫  fence post
+    "vil_cow":          "🐄",        # 🐄  cow
+    "vil_pig":          "🐖",        # 🐖  pig
+    "vil_chicken":      "🐓",        # 🐓  chicken
+    "vil_goat":         "🐐",        # 🐐  goat
+    "vil_sheep":        "🐑",        # 🐑  sheep
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
@@ -491,10 +502,13 @@ BUILDING_EMOJI = {
     "b_chest":          "\U0001F4E6",        # 📦  small storage chest
     "b_resident":       "\U0001F9D3",        # 🧓  house resident NPC
     "b_pet":            "\U0001F431",        # 🐱  house cat
-    # Mill unique
-    "b_millstone":      "\U0001FAA8",        # 🪨  millstone / grinder
-    "b_miller_npc":     "\U0001F9D1",        # 🧑  miller NPC
-    "b_grain_sack":     "\U0001F6F1",        # 🛱  grain sack (drum shape)
+    # Lumber mill unique
+    "b_waterwheel":     "⚙️",    # ⚙️  water-powered wheel
+    "b_saw":            "🔨",       # 🔨  saw
+    "b_lumber_npc":     "🧑",       # 🧑  lumber mill worker
+    "b_farmer_npc":     "🧑",       # 🧑  farmer NPC
+    "b_water":          "🌊",       # 🌊  water tile (lumber mill)
+    # Player-house chests
     # Player-house chests
     "ph_chest_small":     "\U0001F4E6",       # 📦
     "ph_chest_medium":    "\U0001F5C4\uFE0F", # 🗄️
@@ -508,8 +522,9 @@ VILLAGE_WALKABLE = {
     "vil_dock",  # harbor-village boarding point — walkable, triggers ocean
     "vil_villager",     # walkable NPC (interact for gossip)
     "vil_guard",        # walkable NPC (interact for guard dialogue)
-    "vil_notice_board", # outdoor bounty board — walkable, interact to see quests
-    "vil_mill",         # enterable mill building
+    "vil_lumber_mill",  # enterable lumber mill building
+    "vil_farmhouse",    # enterable farmhouse building
+    # Note: vil_fence/animals are solid obstacles (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
 
@@ -520,7 +535,8 @@ BUILDING_WALKABLE = {
     "b_barkeep", "b_tavern_npc", "b_healer", "b_barrel", "b_bar_counter", "b_medicine_shelf",
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "b_chest", "b_resident", "b_pet",
-    "b_millstone", "b_miller_npc", "b_grain_sack",
+    "b_waterwheel", "b_saw", "b_lumber_npc", "b_farmer_npc",
+    # Note: b_water is NOT in BUILDING_WALKABLE (water is impassable inside)
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 

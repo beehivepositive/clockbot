@@ -21,7 +21,7 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
-                    "tavern", "hospital", "mill", "player_house"):
+                    "tavern", "hospital", "lumber_mill", "farmhouse", "player_house"):
         # Wood floors for cozy buildings; stone/grey for blacksmith
         if tile.terrain == "b_floor" and location != "blacksmith":
             return BUILDING_EMOJI.get("b_floor_wood", BUILDING_EMOJI.get("b_floor", _BLACK))
