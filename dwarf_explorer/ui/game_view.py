@@ -147,7 +147,8 @@ class GameView(discord.ui.View):
                  action_label: str = "", action_enabled: bool = False,
                  edit_enabled: bool = False,
                  npc_label: str = "", npc_enabled: bool = False,
-                 embark_enabled: bool = False):
+                 embark_enabled: bool = False,
+                 feed_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -155,7 +156,7 @@ class GameView(discord.ui.View):
                             center_label, center_enabled,
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
-                            embark_enabled)
+                            embark_enabled, feed_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -179,7 +180,8 @@ class GameView(discord.ui.View):
                        action_label: str, action_enabled: bool,
                        edit_enabled: bool,
                        npc_label: str = "", npc_enabled: bool = False,
-                       embark_enabled: bool = False) -> None:
+                       embark_enabled: bool = False,
+                       feed_enabled: bool = False) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
         # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
@@ -272,8 +274,15 @@ class GameView(discord.ui.View):
                 row=2,
             )
 
-        # ── Row 3: embark/spacer | ⬇️ | NPC ────────────────────────────────
-        if embark_enabled:
+        # ── Row 3: embark/feed/spacer | ⬇️ | NPC ───────────────────────────
+        if feed_enabled:
+            sp5_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji="🐟",
+                custom_id=_custom_id(self.guild_id, self.user_id, "feed_cat"),
+                row=3,
+            )
+        elif embark_enabled:
             sp5_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
                 emoji="🛶",
@@ -1571,9 +1580,9 @@ def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
-) -> tuple[str, bool, str, bool, bool, str, bool, bool]:
+) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-               npc_label, npc_enabled, embark_enabled).
+               npc_label, npc_enabled, embark_enabled, feed_enabled).
 
     center = on-tile interaction (interact button at row-2 center)
     action = adjacent-tile interaction (action button at row-1 col-2)
@@ -1809,7 +1818,17 @@ def _compute_context_labels(
                         embark_enabled = True
                         break
 
-    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled
+    # ── Feed cat: bottom-left button when adjacent to a pet inside a house ──────
+    feed_enabled = False
+    if player.in_house:
+        for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
+            r, c = vc + ro, vc + co
+            if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                if grid[r][c].terrain == "b_pet":
+                    feed_enabled = True
+                    break
+
+    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled, feed_enabled
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -1858,7 +1877,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
         if player.hand_2:
             hand_items.add(player.hand_2)
         (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-         npc_label, npc_enabled, embark_enabled) = \
+         npc_label, npc_enabled, embark_enabled, feed_enabled) = \
             _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
@@ -1872,7 +1891,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     edit_enabled=edit_enabled,
                     npc_label=npc_label,
                     npc_enabled=npc_enabled,
-                    embark_enabled=embark_enabled)
+                    embark_enabled=embark_enabled,
+                    feed_enabled=feed_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -3034,6 +3054,40 @@ async def handle_embark(
     grid = await load_viewport(wx, wy, seed, db)
     content = render_grid(grid, player, "🛶 You push off from the bank and onto the water.")
     view = CanoeView(guild_id, user_id, dock_available=False)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_feed_cat(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Feed a fish to the adjacent house cat (bottom-left button)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not player.in_house:
+        await interaction.response.defer()
+        return
+
+    grid = await _load_house_grid(player, db)
+    _fish_rows = await db.fetch_all(
+        "SELECT item_id FROM inventory WHERE user_id=? AND item_id IN ('fish','cooked_fish')",
+        (user_id,)
+    )
+    if _fish_rows:
+        await remove_from_inventory(db, user_id, _fish_rows[0]["item_id"], 1)
+        _flavour = [
+            "🐱 The cat sniffs your fish eagerly, then devours it whole. It purrs loudly.",
+            "🐱 The cat takes the fish delicately, retreats to a corner, and eats with great dignity.",
+            "🐱 The cat headbutts your ankle after finishing the fish. High praise.",
+            "🐱 The cat snatches the fish before you can reconsider. Typical.",
+        ]
+        import hashlib as _fh
+        _fi = int(_fh.md5(f"cat{player.house_id}{player.house_x}{player.house_y}".encode()).hexdigest(), 16) % len(_flavour)
+        content = render_grid(grid, player, _flavour[_fi])
+    else:
+        content = render_grid(grid, player, "🐱 The cat eyes you hopefully. You have no fish to offer.")
+
+    view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -4454,10 +4508,12 @@ async def handle_interact(
 
             elif htile.terrain == "b_pet":
                 grid = await _load_house_grid()
-                hand_items_pet = set()
-                if player.hand_1: hand_items_pet.add(player.hand_1)
-                if player.hand_2: hand_items_pet.add(player.hand_2)
-                if hand_items_pet & {"fish", "cooked_fish"}:
+                _fish_rows = await db.fetch_all(
+                    "SELECT item_id FROM inventory WHERE user_id=? AND item_id IN ('fish','cooked_fish')",
+                    (user_id,)
+                )
+                if _fish_rows:
+                    await remove_from_inventory(db, user_id, _fish_rows[0]["item_id"], 1)
                     content = render_grid(grid, player, "🐱 The cat sniffs your fish eagerly, then devours it whole. It purrs loudly.")
                 else:
                     content = render_grid(grid, player, "🐱 The cat blinks slowly at you.")

@@ -296,15 +296,14 @@ def _group_caves(
 
 def _generate_structures_sync(
     seed: int,
-    forced_river_village: tuple[int, int] | None = None,
+    forced_river_villages: list[tuple[int, int]] | None = None,
 ) -> tuple[list[tuple[int, int, str]], list[list[tuple[int, int]]]]:
     rng = random.Random(seed + _STRUCTURE_SEED_OFFSET)
     overrides: list[tuple[int, int, str]] = []
     village_centers: list[tuple[int, int]] = []
 
-    # --- Forced river village (placed first so all other structures respect it) ---
-    if forced_river_village:
-        fx, fy = forced_river_village
+    # --- Forced river villages (placed first so all other structures respect them) ---
+    for fx, fy in (forced_river_villages or []):
         village_centers.append((fx, fy))
         overrides.append((fx, fy, 'village'))
         for ry in range(fy - 1, fy + 2):
@@ -312,9 +311,9 @@ def _generate_structures_sync(
                 if (rx, ry) != (fx, fy) and 0 <= rx < WORLD_SIZE and 0 <= ry < WORLD_SIZE:
                     overrides.append((rx, ry, 'path'))
 
-    # --- Villages (7-10): plains/grass, single tile, minimum 40 tiles apart ---
-    village_count = rng.randint(7, 10)
-    found = len(village_centers)  # river village counts toward the total
+    # --- Villages (14-20): plains/grass, single tile, minimum 40 tiles apart ---
+    village_count = rng.randint(14, 20)
+    found = len(village_centers)  # river villages count toward the total
     for _ in range(800):
         if found >= village_count:
             break
@@ -541,7 +540,7 @@ def _generate_village_paths_sync(
     seed: int,
     nodes: list[tuple[int, int]],
     river_tiles: set[tuple[int, int]],
-    river_village_pos: tuple[int, int] | None = None,
+    river_village_positions: list[tuple[int, int]] | None = None,
 ) -> list[tuple[int, int, str]]:
     """Connect villages and harbors into a road network.
 
@@ -566,11 +565,10 @@ def _generate_village_paths_sync(
     # Pre-build cost grid once — rivers crossable at moderate cost
     cost_grid, narrow_river = _precompute_costs(seed, river_tiles)
 
-    # If there's a river village, make river tiles near it impassable so A*
+    # For each river village, make river tiles near it impassable so A*
     # is forced to route along the bank and bridge somewhere further away.
     _RIVER_VILLAGE_NO_CROSS_RADIUS = 12
-    if river_village_pos:
-        rvx, rvy = river_village_pos
+    for rvx, rvy in (river_village_positions or []):
         for rx, ry in river_tiles:
             if math.hypot(rx - rvx, ry - rvy) <= _RIVER_VILLAGE_NO_CROSS_RADIUS:
                 cost_grid[ry][rx] = 9_999.0
@@ -679,15 +677,15 @@ def _generate_village_paths_sync(
     return overrides
 
 
-def _find_river_village_pos(
+def _find_river_village_positions(
     seed: int,
     river_tiles: set[tuple[int, int]],
-) -> tuple[int, int] | None:
-    """Find the best tile directly adjacent to a river to place the guaranteed village.
+    count: int = 2,
+) -> list[tuple[int, int]]:
+    """Find `count` tiles directly adjacent to the river for guaranteed river villages.
 
-    Iterates all river tiles, collects non-river cardinal neighbours, scores them
-    by biome preference, and returns the best candidate.  No distance-to-other-
-    villages check here — this runs before any other villages are placed.
+    Scores candidates by biome preference, picks the best, then picks a second
+    that is at least 40 tiles away from the first.
     """
     _BAD_BIOMES = {"deep_water", "shallow_water", "mountain", "snow", "sand"}
     _PREF = {"plains": 0, "grass": 1, "forest": 2, "hills": 3}
@@ -711,33 +709,52 @@ def _find_river_village_pos(
             candidates.append((score, nx, ny))
 
     if not candidates:
-        return None
+        return []
+
     candidates.sort(key=lambda c: c[0])
-    # Among equal-score tiles pick a deterministic one via seed hash
-    best_score = candidates[0][0]
-    best = [(x, y) for s, x, y in candidates if s == best_score]
     rng = random.Random(seed ^ 0xF00DFACE)
-    rng.shuffle(best)
-    return best[0]
+
+    chosen: list[tuple[int, int]] = []
+    # Shuffle within each score tier for variety
+    shuffled = []
+    i = 0
+    while i < len(candidates):
+        j = i
+        while j < len(candidates) and candidates[j][0] == candidates[i][0]:
+            j += 1
+        tier = [(x, y) for _, x, y in candidates[i:j]]
+        rng.shuffle(tier)
+        shuffled.extend(tier)
+        i = j
+
+    for nx, ny in shuffled:
+        if len(chosen) >= count:
+            break
+        # Must be at least 40 tiles from every already-chosen position
+        if any(abs(nx - cx) + abs(ny - cy) < 40 for cx, cy in chosen):
+            continue
+        chosen.append((nx, ny))
+
+    return chosen
 
 
 async def place_structures(seed: int, db) -> None:
     from dwarf_explorer.world.caves import create_cave_system
 
-    # 0. Find the guaranteed river-adjacent village position BEFORE anything
+    # 0. Find 2 guaranteed river-adjacent village positions BEFORE anything
     #    else is placed — rivers are already in the DB from generate_rivers().
     river_rows_pre = await db.fetch_all(
         "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river'"
     )
     river_tiles_pre = {(r["world_x"], r["world_y"]) for r in river_rows_pre}
-    forced_river_village = await asyncio.to_thread(
-        _find_river_village_pos, seed, river_tiles_pre
+    forced_river_villages = await asyncio.to_thread(
+        _find_river_village_positions, seed, river_tiles_pre, 2
     )
 
-    # 1. Base structures — river village is injected as the first village so
-    #    all subsequent random villages respect the 40-tile separation from it.
+    # 1. Base structures — river villages are injected first so all subsequent
+    #    random villages respect the 40-tile separation from them.
     overrides, cave_groups = await asyncio.to_thread(
-        _generate_structures_sync, seed, forced_river_village
+        _generate_structures_sync, seed, forced_river_villages
     )
     if overrides:
         await db.executemany(
@@ -772,7 +789,7 @@ async def place_structures(seed: int, db) -> None:
     # 6. Generate paths — A* crosses rivers at moderate cost
     if nodes:
         path_overrides = await asyncio.to_thread(
-            _generate_village_paths_sync, seed, nodes, river_tiles, forced_river_village,
+            _generate_village_paths_sync, seed, nodes, river_tiles, forced_river_villages,
         )
         if path_overrides:
             await db.executemany(
