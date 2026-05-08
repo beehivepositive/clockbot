@@ -70,7 +70,9 @@ from dwarf_explorer.ui.game_view import (
     handle_tavern_buy, handle_tavern_close,
     handle_heal_accept, handle_heal_decline,
     handle_lumber_convert_confirm, handle_lumber_convert_cancel,
+    handle_lumber_craft_canoe,
     handle_farmer_buy, handle_farmer_close,
+    handle_embark,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -498,6 +500,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_lumber_convert_confirm(interaction, gid, uid)
             elif act == "lumber_convert_cancel":
                 await handle_lumber_convert_cancel(interaction, gid, uid)
+            elif act == "lumber_craft_canoe":
+                await handle_lumber_craft_canoe(interaction, gid, uid)
+            elif act == "embark":
+                await handle_embark(interaction, gid, uid)
             # Farmer shop
             elif act.startswith("farmer_buy_"):
                 item_id = act[len("farmer_buy_"):]

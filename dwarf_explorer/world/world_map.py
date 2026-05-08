@@ -21,7 +21,6 @@ _LEGEND_ENTRIES = [
     ("mountain",      "Mountain"),
     ("snow",          "Snow"),
     ("path",          "Path"),
-    ("river_landing", "River Landing"),
 ]
 _LEGEND_ICON_ENTRIES = [
     ("village",   "Village",        (200, 160, 60),  "filled_diamond"),

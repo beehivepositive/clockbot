@@ -146,14 +146,16 @@ class GameView(discord.ui.View):
                  center_label: str = "", center_enabled: bool = False,
                  action_label: str = "", action_enabled: bool = False,
                  edit_enabled: bool = False,
-                 npc_label: str = "", npc_enabled: bool = False):
+                 npc_label: str = "", npc_enabled: bool = False,
+                 embark_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
         self._build_buttons(boots_equipped, sprinting, mine_dirs,
                             center_label, center_enabled,
                             action_label, action_enabled,
-                            edit_enabled, npc_label, npc_enabled)
+                            edit_enabled, npc_label, npc_enabled,
+                            embark_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -176,7 +178,8 @@ class GameView(discord.ui.View):
                        center_label: str, center_enabled: bool,
                        action_label: str, action_enabled: bool,
                        edit_enabled: bool,
-                       npc_label: str = "", npc_enabled: bool = False) -> None:
+                       npc_label: str = "", npc_enabled: bool = False,
+                       embark_enabled: bool = False) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
         # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
@@ -269,13 +272,21 @@ class GameView(discord.ui.View):
                 row=2,
             )
 
-        # ── Row 3: spacer | ⬇️ | spacer ──────────────────────────────────────
-        sp5_btn  = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="​", disabled=True,
-            custom_id=_custom_id(self.guild_id, self.user_id, "sp5"),
-            row=3,
-        )
+        # ── Row 3: embark/spacer | ⬇️ | NPC ────────────────────────────────
+        if embark_enabled:
+            sp5_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji="🛶",
+                custom_id=_custom_id(self.guild_id, self.user_id, "embark"),
+                row=3,
+            )
+        else:
+            sp5_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="​", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "sp5"),
+                row=3,
+            )
         down_btn = self._dir_btn("down", "⬇️", 3, "down" in mine_dirs)
         if npc_enabled and npc_label:
             npc_btn = discord.ui.Button(
@@ -1385,7 +1396,7 @@ class FarmerShopView(discord.ui.View):
 # ── Lumber convert view ────────────────────────────────────────────────────────
 
 class LumberConvertView(discord.ui.View):
-    """Confirm converting logs → planks."""
+    """Confirm converting logs → planks, or crafting a canoe."""
 
     def __init__(self, guild_id: int, user_id: int, log_count: int):
         super().__init__(timeout=None)
@@ -1396,9 +1407,16 @@ class LumberConvertView(discord.ui.View):
             custom_id=_custom_id(gid, uid, "lumber_convert"),
             row=0,
         ))
+        if log_count >= 10:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="🛶 Craft Canoe (10 logs)",
+                custom_id=_custom_id(gid, uid, "lumber_craft_canoe"),
+                row=1,
+            ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary, label="❌ Cancel",
-            custom_id=_custom_id(gid, uid, "lumber_convert_cancel"), row=0,
+            custom_id=_custom_id(gid, uid, "lumber_convert_cancel"), row=2,
         ))
 
 
@@ -1542,16 +1560,20 @@ async def _resolve_cave_combat(
 # ── Movement ──────────────────────────────────────────────────────────────────
 
 # NPC tiles that can offer quests — player must be adjacent to trigger the NPC button
-_QUEST_NPC_TILES = {"b_priest", "b_tavern_npc", "b_farmer_npc"}
+_QUEST_NPC_TILES = {
+    "b_priest", "b_tavern_npc", "b_farmer_npc",
+    "b_blacksmith_npc", "b_resident",
+    "vil_villager", "vil_guard",
+}
 
 
 def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
-) -> tuple[str, bool, str, bool, bool, str, bool]:
+) -> tuple[str, bool, str, bool, bool, str, bool, bool]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-               npc_label, npc_enabled).
+               npc_label, npc_enabled, embark_enabled).
 
     center = on-tile interaction (interact button at row-2 center)
     action = adjacent-tile interaction (action button at row-1 col-2)
@@ -1565,7 +1587,7 @@ def _compute_context_labels(
     edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
@@ -1592,7 +1614,7 @@ def _compute_context_labels(
             elif t == "ship_chest_cargo":
                 from dwarf_explorer.config import SHIP_EMOJI
                 center_label, center_enabled = SHIP_EMOJI.get("ship_chest_cargo", "📦"), True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
 
         # Island tile context
         if player.in_island:
@@ -1612,7 +1634,7 @@ def _compute_context_labels(
                         local_adj.add(_adj.terrain)
             if "fishing_rod" in hand_items and "island_void" in local_adj:
                 action_label, action_enabled = "🎣 Fish", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False
 
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
@@ -1629,9 +1651,6 @@ def _compute_context_labels(
             center_label, center_enabled = "🏚️", True
         elif s == "harbor":
             center_label, center_enabled = "🚢 Harbor", True
-        # Canoe launch
-        elif t == "river_landing":
-            center_label, center_enabled = "⛵", True
         # Cave chest — use custom chest emoji if available
         elif t in CAVE_CHEST_TYPES:
             center_label, center_enabled = CAVE_EMOJI.get(t, "📦"), True
@@ -1775,7 +1794,22 @@ def _compute_context_labels(
     if adj_terrains & _QUEST_NPC_TILES:
         npc_label, npc_enabled = "📋", True
 
-    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled
+    # ── Embark canoe: bottom-left button, only in overworld with canoe + adjacent water ──
+    embark_enabled = False
+    if (not player.in_village and not player.in_house and not player.in_cave
+            and not player.in_ocean and not player.in_canoe):
+        _CANOE_WATER = {"river", "bridge", "shallow_water"}
+        _has_canoe = "canoe" in hand_items
+        if _has_canoe:
+            for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
+                r, c = vc + ro, vc + co
+                if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                    _at = grid[r][c].terrain
+                    if _at in _CANOE_WATER:
+                        embark_enabled = True
+                        break
+
+    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -1788,7 +1822,8 @@ async def _load_house_grid(player: Player, db) -> list[list]:
 def _game_view(guild_id: int, user_id: int, player: Player,
                mine_dirs: frozenset[str] = frozenset(),
                grid: list[list] | None = None,
-               dock_available: bool = False) -> discord.ui.View:
+               dock_available: bool = False,
+               embark_enabled: bool = False) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
     has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
 
@@ -1822,7 +1857,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             hand_items.add(player.hand_1)
         if player.hand_2:
             hand_items.add(player.hand_2)
-        center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled = \
+        (center_label, center_enabled, action_label, action_enabled, edit_enabled,
+         npc_label, npc_enabled, embark_enabled) = \
             _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
@@ -1835,7 +1871,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     action_enabled=action_enabled,
                     edit_enabled=edit_enabled,
                     npc_label=npc_label,
-                    npc_enabled=npc_enabled)
+                    npc_enabled=npc_enabled,
+                    embark_enabled=embark_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -1949,55 +1986,8 @@ async def _find_treasure_location(user_id: int, world_seed: int, db) -> tuple[in
 async def _find_canoe_destinations(
     player, db
 ) -> list[tuple[int, int]]:
-    """BFS through connected river/bridge tiles; return reachable landing positions."""
-    # Load river/bridge tile set from DB
-    water_rows = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides"
-        " WHERE tile_type IN ('river', 'bridge')"
-    )
-    water_set: set[tuple[int, int]] = {(r["world_x"], r["world_y"]) for r in water_rows}
-
-    start = (player.world_x, player.world_y)
-    if start not in water_set:
-        return []
-
-    # Load all river_landing positions
-    land_rows = await db.fetch_all(
-        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'river_landing'"
-    )
-    all_landings: set[tuple[int, int]] = {(r["world_x"], r["world_y"]) for r in land_rows}
-
-    # BFS (8-directional, limited to 10 000 tiles)
-    visited: set[tuple[int, int]] = {start}
-    queue = [start]
-    head = 0
-    while head < len(queue) and len(visited) < 10_000:
-        x, y = queue[head]; head += 1
-        for ddx, ddy in ((0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)):
-            nb = (x + ddx, y + ddy)
-            if nb not in visited and nb in water_set:
-                visited.add(nb)
-                queue.append(nb)
-
-    # Collect landings adjacent to reachable water (cardinal only for embark)
-    found: list[tuple[int, int]] = []
-    seen: set[tuple[int, int]] = set()
-    for lx, ly in all_landings:
-        if (lx, ly) in seen:
-            continue
-        for ddx, ddy in ((0,1),(0,-1),(1,0),(-1,0)):
-            if (lx + ddx, ly + ddy) in visited:
-                found.append((lx, ly))
-                seen.add((lx, ly))
-                break
-
-    # Sort by distance from player, skip current player position's adjacent landing
-    px, py = player.world_x, player.world_y
-    found.sort(key=lambda p: (p[0] - px) ** 2 + (p[1] - py) ** 2)
-    # Remove the landing the player is right next to (distance 1) to avoid "sail to here"
-    found = [(lx, ly) for lx, ly in found
-             if abs(lx - px) + abs(ly - py) > 1]
-    return found
+    """Canoe fast-travel destinations. (Feature pending river rework.)"""
+    return []
 
 
 def _generate_merchant_catalog(rng: _random.Random) -> list[dict]:
@@ -2067,13 +2057,12 @@ async def _move_steps(
         t = target.structure or target.terrain
         if t not in CANOE_PASSABLE:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            return render_grid(grid, player, "You can't paddle onto land. Dock at a 🏝️ landing first."), \
-                   CanoeView(guild_id, user_id, dock_available=await _adjacent_landing(player, seed, db) is not None)
+            return render_grid(grid, player, "You can't paddle onto land. Use 🏞️ Dock to go ashore."), \
+                   CanoeView(guild_id, user_id, dock_available=True)
         player.world_x, player.world_y = nx, ny
         await update_player_position(db, user_id, nx, ny)
-        landing = await _adjacent_landing(player, seed, db)
         grid = await load_viewport(nx, ny, seed, db)
-        return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=(landing is not None))
+        return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=True)
 
     if player.in_ship:
         nx, ny = player.ship_x + dx, player.ship_y + dy
@@ -2980,14 +2969,22 @@ async def handle_canoe_dock(
         await interaction.response.defer()
         return
 
-    landing = await _adjacent_landing(player, seed, db)
+    # Find any adjacent walkable land tile (not water)
+    _WATER = {"river", "bridge", "shallow_water", "deep_water"}
+    landing = None
+    for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        ax, ay = player.world_x + ddx, player.world_y + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if t.terrain not in _WATER and t.walkable:
+                landing = (ax, ay)
+                break
+
     if not landing:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        content = render_grid(grid, player, "No landing nearby to dock at.")
-        await interaction.response.edit_message(
-            embed=_embed(content), content=None,
-            view=CanoeView(guild_id, user_id, dock_available=False),
-        )
+        content = render_grid(grid, player, "No land nearby to dock at.")
+        view = CanoeView(guild_id, user_id, dock_available=False)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     lx, ly = landing
@@ -2995,11 +2992,49 @@ async def handle_canoe_dock(
     player.in_canoe = False
     await update_player_stats(db, user_id, world_x=lx, world_y=ly, in_canoe=0)
     grid = await load_viewport(lx, ly, seed, db)
-    content = render_grid(grid, player, "You dock the canoe at the landing.")
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player),
-    )
+    content = render_grid(grid, player, "🏞️ You pull the canoe ashore.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_embark(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Embark onto an adjacent river tile using the canoe from inventory."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if player.in_canoe:
+        await interaction.response.defer()
+        return
+
+    # Find adjacent river/water tile
+    _CANOE_WATER = {"river", "bridge", "shallow_water"}
+    water_pos: tuple[int, int] | None = None
+    for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        ax, ay = player.world_x + ddx, player.world_y + ddy
+        if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
+            t = await load_single_tile(ax, ay, seed, db)
+            if t.terrain in _CANOE_WATER:
+                water_pos = (ax, ay)
+                break
+
+    if not water_pos:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "No water to launch from nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    wx, wy = water_pos
+    player.world_x, player.world_y = wx, wy
+    player.in_canoe = True
+    await update_player_stats(db, user_id, world_x=wx, world_y=wy, in_canoe=1)
+    grid = await load_viewport(wx, wy, seed, db)
+    content = render_grid(grid, player, "🛶 You push off from the bank and onto the water.")
+    view = CanoeView(guild_id, user_id, dock_available=False)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_canoe_sail(
@@ -4442,7 +4477,8 @@ async def handle_interact(
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
 
         if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
-                              "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill"):
+                              "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill",
+                              "vil_lumber_mill", "vil_farmhouse"):
             result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
             if result:
                 house_id, btype, hx, hy = result
@@ -4461,6 +4497,7 @@ async def handle_interact(
                     "house": "house", "church": "church", "bank": "bank",
                     "shop": "shop", "blacksmith": "blacksmith",
                     "tavern": "tavern", "hospital": "hospital", "mill": "mill",
+                    "lumber_mill": "lumber mill", "farmhouse": "farmhouse",
                 }
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
@@ -5222,6 +5259,79 @@ async def handle_action(
             return
 
         content = render_grid(grid, player, "Nothing to interact with nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Village (not in building): adjacent NPC/mill interactions ────────────
+    if player.in_village and not player.in_house:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        vc = VIEWPORT_CENTER
+        adj_terrains: set[str] = set()
+        for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            r, c = vc + ro, vc + co
+            if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                t = grid[r][c]
+                if t.terrain: adj_terrains.add(t.terrain)
+                if t.structure: adj_terrains.add(t.structure)
+
+        if "b_lumber_npc" in adj_terrains:
+            log_rows = await db.fetch_all(
+                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='log'",
+                (user_id,)
+            )
+            log_count = log_rows[0]["total"] if log_rows else 0
+            if log_count >= 1:
+                content = render_grid(grid, player,
+                    f"🪵 **Lumber Mill** — Convert logs to planks (3 logs → 1 plank) or craft a canoe (10 logs).\nYou have **{log_count}** logs.")
+                view = LumberConvertView(guild_id, user_id, log_count)
+            else:
+                content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        if "b_farmer_npc" in adj_terrains:
+            content = render_grid(grid, player, "🌾 **Farmer's Market** — Fresh produce and seeds.")
+            view = FarmerShopView(guild_id, user_id)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        _vil_gossip_act = [
+            "\"Beautiful day, isn't it?\"",
+            "\"Watch yourself on the roads at night.\"",
+            "\"I heard adventurers have been clearing out the old cave.\"",
+            "\"My daughter saw something large in the forest last week.\"",
+            "\"The church blesses travellers on request.\"",
+            "\"Trade caravans are rare these days. Dangerous roads.\"",
+            "\"Stick to the paths and you'll be fine.\"",
+            "\"The well water is the sweetest you'll find anywhere.\"",
+        ]
+        _guard_lines_act = [
+            "\"Move along. Keep your weapons sheathed.\"",
+            "\"We've had trouble with wolves on the north road.\"",
+            "\"The village is under our protection.\"",
+            "\"Travellers welcome. Troublemakers are not.\"",
+        ]
+        _resident_lines_act = [
+            "\"Oh! You startled me. Can I help you?\"",
+            "\"I don't get many visitors.\"",
+            "\"The fire's warm tonight, at least.\"",
+        ]
+
+        import hashlib as _hact
+        if "vil_villager" in adj_terrains:
+            _h = int(_hact.md5(f"va{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16)
+            content = render_grid(grid, player, _vil_gossip_act[_h % len(_vil_gossip_act)])
+        elif "vil_guard" in adj_terrains:
+            _h = int(_hact.md5(f"ga{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16)
+            content = render_grid(grid, player, _guard_lines_act[_h % len(_guard_lines_act)])
+        elif "b_resident" in adj_terrains:
+            _h = int(_hact.md5(f"ra{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16)
+            content = render_grid(grid, player, _resident_lines_act[_h % len(_resident_lines_act)])
+        else:
+            content = render_grid(grid, player, "Nothing to interact with nearby.")
+
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
@@ -8409,6 +8519,42 @@ async def handle_npc_quest(
     elif "b_farmer_npc" in adj_npc:
         pool = village_pool[:1]
         source_label = "Farmer"
+    elif "b_blacksmith_npc" in adj_npc:
+        pool = bounty_pool[:1]
+        source_label = "Blacksmith"
+    elif "vil_villager" in adj_npc:
+        import hashlib as _hvill
+        _h = int(_hvill.md5(f"vnq{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16)
+        if _h % 2 == 0:
+            pool = bounty_pool[:1]
+            source_label = "Villager"
+        else:
+            content = render_grid(grid, player, "\"I have no work for you today, stranger.\"")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+    elif "vil_guard" in adj_npc:
+        import hashlib as _hguard
+        _h = int(_hguard.md5(f"gnq{player.village_id}{player.village_x}{player.village_y}".encode()).hexdigest(), 16)
+        if _h % 2 == 0:
+            pool = bounty_pool[:1]
+            source_label = "Guard"
+        else:
+            content = render_grid(grid, player, "\"I have no work for you today, stranger.\"")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+    elif "b_resident" in adj_npc:
+        import hashlib as _hres
+        _h = int(_hres.md5(f"rnq{player.village_id}{player.house_x}{player.house_y}".encode()).hexdigest(), 16)
+        if _h % 10 < 4:  # 40% chance
+            pool = bounty_pool[:1]
+            source_label = "Resident"
+        else:
+            content = render_grid(grid, player, "\"I'm just a resident here.\"")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
     else:
         # Fallback: combined pool first entry
         pool = (village_pool + bounty_pool)[:1]
@@ -8799,6 +8945,43 @@ async def handle_lumber_convert_cancel(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "Come back when you're ready.")
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+async def handle_lumber_craft_canoe(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft a canoe from 10 logs (one canoe max, does not stack)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    inv_items = await get_inventory(db, user_id)
+    log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    if log_count < 10:
+        content = render_grid(grid, player, f"You need **10 logs** to build a canoe. You have {log_count}.")
+        view = LumberConvertView(guild_id, user_id, log_count)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+    # Check if player already has a canoe
+    canoe_rows = await db.fetch_all(
+        "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='canoe'",
+        (user_id,)
+    )
+    canoe_total = canoe_rows[0]["total"] if canoe_rows else 0
+    if canoe_total >= 1:
+        content = render_grid(grid, player, "You already have a canoe — you don't need another one.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+    await remove_from_inventory(db, user_id, "log", 10)
+    await add_to_inventory(db, user_id, "canoe", 1)
+    content = render_grid(grid, player,
+        "🛶 The mill worker shapes the logs into a **canoe**! "
+        "Equip it and stand next to a river to embark.")
     _ui_state.pop(user_id, None)
     await interaction.response.edit_message(
         embed=_embed(content), content=None,

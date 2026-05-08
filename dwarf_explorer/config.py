@@ -158,13 +158,13 @@ ITEM_EMOJI = {
     # Hospital quest ingredient
     "healing_herb":         "\U0001F33F",           # 🌿
     "plank":            "🪵",       # 🪵  wooden plank
+    "canoe":            "🛶",       # 🛶  canoe
 }
 
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
     "sapling", "short_grass", "seedling",
-    "river_landing",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
@@ -890,7 +890,6 @@ TILE_COLORS = {
     "cave": (60, 40, 30),
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),
-    "river_landing": (200, 140, 60),
     "sapling": (100, 200, 80),
     "short_grass": (120, 200, 60),
     "seedling": (130, 210, 70),

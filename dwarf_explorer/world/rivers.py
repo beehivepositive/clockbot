@@ -580,8 +580,8 @@ def _generate_rivers_sync(
 
 
 async def generate_rivers(seed: int, db) -> None:
-    """Generate rivers, bridges, and landings; write to tile_overrides."""
-    river_tiles, bridge_tiles, landing_tiles = await asyncio.to_thread(
+    """Generate rivers and bridges; write to tile_overrides."""
+    river_tiles, bridge_tiles, _landing_tiles = await asyncio.to_thread(
         _generate_rivers_sync, seed
     )
     if river_tiles:
@@ -595,10 +595,4 @@ async def generate_rivers(seed: int, db) -> None:
             "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
             " VALUES (?, ?, 'bridge')",
             [(x, y) for x, y in bridge_tiles],
-        )
-    if landing_tiles:
-        await db.executemany(
-            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
-            " VALUES (?, ?, 'river_landing')",
-            [(x, y) for x, y in landing_tiles],
         )

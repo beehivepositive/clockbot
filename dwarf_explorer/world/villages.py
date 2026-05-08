@@ -317,76 +317,114 @@ def _generate_village_interior(
 
     # ── River-side water edge (river villages only) ──────────────────────────
     if river_side:
+        # Each column/row gets a random water depth 1-4, seeded for smooth meander
+        def _water_depth(idx: int, base_seed: int) -> int:
+            h = (base_seed ^ (idx * 2654435761)) & 0xFFFFFFFF
+            h = ((h >> 16) ^ h) & 0xFFFFFFFF
+            return 1 + (h % 4)   # 1-4
+
+        ws = rng.randint(0, 0xFFFFFF)
         if river_side == "S":
             for x in range(W):
-                grid[H-1][x] = "vil_water"
-                occupied.add((x, H-1))
-                if rng.random() < 0.70:
-                    grid[H-2][x] = "vil_water"
-                    occupied.add((x, H-2))
+                depth = _water_depth(x, ws)
+                for d in range(depth):
+                    gy = H - 1 - d
+                    if 0 <= gy < H:
+                        grid[gy][x] = "vil_water"
+                        occupied.add((x, gy))
         elif river_side == "N":
             for x in range(W):
-                grid[0][x] = "vil_water"
-                occupied.add((x, 0))
-                if rng.random() < 0.70:
-                    grid[1][x] = "vil_water"
-                    occupied.add((x, 1))
+                depth = _water_depth(x, ws)
+                for d in range(depth):
+                    gy = d
+                    if 0 <= gy < H:
+                        grid[gy][x] = "vil_water"
+                        occupied.add((x, gy))
         elif river_side == "E":
             for y in range(H):
-                grid[y][W-1] = "vil_water"
-                occupied.add((W-1, y))
-                if rng.random() < 0.70:
-                    grid[y][W-2] = "vil_water"
-                    occupied.add((W-2, y))
+                depth = _water_depth(y, ws)
+                for d in range(depth):
+                    gx = W - 1 - d
+                    if 0 <= gx < W:
+                        grid[y][gx] = "vil_water"
+                        occupied.add((gx, y))
         elif river_side == "W":
             for y in range(H):
-                grid[y][0] = "vil_water"
-                occupied.add((0, y))
-                if rng.random() < 0.70:
-                    grid[y][1] = "vil_water"
-                    occupied.add((1, y))
+                depth = _water_depth(y, ws)
+                for d in range(depth):
+                    gx = d
+                    if 0 <= gx < W:
+                        grid[y][gx] = "vil_water"
+                        occupied.add((gx, y))
 
-        # ── Lumber mill placement (river village only) ────────────────────────
-        for _ in range(300):
-            if river_side == "S":
-                lx = rng.randint(2, W-3)
-                ly = rng.randint(H-6, H-4)
-            elif river_side == "N":
-                lx = rng.randint(2, W-3)
-                ly = rng.randint(2, 5)
-            elif river_side == "E":
-                lx = rng.randint(W-6, W-4)
-                ly = rng.randint(2, H-3)
-            else:  # W
-                lx = rng.randint(2, 5)
-                ly = rng.randint(2, H-3)
-            if (lx, ly) not in occupied and grid[ly][lx] not in _PROTECTED_TILES:
-                grid[ly][lx] = "vil_lumber_mill"
-                occupied.add((lx, ly))
-                buildings.append((lx, ly, "vil_lumber_mill"))
-                _connect_to_road(grid, lx, ly, cx, cy, W, H, occupied)
-                break
+        # ── Lumber mill: must be directly adjacent to a water tile ───────────
+        lumber_placed = False
+        for _ in range(500):
+            # Pick a random position anywhere in the village interior
+            lx = rng.randint(2, W - 3)
+            ly = rng.randint(2, H - 3)
+            if (lx, ly) in occupied:
+                continue
+            if grid[ly][lx] in _PROTECTED_TILES:
+                continue
+            # Must have at least one adjacent water tile
+            adj_water = any(
+                0 <= lx+ddx < W and 0 <= ly+ddy < H
+                and grid[ly+ddy][lx+ddx] == "vil_water"
+                for ddx, ddy in [(0,1),(0,-1),(1,0),(-1,0)]
+            )
+            if not adj_water:
+                continue
+            grid[ly][lx] = "vil_lumber_mill"
+            occupied.add((lx, ly))
+            buildings.append((lx, ly, "vil_lumber_mill"))
+            _connect_to_road(grid, lx, ly, cx, cy, W, H, occupied)
+            lumber_placed = True
+            break
+
+        # ── Entry relocation when river blocks the default south exit ────────
+        if river_side == "S":
+            # South edge is water — relocate entry to north border
+            nx_e, ny_e = _extend_to_edge(grid, n_inner[0], n_inner[1], W, H, "N")
+            sx, sy = nx_e, ny_e
+        elif river_side == "N":
+            # North edge is water — use south spoke (already set)
+            pass
+        elif river_side == "E":
+            nx_e, ny_e = _extend_to_edge(grid, w_inner[0], w_inner[1], W, H, "W")
+            sx, sy = nx_e, ny_e
+        elif river_side == "W":
+            nx_e, ny_e = _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
+            sx, sy = nx_e, ny_e
 
     # ── Animal pen for farmhouse ──────────────────────────────────────────────
     farm_pos = next(((bx, by) for bx, by, bt in buildings if bt == "vil_farmhouse"), None)
     if farm_pos:
         from dwarf_explorer.config import FARM_ANIMALS
-        animal = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS)-1)]
+        animal = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS) - 1)]
         fx, fy = farm_pos
-        for pdx, pdy in [(1,0),(-1,0),(0,1),(0,-1),(2,0),(-2,0),(0,2),(0,-2)]:
-            px0, py0 = fx+pdx, fy+pdy
-            pen_cells = {(px0+dx, py0+dy) for dy in range(3) for dx in range(3)}
-            if pen_cells & occupied:
-                continue
-            if not all(0 < px < W-1 and 0 < py < H-1 for px,py in pen_cells):
-                continue
-            for px, py in pen_cells:
-                if px == px0 or px == px0+2 or py == py0 or py == py0+2:
-                    grid[py][px] = "vil_fence"
-                else:
-                    grid[py][px] = animal
-            occupied.update(pen_cells)
-            break
+        # Try all 4 cardinal directions at distances 1-4 for the pen top-left corner
+        pen_placed = False
+        for dist in range(1, 5):
+            for pdx, pdy in [(1,0),(-1,0),(0,1),(0,-1)]:
+                # Top-left of 3x3 pen, offset by dist in direction, minus 1 to center on farmhouse
+                px0 = fx + pdx * dist - 1
+                py0 = fy + pdy * dist - 1
+                pen_cells = {(px0+dx, py0+dy) for dy in range(3) for dx in range(3)}
+                if pen_cells & occupied:
+                    continue
+                if not all(0 < px < W-1 and 0 < py < H-1 for px, py in pen_cells):
+                    continue
+                for px, py in pen_cells:
+                    if px == px0 or px == px0+2 or py == py0 or py == py0+2:
+                        grid[py][px] = "vil_fence"
+                    else:
+                        grid[py][px] = animal
+                occupied.update(pen_cells)
+                pen_placed = True
+                break
+            if pen_placed:
+                break
 
     # ── Entry at the bottom border (south spoke exit) ─────────────────────────
     # Player enters the village at this border tile.
