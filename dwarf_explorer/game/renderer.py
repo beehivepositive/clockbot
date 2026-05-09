@@ -120,13 +120,13 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         # Torch required for both regular and lava caves; lava tiles emit local light
         torch_on    = (player.hand_1 == "torch" or player.hand_2 == "torch")
         on_entrance = grid[vp_center][vp_center].terrain == "cave_entrance"
-        # In lava caves, lava_pool tiles and their 8 direct neighbours are always visible
+        # In lava caves, lava_pool tiles and their 4 cardinal neighbours are always visible
         if player.cave_lit:
             for _ry in range(vp_size):
                 for _cx in range(vp_size):
                     if grid[_ry][_cx].terrain == "lava_pool":
                         _lava_lit.add((_cx, _ry))
-                        for _ddx, _ddy in ((-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)):
+                        for _ddx, _ddy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                             _nx, _ny = _cx + _ddx, _ry + _ddy
                             if 0 <= _nx < vp_size and 0 <= _ny < vp_size:
                                 _lava_lit.add((_nx, _ny))

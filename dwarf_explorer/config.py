@@ -447,11 +447,11 @@ CAVE_EMOJI = {
     "rift_floor":         "\U0001F535",            # 🔵 blue circle floor
     "rift_deposit":       "\U0001F4A0",            # 💠 chronolite deposit (mineable after boss)
     "rift_entrance":      "\U0001F300",            # 🌀 swirling portal (exit)
-    # Lava cave tiles (floor/wall match regular cave; lava pool = orange square)
-    "lava_floor":         "\U0001F7EB",            # 🟫 same as stone_floor
-    "lava_pool":          "\U0001F7E0",            # 🟠 orange lava river (impassable)
+    # Lava cave tiles (floor/wall match regular cave; lava = orange square)
+    "lava_floor":         "\U0001F7EB",            # 🟫 same as stone_floor (overridable → grey_square)
+    "lava_pool":          "\U0001F7E7",            # 🟧 orange square lava river (impassable)
     "lava_wall":          "⬛",                # ⬛ same as stone_wall
-    "lava_bridge":        "\U0001F7EB",            # 🟫 stone bridge over lava
+    "lava_bridge":        "\U0001F7EB",            # 🟫 stone bridge over lava (overridable → grey_square)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
@@ -995,6 +995,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI, "ph_chest_medium",   "chest"),
         (BUILDING_EMOJI, "ph_chest_large",    "chest"),
         (CAVE_EMOJI,     "stone_floor",       "grey_square"),
+        (CAVE_EMOJI,     "lava_floor",        "grey_square"),
+        (CAVE_EMOJI,     "lava_bridge",       "grey_square"),
         (BUILDING_EMOJI, "b_stove",           "hearth"),
         (BUILDING_EMOJI, "b_table",           "table"),
         (BUILDING_EMOJI, "b_floor",           "grey_square"),
