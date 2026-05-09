@@ -171,8 +171,13 @@ def action_flee(arena: dict, player, rng: random.Random) -> tuple[str, bool]:
         _hp, enemy_atk, _, _, _ = ENEMY_STATS.get(player.combat_enemy_type, (0, 6, 0, 0, 0))
         player_def = getattr(player, "defense", 5)
         flee_dmg = max(1, enemy_atk // 2 - player_def)
-        player.hp = max(1, player.hp - flee_dmg)  # fleeing can't kill you
-        return f"🏃 You escape, but take a parting blow for **{flee_dmg}** damage! ({player.hp} HP)", True
+        is_naval = getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False)
+        if is_naval:
+            player.ship_hp = max(1, player.ship_hp - flee_dmg)
+            return f"🏃 You escape, but the enemy lands a parting blow for **{flee_dmg}** hull damage! ({player.ship_hp} HP)", True
+        else:
+            player.hp = max(1, player.hp - flee_dmg)  # fleeing can't kill you
+            return f"🏃 You escape, but take a parting blow for **{flee_dmg}** damage! ({player.hp} HP)", True
     return "🏃 You try to flee but can't get away!", False
 
 

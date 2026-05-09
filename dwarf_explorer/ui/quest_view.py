@@ -68,7 +68,12 @@ class QuestView(discord.ui.View):
             row=0,
         ))
 
-        # Row 1: Close
+        # Row 1: Set Target | Close
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, label="📍 Set Target",
+            custom_id=_custom_id(gid, uid, "quest_set_target"),
+            row=1,
+        ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary, label="✖ Close",
             custom_id=_custom_id(gid, uid, "quest_close"),

@@ -63,6 +63,7 @@ from dwarf_explorer.ui.game_view import (
     handle_house_deco_cancel,
     handle_quests, handle_quest_nav, handle_quest_cancel,
     handle_quest_cancel_confirm, handle_quest_cancel_back, handle_quest_close,
+    handle_quest_set_target,
     handle_open_quest_pool, handle_qpool_nav, handle_qpool_accept, handle_qpool_close,
     handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
     handle_qswap, handle_qswap_pass,
@@ -444,6 +445,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_quest_cancel_back(interaction, gid, uid)
             elif act == "quest_close":
                 await handle_quest_close(interaction, gid, uid)
+            elif act == "quest_set_target":
+                await handle_quest_set_target(interaction, gid, uid)
             # Quest pool (village / bounty board)
             elif act == "qpool_prev":
                 await handle_qpool_nav(interaction, gid, uid, -1)

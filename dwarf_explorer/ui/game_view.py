@@ -1156,16 +1156,25 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↗", "ocean_upright",  1))
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            emoji="🪝", custom_id=_custom_id(gid, uid, "boat_grapple"),
+            style=discord.ButtonStyle.secondary, row=2,
+        ))
         self.add_item(_btn("➡️", "ocean_right",  2))
         # Row 3: ↙ ↓ ↘
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
-        # Row 4: Ship interior | optional Fishing
+        # Row 4: Ship interior | optional Fishing | Quests
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Quests", emoji="📋",
+            custom_id=_custom_id(gid, uid, "quests"),
+            row=4,
+        ))
 
 
 # ── High-seas view (separate 200×200 open-ocean grid) ────────────────────────
@@ -1201,7 +1210,10 @@ class OceanView(discord.ui.View):
 
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            emoji="🪝", custom_id=_custom_id(gid, uid, "boat_grapple"),
+            style=discord.ButtonStyle.secondary, row=2,
+        ))
         self.add_item(_btn("➡️", "ocean_right",  2))
 
         # Row 3: ↙ ↓ ↘
@@ -1209,10 +1221,16 @@ class OceanView(discord.ui.View):
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
 
-        # Row 4: Ship interior | optional Fishing
+        # Row 4: Ship interior | optional Fishing | Quests
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Quests", emoji="📋",
+            custom_id=_custom_id(gid, uid, "quests"),
+            row=4,
+        ))
 
 
 class MerchantView(discord.ui.View):
@@ -2501,7 +2519,8 @@ async def _move_steps(
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
                 nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
                 qmarks = await get_player_quest_markers(db, user_id)
-                return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
+                nav = _ui_state.get(user_id, {}).get("nav_target")
+                return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
             # 0.2% travelling merchant encounter
@@ -2539,7 +2558,8 @@ async def _move_steps(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
         qmarks = await get_player_quest_markers(db, user_id)
-        return render_grid(grid, player, other_players=nearby, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
+        nav = _ui_state.get(user_id, {}).get("nav_target")
+        return render_grid(grid, player, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def handle_move(
@@ -2656,7 +2676,8 @@ async def _finish_combat(
         _hs_ce, _ = _gcb2(seed)
         grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
         has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
-        return render_grid(grid, player, extra_msg), OceanView(guild_id, user_id,
+        nav = _ui_state.get(user_id, {}).get("nav_target")
+        return render_grid(grid, player, extra_msg, nav_target=nav), OceanView(guild_id, user_id,
                                                                dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_ce),
                                                                has_fishing_rod=has_rod)
     if player.in_ocean:
@@ -2666,7 +2687,8 @@ async def _finish_combat(
                                                               dock_available=(harbor_adj is not None))
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     qmarks = await get_player_quest_markers(db, user_id)
-    return render_grid(grid, player, extra_msg, quest_markers=qmarks), _game_view(guild_id, user_id, player, grid=grid)
+    nav = _ui_state.get(user_id, {}).get("nav_target")
+    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def _after_player_action(
@@ -3561,7 +3583,8 @@ async def handle_ocean_move(
 
         if not (0 <= nx < OCEAN_SIZE and 0 <= ny < OCEAN_SIZE):
             grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
-            content = render_grid(grid, player, "The vast ocean stretches endlessly in that direction.")
+            nav = _ui_state.get(user_id, {}).get("nav_target")
+            content = render_grid(grid, player, "The vast ocean stretches endlessly in that direction.", nav_target=nav)
             await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=OceanView(guild_id, user_id,
@@ -3575,8 +3598,9 @@ async def handle_ocean_move(
             _ui_state[user_id] = {**_ui_state.get(user_id, {}), "island_target": (nx, ny)}
             has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
             grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
+            nav = _ui_state.get(user_id, {}).get("nav_target")
             content = render_grid(grid, player,
-                "🏝️ An island lies ahead. Use 🏝️ Island to go ashore.")
+                "🏝️ An island lies ahead. Use 🏝️ Island to go ashore.", nav_target=nav)
             view = OceanView(guild_id, user_id,
                              dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge),
                              island_nearby=True,
@@ -3619,7 +3643,8 @@ async def handle_ocean_move(
 
         has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
         grid = load_ocean_viewport(nx, ny, seed)
-        content = render_grid(grid, player)
+        nav = _ui_state.get(user_id, {}).get("nav_target")
+        content = render_grid(grid, player, nav_target=nav)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=OceanView(guild_id, user_id,
@@ -8882,6 +8907,30 @@ async def handle_map(
         await interaction.followup.send(file=file, ephemeral=True)
         return
 
+    if player.in_island:
+        # Show ocean map centred on the island the player is currently visiting
+        ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
+        overworld_qmarks = await get_player_quest_markers(db, user_id)
+        ocean_avatar: bytes | None = None
+        try:
+            member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
+            asset = member.guild_avatar or member.avatar
+            if asset:
+                ocean_avatar = await asset.with_size(32).read()
+        except Exception:
+            pass
+        from dwarf_explorer.world.world_map import generate_ocean_map
+        buf = await generate_ocean_map(
+            seed, guild_id,
+            player.island_ox, player.island_oy,
+            ocean_quest_markers=ocean_qmarks,
+            has_wilderness_quests=bool(overworld_qmarks),
+            player_avatar=ocean_avatar,
+        )
+        file = discord.File(buf, filename="ocean_map.png")
+        await interaction.followup.send(file=file, ephemeral=True)
+        return
+
     other_players = await get_all_overworld_players(db, user_id)
     qmarks = await get_player_quest_markers(db, user_id)
     ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
@@ -9061,10 +9110,46 @@ async def handle_quest_cancel_back(
                                             view=QuestView(guild_id, user_id, quest_index=idx))
 
 
+async def handle_quest_set_target(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Store the currently displayed quest's location as the nav target."""
+    db = await get_database(guild_id)
+    state = _ui_state.get(user_id, {})
+    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    from dwarf_explorer.game.quests import get_active_quests
+    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    quests = await get_active_quests(db, user_id)
+    if quests and idx < len(quests):
+        q = quests[idx]
+        tx = q.get("bounty_wx") or q.get("location_x")
+        ty = q.get("bounty_wy") or q.get("location_y")
+        if tx is not None and ty is not None:
+            _ui_state[user_id] = {"type": "quest_log", "quest_index": idx,
+                                  "nav_target": (int(tx), int(ty))}
+            content = "📍 **Target set!** Orange marker will appear on your viewport edge.\n\n"
+            content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
+        else:
+            _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
+            content = "⚠️ This quest has no map location to target.\n\n"
+            content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
+    else:
+        content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=QuestView(guild_id, user_id, quest_index=idx),
+    )
+
+
 async def handle_quest_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    _ui_state.pop(user_id, None)
+    # Preserve nav_target if set, but clear quest_log state
+    old_state = _ui_state.pop(user_id, {})
+    nav_target = old_state.get("nav_target")
+    if nav_target:
+        _ui_state[user_id] = {"nav_target": nav_target}
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
@@ -9077,7 +9162,8 @@ async def handle_quest_close(
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    content = render_grid(grid, player)
+    nav = _ui_state.get(user_id, {}).get("nav_target")
+    content = render_grid(grid, player, nav_target=nav)
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 

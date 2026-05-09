@@ -1,4 +1,4 @@
-﻿import math
+import math
 
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
@@ -39,7 +39,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
 def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = "",
                 other_players: list[tuple[int, int, str]] | None = None,
                 cursor_pos: tuple[int, int] | None = None,
-                quest_markers: list[tuple[int, int, str]] | None = None) -> str:
+                quest_markers: list[tuple[int, int, str]] | None = None,
+                nav_target: tuple[int, int] | None = None) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -92,6 +93,25 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 emoji = ENTITY_EMOJI.get(target_id, "\U0001F50D")  # 🔍 fallback
                 _quest_vp[(col, row)] = emoji
 
+    # Nav target edge indicator — compute which edge cell to mark with 🟠
+    _nav_edge: tuple[int, int] | None = None  # (col, row) in viewport coords
+    if nav_target and location in ("wilderness", "ocean", "high_seas"):
+        px = player.ocean_x if (player.in_ocean or player.in_high_seas) else player.world_x
+        py = player.ocean_y if (player.in_ocean or player.in_high_seas) else player.world_y
+        tx, ty = nav_target
+        dx, dy = tx - px, ty - py
+        if dx != 0 or dy != 0:
+            half = vp_center  # 4 for 9×9
+            if abs(dx) >= abs(dy):
+                # Left or right edge
+                edge_col = 0 if dx < 0 else vp_size - 1
+                edge_row = max(0, min(vp_size - 1, int(round(half + (dy / abs(dx)) * half))))
+            else:
+                # Top or bottom edge
+                edge_row = 0 if dy < 0 else vp_size - 1
+                edge_col = max(0, min(vp_size - 1, int(round(half + (dx / abs(dy)) * half))))
+            _nav_edge = (edge_col, edge_row)
+
     # Cave visibility pre-computation
     torch_on   = False
     on_entrance = False
@@ -130,6 +150,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                     row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
                 elif (col_x, row_y) in _quest_vp:
                     row_emojis.append(_quest_vp[(col_x, row_y)])
+                elif _nav_edge and (col_x, row_y) == _nav_edge:
+                    row_emojis.append("\U0001F7E0")  # 🟠 nav target indicator
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
@@ -139,8 +161,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         lines.append("".join(row_emojis))
 
     lines.append("")
-    # Ship HP replaces player HP display when inside the ship
-    if player.in_ship:
+    # Ship HP replaces player HP display when inside the ship or on high seas
+    if player.in_ship or getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
         hp_bar = f"\U0001F6F3\uFE0F {player.ship_hp}/{player.ship_max_hp}"
     else:
         hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
