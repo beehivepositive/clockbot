@@ -113,35 +113,46 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
             _nav_edge = (edge_col, edge_row)
 
     # Cave visibility pre-computation
-    torch_on   = False
+    torch_on    = False
     on_entrance = False
+    _lava_lit: set[tuple[int, int]] = set()   # tiles lit by nearby lava (no torch needed)
     if location == "cave":
-        # Lava caves are always fully lit (player can see without torch)
-        torch_on    = (player.cave_lit or
-                       player.hand_1 == "torch" or player.hand_2 == "torch")
+        # Torch required for both regular and lava caves; lava tiles emit local light
+        torch_on    = (player.hand_1 == "torch" or player.hand_2 == "torch")
         on_entrance = grid[vp_center][vp_center].terrain == "cave_entrance"
+        # In lava caves, lava_pool tiles and their 8 direct neighbours are always visible
+        if player.cave_lit:
+            for _ry in range(vp_size):
+                for _cx in range(vp_size):
+                    if grid[_ry][_cx].terrain == "lava_pool":
+                        _lava_lit.add((_cx, _ry))
+                        for _ddx, _ddy in ((-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)):
+                            _nx, _ny = _cx + _ddx, _ry + _ddy
+                            if 0 <= _nx < vp_size and 0 <= _ny < vp_size:
+                                _lava_lit.add((_nx, _ny))
 
+    _player_emoji = getattr(player, "avatar_emoji", None) or ENTITY_EMOJI["player"]
     lines: list[str] = []
     for row_y in range(vp_size):
         row_emojis: list[str] = []
         for col_x in range(vp_size):
             is_center = (col_x == vp_center and row_y == vp_center)
 
-            _player_emoji = getattr(player, "avatar_emoji", None) or ENTITY_EMOJI["player"]
             if location == "cave":
                 dist = math.hypot(col_x - vp_center, row_y - vp_center)
+                lava_visible = (col_x, row_y) in _lava_lit
                 if is_center:
-                    # Show player only if torch on OR standing on entrance
-                    if torch_on or on_entrance:
+                    # Show player if torch on, on entrance, or standing near lava
+                    if torch_on or on_entrance or lava_visible:
                         row_emojis.append(_player_emoji)
                     else:
                         row_emojis.append(_BLACK)
                 else:
-                    if torch_on and dist <= _FOV_RADIUS:
+                    if (torch_on and dist <= _FOV_RADIUS) or lava_visible:
                         row_emojis.append(_tile_emoji(grid[row_y][col_x], location="cave"))
                     else:
                         row_emojis.append(_BLACK)
-            else:
+            else:  # non-cave location
                 if is_center:
                     if (player.in_ocean or player.in_high_seas) and not player.in_ship:
                         row_emojis.append(ENTITY_EMOJI["player_boat"])
@@ -672,8 +683,8 @@ _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
     # Volcano island tiles
     "vol_void":       "🌊",   # ocean surrounding volcano island
     "vol_sand":       "⬛",   # dark ash beach
-    "vol_rock":       "🪨",   # volcanic rock
-    "vol_grass":      "🌿",   # sparse grass
+    "vol_rock":       "⛰️",  # volcanic rock (mountain)
+    "vol_grass":      "🌿",   # sparse grass (overridable with custom grass emoji)
     "vol_forest":     "🌲",   # forest
     "vol_lava":       "🔥",   # impassable lava flow
     "vol_crater":     "🌑",   # impassable crater

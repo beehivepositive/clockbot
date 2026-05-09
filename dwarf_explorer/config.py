@@ -447,10 +447,10 @@ CAVE_EMOJI = {
     "rift_floor":         "\U0001F535",            # 🔵 blue circle floor
     "rift_deposit":       "\U0001F4A0",            # 💠 chronolite deposit (mineable after boss)
     "rift_entrance":      "\U0001F300",            # 🌀 swirling portal (exit)
-    # Lava cave tiles
-    "lava_floor":         "\U0001F7E7",            # 🟧 warm orange rock floor
-    "lava_pool":          "\U0001F525",            # 🔥 impassable lava pool/river
-    "lava_wall":          "\U0001F7E5",            # 🟥 hot glowing rock wall
+    # Lava cave tiles (floor/wall match regular cave; lava pool = orange square)
+    "lava_floor":         "\U0001F7EB",            # 🟫 same as stone_floor
+    "lava_pool":          "\U0001F7E0",            # 🟠 orange lava river (impassable)
+    "lava_wall":          "⬛",                # ⬛ same as stone_wall
     "lava_bridge":        "\U0001F7EB",            # 🟫 stone bridge over lava
 }
 
@@ -1049,6 +1049,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         _renderer._ISLAND_TERRAIN_EMOJI["vol_chest"] = cache["chest"]
     if "grass" in cache:
         _renderer._ISLAND_TERRAIN_EMOJI["island_grass"] = cache["grass"]
+        _renderer._ISLAND_TERRAIN_EMOJI["vol_grass"] = cache["grass"]
     # Ship hull damage tile → :wood_floor_damaged:
     if "wood_floor_damaged" in cache:
         SHIP_EMOJI["ship_hull_damage"] = cache["wood_floor_damaged"]
