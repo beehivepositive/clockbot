@@ -122,7 +122,21 @@
       "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key -o StrictHostKeyChecking=no root@64.23.151.82 \"cd /home/discord-bot/dwarf_explorer && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 30 --nostream\")",
       "PowerShell(git -C C:\\\\ClaudeCode\\\\dwarf_explorer push)",
       "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key -o StrictHostKeyChecking=no root@64.23.151.82 \"cd /home/discord-bot/dwarf_explorer && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 10 --nostream\")",
-      "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key -o StrictHostKeyChecking=no root@64.23.151.82 \"cd /home/discord-bot/dwarf_explorer && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 8 --nostream\")"
+      "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key -o StrictHostKeyChecking=no root@64.23.151.82 \"cd /home/discord-bot/dwarf_explorer && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 8 --nostream\")",
+      "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key root@64.23.151.82 \"cd /opt/clockbot && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 15 --nostream\")",
+      "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key root@64.23.151.82 \"ls /home/discord-bot/\")",
+      "PowerShell(ssh -i C:\\\\Users\\\\User\\\\.ssh\\\\do_key root@64.23.151.82 \"cd /home/discord-bot/dwarf_explorer && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 20 --nostream\")",
+      "Bash(ssh root@64.23.151.82 \"cd /root/clockbot && git pull && pm2 restart dwarf-explorer && sleep 2 && pm2 logs dwarf-explorer --lines 15 --nostream\")",
+      "PowerShell(ssh -i \"$env:USERPROFILE\\\\.ssh\\\\id_rsa\" root@64.23.151.82 \"cd /root/clockbot && git pull && pm2 restart dwarf-explorer && sleep 2 && pm2 logs dwarf-explorer --lines 15 --nostream\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /root/clockbot && git pull && pm2 restart dwarf-explorer && sleep 2 && pm2 logs dwarf-explorer --lines 15 --nostream\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"ls /root/\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"find / -name 'cog.py' -path '*/dwarf_explorer/*' 2>/dev/null | head -5\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart dwarf-explorer && sleep 2 && pm2 logs dwarf-explorer --lines 20 --nostream\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"pm2 list\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"pm2 restart discord-bot && sleep 2 && pm2 logs discord-bot --lines 20 --nostream\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && sleep 2 && pm2 logs discord-bot --lines 5 --nostream\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 10 --nostream\")",
+      "Bash(py _patch_well.py)"
     ]
   }
 }

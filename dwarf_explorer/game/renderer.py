@@ -127,12 +127,13 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         for col_x in range(vp_size):
             is_center = (col_x == vp_center and row_y == vp_center)
 
+            _player_emoji = getattr(player, "avatar_emoji", None) or ENTITY_EMOJI["player"]
             if location == "cave":
                 dist = math.hypot(col_x - vp_center, row_y - vp_center)
                 if is_center:
                     # Show player only if torch on OR standing on entrance
                     if torch_on or on_entrance:
-                        row_emojis.append(ENTITY_EMOJI["player"])
+                        row_emojis.append(_player_emoji)
                     else:
                         row_emojis.append(_BLACK)
                 else:
@@ -145,7 +146,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                     if (player.in_ocean or player.in_high_seas) and not player.in_ship:
                         row_emojis.append(ENTITY_EMOJI["player_boat"])
                     else:
-                        row_emojis.append(ENTITY_EMOJI["player"])
+                        row_emojis.append(_player_emoji)
                 elif (col_x, row_y) in _other_pos:
                     row_emojis.append(ENTITY_EMOJI.get("npc", "\U0001F9D1"))
                 elif (col_x, row_y) in _quest_vp:

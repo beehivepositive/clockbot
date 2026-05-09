@@ -276,6 +276,8 @@ class Database:
                 "ALTER TABLE cave_entrances ADD COLUMN island_id INTEGER DEFAULT NULL",
                 "ALTER TABLE cave_entrances ADD COLUMN island_local_x INTEGER DEFAULT NULL",
                 "ALTER TABLE cave_entrances ADD COLUMN island_local_y INTEGER DEFAULT NULL",
+                # Player custom avatar emoji
+                "ALTER TABLE players ADD COLUMN avatar_emoji TEXT DEFAULT NULL",
             ]
             for mig_sql in migrations:
                 try:

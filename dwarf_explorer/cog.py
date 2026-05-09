@@ -363,5 +363,43 @@ class DwarfExplorer(commands.Cog):
         await update_player_message(db, player.user_id, msg.id, interaction.channel_id)
 
 
+    @app_commands.command(name="avatar", description="Set a custom emoji as your in-game character icon.")
+    @app_commands.describe(emoji="The emoji to display as your character (e.g. 🐉, 🧙, 🤖)")
+    async def avatar(self, interaction: discord.Interaction, emoji: str) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+
+        import re as _re
+
+        # Accept standard Unicode emoji or custom Discord emoji (<:name:id> / <a:name:id>)
+        _UNICODE_RE = _re.compile(
+            r"^[\U00000080-\U0010FFFF][\U0000FE00-\U0000FE0F]?$|"
+            r"^[\U0001F000-\U0010FFFF][\U0001F3FB-\U0001F3FF]?$|"
+            r"^[\U00002600-\U000027BF][\U0000FE0F]?$|"
+            r"^[\U0001F300-\U0001FAFF][\U0001F3FB-\U0001F3FF]?$"
+        )
+        _CUSTOM_RE = _re.compile(r"^<a?:\w+:\d+>$")
+
+        emoji = emoji.strip()
+        if not (_UNICODE_RE.match(emoji) or _CUSTOM_RE.match(emoji)):
+            await interaction.response.send_message(
+                "❌ That doesn't look like a valid emoji. Please use a single standard emoji "
+                "(e.g. `🐉`) or a custom server emoji. Your avatar was not changed.",
+                ephemeral=True,
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+        await update_player_stats(db, interaction.user.id, avatar_emoji=emoji)
+        await interaction.response.send_message(
+            f"✅ Avatar updated! You'll now appear as {emoji} in the viewport.",
+            ephemeral=True,
+        )
+
+
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(DwarfExplorer(bot))

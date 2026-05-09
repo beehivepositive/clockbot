@@ -1144,10 +1144,15 @@ class BoatView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Help | Dock (if available)
+        # Row 0: Map | Inv | Quests | Dock (if available)
         self.add_item(_btn("Map",  "map",        0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory",  0, discord.ButtonStyle.secondary))
-        self.add_item(_btn("Help", "help",       0, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Quests", emoji="📋",
+            custom_id=_custom_id(gid, uid, "quests"),
+            row=0,
+        ))
         if dock_available:
             self.add_item(_btn("⚓ Dock", "ocean_dock", 0, discord.ButtonStyle.success))
         # Row 1: ↖ ↑ ↗
@@ -1165,16 +1170,10 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
-        # Row 4: Ship interior | optional Fishing | Quests
+        # Row 4: Ship interior | optional Fishing
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="Quests", emoji="📋",
-            custom_id=_custom_id(gid, uid, "quests"),
-            row=4,
-        ))
 
 
 # ── High-seas view (separate 200×200 open-ocean grid) ────────────────────────
@@ -1194,10 +1193,15 @@ class OceanView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Help | ⚓ Dock | 🏝️ Island (if nearby)
+        # Row 0: Map | Inv | Quests | ⚓ Dock | 🏝️ Island (if nearby)
         self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
-        self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Quests", emoji="📋",
+            custom_id=_custom_id(gid, uid, "quests"),
+            row=0,
+        ))
         if dock_available:
             self.add_item(_btn("⚓ Dock", "ocean_dock", 0, discord.ButtonStyle.success))
         if island_nearby:
@@ -1221,16 +1225,10 @@ class OceanView(discord.ui.View):
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
 
-        # Row 4: Ship interior | optional Fishing | Quests
+        # Row 4: Ship interior | optional Fishing
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="Quests", emoji="📋",
-            custom_id=_custom_id(gid, uid, "quests"),
-            row=4,
-        ))
 
 
 class MerchantView(discord.ui.View):
@@ -2154,15 +2152,15 @@ def _render_merchant(catalog: list[dict], selected: int, player) -> str:
     return "\n".join(lines)
 
 
-def _roll_encounter(rng: _random.Random, rates: dict | None = None) -> str | None:
-    """Roll for a random cave encounter. Returns enemy_type or None.
+def _roll_encounter(rng: _random.Random, rates: dict | None = None, gate: float = 0.07) -> str | None:
+    """Roll for a random encounter. Returns enemy_type or None.
 
-    Rolls once for a 7% encounter chance, then picks a mob by relative weight
+    Rolls once for a `gate` encounter chance, then picks a mob by relative weight
     (values in `rates` are used as weights, not independent probabilities).
     """
     if rates is None:
         rates = CAVE_ENCOUNTER_RATES
-    if rng.random() >= 0.07:
+    if rng.random() >= gate:
         return None
     total = sum(rates.values())
     if total <= 0:
@@ -3593,14 +3591,17 @@ async def handle_ocean_move(
             return
 
         target_ocean = load_ocean_single_tile(nx, ny, seed)
-        if target_ocean.structure == "island":
+        if target_ocean.structure in ("island", "volcano_island"):
             # Block movement onto island tile — show dock button instead
             _ui_state[user_id] = {**_ui_state.get(user_id, {}), "island_target": (nx, ny)}
             has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
             grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
             nav = _ui_state.get(user_id, {}).get("nav_target")
-            content = render_grid(grid, player,
-                "🏝️ An island lies ahead. Use 🏝️ Island to go ashore.", nav_target=nav)
+            if target_ocean.structure == "volcano_island":
+                shore_msg = "🌋 A volcano island looms ahead. Use 🏝️ Island to go ashore."
+            else:
+                shore_msg = "🏝️ An island lies ahead. Use 🏝️ Island to go ashore."
+            content = render_grid(grid, player, shore_msg, nav_target=nav)
             view = OceanView(guild_id, user_id,
                              dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge),
                              island_nearby=True,
@@ -3616,9 +3617,9 @@ async def handle_ocean_move(
         player.ocean_x, player.ocean_y = nx, ny
         await update_player_ocean_state(db, user_id, False, nx, ny, in_high_seas=True)
 
-        # Check for ocean encounter
+        # Check for ocean encounter (1% per tile)
         enc_rng = _random.Random(hash((user_id, nx, ny, seed, "ocean")))
-        enemy_type = _roll_encounter(enc_rng, OCEAN_ENCOUNTER_RATES)
+        enemy_type = _roll_encounter(enc_rng, OCEAN_ENCOUNTER_RATES, gate=0.01)
         if enemy_type:
             grid = load_ocean_viewport(nx, ny, seed)
             arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type, "ocean")))
@@ -3861,7 +3862,7 @@ async def handle_ship_enter(
     player.ship_x, player.ship_y = HELM_SPAWN
     await update_player_ship_state(db, user_id, True, "helm", ship_x=player.ship_x, ship_y=player.ship_y)
 
-    grid = load_ship_viewport("helm", player.ship_x, player.ship_y)
+    grid = load_ship_viewport("helm", player.ship_x, player.ship_y, player=player)
     content = render_grid(grid, player, "\u2693 You board your ship at the helm.")
     view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -6732,12 +6733,12 @@ async def handle_inventory(
         _ui_state[user_id] = {
             "type": "ship_chest_cargo",
             "selected": 0,
-            "chest_view": "player",
+            "chest_view": "chest",
             "prev_arena": prev_arena,
         }
-        content = render_ship_chest(chest_items, player_items, 0, "player",
+        content = render_ship_chest(chest_items, player_items, 0, "chest",
                                     "Ship Cargo", player, inv_rows, inv_cols)
-        view = ShipChestView(guild_id, user_id, "cargo", "player")
+        view = ShipChestView(guild_id, user_id, "cargo", "chest")
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 

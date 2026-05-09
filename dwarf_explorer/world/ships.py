@@ -71,11 +71,11 @@ def _generate_helm() -> dict[tuple[int, int], str]:
     for x in (1, 2, 6, 7):
         tiles[(x, 11)] = "ship_deck"
 
-    # Forward deck (y 12)
+    # Forward deck (y 12–13)
     for x in range(9):
         tiles[(x, 12)] = "ship_deck"
-
-    # y 13: void gap — no tiles placed; renders as _BG (deep_water)
+    for x in range(1, 8):             # 7-wide, fills the gap at y 13
+        tiles[(x, 13)] = "ship_deck"
 
     # Bow taper (y 14–17)
     for x in range(1, 8):             # 7-wide

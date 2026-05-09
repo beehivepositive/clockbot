@@ -160,6 +160,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             accessory=equipped.get("accessory"),
             pouch=equipped.get("pouch"),
             coin_purse=equipped.get("coin_purse"),
+            avatar_emoji=row["avatar_emoji"] if "avatar_emoji" in cols else None,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
