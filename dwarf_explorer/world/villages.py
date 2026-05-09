@@ -17,6 +17,7 @@ _BUILDING_SEED_OFFSET = 8000
 _PROTECTED_TILES = {
     "vil_well", "vil_house", "vil_church", "vil_bank", "vil_shop",
     "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_lumber_mill", "vil_farmhouse",
+    "vil_puzzle_board",
     "vil_tree", "vil_fence", "vil_fence_gate",
     "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",
     "vil_farmland",
@@ -334,7 +335,7 @@ def _generate_village_interior(
 
     # ── Required special buildings ────────────────────────────────────────────
     required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
-                "vil_tavern", "vil_hospital"]
+                "vil_tavern", "vil_hospital", "vil_puzzle_board"]
     if not _farm_cluster_placed:
         required.append("vil_farmhouse")
     rng.shuffle(required)
@@ -596,7 +597,8 @@ def _generate_harbor_village_interior(
     buildings: list[tuple[int, int, str]] = []
 
     # ── Required buildings ────────────────────────────────────────────────────
-    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital"]
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital",
+                "vil_puzzle_board"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(200):

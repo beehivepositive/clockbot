@@ -1111,6 +1111,32 @@ async def give_quest_reward(
     return " ".join(parts) or "nothing"
 
 
+async def has_claimed_puzzle_today(db: Database, user_id: int) -> bool:
+    """Return True if the player already claimed today's puzzle reward."""
+    from datetime import date
+    today = date.today().isoformat()
+    row = await db.fetch_one(
+        "SELECT 1 FROM puzzle_rewards WHERE user_id=? AND reward_date=?",
+        (user_id, today),
+    )
+    return row is not None
+
+
+async def claim_puzzle_reward(db: Database, user_id: int) -> bool:
+    """Record today's puzzle reward claim. Returns False if already claimed."""
+    import sqlite3
+    from datetime import date
+    today = date.today().isoformat()
+    try:
+        await db.execute(
+            "INSERT INTO puzzle_rewards(user_id, reward_date) VALUES(?, ?)",
+            (user_id, today),
+        )
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
 async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int, int, str]]:
     """Return [(world_x, world_y, enemy_type)] for all active bounty quests with markers."""
     rows = await db.fetch_all(

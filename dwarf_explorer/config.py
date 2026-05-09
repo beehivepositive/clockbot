@@ -491,6 +491,8 @@ VILLAGE_EMOJI = {
     "vil_chicken":      "🐓",        # 🐓  chicken
     "vil_goat":         "🐐",        # 🐐  goat
     "vil_sheep":        "🐑",        # 🐑  sheep
+    # Puzzle board
+    "vil_puzzle_board": "🎮",               # 🎮  sliding-block puzzle board
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
@@ -565,6 +567,7 @@ VILLAGE_WALKABLE = {
     "vil_farmland",
     "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
     "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
+    "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
     # Note: vil_fence/animals are solid obstacles (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }

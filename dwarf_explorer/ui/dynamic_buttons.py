@@ -77,6 +77,10 @@ from dwarf_explorer.ui.game_view import (
     handle_plant,
     handle_plant_choice,
     handle_plant_cancel,
+    handle_puzzle_move,
+    handle_puzzle_reset,
+    handle_puzzle_claim,
+    handle_puzzle_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -111,6 +115,11 @@ _IGNORED_ACTIONS = {
     # Quest spacers (qsp_*)  — caught dynamically below
     # NPC button spacer
     "sp_npc",
+    # Puzzle board spacers / disabled labels
+    "pzsp0a", "pzsp0b", "pzsp0c", "pzsp0d",
+    "pzsp1a", "pzsp1b",
+    "pzsp2a", "pzsp2b", "pzsp2c",
+    "pzsp3a",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 
@@ -523,6 +532,16 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_farmer_buy(interaction, gid, uid, item_id)
             elif act == "farmer_close":
                 await handle_farmer_close(interaction, gid, uid)
+            # Puzzle board
+            elif act in ("puzzle_up", "puzzle_down", "puzzle_left", "puzzle_right"):
+                direction = act[7:]  # strip "puzzle_"
+                await handle_puzzle_move(interaction, gid, uid, direction)
+            elif act == "puzzle_reset":
+                await handle_puzzle_reset(interaction, gid, uid)
+            elif act == "puzzle_claim":
+                await handle_puzzle_claim(interaction, gid, uid)
+            elif act == "puzzle_close":
+                await handle_puzzle_close(interaction, gid, uid)
 
         except discord.NotFound:
             await interaction.followup.send(

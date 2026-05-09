@@ -117,6 +117,10 @@ def _parse_emoji(s: str) -> discord.PartialEmoji | None:
 # {user_id: {"type": str, "selected": int, "bank_view": str, "mode": str}}
 _ui_state: dict[int, dict] = {}
 
+# ── In-memory puzzle state keyed by (guild_id, user_id) ──────────────────────
+# {(gid, uid): {"puzzle": dict, "px": int, "py": int, "moves": int, "won": bool}}
+_PUZZLE_STATES: dict[tuple[int, int], dict] = {}
+
 
 def _embed(content: str) -> discord.Embed:
     """Wrap game content in an embed to bypass Discord's 2000-char content limit."""
@@ -756,6 +760,74 @@ class ShipView(discord.ui.View):
                                discord.ButtonStyle.success, disabled=repair_disabled))
             # Row 2: Return to helm
             self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
+
+
+class PuzzleView(discord.ui.View):
+    """Sliding-block puzzle UI for the village puzzle board."""
+
+    def __init__(
+        self, guild_id: int, user_id: int,
+        moves: int, min_moves: int,
+        won: bool, claimed: bool,
+    ):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label, action, row,
+                 style=discord.ButtonStyle.primary, disabled=False, emoji=None):
+            b = discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+            if emoji:
+                b.emoji = emoji
+            return b
+
+        def _sp(act, row):
+            return discord.ui.Button(
+                style=discord.ButtonStyle.secondary, label="​", disabled=True,
+                custom_id=_custom_id(gid, uid, act), row=row,
+            )
+
+        moves_label = f"Moves: {moves}"
+
+        # Row 0: spacer | ⬆️ | spacer | Moves counter | spacer
+        self.add_item(_sp("pzsp0a", 0))
+        self.add_item(_btn("⬆️", "puzzle_up",    0, disabled=won))
+        self.add_item(_sp("pzsp0b", 0))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label=moves_label, disabled=True,
+            custom_id=_custom_id(gid, uid, "pzsp0c"), row=0,
+        ))
+        self.add_item(_sp("pzsp0d", 0))
+
+        # Row 1: ⬅️ | 🔄 Reset | ➡️ | spacer | spacer
+        self.add_item(_btn("⬅️", "puzzle_left",  1, disabled=won))
+        self.add_item(_btn("🔄 Reset", "puzzle_reset", 1, style=discord.ButtonStyle.secondary))
+        self.add_item(_btn("➡️", "puzzle_right", 1, disabled=won))
+        self.add_item(_sp("pzsp1a", 1))
+        self.add_item(_sp("pzsp1b", 1))
+
+        # Row 2: spacer | ⬇️ | spacer | Optimal hint | ❌ Close
+        self.add_item(_sp("pzsp2a", 2))
+        self.add_item(_btn("⬇️", "puzzle_down",  2, disabled=won))
+        self.add_item(_sp("pzsp2b", 2))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label=f"Optimal: {min_moves}", disabled=True,
+            custom_id=_custom_id(gid, uid, "pzsp2c"), row=2,
+        ))
+        self.add_item(_btn("❌ Close", "puzzle_close", 2,
+                           style=discord.ButtonStyle.danger))
+
+        # Row 3 (only when puzzle is solved): Claim Reward or Already Claimed
+        if won:
+            if claimed:
+                self.add_item(_btn("✅ Reward Claimed", "pzsp3a", 3,
+                                   style=discord.ButtonStyle.secondary, disabled=True))
+            else:
+                self.add_item(_btn("🎁 Claim Reward", "puzzle_claim", 3,
+                                   style=discord.ButtonStyle.success))
 
 
 class IslandView(discord.ui.View):
@@ -1729,6 +1801,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🐱", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
+        elif t == "vil_puzzle_board":
+            center_label, center_enabled = "🎮 Play", True
         elif t == "vil_dock":
             center_label, center_enabled = "⚓ Board", True
         # Village farmland interactions
@@ -4732,6 +4806,10 @@ async def handle_interact(
             else:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
                 content = render_grid(grid, player, "Nothing to interact with here.")
+
+        elif vtile.terrain == "vil_puzzle_board":
+            await _open_puzzle(interaction, guild_id, user_id)
+            return
 
         elif vtile.terrain == "vil_well":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
@@ -9339,3 +9417,147 @@ async def handle_farmer_close(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
+
+
+# ── Village puzzle board ───────────────────────────────────────────────────────
+
+def _puzzle_content(state: dict, extra: str = "") -> str:
+    """Render puzzle board + status into a message string."""
+    from dwarf_explorer.game.ricochet import render_board
+    puzzle  = state["puzzle"]
+    board   = render_board(puzzle, state["px"], state["py"])
+    moves   = state["moves"]
+    opt     = puzzle.get("min_moves", "?")
+    won     = state["won"]
+    lines = [
+        "🎮 **Village Puzzle Board**",
+        board,
+        f"{'🏆 Solved in' if won else 'Moves:'} **{moves}** | Optimal: **{opt}**",
+    ]
+    if not won:
+        lines.append("*Slide 🔵 onto 🔴 using walls and 🟧 blocks.*")
+    if extra:
+        lines.append(extra)
+    return "\n".join(lines)
+
+
+async def _open_puzzle(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Initialise and display the daily puzzle."""
+    from dwarf_explorer.game.ricochet import generate_puzzle
+    from dwarf_explorer.database.repositories import has_claimed_puzzle_today
+    db = await get_database(guild_id)
+    puzzle = generate_puzzle()
+    state: dict = {
+        "puzzle": puzzle,
+        "px": puzzle["start"][0],
+        "py": puzzle["start"][1],
+        "moves": 0,
+        "won": False,
+    }
+    _PUZZLE_STATES[(guild_id, user_id)] = state
+    claimed = await has_claimed_puzzle_today(db, user_id)
+    content = _puzzle_content(state)
+    view = PuzzleView(guild_id, user_id,
+                      moves=0, min_moves=puzzle["min_moves"],
+                      won=False, claimed=claimed)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_puzzle_move(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
+) -> None:
+    state = _PUZZLE_STATES.get((guild_id, user_id))
+    if state is None:
+        await _open_puzzle(interaction, guild_id, user_id)
+        return
+    if state["won"]:
+        await interaction.response.defer()
+        return
+
+    from dwarf_explorer.game.ricochet import apply_move
+    from dwarf_explorer.database.repositories import has_claimed_puzzle_today
+    puzzle = state["puzzle"]
+    nx, ny = apply_move(
+        state["px"], state["py"], direction,
+        puzzle["obstacles"], puzzle["size"],
+    )
+    if nx == state["px"] and ny == state["py"]:
+        await interaction.response.defer()
+        return
+
+    state["px"], state["py"] = nx, ny
+    state["moves"] += 1
+    tx, ty = puzzle["target"]
+    if nx == tx and ny == ty:
+        state["won"] = True
+
+    db = await get_database(guild_id)
+    claimed = state["won"] and await has_claimed_puzzle_today(db, user_id)
+    content = _puzzle_content(state)
+    view = PuzzleView(guild_id, user_id,
+                      moves=state["moves"], min_moves=puzzle["min_moves"],
+                      won=state["won"], claimed=claimed)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_puzzle_reset(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _PUZZLE_STATES.get((guild_id, user_id))
+    if state is None:
+        await _open_puzzle(interaction, guild_id, user_id)
+        return
+    puzzle = state["puzzle"]
+    state["px"], state["py"] = puzzle["start"]
+    state["moves"] = 0
+    state["won"] = False
+    content = _puzzle_content(state)
+    view = PuzzleView(guild_id, user_id,
+                      moves=0, min_moves=puzzle["min_moves"],
+                      won=False, claimed=False)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_puzzle_claim(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _PUZZLE_STATES.get((guild_id, user_id))
+    if state is None or not state.get("won"):
+        await interaction.response.defer()
+        return
+    from dwarf_explorer.database.repositories import claim_puzzle_reward, give_quest_reward
+    db = await get_database(guild_id)
+    ok = await claim_puzzle_reward(db, user_id)
+    if ok:
+        reward_str = await give_quest_reward(db, user_id, 15, 75)
+        extra = f"🎁 Daily reward claimed! {reward_str}"
+    else:
+        extra = "✅ You've already claimed today's reward!"
+    puzzle = state["puzzle"]
+    content = _puzzle_content(state, extra)
+    view = PuzzleView(guild_id, user_id,
+                      moves=state["moves"], min_moves=puzzle["min_moves"],
+                      won=True, claimed=True)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_puzzle_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    _PUZZLE_STATES.pop((guild_id, user_id), None)
+    db = await get_database(guild_id)
+    seed   = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if player.in_village:
+        grid    = await load_village_viewport(
+            player.village_id, player.village_x, player.village_y, db
+        )
+        content = render_grid(grid, player, "")
+        view    = _game_view(guild_id, user_id, player, grid=grid)
+    else:
+        grid    = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player)
+        view    = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)

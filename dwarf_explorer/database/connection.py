@@ -255,6 +255,12 @@ class Database:
     generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
     expires_at   TEXT    NOT NULL
 )""",
+                # Daily puzzle reward tracking (one claim per player per UTC date)
+                """CREATE TABLE IF NOT EXISTS puzzle_rewards (
+    user_id      INTEGER NOT NULL,
+    reward_date  TEXT    NOT NULL,
+    PRIMARY KEY (user_id, reward_date)
+)""",
             ]
             for mig_sql in migrations:
                 try:
