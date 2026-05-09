@@ -686,7 +686,7 @@ _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
     "vol_rock":       "⛰️",  # volcanic rock (mountain)
     "vol_grass":      "🌿",   # sparse grass (overridable with custom grass emoji)
     "vol_forest":     "🌲",   # forest
-    "vol_lava":       "🔥",   # impassable lava flow
+    "vol_lava":       "🟧",   # impassable lava flow (orange square)
     "vol_crater":     "🌑",   # impassable crater
     "vol_lava_bridge":"🌉",   # stone bridge over lava
     "vol_cave":       "🕳️",  # cave entrance (same as wilderness cave hole)

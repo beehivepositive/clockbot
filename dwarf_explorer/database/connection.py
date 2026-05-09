@@ -278,6 +278,15 @@ class Database:
                 "ALTER TABLE cave_entrances ADD COLUMN island_local_y INTEGER DEFAULT NULL",
                 # Player custom avatar emoji
                 "ALTER TABLE players ADD COLUMN avatar_emoji TEXT DEFAULT NULL",
+                # Ship crew system
+                """CREATE TABLE IF NOT EXISTS ship_crew (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    slot    INTEGER NOT NULL,
+                    name    TEXT    NOT NULL DEFAULT 'Sailor',
+                    task    TEXT    NOT NULL DEFAULT 'idle',
+                    UNIQUE(user_id, slot)
+                )""",
             ]
             for mig_sql in migrations:
                 try:

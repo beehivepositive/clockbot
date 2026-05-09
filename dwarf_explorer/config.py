@@ -567,6 +567,7 @@ BUILDING_EMOJI = {
     "b_barrel":          "🛢️", # 🛢️  barrel
     "b_barkeep":         "🧑",       # 🧑  barkeep NPC
     "b_tavern_npc":      "🧑",       # 🧑  tavern quest NPC
+    "b_crew_npc":        "⚓",       # ⚓  harbour tavern recruit NPC (hireable crew member)
     # Hospital unique
     "b_healer":          "🧑",       # 🧑  healer NPC
     "b_medicine_shelf":  "🌿",       # 🌿  herb/medicine shelf
@@ -615,6 +616,7 @@ BUILDING_WALKABLE = {
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "b_chest", "b_resident", "b_pet",
     "b_waterwheel", "b_saw", "b_lumber_npc", "b_farmer_npc",
+    "b_crew_npc",   # harbour tavern recruit NPC — walkable
     # Note: b_water is NOT in BUILDING_WALKABLE (water is impassable inside)
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
@@ -996,6 +998,26 @@ TILE_COLORS = {
     "crop_ripe": (200, 180, 20),
     "harbor": (40, 80, 200),
     "ruins_looted": (100, 85, 70),
+}
+
+
+# --- Ship Crew System ---
+
+MAX_CREW_SIZE = 3
+CREW_HIRE_COST = 500
+
+# Crew NPC names (randomly assigned at hire)
+CREW_NAMES = [
+    "Jake", "Morgan", "Sam", "Alex", "Riley", "Casey", "Drew", "Jordan",
+    "Quinn", "Avery", "Reese", "Blake", "Devon", "Sage", "River", "Finley",
+]
+
+# Available crew tasks: {task_id: {label, emoji, desc}}
+CREW_TASKS = {
+    "idle":   {"label": "Idle",        "emoji": "💤", "desc": "No task assigned"},
+    "repair": {"label": "Auto-Repair", "emoji": "🔨", "desc": "Repairs hull when damaged and hammer+nails+planks are in cargo"},
+    "cannon": {"label": "Gunner",      "emoji": "💣", "desc": "Boosts cannon attack damage by +5"},
+    "watch":  {"label": "Lookout",     "emoji": "🔭", "desc": "Reduces ocean encounter rate by half"},
 }
 
 

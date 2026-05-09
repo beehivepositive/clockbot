@@ -69,6 +69,8 @@ from dwarf_explorer.ui.game_view import (
     handle_qswap, handle_qswap_pass,
     handle_npc_quest,
     handle_tavern_buy, handle_tavern_close,
+    handle_crew_npc_talk, handle_dialogue_nav, handle_dialogue_confirm, handle_dialogue_cancel,
+    handle_ship_crew_view, handle_crew_task_cycle, handle_crew_fire, handle_crew_close,
     handle_heal_accept, handle_heal_decline,
     handle_lumber_convert_confirm, handle_lumber_convert_cancel,
     handle_lumber_craft_canoe,
@@ -115,6 +117,8 @@ _IGNORED_ACTIONS = {
     # Quest spacers (qsp_*)  — caught dynamically below
     # NPC button spacer
     "sp_npc",
+    # Dialogue spacer
+    "dlg_sp1",
     # Puzzle board info labels (disabled counters)
     "pzsp0a", "pzsp0b",
 }
@@ -502,6 +506,29 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_tavern_buy(interaction, gid, uid, item_id)
             elif act == "tavern_close":
                 await handle_tavern_close(interaction, gid, uid)
+            # NPC Dialogue system
+            elif act == "dlg_up":
+                await handle_dialogue_nav(interaction, gid, uid, -1)
+            elif act == "dlg_down":
+                await handle_dialogue_nav(interaction, gid, uid, +1)
+            elif act == "dlg_cancel":
+                await handle_dialogue_cancel(interaction, gid, uid)
+            elif act.startswith("dlg_confirm_"):
+                action = act[len("dlg_confirm_"):]
+                await handle_dialogue_confirm(interaction, gid, uid, action)
+            # Ship crew management
+            elif act == "ship_crew_view":
+                await handle_ship_crew_view(interaction, gid, uid)
+            elif act.startswith("crew_task_") and act[len("crew_task_"):].isdigit():
+                slot = int(act[len("crew_task_"):])
+                await handle_crew_task_cycle(interaction, gid, uid, slot)
+            elif act.startswith("crew_fire_") and act[len("crew_fire_"):].isdigit():
+                slot = int(act[len("crew_fire_"):])
+                await handle_crew_fire(interaction, gid, uid, slot)
+            elif act == "crew_close":
+                await handle_crew_close(interaction, gid, uid)
+            elif act.startswith("crew_sp_"):
+                await interaction.response.defer()  # crew slot name label spacer
             # Hospital heal confirm
             elif act == "heal_accept":
                 await handle_heal_accept(interaction, gid, uid)

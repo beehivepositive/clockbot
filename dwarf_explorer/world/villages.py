@@ -803,7 +803,7 @@ def _place_table_cluster(
                 break
 
 
-def _tavern_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
+def _tavern_interior(rng: random.Random, W: int, H: int, is_harbor: bool = False) -> dict[tuple[int,int], str]:
     """Tavern with bar, 3-4 table clusters, and 4-6 quest NPCs (patrons)."""
     tiles: dict[tuple[int,int], str] = {}
     for y in range(H):
@@ -845,6 +845,15 @@ def _tavern_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int],
         if tiles.get((ex, ey)) == "b_floor":
             tiles[(ex, ey)] = "b_tavern_npc"
             placed += 1
+
+    # ── Harbour-specific: one crew recruit NPC near the bar ──────────────────
+    if is_harbor:
+        for _try in range(100):
+            rx = rng.randint(2, W - 3)
+            ry = rng.randint(floor_top, floor_bot - 1)
+            if tiles.get((rx, ry)) == "b_floor":
+                tiles[(rx, ry)] = "b_crew_npc"
+                break
 
     return tiles
 
@@ -954,6 +963,7 @@ def _farmhouse_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,in
 def _generate_building_interior(
     house_id: int, seed: int, village_id: int,
     building_type: str, door_vx: int, door_vy: int,
+    is_harbor: bool = False,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int]]:
     rng = random.Random(seed + _BUILDING_SEED_OFFSET + house_id + village_id * 97 + door_vx * 13 + door_vy)
 
@@ -971,7 +981,7 @@ def _generate_building_interior(
         tiles_dict = _blacksmith_interior(rng, W, H)
     elif building_type in ("vil_tavern", "tavern"):
         W, H = rng.randint(11, 13), rng.randint(10, 12)
-        tiles_dict = _tavern_interior(rng, W, H)
+        tiles_dict = _tavern_interior(rng, W, H, is_harbor=is_harbor)
     elif building_type in ("vil_hospital", "hospital"):
         W, H = rng.randint(9, 11), rng.randint(9, 11)
         tiles_dict = _hospital_interior(rng, W, H)
@@ -1121,8 +1131,10 @@ async def get_or_create_harbor_village(
             (village_id, canonical),
         )
         house_id = hcursor.lastrowid
+        # Harbor villages: pass is_harbor=True for taverns so they get a crew NPC
+        _is_harbor_bldg = btype in ("vil_tavern", "tavern")
         hW, hH, htiles, hentry = await asyncio.to_thread(
-            _generate_building_interior, house_id, seed, village_id, btype, bx, by
+            _generate_building_interior, house_id, seed, village_id, btype, bx, by, _is_harbor_bldg
         )
         await db.execute(
             "UPDATE houses SET width = ?, height = ? WHERE house_id = ?",

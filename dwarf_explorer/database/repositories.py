@@ -1212,3 +1212,59 @@ async def get_player_ocean_quest_markers(db, user_id: int) -> list[tuple[int, in
         if ox is not None and oy is not None:
             markers.append((ox, oy, r["target_id"]))
     return markers
+
+
+# ── Ship Crew ──────────────────────────────────────────────────────────────────
+
+async def get_ship_crew(db: Database, user_id: int) -> list[dict]:
+    """Return list of crew members [{slot, name, task}] sorted by slot."""
+    rows = await db.fetch_all(
+        "SELECT slot, name, task FROM ship_crew WHERE user_id=? ORDER BY slot",
+        (user_id,),
+    )
+    return [{"slot": r["slot"], "name": r["name"], "task": r["task"]} for r in rows]
+
+
+async def hire_crew_member(db: Database, user_id: int, name: str) -> int | None:
+    """Hire a new crew member into the next available slot (1-3). Returns slot or None if full."""
+    from dwarf_explorer.config import MAX_CREW_SIZE
+    existing = await db.fetch_all(
+        "SELECT slot FROM ship_crew WHERE user_id=? ORDER BY slot",
+        (user_id,),
+    )
+    used_slots = {r["slot"] for r in existing}
+    for slot in range(1, MAX_CREW_SIZE + 1):
+        if slot not in used_slots:
+            await db.execute(
+                "INSERT INTO ship_crew (user_id, slot, name, task) VALUES (?,?,?,'idle')",
+                (user_id, slot, name),
+            )
+            return slot
+    return None  # full
+
+
+async def fire_crew_member(db: Database, user_id: int, slot: int) -> bool:
+    """Remove crew member at given slot. Returns True if removed."""
+    row = await db.fetch_one(
+        "SELECT id FROM ship_crew WHERE user_id=? AND slot=?", (user_id, slot)
+    )
+    if not row:
+        return False
+    await db.execute("DELETE FROM ship_crew WHERE user_id=? AND slot=?", (user_id, slot))
+    return True
+
+
+async def set_crew_task(db: Database, user_id: int, slot: int, task: str) -> None:
+    """Assign a task to a crew member slot."""
+    await db.execute(
+        "UPDATE ship_crew SET task=? WHERE user_id=? AND slot=?",
+        (task, user_id, slot),
+    )
+
+
+async def get_crew_task(db: Database, user_id: int, task: str) -> bool:
+    """Return True if any crew member is assigned the given task."""
+    row = await db.fetch_one(
+        "SELECT 1 FROM ship_crew WHERE user_id=? AND task=?", (user_id, task)
+    )
+    return row is not None

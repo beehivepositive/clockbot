@@ -242,3 +242,13 @@ CREATE TABLE IF NOT EXISTS treasure_maps (
     treasure_y  INTEGER NOT NULL,
     found       INTEGER NOT NULL DEFAULT 0
 );
+
+-- Ship crew members (max 3 per player)
+CREATE TABLE IF NOT EXISTS ship_crew (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id   INTEGER NOT NULL,
+    slot      INTEGER NOT NULL,   -- 1, 2, or 3
+    name      TEXT    NOT NULL DEFAULT 'Sailor',
+    task      TEXT    NOT NULL DEFAULT 'idle',
+    UNIQUE(user_id, slot)
+);

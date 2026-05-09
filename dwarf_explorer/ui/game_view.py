@@ -16,6 +16,7 @@ from dwarf_explorer.config import (
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
     COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
     FARM_ANIMALS, FARMER_SHOP, FARM_CROPS,
+    MAX_CREW_SIZE, CREW_HIRE_COST, CREW_NAMES, CREW_TASKS,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.database.connection import get_database
@@ -65,6 +66,10 @@ from dwarf_explorer.database.repositories import (
     get_all_overworld_players,
     get_player_quest_markers,
     get_player_ocean_quest_markers,
+    get_ship_crew,
+    hire_crew_member,
+    fire_crew_member,
+    set_crew_task,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -745,8 +750,9 @@ class ShipView(discord.ui.View):
             self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
 
         else:  # lower_deck
-            # Row 1: Cargo chest
-            self.add_item(_btn("📦 Cargo",  "ship_chest_cargo_open",  1, discord.ButtonStyle.primary))
+            # Row 1: Cargo chest | Crew
+            self.add_item(_btn("📦 Cargo",   "ship_chest_cargo_open", 1, discord.ButtonStyle.primary))
+            self.add_item(_btn("👥 Crew",    "ship_crew_view",        1, discord.ButtonStyle.primary))
             # Row 2: Return to helm
             self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
 
@@ -1502,6 +1508,85 @@ class LumberConvertView(discord.ui.View):
         ))
 
 
+# ── NPC Dialogue view ─────────────────────────────────────────────────────────
+
+class DialogueView(discord.ui.View):
+    """Scrollable NPC dialogue with option list.
+
+    State in _ui_state[user_id]:
+      {"type": "npc_dialogue", "npc_type": str, "text": str,
+       "options": [{"label": str, "action": str}, ...], "selected": int}
+    """
+
+    def __init__(self, guild_id: int, user_id: int, options: list[dict], selected: int = 0):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+
+        def _btn(label, action, row, style=discord.ButtonStyle.secondary, disabled=False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # Row 0: ⬆ scroll | ⬇ scroll | spacer | Cancel
+        self.add_item(_btn("⬆️", "dlg_up",   0, disabled=(selected == 0)))
+        self.add_item(_btn("⬇️", "dlg_down", 0, disabled=(selected >= len(options) - 1)))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="​", disabled=True,
+            custom_id=_custom_id(gid, uid, "dlg_sp1"), row=0,
+        ))
+        self.add_item(_btn("❌ Cancel", "dlg_cancel", 0, discord.ButtonStyle.danger))
+
+        # Row 1: Confirm selected option
+        if options and selected < len(options):
+            opt = options[selected]
+            self.add_item(_btn(
+                f"✅ {opt['label']}", f"dlg_confirm_{opt['action']}",
+                1, discord.ButtonStyle.success
+            ))
+
+
+# ── Crew management view ───────────────────────────────────────────────────────
+
+class CrewView(discord.ui.View):
+    """Below-deck crew management: assign tasks, fire crew."""
+
+    def __init__(self, guild_id: int, user_id: int, crew: list[dict]):
+        super().__init__(timeout=None)
+        from dwarf_explorer.config import CREW_TASKS, MAX_CREW_SIZE
+        gid, uid = guild_id, user_id
+
+        def _btn(label, action, row, style=discord.ButtonStyle.secondary, disabled=False):
+            return discord.ui.Button(
+                style=style, label=label, disabled=disabled,
+                custom_id=_custom_id(gid, uid, action), row=row,
+            )
+
+        # One row per crew slot (up to MAX_CREW_SIZE rows)
+        for i, member in enumerate(crew[:MAX_CREW_SIZE]):
+            slot = member["slot"]
+            name = member["name"]
+            task_info = CREW_TASKS.get(member["task"], CREW_TASKS["idle"])
+            task_label = f"{task_info['emoji']} {task_info['label']}"
+            row = i
+            # Name label (disabled)
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=f"⚓ {name}",
+                disabled=True,
+                custom_id=_custom_id(gid, uid, f"crew_sp_{slot}"),
+                row=row,
+            ))
+            # Task cycle button
+            self.add_item(_btn(task_label, f"crew_task_{slot}", row, discord.ButtonStyle.primary))
+            # Fire button
+            self.add_item(_btn("🔥 Fire", f"crew_fire_{slot}", row, discord.ButtonStyle.danger))
+
+        # Close button on last row
+        close_row = min(len(crew), MAX_CREW_SIZE)
+        self.add_item(_btn("❌ Close", "crew_close", close_row, discord.ButtonStyle.secondary))
+
+
 # ── Gold cap helper ───────────────────────────────────────────────────────────
 
 def _apply_gold_cap(player: Player, amount: int) -> int:
@@ -1780,6 +1865,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🍺 Order", True
         elif t == "b_tavern_npc":
             center_label, center_enabled = "📋 Quest", True
+        elif t == "b_crew_npc":
+            center_label, center_enabled = "💬 Talk", True
         elif t == "b_healer":
             center_label, center_enabled = "💊 Heal", True
         elif t == "b_bar_counter":
@@ -4761,6 +4848,11 @@ async def handle_interact(
                     return
                 content = render_grid(grid, player,
                     "\"No work posted today. Check back another time.\"")
+
+            elif htile.terrain == "b_crew_npc":
+                # ── Harbour tavern crew recruit — open hiring dialogue ─────────
+                await handle_crew_npc_talk(interaction, guild_id, user_id)
+                return
 
             elif htile.terrain == "b_healer" and player.house_type == "hospital":
                 # ── Hospital healer — pay to heal ──────────────────────────────
@@ -8951,8 +9043,8 @@ async def handle_map(
         await interaction.followup.send(file=file, ephemeral=True)
         return
 
-    if player.in_island:
-        # Show ocean map centred on the island the player is currently visiting
+    if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
+        # Show ocean map centred on the island/volcano island the player is visiting/caving under
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
         ocean_avatar: bytes | None = None
@@ -9609,6 +9701,234 @@ async def handle_tavern_close(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
+
+
+# ── NPC Dialogue handlers ─────────────────────────────────────────────────────
+
+def _render_dialogue(npc_name: str, text: str, options: list[dict], selected: int) -> str:
+    """Render NPC dialogue as text block with option list."""
+    lines = [f"**{npc_name}** says:", f'> *"{text}"*', ""]
+    for i, opt in enumerate(options):
+        prefix = "▶ " if i == selected else "  "
+        lines.append(f"{prefix}**{opt['label']}**")
+    return "\n".join(lines)
+
+
+async def handle_crew_npc_talk(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open dialogue with harbour tavern crew recruit NPC."""
+    import random as _rand_mod
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    crew = await get_ship_crew(db, user_id)
+    crew_count = len(crew)
+
+    # Pick a deterministic name for this NPC based on their house tile position
+    _seed = hash((user_id, player.house_id, player.house_x, player.house_y))
+    npc_name = CREW_NAMES[abs(_seed) % len(CREW_NAMES)]
+
+    if crew_count >= MAX_CREW_SIZE:
+        options = [{"label": "Maybe next time", "action": "close"}]
+        npc_text = f"Yer ship's already got a full crew! I'd only be in the way."
+    else:
+        options = [
+            {"label": f"Hire for {CREW_HIRE_COST}🪙", "action": "hire_crew"},
+            {"label": "Not right now", "action": "close"},
+        ]
+        npc_text = (
+            f"Aye, I'm lookin' for work! I can join yer crew for {CREW_HIRE_COST} gold. "
+            f"Just say the word and I'll be on yer ship. "
+            f"(Crew: {crew_count}/{MAX_CREW_SIZE})"
+        )
+
+    state = {
+        "type": "npc_dialogue",
+        "npc_type": "crew_recruit",
+        "npc_name": npc_name,
+        "text": npc_text,
+        "options": options,
+        "selected": 0,
+    }
+    _ui_state[user_id] = state
+    content = _render_dialogue(npc_name, npc_text, options, 0)
+    view = DialogueView(guild_id, user_id, options, 0)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_dialogue_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, direction: int
+) -> None:
+    """Scroll dialogue option up (-1) or down (+1)."""
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "npc_dialogue":
+        await interaction.response.defer()
+        return
+    options = state.get("options", [])
+    sel = state.get("selected", 0)
+    sel = max(0, min(len(options) - 1, sel + direction))
+    state["selected"] = sel
+    _ui_state[user_id] = state
+    content = _render_dialogue(state["npc_name"], state["text"], options, sel)
+    view = DialogueView(guild_id, user_id, options, sel)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_dialogue_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int, action: str
+) -> None:
+    """Execute the confirmed dialogue option action."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+
+    if action == "close" or state.get("type") != "npc_dialogue":
+        # Return to building view
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        content = render_grid(grid, player, "Farewell.")
+        _ui_state.pop(user_id, None)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
+
+    if action == "hire_crew":
+        npc_name = state.get("npc_name", "Sailor")
+        crew = await get_ship_crew(db, user_id)
+        if len(crew) >= MAX_CREW_SIZE:
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "Your crew is already full!")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+        if player.gold < CREW_HIRE_COST:
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player,
+                f"\"You don't have enough coin, friend.\" (need {CREW_HIRE_COST}🪙, have {player.gold}🪙)")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+        player.gold -= CREW_HIRE_COST
+        await update_player_stats(db, user_id, gold=player.gold)
+        slot = await hire_crew_member(db, user_id, npc_name)
+        _ui_state.pop(user_id, None)
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        content = render_grid(grid, player,
+            f"⚓ **{npc_name}** joins your crew! (slot {slot}) "
+            f"Assign them tasks from below deck. (-{CREW_HIRE_COST}🪙)")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
+
+    # Unknown action — close
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "Goodbye.")
+    _ui_state.pop(user_id, None)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+async def handle_dialogue_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel NPC dialogue and return to building view."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state.pop(user_id, None)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "You end the conversation.")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
+# ── Ship crew management handlers ─────────────────────────────────────────────
+
+def _render_crew(crew: list[dict]) -> str:
+    """Render crew list with task assignments."""
+    from dwarf_explorer.config import CREW_TASKS, MAX_CREW_SIZE
+    lines = [f"**👥 Ship Crew** ({len(crew)}/{MAX_CREW_SIZE})", ""]
+    if not crew:
+        lines.append("*No crew hired yet. Visit a harbour tavern to recruit sailors.*")
+    for m in crew:
+        task_info = CREW_TASKS.get(m["task"], CREW_TASKS["idle"])
+        lines.append(
+            f"**Slot {m['slot']}** — ⚓ {m['name']}"
+            f"\n    {task_info['emoji']} **{task_info['label']}**: {task_info['desc']}"
+        )
+        lines.append("")
+    lines.append("Press a task button to cycle through assignments. 🔥 Fire dismisses the crew member.")
+    return "\n".join(lines)
+
+
+async def handle_ship_crew_view(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open crew management view from below deck."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    crew = await get_ship_crew(db, user_id)
+    content = _render_crew(crew)
+    view = CrewView(guild_id, user_id, crew)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_crew_task_cycle(
+    interaction: discord.Interaction, guild_id: int, user_id: int, slot: int
+) -> None:
+    """Cycle through available tasks for a crew member slot."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    crew = await get_ship_crew(db, user_id)
+    member = next((m for m in crew if m["slot"] == slot), None)
+    if not member:
+        await interaction.response.defer()
+        return
+    task_keys = list(CREW_TASKS.keys())
+    cur_idx = task_keys.index(member["task"]) if member["task"] in task_keys else 0
+    next_task = task_keys[(cur_idx + 1) % len(task_keys)]
+    await set_crew_task(db, user_id, slot, next_task)
+    # Refresh crew list
+    crew = await get_ship_crew(db, user_id)
+    content = _render_crew(crew)
+    view = CrewView(guild_id, user_id, crew)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_crew_fire(
+    interaction: discord.Interaction, guild_id: int, user_id: int, slot: int
+) -> None:
+    """Dismiss crew member at the given slot."""
+    db = await get_database(guild_id)
+    await get_or_create_player(db, user_id, interaction.user.display_name)
+    await fire_crew_member(db, user_id, slot)
+    crew = await get_ship_crew(db, user_id)
+    content = _render_crew(crew)
+    view = CrewView(guild_id, user_id, crew)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_crew_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Return to lower deck from crew view."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    from dwarf_explorer.game.renderer import render_ship_room
+    content = render_ship_room(player)
+    view = ShipView(guild_id, user_id, room="lower_deck",
+                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Hospital handlers ─────────────────────────────────────────────────────────
