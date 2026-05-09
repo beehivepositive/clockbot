@@ -1063,7 +1063,7 @@ async def give_quest_reward(
 
     # Grant gold (respecting cap)
     if gold > 0:
-        player_row = await db.fetch_one("SELECT gold, coin_purse FROM players WHERE user_id=?", (user_id,))
+        player_row = await db.fetch_one("SELECT gold FROM players WHERE user_id=?", (user_id,))
         if player_row:
             eq_row = await db.fetch_one(
                 "SELECT item_id FROM equipment WHERE user_id=? AND slot='coin_purse'", (user_id,)
