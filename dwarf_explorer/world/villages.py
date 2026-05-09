@@ -20,6 +20,7 @@ _PROTECTED_TILES = {
     "vil_puzzle_board",
     "vil_tree", "vil_fence", "vil_fence_gate",
     "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",
+    "vil_pen_grass",
     "vil_farmland",
     "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
     "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
@@ -231,15 +232,19 @@ def _generate_village_interior(
                 _gx, _gy = rng.choice(_gate_cands)
                 grid[_gy][_gx] = "vil_fence_gate"
 
-            # Animals inside pen (3-6 mixed)
+            # Animals inside pen (3-6 mixed); remaining interior = vil_pen_grass
             _pen_interior = [
                 (_px0 + _dx, _py0 + _dy)
                 for _dx in range(1, PEN_W - 1)
                 for _dy in range(1, PEN_H - 1)
             ]
             rng.shuffle(_pen_interior)
-            for _apos in _pen_interior[:rng.randint(3, 6)]:
+            _animal_count = rng.randint(3, 6)
+            for _apos in _pen_interior[:_animal_count]:
                 grid[_apos[1]][_apos[0]] = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS) - 1)]
+            # Fill remaining interior tiles so paths can't cut through the pen
+            for _apos in _pen_interior[_animal_count:]:
+                grid[_apos[1]][_apos[0]] = "vil_pen_grass"
 
             _farm_pre.update(_all)
             _farm_cluster_placed = True

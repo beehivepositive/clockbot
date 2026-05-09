@@ -89,16 +89,6 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
                     "DELETE FROM equipment WHERE user_id=? AND slot='light'", (user_id,)
                 )
 
-        # Give torch for testing if player doesn't already have one
-        has_torch_equipped = equipped.get("hand_1") == "torch" or equipped.get("hand_2") == "torch"
-        if not has_torch_equipped:
-            torch_row = await db.fetch_one(
-                "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = 'torch'",
-                (user_id,),
-            )
-            if not torch_row:
-                await add_to_inventory(db, user_id, "torch", 1)
-
         cols = row.keys()
         return Player(
             user_id=row["user_id"],
@@ -176,7 +166,6 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
         (user_id, display_name, SPAWN_X, SPAWN_Y,
          PLAYER_START_HP, PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE),
     )
-    await add_to_inventory(db, user_id, "torch", 1)
     return Player(user_id=user_id, display_name=display_name)
 
 

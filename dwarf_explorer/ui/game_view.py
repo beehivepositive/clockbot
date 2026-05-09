@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re as _re
 import random as _random
@@ -842,7 +842,8 @@ class IslandView(discord.ui.View):
 
 class ShopView(discord.ui.View):
     """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
-    def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop"):
+    def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop",
+                 farmer_mode: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -851,12 +852,16 @@ class ShopView(discord.ui.View):
             custom_id=_custom_id(gid, uid, act), row=r,
         ))
 
-        # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv) ────────
-        switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, emoji=switch_emoji,
-            custom_id=_custom_id(gid, uid, "shop_switch"), row=0,
-        ))
+        # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv)
+        #           Disabled spacer in farmer_mode (buy-only, no sell tab)
+        if farmer_mode:
+            _sp("shop_switch", 0)
+        else:
+            switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary, emoji=switch_emoji,
+                custom_id=_custom_id(gid, uid, "shop_switch"), row=0,
+            ))
 
         # ── Row 1: [−] [⬆] [+] ───────────────────────────────────────────────
         self.add_item(discord.ui.Button(
@@ -1853,6 +1858,8 @@ def _compute_context_labels(
         action_label, action_enabled = "🪵 Mill", True
     elif "b_resident" in adj_terrains and not action_enabled:
         action_label, action_enabled = "💬 Chat", True
+    elif "b_pet" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "🐱 Pet", True
     elif "vil_villager" in adj_terrains and not action_enabled:
         action_label, action_enabled = "💬 Talk", True
     elif "vil_guard" in adj_terrains and not action_enabled:
@@ -4700,16 +4707,7 @@ async def handle_interact(
                 content = render_grid(grid, player, "The waterwheel spins steadily, powered by the river current.")
 
             elif htile.terrain == "b_farmer_npc":
-                grid = await _load_house_grid()
-                shop_lines = "\n".join(
-                    f"🌾 {item['name']} {item['price']}🪙"
-                    for item in FARMER_SHOP
-                )
-                _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "farmer_shop"}
-                intro = "Fresh from the farm."
-                content = render_grid(grid, player, intro + "\n" + shop_lines)
-                view = FarmerShopView(guild_id, user_id)
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return await _open_farmer_shop(interaction, guild_id, user_id, player)
                 return
 
 
@@ -5548,6 +5546,38 @@ async def handle_action(
                 )
             return
 
+        if "b_farmer_npc" in adj_terrains:
+            return await _open_farmer_shop(interaction, guild_id, user_id, player)
+
+        if "b_resident" in adj_terrains:
+            import hashlib as _rh
+            _gossip = [
+                "\"It's a fine day, isn't it?\"",
+                "\"I heard the well has been running dry lately.\"",
+                "\"The blacksmith's been forging day and night. Wonder what for.\"",
+                "\"I heard someone found a map fragment near the old shrine.\"",
+                "\"Don't wander off after dark. Strange things move in the forest.\"",
+            ]
+            _gi = int(_rh.md5(f"{player.house_id}{player.house_x}{player.house_y}".encode()).hexdigest(), 16) % len(_gossip)
+            content = render_grid(grid, player, _gossip[_gi])
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        if "b_pet" in adj_terrains:
+            _fish_rows = await db.fetch_all(
+                "SELECT item_id FROM inventory WHERE user_id=? AND item_id IN ('fish','cooked_fish')",
+                (user_id,)
+            )
+            if _fish_rows:
+                await remove_from_inventory(db, user_id, _fish_rows[0]["item_id"], 1)
+                content = render_grid(grid, player, "🐱 The cat sniffs your hand, then rubs its face against you. It purrs.")
+            else:
+                content = render_grid(grid, player, "🐱 The cat eyes you curiously from across the room.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -5582,10 +5612,7 @@ async def handle_action(
             return
 
         if "b_farmer_npc" in adj_terrains:
-            content = render_grid(grid, player, "🌾 **Farmer's Market** — Fresh produce and seeds.")
-            view = FarmerShopView(guild_id, user_id)
-            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-            return
+            return await _open_farmer_shop(interaction, guild_id, user_id, player)
 
         # ── Village farmland / crop / hoe interactions ────────────────────────
         vc2 = 4  # VIEWPORT_CENTER
@@ -7649,8 +7676,9 @@ def _shop_render(state: dict, player_items: list, equipped: dict,
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
+    catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
     return render_shop(
-        SHOP_CATALOG, player_items, sel, view_mode, equipped,
+        catalog, player_items, sel, view_mode, equipped,
         player_gold, inv_rows, inv_cols, ITEM_SELL_PRICES, qty,
     )
 
@@ -7670,6 +7698,22 @@ async def _open_shop(
                                             view=ShopView(guild_id, user_id, "shop"))
 
 
+async def _open_farmer_shop(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
+) -> None:
+    """Open the farmer shop (buy-only, uses FARMER_SHOP catalog)."""
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {"type": "farmer_shop", "selected": 0, "shop_view": "shop",
+                          "qty": 1, "farmer_mode": True}
+    content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "shop",
+                                                          farmer_mode=True))
+
+
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:
     """Return total navigable slots in current shop view."""
     view_mode = state.get("shop_view", "shop")
@@ -7678,7 +7722,8 @@ def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_col
         return max(1, inv_rows * inv_cols)
     else:
         cols = 7
-        cat_len = max(1, len(SHOP_CATALOG))
+        catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+        cat_len = max(1, len(catalog))
         # Round up to full rows so wrapping aligns with the rendered grid
         return ((cat_len + cols - 1) // cols) * cols
 
@@ -7701,7 +7746,8 @@ async def _shop_nav(
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop")))
+                                            view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
+                                                          farmer_mode=bool(new_state.get("farmer_mode"))))
 
 
 async def handle_shop_nav(
@@ -7734,8 +7780,9 @@ async def handle_shop_qty_inc(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if view_mode == "shop" and sel < len(SHOP_CATALOG):
-        max_qty = max(1, player.gold // max(1, SHOP_CATALOG[sel]["price"]))
+    _catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+    if view_mode == "shop" and sel < len(_catalog):
+        max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = (qty % max_qty) + 1
     elif view_mode == "player":
         from dwarf_explorer.game.renderer import _build_slot_map
@@ -7749,7 +7796,8 @@ async def handle_shop_qty_inc(
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, view_mode))
+                                            view=ShopView(guild_id, user_id, view_mode,
+                                                          farmer_mode=bool(state.get("farmer_mode"))))
 
 
 async def handle_shop_qty_dec(
@@ -7764,8 +7812,9 @@ async def handle_shop_qty_dec(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if view_mode == "shop" and sel < len(SHOP_CATALOG):
-        max_qty = max(1, player.gold // max(1, SHOP_CATALOG[sel]["price"]))
+    _catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+    if view_mode == "shop" and sel < len(_catalog):
+        max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = max_qty if qty <= 1 else qty - 1
     elif view_mode == "player":
         from dwarf_explorer.game.renderer import _build_slot_map
@@ -7780,7 +7829,8 @@ async def handle_shop_qty_dec(
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, view_mode))
+                                            view=ShopView(guild_id, user_id, view_mode,
+                                                          farmer_mode=bool(state.get("farmer_mode"))))
 
 
 async def handle_shop_buy(
@@ -7794,18 +7844,22 @@ async def handle_shop_buy(
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop", "qty": 1})
     sel = state.get("selected", 0)
     qty = max(1, state.get("qty", 1))
-    if sel >= len(SHOP_CATALOG):
+    _farmer = bool(state.get("farmer_mode"))
+    _catalog = FARMER_SHOP if _farmer else SHOP_CATALOG
+    if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "shop"))
+                                                view=ShopView(guild_id, user_id, "shop",
+                                                              farmer_mode=_farmer))
         return
-    item = SHOP_CATALOG[sel]
+    item = _catalog[sel]
     total_cost = item["price"] * qty
     if player.gold < total_cost:
         suffix = f"\n*Not enough gold! Need {total_cost}g for ×{qty}.*"
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "shop"))
+                                                view=ShopView(guild_id, user_id, "shop",
+                                                              farmer_mode=_farmer))
         return
     player.gold -= total_cost
     await update_player_stats(db, user_id, gold=player.gold)
@@ -7816,7 +7870,8 @@ async def handle_shop_buy(
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, "shop"))
+                                            view=ShopView(guild_id, user_id, "shop",
+                                                          farmer_mode=_farmer))
 
 
 async def handle_shop_sell(
@@ -7864,13 +7919,20 @@ async def handle_shop_sell(
 async def handle_shop_switch(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Switch between shop catalog and player inventory."""
+    """Switch between shop catalog and player inventory. No-op in farmer_mode."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     player_items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
+    # Farmer shop has no sell tab — treat switch as a no-op
+    if state.get("farmer_mode"):
+        content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=ShopView(guild_id, user_id, "shop",
+                                                              farmer_mode=True))
+        return
     new_view = "player" if state.get("shop_view", "shop") == "shop" else "shop"
     new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}
     _ui_state[user_id] = new_state
@@ -8817,7 +8879,9 @@ async def handle_quest_close(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    if player.in_village:
+    if player.in_house:
+        grid = await _load_house_grid(player, db)
+    elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
     elif player.in_cave:
         from dwarf_explorer.world.caves import load_cave_viewport
