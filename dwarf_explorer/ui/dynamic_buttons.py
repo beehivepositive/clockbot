@@ -114,11 +114,8 @@ _IGNORED_ACTIONS = {
     # Quest spacers (qsp_*)  — caught dynamically below
     # NPC button spacer
     "sp_npc",
-    # Puzzle board spacers / disabled labels
-    "pzsp0a", "pzsp0b", "pzsp0c", "pzsp0d",
-    "pzsp1a", "pzsp1b",
-    "pzsp2a", "pzsp2b", "pzsp2c",
-    "pzsp3a",
+    # Puzzle board info labels (disabled counters)
+    "pzsp0a", "pzsp0b",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 

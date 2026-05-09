@@ -763,9 +763,19 @@ class ShipView(discord.ui.View):
 
 
 class PuzzleView(discord.ui.View):
-    """Sliding-block puzzle UI for the village puzzle board."""
+    """Sliding-block puzzle UI for the village puzzle board.
 
-    def __init__(self, guild_id: int, user_id: int, moves: int, min_moves: int):
+    Layout (3-column D-pad):
+      Row 0: [Moves: N]  [⬆️]  [Optimal: N]
+      Row 1: [⬅️]        [🔄]  [➡️]
+      Row 2: [❌ Close]  [⬇️]  [🎁 Claim]  ← claim only if reward available
+    """
+
+    def __init__(
+        self, guild_id: int, user_id: int,
+        moves: int, min_moves: int,
+        claim_available: bool = False,
+    ):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -775,39 +785,27 @@ class PuzzleView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        def _sp(act, row):
+        def _info(label, act, row):
             return discord.ui.Button(
-                style=discord.ButtonStyle.secondary, label="​", disabled=True,
+                style=discord.ButtonStyle.secondary, label=label, disabled=True,
                 custom_id=_custom_id(gid, uid, act), row=row,
             )
 
-        # Row 0: spacer | ⬆️ | spacer | Moves counter | spacer
-        self.add_item(_sp("pzsp0a", 0))
+        # Row 0: Moves counter | ⬆️ | Optimal hint
+        self.add_item(_info(f"Moves: {moves}", "pzsp0a", 0))
         self.add_item(_btn("⬆️", "puzzle_up", 0))
-        self.add_item(_sp("pzsp0b", 0))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label=f"Moves: {moves}", disabled=True,
-            custom_id=_custom_id(gid, uid, "pzsp0c"), row=0,
-        ))
-        self.add_item(_sp("pzsp0d", 0))
+        self.add_item(_info(f"Optimal: {min_moves}", "pzsp0b", 0))
 
-        # Row 1: ⬅️ | 🔄 Reset | ➡️ | spacer | spacer
+        # Row 1: ⬅️ | 🔄 (emoji only) | ➡️
         self.add_item(_btn("⬅️", "puzzle_left", 1))
-        self.add_item(_btn("🔄 Reset", "puzzle_reset", 1, style=discord.ButtonStyle.secondary))
+        self.add_item(_btn("🔄", "puzzle_reset", 1, style=discord.ButtonStyle.secondary))
         self.add_item(_btn("➡️", "puzzle_right", 1))
-        self.add_item(_sp("pzsp1a", 1))
-        self.add_item(_sp("pzsp1b", 1))
 
-        # Row 2: spacer | ⬇️ | spacer | Optimal hint | ❌ Close
-        self.add_item(_sp("pzsp2a", 2))
+        # Row 2: ❌ Close | ⬇️ | 🎁 Claim (conditional)
+        self.add_item(_btn("❌", "puzzle_close", 2, style=discord.ButtonStyle.danger))
         self.add_item(_btn("⬇️", "puzzle_down", 2))
-        self.add_item(_sp("pzsp2b", 2))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label=f"Optimal: {min_moves}", disabled=True,
-            custom_id=_custom_id(gid, uid, "pzsp2c"), row=2,
-        ))
-        self.add_item(_btn("❌ Close", "puzzle_close", 2, style=discord.ButtonStyle.danger))
+        if claim_available:
+            self.add_item(_btn("🎁", "puzzle_claim", 2, style=discord.ButtonStyle.success))
 
 
 class IslandView(discord.ui.View):
@@ -9440,7 +9438,8 @@ async def _open_puzzle(
     }
     _PUZZLE_STATES[(guild_id, user_id)] = state
     content = _puzzle_content(state)
-    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"])
+    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"],
+                      claim_available=False)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -9493,11 +9492,13 @@ async def handle_puzzle_move(
 
         extra   = f"{reward_line}Solved in **{solved_in}** moves! Here's the next one."
         content = _puzzle_content(state, extra)
-        view    = PuzzleView(guild_id, user_id, moves=0, min_moves=next_puzzle["min_moves"])
+        view    = PuzzleView(guild_id, user_id, moves=0, min_moves=next_puzzle["min_moves"],
+                             claim_available=False)
     else:
         content = _puzzle_content(state)
         view    = PuzzleView(guild_id, user_id,
-                             moves=state["moves"], min_moves=puzzle["min_moves"])
+                             moves=state["moves"], min_moves=puzzle["min_moves"],
+                             claim_available=False)
 
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -9513,7 +9514,8 @@ async def handle_puzzle_reset(
     state["px"], state["py"] = puzzle["start"]
     state["moves"] = 0
     content = _puzzle_content(state)
-    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"])
+    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"],
+                      claim_available=False)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
