@@ -46,6 +46,9 @@ _ITEM_NAMES = {
     "plant_fiber": "Plant Fiber",
     "resin":      "Tree Resin",
     "gold_ore":   "Gold Ore",
+    "wheat":      "Wheat",
+    "carrot":     "Carrots",
+    "potato":     "Potatoes",
 }
 
 # ── Quest templates ────────────────────────────────────────────────────────────
@@ -234,6 +237,124 @@ _BOUNTY_TEMPLATES = [
     },
 ]
 
+# ── Village errand templates (no tools required; complete by visiting a tile) ──
+_VILLAGE_ERRAND_TEMPLATES = [
+    {
+        "target_id": "vil_well",
+        "title": "Fresh Water Run",
+        "descriptions": [
+            "The well in the village square needs checking after last night's storm. Head over and take a look.",
+            "An elder asked someone to inspect the well. A small gesture of goodwill goes a long way.",
+        ],
+        "reward_gold": 8,
+        "reward_xp": 30,
+    },
+    {
+        "target_id": "vil_guard",
+        "title": "Guard Patrol Report",
+        "descriptions": [
+            "The village guard wants to brief any willing adventurers about recent disturbances. Find the guard.",
+            "A posted notice asks travellers to check in with the village guard for a quick debrief.",
+        ],
+        "reward_gold": 10,
+        "reward_xp": 35,
+    },
+    {
+        "target_id": "vil_farmhouse",
+        "title": "Helping the Farmer",
+        "descriptions": [
+            "The farmer is overwhelmed with chores. Stop by the farmhouse and lend a hand for a few minutes.",
+            "Someone's needed at the farmhouse to help move some grain sacks. Shouldn't take long.",
+        ],
+        "reward_gold": 8,
+        "reward_xp": 30,
+    },
+    {
+        "target_id": "vil_tavern",
+        "title": "A Message for the Innkeeper",
+        "descriptions": [
+            "Deliver a quick verbal message to the innkeeper at the tavern. Shouldn't take long.",
+            "The village elder wants the innkeeper to know about the upcoming festival. Pass the word along.",
+        ],
+        "reward_gold": 7,
+        "reward_xp": 25,
+    },
+    {
+        "target_id": "vil_market",
+        "title": "Market Errand",
+        "descriptions": [
+            "Pop over to the market and let the stall holders know about the upcoming inspection.",
+            "The village needs someone to check the market prices are still in order. Quick job.",
+        ],
+        "reward_gold": 7,
+        "reward_xp": 25,
+    },
+]
+
+# ── Easy village fetch templates (no tools; items obtainable in the village) ───
+_VILLAGE_EASY_FETCH_TEMPLATES = [
+    {
+        "target_id": "wheat",
+        "count_range": (2, 3),
+        "title": "Grain for the Baker",
+        "descriptions": [
+            "The baker has run out of wheat. Harvest a little from the village fields.",
+            "A small amount of wheat is needed for tonight's bread. The farm fields should have some.",
+        ],
+        "reward_gold_base": 5,
+        "reward_xp_base": 20,
+        "reward_item": None,
+    },
+    {
+        "target_id": "carrot",
+        "count_range": (2, 3),
+        "title": "Carrots for the Cook",
+        "descriptions": [
+            "The village cook needs a few carrots for tonight's stew. See what you can pull from the garden.",
+            "Carrots are needed in the kitchen. Grow a couple from the farmland and bring them over.",
+        ],
+        "reward_gold_base": 5,
+        "reward_xp_base": 20,
+        "reward_item": None,
+    },
+    {
+        "target_id": "potato",
+        "count_range": (2, 3),
+        "title": "Potatoes for the Cellar",
+        "descriptions": [
+            "The village needs a few potatoes stored before the cold sets in. Bring some from the farm.",
+            "The innkeeper wants to stock up on potatoes. Harvest a small batch from the farmland.",
+        ],
+        "reward_gold_base": 5,
+        "reward_xp_base": 20,
+        "reward_item": None,
+    },
+    {
+        "target_id": "plant_fiber",
+        "count_range": (3, 5),
+        "title": "Fiber for the Weaver",
+        "descriptions": [
+            "The local weaver needs plant fiber for a new batch of cloth. Gather a handful.",
+            "A quick job: collect some plant fiber from the surrounding area for the village weaver.",
+        ],
+        "reward_gold_base": 3,
+        "reward_xp_base": 12,
+        "reward_item": None,
+    },
+    {
+        "target_id": "dry_grass",
+        "count_range": (4, 6),
+        "title": "Thatching Material",
+        "descriptions": [
+            "A roof needs patching. Collect some dry grass from the fields.",
+            "The carpenter needs dry grass for thatching repairs. Easy work for willing hands.",
+        ],
+        "reward_gold_base": 2,
+        "reward_xp_base": 10,
+        "reward_item": None,
+    },
+]
+
 _MERCHANT_DELIVERY_TEMPLATES = [
     {
         "title": "Urgent Parcel",
@@ -386,6 +507,26 @@ def _build_village_fetch(rng: random.Random, tmpl: dict) -> dict:
     }
 
 
+def _build_village_errand(rng: random.Random, tmpl: dict, village_id: int) -> dict:
+    """Build an errand quest that completes by visiting a specific tile in this village."""
+    desc = _pick(rng, tmpl["descriptions"])
+    return {
+        "quest_type": f"Errand: {tmpl['title']}",
+        "title": tmpl["title"],
+        "description": desc,
+        "target_id": tmpl["target_id"],   # village tile type to visit
+        "target_count": 1,
+        "reward_gold": tmpl["reward_gold"],
+        "reward_xp": tmpl["reward_xp"],
+        "reward_item": tmpl.get("reward_item"),
+        "location_x": village_id,          # overloaded: stores village_id
+        "location_y": None,
+        "source_type": "village_npc",
+        "quest_subtype": "errand",
+        "location_type": "village",
+    }
+
+
 def _build_village_investigation(rng: random.Random, tmpl: dict, loc_x: int | None, loc_y: int | None) -> dict:
     desc = _pick(rng, tmpl["descriptions"])
     return {
@@ -494,24 +635,25 @@ async def get_or_refresh_village_pool(db, village_id: int, seed: int) -> list[di
     rng = random.Random(seed ^ village_id ^ int(_now_utc().timestamp() // (POOL_TTL_HOURS * 3600)))
     quests_out: list[dict] = []
 
-    # Pick 1–2 kill/fetch quests + maybe 1 investigation
+    # Guaranteed: 1 errand + 1 easy fetch (no tools required, completable in the village)
+    all_errands     = _VILLAGE_ERRAND_TEMPLATES[:]
+    all_easy_fetch  = _VILLAGE_EASY_FETCH_TEMPLATES[:]
+    rng.shuffle(all_errands)
+    rng.shuffle(all_easy_fetch)
+
+    records: list[dict] = []
+    records.append(_build_village_errand(rng, all_errands[0], village_id))
+    records.append(_build_village_fetch(rng, all_easy_fetch[0]))
+
+    # Pick 1 kill or harder fetch quest to round out the pool
     all_kill   = _VILLAGE_KILL_TEMPLATES[:]
     all_fetch  = _VILLAGE_FETCH_TEMPLATES[:]
     rng.shuffle(all_kill)
     rng.shuffle(all_fetch)
+    inv_chance = rng.random()
 
-    kill_count  = rng.randint(1, 2)
-    fetch_count = rng.randint(1, 2)
-    inv_chance  = rng.random()
-
-    records: list[dict] = []
-    for tmpl in all_kill[:kill_count]:
-        records.append(_build_village_kill(rng, tmpl))
-    for tmpl in all_fetch[:fetch_count]:
-        records.append(_build_village_fetch(rng, tmpl))
-
-    # Investigation quest: need a ruins or shrine tile in the world
-    if inv_chance < 0.5:
+    if inv_chance < 0.4:
+        # Investigation quest if a matching structure exists
         inv_tmpl = _pick(rng, _VILLAGE_INVESTIGATION_TEMPLATES)
         loc = await db.fetch_one(
             "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = ? LIMIT 1",
@@ -519,6 +661,12 @@ async def get_or_refresh_village_pool(db, village_id: int, seed: int) -> list[di
         )
         if loc:
             records.append(_build_village_investigation(rng, inv_tmpl, loc["world_x"], loc["world_y"]))
+        else:
+            records.append(_build_village_kill(rng, all_kill[0]))
+    elif inv_chance < 0.7:
+        records.append(_build_village_kill(rng, all_kill[0]))
+    else:
+        records.append(_build_village_fetch(rng, all_fetch[0]))
 
     # Limit to 3
     rng.shuffle(records)
@@ -813,6 +961,21 @@ async def get_completable_investigation_quests(
     return completable
 
 
+async def get_completable_errand_quests(
+    db, user_id: int, tile_type: str, village_id: int
+) -> list[dict]:
+    """Return errand quests completable by standing on *tile_type* in *village_id*."""
+    rows = await db.fetch_all(
+        "SELECT pq.id AS pq_id, q.title, q.reward_gold, q.reward_xp, q.reward_item, "
+        "q.location_x, q.target_id "
+        "FROM player_quests pq JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id = ? AND pq.status = 'active' "
+        "AND q.quest_subtype = 'errand' AND q.target_id = ?",
+        (user_id, tile_type),
+    )
+    return [dict(r) for r in rows if r["location_x"] == village_id]
+
+
 def render_quest_progress_bar(progress: int, total: int, width: int = 5) -> str:
     """Return a filled/empty bar like ██░░░ 3/5."""
     filled = min(width, round(progress / max(1, total) * width))
@@ -844,6 +1007,20 @@ def render_quest_summary(q: dict) -> str:
             loc_str = f"\nDestination: ({q['location_x']}, {q['location_y']})"
         return (f"**{q['title']}** [Investigation]\n"
                 f"{q['description']}{loc_str}\n"
+                f"Reward: {q['reward_gold']}🪙 +{q['reward_xp']}xp"
+                + (f" +{q['reward_item']}" if q.get("reward_item") else ""))
+    elif subtype == "errand":
+        _tile_labels = {
+            "vil_well":      "the village well ⛲",
+            "vil_guard":     "the village guard 🛡️",
+            "vil_farmhouse": "the farmhouse 🏡",
+            "vil_tavern":    "the tavern 🍺",
+            "vil_market":    "the market 🛒",
+        }
+        dest_label = _tile_labels.get(q.get("target_id", ""), q.get("target_id", "the destination"))
+        return (f"**{q['title']}** [Errand]\n"
+                f"{q['description']}\n"
+                f"Go to: {dest_label}\n"
                 f"Reward: {q['reward_gold']}🪙 +{q['reward_xp']}xp"
                 + (f" +{q['reward_item']}" if q.get("reward_item") else ""))
     elif subtype == "delivery":

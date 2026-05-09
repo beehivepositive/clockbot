@@ -2233,8 +2233,29 @@ async def _move_steps(
                 db, user_id, True, player.village_id,
                 nx, ny, player.village_wx, player.village_wy,
             )
+
+        # ── Errand quest completion: check current tile ──────────────────────
+        cur_vtile = await load_village_single_tile(
+            player.village_id, player.village_x, player.village_y, db
+        )
+        errand_msg = ""
+        if cur_vtile.terrain:
+            from dwarf_explorer.game.quests import get_completable_errand_quests, complete_quest
+            from dwarf_explorer.database.repositories import give_quest_reward
+            errand_qs = await get_completable_errand_quests(
+                db, user_id, cur_vtile.terrain, player.village_id
+            )
+            if errand_qs:
+                q = errand_qs[0]
+                reward = await complete_quest(db, user_id, q["pq_id"])
+                if reward:
+                    reward_str = await give_quest_reward(
+                        db, user_id, reward["gold"], reward["xp"], reward.get("item")
+                    )
+                    errand_msg = f"📜 Quest complete: **{q['title']}**! {reward_str}"
+
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, errand_msg), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_island:
         from dwarf_explorer.config import ISLAND_WALKABLE
