@@ -391,11 +391,14 @@ def render_arena(arena: dict, player) -> str:
 
     echo_deposits: set[tuple[int, int]] = arena.get("echo_deposits", set())
 
+    # Use ship emoji for player in naval combat
+    player_icon = ENTITY_EMOJI.get("player_boat", "⛵") if is_naval else ENTITY_EMOJI["player"]
+
     for row_y in range(ARENA_SIZE):
         cells: list[str] = []
         for col_x in range(ARENA_SIZE):
             if col_x == px and row_y == py:
-                cells.append(ENTITY_EMOJI["player"])
+                cells.append(player_icon)
             elif col_x == ex and row_y == ey:
                 cells.append(enemy_emoji)
             elif (col_x, row_y) in echo_deposits:

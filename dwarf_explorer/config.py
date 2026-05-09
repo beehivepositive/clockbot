@@ -167,6 +167,8 @@ ITEM_EMOJI = {
     "healing_herb":         "\U0001F33F",           # 🌿
     "plank":            "🪵",       # 🪵  wooden plank
     "canoe":            "🛶",       # 🛶  canoe
+    "hammer":           "🔨",       # 🔨  hammer (ship repair)
+    "nail":             "📌",       # 📌  nail (ship repair)
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -373,6 +375,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("enchanted_gem_defense", 1),  ("gold_ring", 1)}): {"result": "ring_of_defense",  "qty": 1, "label": "🛡️ Ring of Defense"},
     frozenset({("enchanted_gem_sight", 1),    ("gold_ring", 1)}): {"result": "ring_of_sight",    "qty": 1, "label": "👁️ Ring of Sight"},
     frozenset({("enchanted_gem_luck", 1),     ("gold_ring", 1)}): {"result": "ring_of_luck",     "qty": 1, "label": "🍀 Ring of Luck"},
+    # Ship repair materials
+    frozenset({("iron_ingot", 1)}):                              {"result": "nail",            "qty": 18, "label": "📌 Forge Nails (×18)"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -408,11 +412,13 @@ SHIP_EMOJI = {
     "ship_bed":              "\U0001F6CF\uFE0F",# 🛏️ bed
     "ship_table":            "\U0001FA91",      # 🪑 chair/table
     "ship_stairs":           "\U0001FA9C",      # 🪜 stairs
+    "ship_hull_damage":      "\U0001F573️",# 🕳️ hull breach (overridable with :wood_floor_damaged:)
 }
 
 SHIP_WALKABLE = {
     "ship_deck", "ship_helm", "ship_door",
     "ship_chest_personal", "ship_chest_cargo", "ship_stairs",
+    "ship_hull_damage",
 }
 
 # --- Cave System ---
@@ -710,6 +716,14 @@ SHOP_CATALOG = [
         "equip_slot": "coin_purse",
         "description": "Increases coin capacity to 1000 coins.",
     },
+    {
+        "id": "hammer",
+        "name": "Hammer",
+        "emoji": "\U0001F528",
+        "price": 80,
+        "equip_slot": "hand",
+        "description": "Repair ship hull damage tiles. Requires nails + planks.",
+    },
 ]
 
 # Equipment slots
@@ -754,6 +768,7 @@ ITEM_EQUIP_SLOTS = {
     "ring_of_luck":        "accessory",
     "flint_and_steel":     "hand",
     "hoe":                 "hand",
+    "hammer":              "hand",
 }
 
 # Items that occupy both hand slots
@@ -1027,9 +1042,15 @@ def apply_custom_emojis(guild_emojis: list) -> None:
             ITEM_EMOJI[item_key] = cache[emoji_name]
             _renderer._ITEM_SLOT_EMOJI[item_key] = cache[emoji_name]
 
-    # Island chest uses the same custom :chest: emoji
+    # Island tiles use custom emojis when available
     if "chest" in cache:
         _renderer._ISLAND_TERRAIN_EMOJI["island_chest"] = cache["chest"]
+        _renderer._ISLAND_TERRAIN_EMOJI["vol_chest"] = cache["chest"]
+    if "grass" in cache:
+        _renderer._ISLAND_TERRAIN_EMOJI["island_grass"] = cache["grass"]
+    # Ship hull damage tile → :wood_floor_damaged:
+    if "wood_floor_damaged" in cache:
+        SHIP_EMOJI["ship_hull_damage"] = cache["wood_floor_damaged"]
 
     # Iron ore deposit uses the same :iron_ore: custom emoji
     if "iron_ore" in cache:

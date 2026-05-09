@@ -617,11 +617,11 @@ async def save_combat_state(db: Database, user_id: int, player) -> None:
     await db.execute(
         "UPDATE players SET in_combat=?, combat_enemy_type=?, combat_enemy_hp=?,"
         " combat_enemy_x=?, combat_enemy_y=?, combat_player_x=?, combat_player_y=?,"
-        " combat_moves_left=?, hp=? WHERE user_id=?",
+        " combat_moves_left=?, hp=?, ship_hp=? WHERE user_id=?",
         (int(player.in_combat), player.combat_enemy_type, player.combat_enemy_hp,
          player.combat_enemy_x, player.combat_enemy_y,
          player.combat_player_x, player.combat_player_y,
-         player.combat_moves_left, player.hp, user_id),
+         player.combat_moves_left, player.hp, player.ship_hp, user_id),
     )
 
 

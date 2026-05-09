@@ -29,13 +29,14 @@ def get_ocean_tile(ox: int, oy: int, seed: int) -> str:
     """Return terrain tile for ocean coordinates.
 
     Uses elevation noise for shallow vs deep water only.
-    Islands are handled as structure overlays (see get_ocean_structure).
+    Shallow water appears near islands; the vast majority of the ocean is deep water.
     """
-    import random as _rng
     e = fbm(ox, oy, seed + _OCEAN_ELEV_OFFSET)
     depth_bias = (oy / OCEAN_SIZE) * 0.40
     adjusted_e = e - depth_bias
-    if adjusted_e > 0.10:
+    # Raise threshold significantly — only very high FBM values become shallow
+    # (near-island shoals). Roughly 5-10% of tiles will be shallow.
+    if adjusted_e > 0.55:
         return "shallow_water"
     return "deep_water"
 

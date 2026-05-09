@@ -168,6 +168,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
             _torch_emoji = ITEM_EMOJI.get("torch", "\U0001F526")
             dark_tag = "  ⚫ Darkness" if not torch_on else f"  {_torch_emoji}"
         pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y}){dark_tag}"
+    elif getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
+        sprint_tag = " \U0001F3C3" if player.sprinting else ""
+        pos = f"\U0001F30A High Seas ({player.ocean_x},{player.ocean_y}){sprint_tag}"
     else:
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
         pos = f"\U0001F4CD Wilderness ({player.world_x},{player.world_y}){sprint_tag}"
@@ -652,7 +655,7 @@ _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
     "vol_lava":       "🔥",   # impassable lava flow
     "vol_crater":     "🌑",   # impassable crater
     "vol_lava_bridge":"🌉",   # stone bridge over lava
-    "vol_cave":       "⛰️",  # cave entrance
+    "vol_cave":       "🕳️",  # cave entrance (same as wilderness cave hole)
     "vol_dock":       "⚓",   # dock back to sea
     "vol_outpost":    "🏚️",  # trading post
     "vol_chest":      "💰",   # treasure chest

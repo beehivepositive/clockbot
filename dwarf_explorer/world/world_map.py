@@ -36,8 +36,9 @@ _OCEAN_LEGEND_ENTRIES = [
     ("shallow_water", "Shallow Water"),
 ]
 _OCEAN_LEGEND_ICON_ENTRIES = [
-    ("island",    "Island",    (200, 170, 80), "filled_diamond"),
-    ("shipwreck", "Shipwreck", (100, 80,  50), "outline_square"),
+    ("island",         "Island",         (200, 170, 80), "filled_diamond"),
+    ("volcano_island", "Volcano Island", (220, 80,  20), "filled_diamond"),
+    ("shipwreck",      "Shipwreck",      (100, 80,  50), "outline_square"),
 ]
 
 _LEGEND_SWATCH = 12
@@ -430,6 +431,7 @@ def _composite_ocean_sync(
     ocean_quest_markers: list | None = None,
     has_wilderness_quests: bool = False,
     coast_edge: int = 0,
+    player_avatar: bytes | None = None,
 ) -> io.BytesIO:
     """coast_edge is the same value as for the wilderness map (0=south etc.).
     The exit from the ocean is on the *opposite* side of the ocean grid:
@@ -472,11 +474,15 @@ def _composite_ocean_sync(
             _draw_icon(draw, 14, mid, "filled_diamond", _dc)
             _draw_icon(draw, 5,  mid, "arrow_left", _ec)
 
-    # Current player (red)
+    # Current player — avatar (20 px) or red dot fallback
     cx_p = player_ox * scale + scale // 2
     cy_p = player_oy * scale + scale // 2
-    draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3],
-                 fill=(255, 0, 0), outline=(255, 255, 255))
+    if player_avatar:
+        img = _paste_avatar(img, player_avatar, cx_p, cy_p, 20, (255, 50, 50))
+        draw = ImageDraw.Draw(img)
+    else:
+        draw.ellipse([cx_p - 3, cy_p - 3, cx_p + 3, cy_p + 3],
+                     fill=(255, 0, 0), outline=(255, 255, 255))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -530,11 +536,13 @@ async def generate_ocean_map(
     player_ox: int, player_oy: int,
     ocean_quest_markers: list | None = None,
     has_wilderness_quests: bool = False,
+    player_avatar: bytes | None = None,
 ) -> io.BytesIO:
     """Return a BytesIO PNG of the ocean map with player dot composited.
 
     ocean_quest_markers: [(ocean_x, ocean_y, target_id)] — orange diamonds.
     has_wilderness_quests: if True, draws a green arrow at the north exit edge.
+    player_avatar: PNG/JPEG bytes for the current player's profile picture.
     """
     if not _ocean_cache_valid(guild_id, seed):
         base_png = await asyncio.to_thread(_generate_ocean_base_map_sync, seed)
@@ -548,4 +556,5 @@ async def generate_ocean_map(
     return await asyncio.to_thread(
         _composite_ocean_sync, base_png, player_ox, player_oy,
         ocean_quest_markers or [], has_wilderness_quests, coast_edge,
+        player_avatar,
     )

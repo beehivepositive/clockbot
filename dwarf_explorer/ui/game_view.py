@@ -718,8 +718,7 @@ class ShipView(discord.ui.View):
 
     def __init__(self, guild_id: int, user_id: int,
                  room: str = "helm",
-                 ship_hp: int = 100, ship_max_hp: int = 100,
-                 has_repair_logs: bool = False):
+                 ship_hp: int = 100, ship_max_hp: int = 100):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -753,12 +752,8 @@ class ShipView(discord.ui.View):
             self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
 
         else:  # lower_deck
-            # Row 1: Cargo chest | Repair
+            # Row 1: Cargo chest
             self.add_item(_btn("📦 Cargo",  "ship_chest_cargo_open",  1, discord.ButtonStyle.primary))
-            repair_disabled = (ship_hp >= ship_max_hp) or not has_repair_logs
-            repair_label = "🔨 Repair (3 🪵)" if not repair_disabled else "🔨 Repair"
-            self.add_item(_btn(repair_label, "ship_repair", 1,
-                               discord.ButtonStyle.success, disabled=repair_disabled))
             # Row 2: Return to helm
             self.add_item(_btn("🔙 Return to Helm", "ship_room_helm", 2, discord.ButtonStyle.secondary))
 
@@ -1161,7 +1156,7 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↗", "ocean_upright",  1))
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝 Hook", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
         self.add_item(_btn("➡️", "ocean_right",  2))
         # Row 3: ↙ ↓ ↘
         self.add_item(_btn("↙", "ocean_downleft",  3))
@@ -1206,7 +1201,7 @@ class OceanView(discord.ui.View):
 
         # Row 2: ← 🪝 →
         self.add_item(_btn("⬅️", "ocean_left",   2))
-        self.add_item(_btn("🪝 Hook", "boat_grapple", 2, discord.ButtonStyle.secondary))
+        self.add_item(_btn("🪝", "boat_grapple", 2, discord.ButtonStyle.secondary))
         self.add_item(_btn("➡️", "ocean_right",  2))
 
         # Row 3: ↙ ↓ ↘
@@ -1695,6 +1690,12 @@ def _compute_context_labels(
             elif t == "ship_chest_cargo":
                 from dwarf_explorer.config import SHIP_EMOJI
                 center_label, center_enabled = SHIP_EMOJI.get("ship_chest_cargo", "📦"), True
+            elif t == "ship_hull_damage":
+                hand_items = {player.hand_1, player.hand_2} - {None}
+                if "hammer" in hand_items:
+                    center_label, center_enabled = "🔨 Repair", True
+                else:
+                    center_label, center_enabled = "🕳️ Damage", False
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Island tile context
@@ -1944,7 +1945,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
     # When player is in ship, use ship tile view (GameView with ship grid)
     if player.in_ship:
         if grid is None:
-            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
         # Fall through to GameView builder below (skip other mode checks)
     elif player.in_island:
         pass  # Fall through to GameView; caller must supply grid
@@ -2008,7 +2009,7 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
 
 def _ship_game_view(guild_id: int, user_id: int, player: Player) -> discord.ui.View:
     """Build a GameView for ship interior with contextual center button."""
-    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
     return _game_view(guild_id, user_id, player, grid=grid)
 
 
@@ -2202,7 +2203,7 @@ async def _move_steps(
         target_tile = target_grid[4][4]
         ok, msg = can_move_ship(target_tile)
         if not ok:
-            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
             return render_grid(grid, player, f"\U0001F6AB {msg}"), \
                    _game_view(guild_id, user_id, player, grid=grid)
         player.ship_x, player.ship_y = nx, ny
@@ -3067,7 +3068,7 @@ async def handle_sprint(
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     elif player.in_ship:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
         view = _ship_game_view(guild_id, user_id, player)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
@@ -3890,11 +3891,11 @@ async def handle_ship_move(
     nx, ny = player.ship_x + dx, player.ship_y + dy
 
     # Load target tile and check walkability
-    target_grid = load_ship_viewport(player.ship_room, nx, ny)
+    target_grid = load_ship_viewport(player.ship_room, nx, ny, player=player)
     target_tile = target_grid[4][4]  # center = new position
     ok, msg = can_move_ship(target_tile)
     if not ok:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
         content = render_grid(grid, player, f"\U0001F6AB {msg}")
         view = _ship_game_view(guild_id, user_id, player)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -3908,7 +3909,7 @@ async def handle_ship_move(
         player.ship_x, player.ship_y = new_x, new_y
         await update_player_ship_state(db, user_id, True, new_room, ship_x=new_x, ship_y=new_y)
         room_names = {"helm": "the helm deck", "quarters": "the captain's quarters", "lower_deck": "the lower deck"}
-        grid = load_ship_viewport(new_room, new_x, new_y)
+        grid = load_ship_viewport(new_room, new_x, new_y, player=player)
         content = render_grid(grid, player, f"\U0001F6AA You enter {room_names.get(new_room, new_room)}.")
         view = _ship_game_view(guild_id, user_id, player)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -3917,7 +3918,7 @@ async def handle_ship_move(
     # Normal move
     player.ship_x, player.ship_y = nx, ny
     await update_player_ship_state(db, user_id, True, player.ship_room, ship_x=nx, ship_y=ny)
-    grid = load_ship_viewport(player.ship_room, nx, ny)
+    grid = load_ship_viewport(player.ship_room, nx, ny, player=player)
     content = render_grid(grid, player, "")
     view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -3937,20 +3938,25 @@ async def handle_ship_room(
     player.ship_room = room
     await update_player_ship_state(db, user_id, True, room)
 
-    # Repair logs come from the cargo chest, not player inventory
-    cargo = await get_ship_cargo_items(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in cargo)
-    content = render_ship_room(player)
-    view = ShipView(guild_id, user_id, room=room,
-                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                    has_repair_logs=has_logs)
+    if room == "helm":
+        # Switch to grid-based GameView for the helm so hull damage holes are visible
+        from dwarf_explorer.world.ships import HELM_SPAWN
+        player.ship_x, player.ship_y = HELM_SPAWN
+        await update_player_ship_state(db, user_id, True, "helm", ship_x=HELM_SPAWN[0], ship_y=HELM_SPAWN[1])
+        grid = load_ship_viewport("helm", player.ship_x, player.ship_y, player=player)
+        content = render_grid(grid, player, "⚓ Helm deck. Walk to 🕳️ holes and press Interact (hammer equipped) to repair them.")
+        view = _ship_game_view(guild_id, user_id, player)
+    else:
+        content = render_ship_room(player)
+        view = ShipView(guild_id, user_id, room=room,
+                        ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_repair(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Repair ship hull using 3 logs from the cargo chest → +20 HP."""
+    """Legacy repair action — redirects player to the new hull damage repair mechanic."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
@@ -3958,38 +3964,16 @@ async def handle_ship_repair(
         await interaction.response.defer()
         return
 
-    if player.ship_hp >= player.ship_max_hp:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
-        content = render_grid(grid, player, "✅ Hull is already at full integrity.")
-        view = _ship_game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
-
-    # Logs come from the ship cargo chest, not player inventory
-    cargo = await get_ship_cargo_items(db, user_id)
-    log_row = next((it for it in cargo if it["item_id"] == "log"), None)
-
-    if not log_row or log_row["quantity"] < 3:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
-        content = render_grid(grid, player, "❌ You need at least 3 logs in the cargo chest to repair.")
-        view = _ship_game_view(guild_id, user_id, player)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
-
-    await ship_cargo_consume(db, user_id, "log", 3)
-    heal = min(20, player.ship_max_hp - player.ship_hp)
-    player.ship_hp = min(player.ship_max_hp, player.ship_hp + heal)
-    await update_player_ship_hp(db, user_id, player.ship_hp)
-
-    # Rebuild has_repair_logs from updated cargo
-    cargo = await get_ship_cargo_items(db, user_id)
-    has_logs = any(it["item_id"] == "log" and it["quantity"] >= 3 for it in cargo)
-    content = render_ship_room(player)
-    view = ShipView(guild_id, user_id, room=player.ship_room,
-                    ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp,
-                    has_repair_logs=has_logs)
-    # Append message to content
-    content += f"\n\n🔨 Hull repaired! +{heal} HP. ({player.ship_hp}/{player.ship_max_hp})"
+    # Send player to helm deck grid view so they can find and repair hull damage holes
+    from dwarf_explorer.world.ships import HELM_SPAWN
+    player.ship_room = "helm"
+    player.ship_x, player.ship_y = HELM_SPAWN
+    await update_player_ship_state(db, user_id, True, "helm", ship_x=HELM_SPAWN[0], ship_y=HELM_SPAWN[1])
+    grid = load_ship_viewport("helm", player.ship_x, player.ship_y, player=player)
+    msg = ("🔨 Repair holes in the helm deck: equip a **hammer**, carry **nails** and **planks**, "
+           "walk to a 🕳️ hull damage tile, and press Interact to patch it (+5 HP per hole, costs 2 nails + 1 plank).")
+    content = render_grid(grid, player, msg)
+    view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -4115,7 +4099,7 @@ async def handle_ship_chest_close(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)
+    grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
     content = render_grid(grid, player, "\U0001F4E6 You close the chest.")
     view = _ship_game_view(guild_id, user_id, player)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -4471,7 +4455,7 @@ async def handle_interact(
 
     # Ship interior tile interactions
     if player.in_ship:
-        center_tile_type = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y)[4][4].terrain
+        center_tile_type = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)[4][4].terrain
         if center_tile_type == "ship_helm":
             await handle_ship_leave(interaction, guild_id, user_id)
             return
@@ -4480,6 +4464,40 @@ async def handle_interact(
             return
         elif center_tile_type == "ship_chest_cargo":
             await handle_ship_chest_open_cargo(interaction, guild_id, user_id)
+            return
+        elif center_tile_type == "ship_hull_damage":
+            # Repair hull damage: requires hammer equipped + 2 nails + 1 plank in inventory
+            hand_items = {player.hand_1, player.hand_2} - {None}
+            if "hammer" not in hand_items:
+                grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
+                content = render_grid(grid, player, "🔨 You need a **hammer** equipped to repair hull damage.")
+                view = _ship_game_view(guild_id, user_id, player)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            inv = await get_inventory(db, user_id)
+            nail_count = sum(r["quantity"] for r in inv if r["item_id"] == "nail")
+            plank_count = sum(r["quantity"] for r in inv if r["item_id"] == "plank")
+            if nail_count < 2 or plank_count < 1:
+                need = []
+                if nail_count < 2:
+                    need.append(f"{2 - nail_count} more nail(s)")
+                if plank_count < 1:
+                    need.append("1 plank")
+                grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
+                content = render_grid(grid, player, f"🔨 Need {' and '.join(need)} to patch this hole.")
+                view = _ship_game_view(guild_id, user_id, player)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            # Consume materials and heal 5 HP
+            await remove_from_inventory(db, user_id, "nail", 2)
+            await remove_from_inventory(db, user_id, "plank", 1)
+            player.ship_hp = min(player.ship_max_hp, player.ship_hp + 5)
+            await update_player_stats(db, user_id, ship_hp=player.ship_hp)
+            grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
+            content = render_grid(grid, player,
+                f"🔨 Hull patched! Ship HP: {player.ship_hp}/{player.ship_max_hp}. Used 2 nails + 1 plank.")
+            view = _ship_game_view(guild_id, user_id, player)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         else:
             await interaction.response.defer()
@@ -4970,7 +4988,9 @@ async def handle_interact(
                 db, player.cave_id, player.cave_x, player.cave_y, cave_tile.terrain
             )
             if is_new:
-                await populate_chest_loot(chest_id, cave_tile.terrain, db)
+                # lava_mode=True for lava caves → sea-themed bonus loot
+                await populate_chest_loot(chest_id, cave_tile.terrain, db,
+                                          lava_mode=getattr(player, "cave_lit", False))
             chest_inv = await get_chest_items(db, chest_id)
             inv_rows, inv_cols = _inv_capacity(player)
             _ui_state[user_id] = {
@@ -5096,6 +5116,40 @@ async def handle_interact(
                     item_id, qty = "iron_ingot", loot_rng.randint(3, 8)
                 else:
                     item_id, qty = "obsidian", loot_rng.randint(1, 3)
+                await add_to_inventory(db, user_id, item_id, qty)
+                label = item_id.replace("_", " ").title()
+                content = render_grid(grid, player,
+                                      f"💰 You pry open the chest — **{label} ×{qty}**!")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif current_terrain == "island_chest":
+            # Regular island chest — one-time loot per island tile
+            already = await db.fetch_one(
+                "SELECT 1 FROM island_loots WHERE ocean_x=? AND ocean_y=?",
+                (ox * 10000 + px, oy * 10000 + py),
+            ) is not None
+            grid = load_island_viewport(tiles, px, py)
+            if already:
+                content = render_grid(grid, player, "💰 This chest has already been looted.")
+            else:
+                await db.execute(
+                    "INSERT OR IGNORE INTO island_loots (ocean_x, ocean_y) VALUES (?, ?)",
+                    (ox * 10000 + px, oy * 10000 + py),
+                )
+                loot_rng = _random.Random(hash((ox, oy, seed, "island_chest", px, py)))
+                roll = loot_rng.random()
+                if roll < 0.35:
+                    item_id, qty = "gold_coin", loot_rng.randint(20, 80)
+                elif roll < 0.60:
+                    item_id, qty = "gem", loot_rng.randint(1, 3)
+                elif roll < 0.75:
+                    item_id, qty = "map_fragment", 1
+                elif roll < 0.88:
+                    item_id, qty = "iron_ingot", loot_rng.randint(2, 5)
+                else:
+                    item_id, qty = "log", loot_rng.randint(3, 8)
                 await add_to_inventory(db, user_id, item_id, qty)
                 label = item_id.replace("_", " ").title()
                 content = render_grid(grid, player,
@@ -6645,8 +6699,8 @@ async def handle_inventory(
     prev_state = _ui_state.get(user_id, {})
     prev_arena = prev_state.get("arena")
 
-    # In combat + on ship → show ship cargo, but preserve prev_arena so combat restores
-    if player.in_combat and player.in_ship:
+    # On ship (in or out of combat) → show ship cargo chest instead of personal inventory
+    if player.in_ship:
         chest_items = await get_ship_cargo_items(db, user_id)
         player_items = await get_inventory(db, user_id)
         inv_rows, inv_cols = _inv_capacity(player)
@@ -8807,12 +8861,22 @@ async def handle_map(
     if player.in_high_seas:
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
+        # Fetch player avatar for ocean map
+        ocean_avatar: bytes | None = None
+        try:
+            member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
+            asset = member.guild_avatar or member.avatar
+            if asset:
+                ocean_avatar = await asset.with_size(32).read()
+        except Exception:
+            pass
         from dwarf_explorer.world.world_map import generate_ocean_map
         buf = await generate_ocean_map(
             seed, guild_id,
             player.ocean_x, player.ocean_y,
             ocean_quest_markers=ocean_qmarks,
             has_wilderness_quests=bool(overworld_qmarks),
+            player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
         await interaction.followup.send(file=file, ephemeral=True)

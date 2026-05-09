@@ -251,14 +251,10 @@ def _generate_cave_interior(
         else:
             rock_positions.add(pos)
 
-    # --- Assign chest sizes (60% small, 30% medium, 10% large) ---
+    # --- All chests are small (cave_chest) ---
     chest_types: dict[tuple[int, int], str] = {}
     for pos in chest_positions:
-        chest_type = rng.choices(
-            ["cave_chest", "cave_chest_medium", "cave_chest_large"],
-            weights=[60, 30, 10], k=1
-        )[0]
-        chest_types[pos] = chest_type
+        chest_types[pos] = "cave_chest"
 
     # --- Stairdown entrances (if not at max depth) ---
     stairdown_positions: set[tuple[int, int]] = set()
@@ -624,27 +620,38 @@ async def get_or_create_cave(
     return row["cave_id"], row["local_x"], row["local_y"]
 
 
-async def populate_chest_loot(chest_id: int, chest_type: str, db) -> None:
-    """Populate a freshly-created chest with random loot."""
+async def populate_chest_loot(chest_id: int, chest_type: str, db, lava_mode: bool = False) -> None:
+    """Populate a freshly-created chest with random loot.
+
+    lava_mode=True: use sea-themed bonus loot in addition to standard loot
+    (cannonballs, seaweed, extra gold — for lava cave chests on volcano islands).
+    """
     from dwarf_explorer.database.repositories import add_to_chest
     rng = random.Random(chest_id * 7331)
     weights = [t[0] for t in CHEST_LOOT]
 
-    # More loot tiers for larger chests
-    num_tiers = {"cave_chest": 1, "cave_chest_medium": 2, "cave_chest_large": 3}.get(chest_type, 1)
-    for _ in range(num_tiers):
-        tier = rng.choices(CHEST_LOOT, weights=weights, k=1)[0]
-        _, gold_min, gold_max, _xp_min, _xp_max, item = tier
-        gold = rng.randint(gold_min, gold_max)
-        if gold > 0:
-            await add_to_chest(db, chest_id, "gold_coin", gold)
-        if item:
-            await add_to_chest(db, chest_id, item, 1)
-    # Always add some base items
-    if chest_type in ("cave_chest_medium", "cave_chest_large"):
-        await add_to_chest(db, chest_id, "flint", rng.randint(1, 3))
-    if chest_type == "cave_chest_large":
-        await add_to_chest(db, chest_id, "gem", 1)
+    # All chests are small (1 loot tier)
+    tier = rng.choices(CHEST_LOOT, weights=weights, k=1)[0]
+    _, gold_min, gold_max, _xp_min, _xp_max, item = tier
+    gold = rng.randint(gold_min, gold_max)
+    if gold > 0:
+        await add_to_chest(db, chest_id, "gold_coin", gold)
+    if item:
+        await add_to_chest(db, chest_id, item, 1)
+
+    # Lava cave sea-themed bonus loot
+    if lava_mode:
+        sea_roll = rng.random()
+        if sea_roll < 0.40:
+            await add_to_chest(db, chest_id, "cannonball", rng.randint(1, 4))
+        elif sea_roll < 0.65:
+            await add_to_chest(db, chest_id, "seaweed", rng.randint(2, 6))
+        elif sea_roll < 0.80:
+            await add_to_chest(db, chest_id, "iron_ingot", rng.randint(2, 5))
+        elif sea_roll < 0.90:
+            await add_to_chest(db, chest_id, "gem", rng.randint(1, 2))
+        # Extra gold for the pirate vibe
+        await add_to_chest(db, chest_id, "gold_coin", rng.randint(20, 60))
 
 
 async def _restore_regenerated_rocks(cave_id: int, db) -> None:

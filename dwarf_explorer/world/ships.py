@@ -205,8 +205,44 @@ def get_room_tile(room: str, x: int, y: int) -> str:
     return tiles.get((x, y), _BG)
 
 
-def load_ship_viewport(room: str, ship_x: int, ship_y: int) -> list[list[TileData]]:
-    """Return 9×9 viewport (list of lists of TileData) centered on (ship_x, ship_y)."""
+def get_hull_damage_positions(ship_hp: int, ship_max_hp: int) -> list[tuple[int, int]]:
+    """Return a list of (x, y) deck positions that have hull damage holes.
+
+    One hole appears per 5 HP missing, placed on the open helm deck.
+    """
+    damage = max(0, ship_max_hp - ship_hp)
+    num_holes = damage // 5
+    if num_holes <= 0:
+        return []
+    # Spread holes across the open mid-deck (y 5–9 on the helm, centre area)
+    _HOLE_SPOTS = [
+        (2, 5), (6, 5), (1, 7), (7, 7), (4, 8),
+        (3, 6), (5, 6), (2, 9), (6, 9), (4, 6),
+        (1, 5), (7, 5), (3, 9), (5, 9), (4, 5),
+        (2, 7), (6, 7), (1, 9), (7, 9), (3, 8),
+    ]
+    return _HOLE_SPOTS[:num_holes]
+
+
+def load_ship_viewport(
+    room: str, ship_x: int, ship_y: int,
+    ship_hp: int = 0, ship_max_hp: int = 0,
+    player=None,
+) -> list[list[TileData]]:
+    """Return 9×9 viewport (list of lists of TileData) centered on (ship_x, ship_y).
+
+    Hull damage tiles are overlaid on deck positions based on missing HP.
+    """
+    # Allow passing a player object for convenience
+    if player is not None:
+        ship_hp = getattr(player, "ship_hp", ship_hp)
+        ship_max_hp = getattr(player, "ship_max_hp", ship_max_hp)
+
+    # Compute hull damage overlay (only shown on helm deck)
+    damage_set: set[tuple[int, int]] = set()
+    if room == "helm" and ship_max_hp > 0:
+        damage_set = set(get_hull_damage_positions(ship_hp, ship_max_hp))
+
     grid: list[list[TileData]] = []
     half = 4  # 9//2
     for row_offset in range(-half, half + 1):
@@ -215,6 +251,9 @@ def load_ship_viewport(room: str, ship_x: int, ship_y: int) -> list[list[TileDat
             tx = ship_x + col_offset
             ty = ship_y + row_offset
             tile_type = get_room_tile(room, tx, ty)
+            # Overlay hull damage if this tile is a deck tile in the damage set
+            if tile_type == "ship_deck" and (tx, ty) in damage_set:
+                tile_type = "ship_hull_damage"
             row.append(TileData(terrain=tile_type))
         grid.append(row)
     return grid
