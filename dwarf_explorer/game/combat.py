@@ -336,6 +336,37 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = Fa
     return " ".join(msgs)
 
 
+# ── Bat swarm ─────────────────────────────────────────────────────────────────
+
+def maybe_next_bat(arena: dict, player, rng: random.Random) -> bool:
+    """If there are more bats in the swarm, reset HP and reposition for the next one.
+
+    Returns True if another bat was spawned (combat continues), False if swarm is done.
+    """
+    remaining = arena.get("bat_remaining", 1)
+    if remaining <= 1:
+        return False  # last bat — real victory
+
+    arena["bat_remaining"] = remaining - 1
+    bat_hp = ENEMY_STATS["cave_bat"][0]
+    player.combat_enemy_hp = bat_hp
+    # Reposition the next bat 2-3 tiles from the player
+    px, py = player.combat_player_x, player.combat_player_y
+    for _ in range(40):
+        angle = rng.uniform(0, 2 * math.pi)
+        dist = rng.uniform(2.0, 3.5)
+        cx = max(1, min(ARENA_SIZE - 2, int(round(px + math.cos(angle) * dist))))
+        cy = max(1, min(ARENA_SIZE - 2, int(round(py + math.sin(angle) * dist))))
+        if _passable(arena["grid"], cx, cy) and (cx, cy) != (px, py):
+            player.combat_enemy_x = cx
+            player.combat_enemy_y = cy
+            break
+    arena["combat_log"].append(
+        f"🦇 Another bat swoops in! ({arena['bat_remaining']} remaining)"
+    )
+    return True
+
+
 # ── Victory / death ───────────────────────────────────────────────────────────
 
 def apply_victory(player) -> str:
@@ -422,7 +453,9 @@ def render_arena(arena: dict, player) -> str:
         hp_bar = f"🛳️ {player.ship_hp}/{player.ship_max_hp}"
     else:
         hp_bar = f"❤️ {player.hp}/{player.max_hp}"
-    enemy_bar = f"💀 {name} {player.combat_enemy_hp}/{enemy_max_hp}hp"
+    bat_swarm = arena.get("bat_remaining", 1)
+    swarm_suffix = f" ×{bat_swarm}" if player.combat_enemy_type == "cave_bat" and bat_swarm > 1 else ""
+    enemy_bar = f"💀 {name}{swarm_suffix} {player.combat_enemy_hp}/{enemy_max_hp}hp"
     moves_bar = f"⚡ {player.combat_moves_left} move{'s' if player.combat_moves_left != 1 else ''} left"
 
     rows.append("")

@@ -231,11 +231,15 @@ ENEMY_STATS = {
     "wolf":        (20,  8,  1, 10,  5),
     "bear":        (40, 16,  3, 25, 15),
     "spider":      (15, 12,  1, 15,  8),
-    "cave_bat":    (12,  8,  0,  5,  3),
+    "cave_bat":    ( 8,  5,  0,  5,  3),   # weaker solo — can swarm 2-3
     "cave_spider": (25, 14,  2, 15,  8),
     "cave_golem":  (70, 22,  8, 50, 25),
     "cave_troll":  (50, 18,  5, 35, 20),
     "cave_wyvern": (80, 28,  6, 75, 40),
+    # Lava cave enemies
+    "cinder_imp":      (22, 13,  0, 20, 10),
+    "lava_salamander": (18, 11,  1, 15,  8),
+    "obsidian_golem":  (90, 28, 12, 60, 30),
     # Ocean creatures
     "shark":       (35, 15,  1, 20, 12),
     "crab":        (20,  8,  4, 12,  8),
@@ -258,11 +262,15 @@ ENEMY_ABILITIES = {
     "wolf":        {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
     "bear":        {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": False},
     "spider":      {"cobweb": True,  "poison": False, "hit_run": False, "roar": False, "slam": False},
-    "cave_bat":    {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
-    "cave_spider": {"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False},
-    "cave_golem":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
-    "cave_troll":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
-    "cave_wyvern": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False},
+    "cave_bat":        {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "cave_spider":     {"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False},
+    "cave_golem":      {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+    "cave_troll":      {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
+    "cave_wyvern":     {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False},
+    # Lava cave enemies
+    "cinder_imp":      {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "lava_salamander": {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "obsidian_golem":  {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True},
     # Ocean creatures
     "shark":       {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
     "crab":        {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
@@ -452,6 +460,10 @@ CAVE_EMOJI = {
     "lava_pool":          "\U0001F7E7",            # 🟧 orange square lava river (impassable)
     "lava_wall":          "⬛",                # ⬛ same as stone_wall
     "lava_bridge":        "\U0001F7EB",            # 🟫 stone bridge over lava (overridable → grey_square)
+    # Lava cave enemies
+    "cinder_imp":         "👺",                    # red goblin demon
+    "lava_salamander":    "🦎",                    # lizard
+    "obsidian_golem":     "\U0001F5FF",            # 🗿 stone/obsidian golem (same as cave_golem)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
@@ -853,6 +865,14 @@ CAVE_LEVEL_ENCOUNTER_RATES = {
     1: {"cave_bat": 0.12, "cave_spider": 0.10},
     2: {"cave_spider": 0.08, "cave_golem": 0.10, "cave_troll": 0.08},
     3: {"cave_golem": 0.10, "cave_troll": 0.12, "cave_wyvern": 0.10},
+}
+
+# Lava cave random encounter rates (separate from normal cave rates)
+LAVA_CAVE_ENCOUNTER_RATES = {
+    "cave_bat":       0.06,
+    "cinder_imp":     0.10,
+    "lava_salamander":0.08,
+    "obsidian_golem": 0.04,
 }
 
 # Surface encounters: terrain → enemy_type (1% chance per step, short_grass excluded)

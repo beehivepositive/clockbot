@@ -425,34 +425,41 @@ def _generate_lava_cave_interior(
     mid = carved_list[len(carved_list) // 2]
     _carve_chamber(carved, mid[0], mid[1], 8, width, height)
 
-    # --- Lava rivers: 2–4 horizontal or diagonal bands of lava_pool ---
+    # --- Lava rivers: 2–4 wide horizontal bands of lava_pool (2-3 tiles thick) ---
     entrance_set = set(entrances)
     lava_cells: set[tuple[int, int]] = set()
+    # Track which x-columns belong to each river so bridges span the full width
+    river_columns: dict[int, list[int]] = {}  # x → list of y positions in lava
     num_rivers = rng.randint(2, 4)
     for ri in range(num_rivers):
-        # Choose a y-band and carve a wavy horizontal river
+        # Choose a y-band and carve a wavy horizontal river 2-3 tiles thick
         river_y = rng.randint(height // 5, height - height // 5)
+        thickness = rng.randint(2, 3)
         rx = 1
         cur_y = river_y
         while rx < width - 1:
-            if (rx, cur_y) in carved and (rx, cur_y) not in entrance_set:
-                lava_cells.add((rx, cur_y))
-            cur_y = max(1, min(height - 2, cur_y + rng.randint(-1, 1)))
+            for t in range(thickness):
+                ry2 = cur_y + t
+                if 1 <= ry2 < height - 1 and (rx, ry2) not in entrance_set:
+                    lava_cells.add((rx, ry2))
+                    river_columns.setdefault(rx, []).append(ry2)
+            cur_y = max(1, min(height - 2 - thickness, cur_y + rng.randint(-1, 1)))
             rx += 1
 
-    # Place lava_bridge every 8–15 tiles along each river to allow crossing
-    for (rx2, ry2) in list(lava_cells):
-        # Remove from carved so river is impassable by default
-        carved.discard((rx2, ry2))
+    # Remove lava cells from carved so river is impassable by default
+    for cell in lava_cells:
+        carved.discard(cell)
 
-    # Add bridges: for each river scan, place bridges at intervals
+    # Add bridges: at intervals, bridge ALL lava rows at that x-column
     bridges: set[tuple[int, int]] = set()
-    sorted_lava = sorted(lava_cells, key=lambda p: p[0])
-    if sorted_lava:
+    sorted_xs = sorted(river_columns.keys())
+    if sorted_xs:
         bridge_interval = rng.randint(8, 15)
-        for i, (rx2, ry2) in enumerate(sorted_lava):
-            if i % bridge_interval == 0 and (rx2, ry2) in lava_cells:
-                bridges.add((rx2, ry2))
+        for i, bx in enumerate(sorted_xs):
+            if i % bridge_interval == 0:
+                for by in river_columns[bx]:
+                    if (bx, by) in lava_cells:
+                        bridges.add((bx, by))
 
     # Chests scattered in the cave
     floor_tiles = [

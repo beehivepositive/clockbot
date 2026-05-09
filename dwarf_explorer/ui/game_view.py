@@ -9,7 +9,7 @@ import discord
 from dwarf_explorer.config import (
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
-    CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
+    CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, LAVA_CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
@@ -71,7 +71,7 @@ from dwarf_explorer.game.combat import (
     action_move, action_attack, action_flee, action_use_potion,
     resolve_enemy_turn, apply_victory, apply_death_reset,
     render_arena, ARENA_SIZE,
-    resolve_echo_deposits,
+    resolve_echo_deposits, maybe_next_bat,
 )
 from dwarf_explorer.world.rift import (
     create_rift, get_rift_for_sundial,
@@ -2362,7 +2362,11 @@ async def _move_steps(
         cave_level = cave_meta_row["cave_level"] if cave_meta_row else 1
         is_rift = cave_meta_row and cave_meta_row["cave_type"] == "rift"
         rift_boss_defeated = cave_meta_row and bool(cave_meta_row["boss_defeated"])
-        enc_rates = CAVE_LEVEL_ENCOUNTER_RATES.get(cave_level, CAVE_ENCOUNTER_RATES)
+        is_lava_cave = getattr(player, "cave_lit", False)
+        if is_lava_cave:
+            enc_rates = LAVA_CAVE_ENCOUNTER_RATES
+        else:
+            enc_rates = CAVE_LEVEL_ENCOUNTER_RATES.get(cave_level, CAVE_ENCOUNTER_RATES)
 
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
@@ -2475,8 +2479,8 @@ async def _move_steps(
                 return render_grid(grid, player, reason), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
             player.cave_x, player.cave_y = nx, ny
             await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
-            # Random encounter on stone_floor tiles
-            if target.terrain == "stone_floor":
+            # Random encounter on floor tiles (stone_floor or lava_floor)
+            if target.terrain in ("stone_floor", "lava_floor"):
                 enc_rng = _random.Random(hash((user_id, nx, ny,
                                               player.cave_id, player.gold)))
                 enemy_type = _roll_encounter(enc_rng, enc_rates)
@@ -2484,6 +2488,15 @@ async def _move_steps(
                     grid = await load_cave_viewport(player.cave_id, nx, ny, db)
                     arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
                     arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+                    # Bat swarm: 25% chance of 2 bats, 5% chance of 3 bats
+                    if enemy_type == "cave_bat":
+                        _swarm_roll = enc_rng.random()
+                        if _swarm_roll < 0.05:
+                            arena["bat_remaining"] = 3
+                        elif _swarm_roll < 0.30:
+                            arena["bat_remaining"] = 2
+                        else:
+                            arena["bat_remaining"] = 1
                     player.in_combat = True
                     player.combat_enemy_type = enemy_type
                     player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
@@ -2709,6 +2722,15 @@ async def _after_player_action(
 
     # Enemy dead?
     if player.combat_enemy_hp <= 0:
+        _swarm_rng = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y, "swarm")))
+        if maybe_next_bat(arena, player, _swarm_rng):
+            # Another bat — reset moves and continue combat
+            player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
+            await save_combat_state(db, user_id, player)
+            content = render_arena(arena, player)
+            view = _combat_view(guild_id, user_id, arena, player)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
@@ -2748,6 +2770,15 @@ async def _after_player_action(
         return
 
     if player.combat_enemy_hp <= 0:
+        _swarm_rng2 = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y, "swarm2")))
+        if maybe_next_bat(arena, player, _swarm_rng2):
+            # Another bat — reset moves and continue combat
+            player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
+            await save_combat_state(db, user_id, player)
+            content = render_arena(arena, player)
+            view = _combat_view(guild_id, user_id, arena, player)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
