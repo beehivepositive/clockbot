@@ -79,7 +79,6 @@ from dwarf_explorer.ui.game_view import (
     handle_plant_cancel,
     handle_puzzle_move,
     handle_puzzle_reset,
-    handle_puzzle_claim,
     handle_puzzle_close,
 )
 
@@ -538,8 +537,6 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_puzzle_move(interaction, gid, uid, direction)
             elif act == "puzzle_reset":
                 await handle_puzzle_reset(interaction, gid, uid)
-            elif act == "puzzle_claim":
-                await handle_puzzle_claim(interaction, gid, uid)
             elif act == "puzzle_close":
                 await handle_puzzle_close(interaction, gid, uid)
 

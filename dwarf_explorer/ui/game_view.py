@@ -765,23 +765,15 @@ class ShipView(discord.ui.View):
 class PuzzleView(discord.ui.View):
     """Sliding-block puzzle UI for the village puzzle board."""
 
-    def __init__(
-        self, guild_id: int, user_id: int,
-        moves: int, min_moves: int,
-        won: bool, claimed: bool,
-    ):
+    def __init__(self, guild_id: int, user_id: int, moves: int, min_moves: int):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
-        def _btn(label, action, row,
-                 style=discord.ButtonStyle.primary, disabled=False, emoji=None):
-            b = discord.ui.Button(
+        def _btn(label, action, row, style=discord.ButtonStyle.primary, disabled=False):
+            return discord.ui.Button(
                 style=style, label=label, disabled=disabled,
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
-            if emoji:
-                b.emoji = emoji
-            return b
 
         def _sp(act, row):
             return discord.ui.Button(
@@ -789,45 +781,33 @@ class PuzzleView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, act), row=row,
             )
 
-        moves_label = f"Moves: {moves}"
-
         # Row 0: spacer | ⬆️ | spacer | Moves counter | spacer
         self.add_item(_sp("pzsp0a", 0))
-        self.add_item(_btn("⬆️", "puzzle_up",    0, disabled=won))
+        self.add_item(_btn("⬆️", "puzzle_up", 0))
         self.add_item(_sp("pzsp0b", 0))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label=moves_label, disabled=True,
+            style=discord.ButtonStyle.secondary, label=f"Moves: {moves}", disabled=True,
             custom_id=_custom_id(gid, uid, "pzsp0c"), row=0,
         ))
         self.add_item(_sp("pzsp0d", 0))
 
         # Row 1: ⬅️ | 🔄 Reset | ➡️ | spacer | spacer
-        self.add_item(_btn("⬅️", "puzzle_left",  1, disabled=won))
+        self.add_item(_btn("⬅️", "puzzle_left", 1))
         self.add_item(_btn("🔄 Reset", "puzzle_reset", 1, style=discord.ButtonStyle.secondary))
-        self.add_item(_btn("➡️", "puzzle_right", 1, disabled=won))
+        self.add_item(_btn("➡️", "puzzle_right", 1))
         self.add_item(_sp("pzsp1a", 1))
         self.add_item(_sp("pzsp1b", 1))
 
         # Row 2: spacer | ⬇️ | spacer | Optimal hint | ❌ Close
         self.add_item(_sp("pzsp2a", 2))
-        self.add_item(_btn("⬇️", "puzzle_down",  2, disabled=won))
+        self.add_item(_btn("⬇️", "puzzle_down", 2))
         self.add_item(_sp("pzsp2b", 2))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label=f"Optimal: {min_moves}", disabled=True,
             custom_id=_custom_id(gid, uid, "pzsp2c"), row=2,
         ))
-        self.add_item(_btn("❌ Close", "puzzle_close", 2,
-                           style=discord.ButtonStyle.danger))
-
-        # Row 3 (only when puzzle is solved): Claim Reward or Already Claimed
-        if won:
-            if claimed:
-                self.add_item(_btn("✅ Reward Claimed", "pzsp3a", 3,
-                                   style=discord.ButtonStyle.secondary, disabled=True))
-            else:
-                self.add_item(_btn("🎁 Claim Reward", "puzzle_claim", 3,
-                                   style=discord.ButtonStyle.success))
+        self.add_item(_btn("❌ Close", "puzzle_close", 2, style=discord.ButtonStyle.danger))
 
 
 class IslandView(discord.ui.View):
@@ -9424,21 +9404,24 @@ async def handle_farmer_close(
 def _puzzle_content(state: dict, extra: str = "") -> str:
     """Render puzzle board + status into a message string."""
     from dwarf_explorer.game.ricochet import render_board
-    puzzle  = state["puzzle"]
-    board   = render_board(puzzle, state["px"], state["py"])
-    moves   = state["moves"]
-    opt     = puzzle.get("min_moves", "?")
-    won     = state["won"]
-    lines = [
+    puzzle = state["puzzle"]
+    board  = render_board(puzzle, state["px"], state["py"])
+    moves  = state["moves"]
+    opt    = puzzle.get("min_moves", "?")
+    lines  = [
         "🎮 **Village Puzzle Board**",
         board,
-        f"{'🏆 Solved in' if won else 'Moves:'} **{moves}** | Optimal: **{opt}**",
+        f"Moves: **{moves}** | Optimal: **{opt}**",
+        "*Slide 🔵 onto 🔴 using walls and 🟧 blocks.*",
     ]
-    if not won:
-        lines.append("*Slide 🔵 onto 🔴 using walls and 🟧 blocks.*")
     if extra:
         lines.append(extra)
     return "\n".join(lines)
+
+
+def _next_puzzle_seed(daily_seed: int, user_id: int, solve_count: int) -> int:
+    """Deterministic seed for puzzle N solved by this player today."""
+    return (daily_seed * 1_000_003 + user_id * 999_983 + solve_count * 99_991) & 0xFFFF_FFFF
 
 
 async def _open_puzzle(
@@ -9446,22 +9429,18 @@ async def _open_puzzle(
 ) -> None:
     """Initialise and display the daily puzzle."""
     from dwarf_explorer.game.ricochet import generate_puzzle
-    from dwarf_explorer.database.repositories import has_claimed_puzzle_today
-    db = await get_database(guild_id)
-    puzzle = generate_puzzle()
+    puzzle = generate_puzzle()          # seed = today's date
     state: dict = {
-        "puzzle": puzzle,
-        "px": puzzle["start"][0],
-        "py": puzzle["start"][1],
-        "moves": 0,
-        "won": False,
+        "puzzle":      puzzle,
+        "px":          puzzle["start"][0],
+        "py":          puzzle["start"][1],
+        "moves":       0,
+        "solve_count": 0,
+        "daily_seed":  puzzle["seed"],
     }
     _PUZZLE_STATES[(guild_id, user_id)] = state
-    claimed = await has_claimed_puzzle_today(db, user_id)
     content = _puzzle_content(state)
-    view = PuzzleView(guild_id, user_id,
-                      moves=0, min_moves=puzzle["min_moves"],
-                      won=False, claimed=claimed)
+    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"])
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -9472,12 +9451,8 @@ async def handle_puzzle_move(
     if state is None:
         await _open_puzzle(interaction, guild_id, user_id)
         return
-    if state["won"]:
-        await interaction.response.defer()
-        return
 
-    from dwarf_explorer.game.ricochet import apply_move
-    from dwarf_explorer.database.repositories import has_claimed_puzzle_today
+    from dwarf_explorer.game.ricochet import apply_move, generate_puzzle
     puzzle = state["puzzle"]
     nx, ny = apply_move(
         state["px"], state["py"], direction,
@@ -9490,15 +9465,40 @@ async def handle_puzzle_move(
     state["px"], state["py"] = nx, ny
     state["moves"] += 1
     tx, ty = puzzle["target"]
-    if nx == tx and ny == ty:
-        state["won"] = True
 
-    db = await get_database(guild_id)
-    claimed = state["won"] and await has_claimed_puzzle_today(db, user_id)
-    content = _puzzle_content(state)
-    view = PuzzleView(guild_id, user_id,
-                      moves=state["moves"], min_moves=puzzle["min_moves"],
-                      won=state["won"], claimed=claimed)
+    if nx == tx and ny == ty:
+        # ── Puzzle solved ────────────────────────────────────────────────────
+        solved_in  = state["moves"]
+        solve_count = state.get("solve_count", 0) + 1
+
+        # Auto-claim daily reward on first solve
+        from dwarf_explorer.database.repositories import claim_puzzle_reward, give_quest_reward
+        db = await get_database(guild_id)
+        reward_line = ""
+        ok = await claim_puzzle_reward(db, user_id)
+        if ok:
+            rs = await give_quest_reward(db, user_id, 15, 75)
+            reward_line = f"🎁 Daily reward: {rs}  •  "
+
+        # Generate the next puzzle immediately
+        next_seed   = _next_puzzle_seed(state["daily_seed"], user_id, solve_count)
+        next_puzzle = generate_puzzle(next_seed)
+        state.update({
+            "puzzle":      next_puzzle,
+            "px":          next_puzzle["start"][0],
+            "py":          next_puzzle["start"][1],
+            "moves":       0,
+            "solve_count": solve_count,
+        })
+
+        extra   = f"{reward_line}Solved in **{solved_in}** moves! Here's the next one."
+        content = _puzzle_content(state, extra)
+        view    = PuzzleView(guild_id, user_id, moves=0, min_moves=next_puzzle["min_moves"])
+    else:
+        content = _puzzle_content(state)
+        view    = PuzzleView(guild_id, user_id,
+                             moves=state["moves"], min_moves=puzzle["min_moves"])
+
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -9512,34 +9512,8 @@ async def handle_puzzle_reset(
     puzzle = state["puzzle"]
     state["px"], state["py"] = puzzle["start"]
     state["moves"] = 0
-    state["won"] = False
     content = _puzzle_content(state)
-    view = PuzzleView(guild_id, user_id,
-                      moves=0, min_moves=puzzle["min_moves"],
-                      won=False, claimed=False)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-
-
-async def handle_puzzle_claim(
-    interaction: discord.Interaction, guild_id: int, user_id: int
-) -> None:
-    state = _PUZZLE_STATES.get((guild_id, user_id))
-    if state is None or not state.get("won"):
-        await interaction.response.defer()
-        return
-    from dwarf_explorer.database.repositories import claim_puzzle_reward, give_quest_reward
-    db = await get_database(guild_id)
-    ok = await claim_puzzle_reward(db, user_id)
-    if ok:
-        reward_str = await give_quest_reward(db, user_id, 15, 75)
-        extra = f"🎁 Daily reward claimed! {reward_str}"
-    else:
-        extra = "✅ You've already claimed today's reward!"
-    puzzle = state["puzzle"]
-    content = _puzzle_content(state, extra)
-    view = PuzzleView(guild_id, user_id,
-                      moves=state["moves"], min_moves=puzzle["min_moves"],
-                      won=True, claimed=True)
+    view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"])
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
