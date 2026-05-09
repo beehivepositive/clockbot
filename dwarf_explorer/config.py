@@ -63,6 +63,7 @@ STRUCTURE_EMOJI = {
     "harbor": "\U0001F6A2",         # 🚢 harbor/dock
     "shipwreck": "\u2693",          # ⚓ shipwreck
     "island": "\U0001F3DD️",  # 🏝️ high-seas island
+    "volcano_island": "\U0001F30B",  # 🌋 volcano island
     "sundial": "\U0001F55B",        # 🕛 sundial ruins (rift portal)
 }
 
@@ -215,7 +216,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "sundial"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
