@@ -379,6 +379,178 @@ async def create_deep_caves(
         await _create_child_cave(seed, cave_id, sx, sy, cave_level + 1, db)
 
 
+def _generate_lava_cave_interior(
+    cave_id: int, seed: int, island_id: int, local_x: int, local_y: int,
+) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]]]:
+    """Generate a lava cave interior for a volcano island.
+
+    Returns (width, height, tiles, entrances).
+    Lava caves use lava_wall as boundaries, lava_floor as walkable floor,
+    with lava_pool rivers and lava_bridge crossings.
+    Full sight (no torch needed) — cave_type set to 'lava' in DB.
+    """
+    rng = random.Random(seed + _CAVE_SEED_OFFSET + cave_id + island_id * 31 + local_x * 1000 + local_y)
+    worm_seed = (seed ^ (cave_id * 0xBEEF + island_id * 31 + local_x * 97 + local_y)) & 0xFFFFFFFF
+
+    # Lava caves are generous-sized
+    width  = rng.randint(40, 70)
+    height = rng.randint(40, 60)
+
+    carved: set[tuple[int, int]] = set()
+
+    # Single entrance at top center (island surface)
+    ex, ey = width // 2, 0
+    entrances = [(ex, ey)]
+    carved.add((ex, ey))
+    ix, iy = ex, 1
+    carved.add((ix, iy))
+
+    # Primary cave carve
+    _carve_chamber(carved, ix, iy, 5, width, height)
+    _perlin_worm_cave(rng, carved, ix, iy, worm_seed, width, height, CAVE_WALK_STEPS)
+    _drunkard_walk(rng, carved, ix, iy, CAVE_WALK_STEPS // 2, width, height)
+
+    # Branching corridors
+    carved_list = list(carved)
+    for b in range(rng.randint(3, 5)):
+        if not carved_list:
+            break
+        bs = rng.choice(carved_list)
+        bseed = (worm_seed + b * 0xCAFE) & 0xFFFFFFFF
+        if b % 2 == 0:
+            _perlin_worm_cave(rng, carved, bs[0], bs[1], bseed,
+                              width, height, CAVE_WALK_STEPS // 3)
+        else:
+            _drunkard_walk(rng, carved, bs[0], bs[1],
+                           CAVE_WALK_STEPS // 3, width, height)
+        carved_list = list(carved)
+
+    # Large central chamber
+    mid = carved_list[len(carved_list) // 2]
+    _carve_chamber(carved, mid[0], mid[1], 8, width, height)
+
+    # --- Lava rivers: 2–4 horizontal or diagonal bands of lava_pool ---
+    entrance_set = set(entrances)
+    lava_cells: set[tuple[int, int]] = set()
+    num_rivers = rng.randint(2, 4)
+    for ri in range(num_rivers):
+        # Choose a y-band and carve a wavy horizontal river
+        river_y = rng.randint(height // 5, height - height // 5)
+        rx = 1
+        cur_y = river_y
+        while rx < width - 1:
+            if (rx, cur_y) in carved and (rx, cur_y) not in entrance_set:
+                lava_cells.add((rx, cur_y))
+            cur_y = max(1, min(height - 2, cur_y + rng.randint(-1, 1)))
+            rx += 1
+
+    # Place lava_bridge every 8–15 tiles along each river to allow crossing
+    for (rx2, ry2) in list(lava_cells):
+        # Remove from carved so river is impassable by default
+        carved.discard((rx2, ry2))
+
+    # Add bridges: for each river scan, place bridges at intervals
+    bridges: set[tuple[int, int]] = set()
+    sorted_lava = sorted(lava_cells, key=lambda p: p[0])
+    if sorted_lava:
+        bridge_interval = rng.randint(8, 15)
+        for i, (rx2, ry2) in enumerate(sorted_lava):
+            if i % bridge_interval == 0 and (rx2, ry2) in lava_cells:
+                bridges.add((rx2, ry2))
+
+    # Chests scattered in the cave
+    floor_tiles = [
+        p for p in carved
+        if p not in entrance_set
+        and all(abs(p[0] - ex2) + abs(p[1] - ey2) > 6 for ex2, ey2 in entrances)
+    ]
+    num_chests = rng.randint(2, 5)
+    chest_positions: set[tuple[int, int]] = set()
+    if floor_tiles:
+        rng.shuffle(floor_tiles)
+        for pos in floor_tiles:
+            if len(chest_positions) >= num_chests:
+                break
+            if all(abs(pos[0] - cx2) + abs(pos[1] - cy2) > 6
+                   for cx2, cy2 in chest_positions):
+                chest_positions.add(pos)
+
+    # Ore deposits in lava caves (richer than normal)
+    ore_positions: set[tuple[int, int]] = set()
+    ore_candidates = [p for p in carved if p not in entrance_set and p not in chest_positions]
+    rng.shuffle(ore_candidates)
+    for pos in ore_candidates[:len(ore_candidates) // 6]:
+        r2 = rng.random()
+        if r2 < 0.2:
+            ore_positions.add(pos)
+
+    # Build tile list
+    tiles: list[tuple[int, int, str]] = []
+    for y in range(height):
+        for x in range(width):
+            if (x, y) in entrance_set:
+                tiles.append((x, y, "cave_entrance"))
+            elif (x, y) in bridges:
+                tiles.append((x, y, "lava_bridge"))
+            elif (x, y) in lava_cells:
+                tiles.append((x, y, "lava_pool"))
+            elif (x, y) in chest_positions:
+                tiles.append((x, y, "cave_chest"))
+            elif (x, y) in ore_positions:
+                tiles.append((x, y, "gold_ore_deposit"))
+            elif (x, y) in carved:
+                tiles.append((x, y, "lava_floor"))
+            else:
+                tiles.append((x, y, "lava_wall"))
+
+    return width, height, tiles, entrances
+
+
+async def create_island_lava_cave(
+    seed: int, island_id: int, local_x: int, local_y: int, db,
+) -> int:
+    """Create a lava cave linked to a vol_cave tile on a volcano island.
+
+    Returns the new cave_id.
+    """
+    from dwarf_explorer.database.repositories import register_island_cave
+
+    # Check if already exists
+    row = await db.fetch_one(
+        "SELECT cave_id FROM island_cave_entrances"
+        " WHERE island_id=? AND local_x=? AND local_y=?",
+        (island_id, local_x, local_y),
+    )
+    if row:
+        return row["cave_id"]
+
+    # Insert cave row
+    cursor = await db.execute(
+        "INSERT INTO caves (width, height, cave_level, cave_type) VALUES (1, 1, 1, 'lava')"
+    )
+    cave_id = cursor.lastrowid
+
+    width, height, tiles, entrances = await asyncio.to_thread(
+        _generate_lava_cave_interior,
+        cave_id, seed, island_id, local_x, local_y,
+    )
+
+    await db.execute(
+        "UPDATE caves SET width=?, height=? WHERE cave_id=?",
+        (width, height, cave_id),
+    )
+    await db.executemany(
+        "INSERT OR IGNORE INTO cave_tiles (cave_id, local_x, local_y, tile_type)"
+        " VALUES (?, ?, ?, ?)",
+        [(cave_id, lx, ly, tt) for lx, ly, tt in tiles],
+    )
+
+    # Register link
+    await register_island_cave(db, island_id, local_x, local_y, cave_id)
+
+    return cave_id
+
+
 async def create_cave_system(
     seed: int, world_positions: list[tuple[int, int]], db
 ) -> None:

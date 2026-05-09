@@ -261,6 +261,21 @@ class Database:
     reward_date  TEXT    NOT NULL,
     PRIMARY KEY (user_id, reward_date)
 )""",
+                # Volcano island type
+                "ALTER TABLE ocean_islands ADD COLUMN island_type TEXT NOT NULL DEFAULT 'regular'",
+                # Island cave entrance links: island position → cave
+                """CREATE TABLE IF NOT EXISTS island_cave_entrances (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    island_id    INTEGER NOT NULL,
+    local_x      INTEGER NOT NULL,
+    local_y      INTEGER NOT NULL,
+    cave_id      INTEGER NOT NULL,
+    UNIQUE(island_id, local_x, local_y)
+)""",
+                # Track which island a cave's entrance returns to
+                "ALTER TABLE cave_entrances ADD COLUMN island_id INTEGER DEFAULT NULL",
+                "ALTER TABLE cave_entrances ADD COLUMN island_local_x INTEGER DEFAULT NULL",
+                "ALTER TABLE cave_entrances ADD COLUMN island_local_y INTEGER DEFAULT NULL",
             ]
             for mig_sql in migrations:
                 try:

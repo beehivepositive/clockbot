@@ -299,5 +299,69 @@ class DwarfExplorer(commands.Cog):
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
+    @app_commands.command(name="harbor", description="Teleport to the nearest harbor (admin only).")
+    async def harbor(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "You don't have permission to use this command.", ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+        seed = await get_or_create_world(db, guild_id)
+        player = await get_or_create_player(db, interaction.user.id, interaction.user.display_name)
+
+        # Find all harbor tile overrides
+        harbor_rows = await db.fetch_all(
+            "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = 'harbor'",
+        )
+        if not harbor_rows:
+            await interaction.response.send_message(
+                "No harbors found in this world.", ephemeral=True
+            )
+            return
+
+        # Find the nearest harbor to the player's current position
+        px, py = player.world_x, player.world_y
+        nearest = min(
+            harbor_rows,
+            key=lambda r: abs(r["world_x"] - px) + abs(r["world_y"] - py),
+        )
+        hx, hy = nearest["world_x"], nearest["world_y"]
+
+        # Clear any in-cave/village/house/ocean state
+        player.in_cave = False
+        player.in_village = False
+        player.in_house = False
+        player.in_ocean = False
+        player.in_high_seas = False
+        player.in_island = False
+        player.in_ship = False
+        player.world_x, player.world_y = hx, hy
+        await update_player_stats(
+            db, player.user_id,
+            world_x=hx, world_y=hy,
+            in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+            in_village=0, village_id=None,
+            in_house=0, house_id=None,
+            in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+        )
+
+        grid = await load_viewport(hx, hy, seed, db)
+        content = render_grid(grid, player, f"⚓ Teleported to harbor at ({hx}, {hy}).")
+        from dwarf_explorer.ui.game_view import GameView as _GV
+        view = _GV(guild_id, player.user_id)
+        await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
+
+        msg = await interaction.original_response()
+        await update_player_message(db, player.user_id, msg.id, interaction.channel_id)
+
+
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(DwarfExplorer(bot))

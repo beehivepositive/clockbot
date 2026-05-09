@@ -205,7 +205,12 @@ OCEAN_WALKABLE = {"deep_water", "shallow_water", "harbor"}
 
 # Tile types walkable on an island interior
 ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree",
-                   "island_chest", "island_dock", "island_sapling"}
+                   "island_chest", "island_dock", "island_sapling", "island_npc",
+                   # Volcano island walkable tiles
+                   "vol_rock", "vol_grass", "vol_forest", "vol_lava_bridge",
+                   "vol_cave", "vol_dock", "vol_outpost", "vol_chest"}
+
+VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
 STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "sundial"}
@@ -435,10 +440,17 @@ CAVE_EMOJI = {
     "rift_floor":         "\U0001F535",            # 🔵 blue circle floor
     "rift_deposit":       "\U0001F4A0",            # 💠 chronolite deposit (mineable after boss)
     "rift_entrance":      "\U0001F300",            # 🌀 swirling portal (exit)
+    # Lava cave tiles
+    "lava_floor":         "\U0001F7E7",            # 🟧 warm orange rock floor
+    "lava_pool":          "\U0001F525",            # 🔥 impassable lava pool/river
+    "lava_wall":          "\U0001F7E5",            # 🟥 hot glowing rock wall
+    "lava_bridge":        "\U0001F7EB",            # 🟫 stone bridge over lava
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
-                 "rift_floor", "rift_entrance", "rift_deposit"}
+                 "rift_floor", "rift_entrance", "rift_deposit",
+                 # Lava cave tiles
+                 "lava_floor", "lava_bridge"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}

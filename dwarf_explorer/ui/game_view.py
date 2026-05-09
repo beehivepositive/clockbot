@@ -36,6 +36,7 @@ from dwarf_explorer.database.repositories import (
     update_player_island_state,
     is_island_looted, mark_island_looted,
     update_island_tile,
+    get_island_type, get_or_create_island_cave,
     get_cave_entrance_exit,
     equip_item, unequip_item,
     get_inventory,
@@ -1698,13 +1699,17 @@ def _compute_context_labels(
 
         # Island tile context
         if player.in_island:
-            if t == "island_dock":
+            if t in ("island_dock", "vol_dock"):
                 center_label, center_enabled = "⛵ Leave", True
-            elif t == "island_chest":
+            elif t in ("island_chest", "vol_chest"):
                 center_label, center_enabled = "💰 Loot", True
+            elif t == "vol_cave":
+                center_label, center_enabled = "⛰️ Enter", True
+            elif t == "vol_outpost":
+                center_label, center_enabled = "🛒 Shop", True
             elif t in ("island_forest", "island_tree") and "axe" in hand_items:
                 center_label, center_enabled = "🪓", True
-            # Fishing: adjacent to island_void (open ocean surrounding island)
+            # Fishing: adjacent to island_void or vol_void (open ocean surrounding island)
             local_adj: set[str] = set()
             for _ro, _co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _r, _c = vc + _ro, vc + _co
@@ -1712,7 +1717,7 @@ def _compute_context_labels(
                     _adj = grid[_r][_c]
                     if _adj.terrain:
                         local_adj.add(_adj.terrain)
-            if "fishing_rod" in hand_items and "island_void" in local_adj:
+            if "fishing_rod" in hand_items and local_adj & {"island_void", "vol_void"}:
                 action_label, action_enabled = "🎣 Fish", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
@@ -4123,12 +4128,20 @@ async def handle_island_arrive(
     ox: int, oy: int,
 ) -> None:
     """Called when player sails onto an island tile in the high seas."""
+    from dwarf_explorer.world.ocean import get_ocean_structure
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
+    # Determine island type from ocean structure
+    structure = get_ocean_structure(ox, oy, seed)
+    is_volcano = (structure == "volcano_island")
+    island_type = "volcano" if is_volcano else "regular"
+
     from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
-    _island_id, tiles, (dock_x, dock_y) = await get_or_create_island_data(db, ox, oy, seed)
+    _island_id, tiles, (dock_x, dock_y) = await get_or_create_island_data(
+        db, ox, oy, seed, island_type=island_type
+    )
 
     player.in_high_seas = False
     player.in_island = True
@@ -4143,7 +4156,8 @@ async def handle_island_arrive(
     await update_player_ocean_state(db, user_id, False, dock_x, dock_y)
 
     grid = load_island_viewport(tiles, dock_x, dock_y)
-    content = render_grid(grid, player, "🏝️ You row ashore onto the island.")
+    arrive_msg = "🌋 You approach the volcano island and row ashore." if is_volcano else "🏝️ You row ashore onto the island."
+    content = render_grid(grid, player, arrive_msg)
     # Clear any island_target from high-seas ui_state
     _ui_state.pop(user_id, None)
     view = _game_view(guild_id, user_id, player, grid=grid)
@@ -4175,6 +4189,20 @@ async def handle_island_move(
     _island_id, tiles, (dock_x, dock_y) = await get_or_create_island_data(db, ox, oy, seed)
     tile_map = {(lx, ly): tt for lx, ly, tt in tiles}
     target_terrain = tile_map.get((nx, ny), "island_void")
+
+    if target_terrain == "vol_lava":
+        grid = load_island_viewport(tiles, px, py)
+        content = render_grid(grid, player, "🔥 The lava is impassable!")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if target_terrain == "vol_crater":
+        grid = load_island_viewport(tiles, px, py)
+        content = render_grid(grid, player, "🌑 The volcano crater is too dangerous to enter!")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
 
     if target_terrain not in ISLAND_WALKABLE:
         grid = load_island_viewport(tiles, px, py)
@@ -4854,19 +4882,57 @@ async def handle_interact(
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
 
         if cave_tile.terrain == "cave_entrance":
-            result = await get_cave_entrance_exit(db, player.cave_id, player.cave_x, player.cave_y)
-            if result:
-                wx, wy = result
-                player.world_x, player.world_y = wx, wy
-                player.in_cave = False
-                player.cave_id = None
-                await update_player_position(db, user_id, wx, wy)
-                await update_player_cave_state(db, user_id, False, None, 0, 0)
-                grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, "You exit the cave.")
+            # Check if this is an island lava cave (exits back to the island)
+            island_link = await db.fetch_one(
+                "SELECT island_id, local_x, local_y FROM island_cave_entrances WHERE cave_id=?",
+                (player.cave_id,),
+            )
+            if island_link:
+                # Return to the island at the vol_cave tile
+                iid = island_link["island_id"]
+                ret_lx = island_link["local_x"]
+                ret_ly = island_link["local_y"]
+                # Look up the island's ocean position
+                irow = await db.fetch_one(
+                    "SELECT ocean_x, ocean_y FROM ocean_islands WHERE island_id=?", (iid,)
+                )
+                if irow:
+                    ox, oy = irow["ocean_x"], irow["ocean_y"]
+                    player.in_cave = False
+                    player.cave_lit = False
+                    player.in_island = True
+                    player.island_ox = ox
+                    player.island_oy = oy
+                    player.ocean_x = ret_lx
+                    player.ocean_y = ret_ly
+                    await update_player_cave_state(db, user_id, False, None, 0, 0)
+                    await update_player_island_state(db, user_id, True, ox, oy)
+                    await update_player_ocean_state(db, user_id, False, ret_lx, ret_ly)
+                    from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
+                    _iid2, island_tiles, _ = await get_or_create_island_data(db, ox, oy, seed, "volcano")
+                    grid = load_island_viewport(island_tiles, ret_lx, ret_ly)
+                    content = render_grid(grid, player, "🌋 You climb back out of the lava cave.")
+                    view = _game_view(guild_id, user_id, player, grid=grid)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                    return
+                else:
+                    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                    content = render_grid(grid, player, "Nothing to interact with here.")
             else:
-                grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-                content = render_grid(grid, player, "Nothing to interact with here.")
+                result = await get_cave_entrance_exit(db, player.cave_id, player.cave_x, player.cave_y)
+                if result:
+                    wx, wy = result
+                    player.world_x, player.world_y = wx, wy
+                    player.in_cave = False
+                    player.cave_id = None
+                    player.cave_lit = False
+                    await update_player_position(db, user_id, wx, wy)
+                    await update_player_cave_state(db, user_id, False, None, 0, 0)
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, "You exit the cave.")
+                else:
+                    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                    content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif cave_tile.terrain == "player_house_cave":
             house_id = await get_player_house_at(
@@ -4939,7 +5005,7 @@ async def handle_interact(
         if player.hand_2:
             hand_items.add(player.hand_2)
 
-        if current_terrain == "island_dock":
+        if current_terrain in ("island_dock", "vol_dock"):
             # Leave island → return to high seas
             player.in_island = False
             player.in_high_seas = True
@@ -4954,7 +5020,57 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
-        elif current_terrain == "island_chest":
+        elif current_terrain == "vol_cave":
+            # Enter a lava cave from the volcano island
+            from dwarf_explorer.world.caves import create_island_lava_cave
+            island_id_row = await db.fetch_one(
+                "SELECT island_id FROM ocean_islands WHERE ocean_x=? AND ocean_y=?",
+                (ox, oy),
+            )
+            if not island_id_row:
+                grid = load_island_viewport(tiles, px, py)
+                content = render_grid(grid, player, "⛰️ The cave entrance is unstable...")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            iid = island_id_row["island_id"]
+            cave_id = await create_island_lava_cave(seed, iid, px, py, db)
+            # Find the entrance position in the cave
+            ent_row = await db.fetch_one(
+                "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cave_entrance'",
+                (cave_id,),
+            )
+            ent_x = ent_row["local_x"] if ent_row else 1
+            ent_y = ent_row["local_y"] if ent_row else 1
+            player.in_island = False
+            player.in_cave = True
+            player.cave_id = cave_id
+            player.cave_x = ent_x
+            player.cave_y = ent_y
+            player.cave_lit = True  # lava caves are self-lit
+            await update_player_island_state(db, user_id, False)
+            await update_player_cave_state(db, user_id, True, cave_id, ent_x, ent_y)
+            # Store island return point in players table (using island_ox/oy)
+            grid = await load_cave_viewport(cave_id, ent_x, ent_y, db)
+            content = render_grid(grid, player, "🌋 You descend into the lava cave!")
+            view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif current_terrain == "vol_outpost":
+            # Volcano island outpost shop
+            player_items = await get_inventory(db, user_id)
+            equipped = _equipped_dict(player)
+            inv_rows, inv_cols = _inv_capacity(player)
+            _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
+            content_shop = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
+            await interaction.response.edit_message(
+                embed=_embed(content_shop), content=None,
+                view=ShopView(guild_id, user_id, "shop")
+            )
+            return
+
+        elif current_terrain == "vol_chest":
             already = await is_island_looted(db, ox, oy)
             grid = load_island_viewport(tiles, px, py)
             if already:

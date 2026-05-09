@@ -30,6 +30,7 @@ class Player:
     cave_id: int | None = None
     cave_x: int = 0
     cave_y: int = 0
+    cave_lit: bool = False   # True for lava caves (full visibility, no torch needed)
     # Village state
     in_village: bool = False
     village_id: int | None = None

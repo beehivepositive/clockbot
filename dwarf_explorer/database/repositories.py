@@ -108,6 +108,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             cave_id=row["cave_id"],
             cave_x=row["cave_x"] or 0,
             cave_y=row["cave_y"] or 0,
+            cave_lit=await _is_lava_cave(db, row["cave_id"]) if row["cave_id"] else False,
             in_village=bool(row["in_village"]),
             village_id=row["village_id"],
             village_x=row["village_x"] or 0,
@@ -229,6 +230,25 @@ async def get_all_overworld_players(
 
 
 # --- Caves ---
+
+async def _is_lava_cave(db: Database, cave_id: int) -> bool:
+    """Return True if this cave has cave_type='lava' (a volcano island lava cave)."""
+    row = await db.fetch_one(
+        "SELECT cave_type FROM caves WHERE cave_id = ?", (cave_id,)
+    )
+    return bool(row and row["cave_type"] == "lava")
+
+
+async def register_island_cave(
+    db: Database, island_id: int, local_x: int, local_y: int, cave_id: int
+) -> None:
+    """Link a vol_cave tile on a volcano island to a lava cave."""
+    await db.execute(
+        "INSERT OR IGNORE INTO island_cave_entrances (island_id, local_x, local_y, cave_id)"
+        " VALUES (?, ?, ?, ?)",
+        (island_id, local_x, local_y, cave_id),
+    )
+
 
 async def update_player_cave_state(
     db: Database, user_id: int, in_cave: bool, cave_id: int | None, cave_x: int, cave_y: int
@@ -808,7 +828,10 @@ async def update_player_island_state(
     )
 
 
-async def get_or_create_island(db: Database, ocean_x: int, ocean_y: int) -> int:
+async def get_or_create_island(
+    db: Database, ocean_x: int, ocean_y: int,
+    island_type: str = "regular",
+) -> int:
     """Return island_id, creating a DB record if it doesn't exist yet."""
     row = await db.fetch_one(
         "SELECT island_id FROM ocean_islands WHERE ocean_x=? AND ocean_y=?",
@@ -817,8 +840,8 @@ async def get_or_create_island(db: Database, ocean_x: int, ocean_y: int) -> int:
     if row:
         return row["island_id"]
     cur = await db.execute(
-        "INSERT OR IGNORE INTO ocean_islands (ocean_x, ocean_y) VALUES (?, ?)",
-        (ocean_x, ocean_y),
+        "INSERT OR IGNORE INTO ocean_islands (ocean_x, ocean_y, island_type) VALUES (?, ?, ?)",
+        (ocean_x, ocean_y, island_type),
     )
     if cur.lastrowid:
         return cur.lastrowid
@@ -827,6 +850,28 @@ async def get_or_create_island(db: Database, ocean_x: int, ocean_y: int) -> int:
         (ocean_x, ocean_y),
     )
     return row["island_id"]
+
+
+async def get_island_type(db: Database, ocean_x: int, ocean_y: int) -> str:
+    """Return the island_type ('regular' or 'volcano') for an ocean position."""
+    row = await db.fetch_one(
+        "SELECT island_type FROM ocean_islands WHERE ocean_x=? AND ocean_y=?",
+        (ocean_x, ocean_y),
+    )
+    return row["island_type"] if row else "regular"
+
+
+async def get_or_create_island_cave(
+    db: Database, island_id: int, local_x: int, local_y: int,
+) -> int:
+    """Return cave_id for a vol_cave tile on a volcano island, creating it if needed."""
+    row = await db.fetch_one(
+        "SELECT cave_id FROM island_cave_entrances WHERE island_id=? AND local_x=? AND local_y=?",
+        (island_id, local_x, local_y),
+    )
+    if row:
+        return row["cave_id"]
+    return 0   # signal to caller to generate the cave
 
 
 async def store_island_tiles(

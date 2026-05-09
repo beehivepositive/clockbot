@@ -1,4 +1,4 @@
-import math
+﻿import math
 
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
@@ -96,7 +96,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     torch_on   = False
     on_entrance = False
     if location == "cave":
-        torch_on    = player.hand_1 == "torch" or player.hand_2 == "torch"
+        # Lava caves are always fully lit (player can see without torch)
+        torch_on    = (player.cave_lit or
+                       player.hand_1 == "torch" or player.hand_2 == "torch")
         on_entrance = grid[vp_center][vp_center].terrain == "cave_entrance"
 
     lines: list[str] = []
@@ -160,8 +162,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     elif player.in_village:
         pos = f"\U0001F4CD Village ({player.village_x},{player.village_y})"
     elif player.in_cave:
-        _torch_emoji = ITEM_EMOJI.get("torch", "\U0001F526")
-        dark_tag = "  \u26AB Darkness" if not torch_on else f"  {_torch_emoji}"
+        if player.cave_lit:
+            dark_tag = "  \U0001F525 Lava Cave"
+        else:
+            _torch_emoji = ITEM_EMOJI.get("torch", "\U0001F526")
+            dark_tag = "  ⚫ Darkness" if not torch_on else f"  {_torch_emoji}"
         pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y}){dark_tag}"
     else:
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
@@ -637,6 +642,20 @@ _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
     "island_sapling": "🌱",
     "island_chest":   "💰",   # distinct treasure-chest look
     "island_dock":    "⚓",
+    "island_npc":     "🧑",   # small island merchant
+    # Volcano island tiles
+    "vol_void":       "🌊",   # ocean surrounding volcano island
+    "vol_sand":       "⬛",   # dark ash beach
+    "vol_rock":       "🪨",   # volcanic rock
+    "vol_grass":      "🌿",   # sparse grass
+    "vol_forest":     "🌲",   # forest
+    "vol_lava":       "🔥",   # impassable lava flow
+    "vol_crater":     "🌑",   # impassable crater
+    "vol_lava_bridge":"🌉",   # stone bridge over lava
+    "vol_cave":       "⛰️",  # cave entrance
+    "vol_dock":       "⚓",   # dock back to sea
+    "vol_outpost":    "🏚️",  # trading post
+    "vol_chest":      "💰",   # treasure chest
 }
 
 

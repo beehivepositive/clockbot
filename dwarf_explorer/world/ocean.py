@@ -44,11 +44,16 @@ def get_ocean_structure(ox: int, oy: int, seed: int) -> str | None:
     """Return structure type for this ocean tile, or None.
 
     Islands: rare single-tile markers (~0.6% of tiles, rarer with depth).
+    Volcano islands: very rare (~0.2%), only in deeper waters (oy > 30% of map).
     Shipwrecks: ~0.04% of deep-water tiles.
     """
     import random as _rng
     rnd = _rng.Random(seed ^ (ox * 73_856_093) ^ (oy * 19_349_663))
     depth_factor = 1.0 - (oy / OCEAN_SIZE) * 0.7
+    # Volcano islands: rare, only in mid-to-deep ocean
+    if oy > OCEAN_SIZE * 0.3 and get_ocean_tile(ox, oy, seed) == "deep_water":
+        if rnd.random() < 0.002:
+            return "volcano_island"
     if rnd.random() < 0.006 * depth_factor:
         return "island"
     if rnd.random() < 0.0004:
