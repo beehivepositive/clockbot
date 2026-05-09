@@ -211,12 +211,6 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "quests"),
             row=0,
         )
-        help_btn = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="Help", emoji="\u2753",
-            custom_id=_custom_id(self.guild_id, self.user_id, "help"),
-            row=0,
-        )
         edit_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary, label="\u26CF\uFE0F Edit",
             custom_id=_custom_id(self.guild_id, self.user_id, "action"),
@@ -327,7 +321,7 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
-        row0 = [map_btn, inventory_btn, quest_btn, help_btn]
+        row0 = [map_btn, inventory_btn, quest_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
@@ -728,10 +722,9 @@ class ShipView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Help | HP status (disabled label)
+        # Row 0: Map | Inv | HP status (disabled label)
         self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
-        self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label=f"🛳️ {ship_hp}/{ship_max_hp}", disabled=True,
@@ -818,10 +811,9 @@ class IslandView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Help
+        # Row 0: Map | Inv
         self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
-        self.add_item(_btn("Help", "help",      0, discord.ButtonStyle.secondary))
 
         # Row 1: ↑  (+ interact if on dock/chest)
         self.add_item(_btn("⬆️", "island_up", 1))
@@ -1134,7 +1126,7 @@ class BoatView(discord.ui.View):
     """
 
     def __init__(self, guild_id: int, user_id: int, dock_available: bool = False,
-                 has_fishing_rod: bool = False):
+                 island_nearby: bool = False, has_fishing_rod: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -1170,10 +1162,12 @@ class BoatView(discord.ui.View):
         self.add_item(_btn("↙", "ocean_downleft",  3))
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
-        # Row 4: Ship interior | optional Fishing
+        # Row 4: Ship interior | optional Fishing | 🏝️ Island (if nearby)
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
+        if island_nearby:
+            self.add_item(_btn("🏝️ Island", "island_dock_hs", 4, discord.ButtonStyle.success))
 
 
 # ── High-seas view (separate 200×200 open-ocean grid) ────────────────────────
@@ -1193,7 +1187,7 @@ class OceanView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: Map | Inv | Quests | ⚓ Dock | 🏝️ Island (if nearby)
+        # Row 0: Map | Inv | Quests | ⚓ Dock
         self.add_item(_btn("Map",  "map",       0, discord.ButtonStyle.secondary))
         self.add_item(_btn("Inv",  "inventory", 0, discord.ButtonStyle.secondary))
         self.add_item(discord.ui.Button(
@@ -1204,8 +1198,6 @@ class OceanView(discord.ui.View):
         ))
         if dock_available:
             self.add_item(_btn("⚓ Dock", "ocean_dock", 0, discord.ButtonStyle.success))
-        if island_nearby:
-            self.add_item(_btn("🏝️ Island", "island_dock_hs", 0, discord.ButtonStyle.success))
 
         # Row 1: ↖ ↑ ↗
         self.add_item(_btn("↖", "ocean_upleft",   1))
@@ -1225,10 +1217,12 @@ class OceanView(discord.ui.View):
         self.add_item(_btn("⬇️", "ocean_down",      3))
         self.add_item(_btn("↘", "ocean_downright", 3))
 
-        # Row 4: Ship interior | optional Fishing
+        # Row 4: Ship interior | optional Fishing | 🏝️ Island (if nearby)
         self.add_item(_btn("🚢 Ship", "ship_enter", 4, discord.ButtonStyle.secondary))
         if has_fishing_rod:
             self.add_item(_btn("🎣 Fish", "ocean_fish", 4, discord.ButtonStyle.secondary))
+        if island_nearby:
+            self.add_item(_btn("🏝️ Island", "island_dock_hs", 4, discord.ButtonStyle.success))
 
 
 class MerchantView(discord.ui.View):
@@ -2211,7 +2205,7 @@ async def _move_steps(
             _room_names = {"helm": "the helm deck",
                            "quarters": "the captain's quarters",
                            "lower_deck": "the lower deck"}
-            grid = load_ship_viewport(new_room, new_x, new_y)
+            grid = load_ship_viewport(new_room, new_x, new_y, player=player)
             return (render_grid(grid, player,
                                 f"\U0001F6AA You enter {_room_names.get(new_room, new_room)}."),
                     _game_view(guild_id, user_id, player, grid=grid))
@@ -2225,7 +2219,7 @@ async def _move_steps(
         player.ship_x, player.ship_y = nx, ny
         await update_player_ship_state(db, user_id, True, player.ship_room,
                                        ship_x=nx, ship_y=ny)
-        grid = load_ship_viewport(player.ship_room, nx, ny)
+        grid = load_ship_viewport(player.ship_room, nx, ny, player=player)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_house:
@@ -3609,11 +3603,6 @@ async def handle_ocean_move(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
-        # Clear any stale island_target when moving away
-        if _ui_state.get(user_id, {}).get("island_target"):
-            _ui_state[user_id] = {k: v for k, v in _ui_state.get(user_id, {}).items()
-                                   if k != "island_target"}
-
         player.ocean_x, player.ocean_y = nx, ny
         await update_player_ocean_state(db, user_id, False, nx, ny, in_high_seas=True)
 
@@ -3642,7 +3631,29 @@ async def handle_ocean_move(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        # Check all 8 neighbours for island tiles — show Island button if any found
+        _island_adj: tuple[int, int] | None = None
+        for _adx in (-1, 0, 1):
+            for _ady in (-1, 0, 1):
+                if _adx == 0 and _ady == 0:
+                    continue
+                _adj = load_ocean_single_tile(nx + _adx, ny + _ady, seed)
+                if _adj.structure in ("island", "volcano_island"):
+                    _island_adj = (nx + _adx, ny + _ady)
+                    break
+            if _island_adj:
+                break
+
+        if _island_adj:
+            _ui_state[user_id] = {**_ui_state.get(user_id, {}), "island_target": _island_adj}
+        else:
+            # Clear stale island_target when moving away from all islands
+            if _ui_state.get(user_id, {}).get("island_target"):
+                _ui_state[user_id] = {k: v for k, v in _ui_state.get(user_id, {}).items()
+                                       if k != "island_target"}
+
         has_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+        island_nearby = bool(_island_adj)
         grid = load_ocean_viewport(nx, ny, seed)
         nav = _ui_state.get(user_id, {}).get("nav_target")
         content = render_grid(grid, player, nav_target=nav)
@@ -3650,6 +3661,7 @@ async def handle_ocean_move(
             embed=_embed(content), content=None,
             view=OceanView(guild_id, user_id,
                            dock_available=_hs_at_harbor(nx, ny, _hs_coast_edge),
+                           island_nearby=island_nearby,
                            has_fishing_rod=has_rod),
         )
         return

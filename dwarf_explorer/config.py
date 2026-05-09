@@ -210,7 +210,7 @@ OCEAN_WALKABLE = {"deep_water", "shallow_water", "harbor"}
 ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree",
                    "island_chest", "island_dock", "island_sapling", "island_npc",
                    # Volcano island walkable tiles
-                   "vol_rock", "vol_grass", "vol_forest", "vol_lava_bridge",
+                   "vol_sand", "vol_rock", "vol_grass", "vol_forest", "vol_lava_bridge",
                    "vol_cave", "vol_dock", "vol_outpost", "vol_chest"}
 
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
