@@ -5071,22 +5071,31 @@ async def handle_interact(
             return
 
         elif current_terrain == "vol_chest":
-            already = await is_island_looted(db, ox, oy)
+            # Volcano island chests: use (ox, oy, px, py) to allow multiple chests per island
+            already = await db.fetch_one(
+                "SELECT 1 FROM island_loots WHERE ocean_x=? AND ocean_y=?",
+                (ox * 10000 + px, oy * 10000 + py),
+            ) is not None
             grid = load_island_viewport(tiles, px, py)
             if already:
-                content = render_grid(grid, player, "💰 The chest has already been looted.")
+                content = render_grid(grid, player, "💰 This chest has already been looted.")
             else:
-                await mark_island_looted(db, ox, oy)
-                loot_rng = _random.Random(hash((ox, oy, seed, "island_loot")))
+                await db.execute(
+                    "INSERT OR IGNORE INTO island_loots (ocean_x, ocean_y) VALUES (?, ?)",
+                    (ox * 10000 + px, oy * 10000 + py),
+                )
+                loot_rng = _random.Random(hash((ox, oy, seed, "vol_chest", px, py)))
                 roll = loot_rng.random()
-                if roll < 0.4:
-                    item_id, qty = "gold_coin", loot_rng.randint(10, 50)
-                elif roll < 0.65:
-                    item_id, qty = "gem", loot_rng.randint(1, 3)
-                elif roll < 0.80:
+                if roll < 0.30:
+                    item_id, qty = "gold_coin", loot_rng.randint(40, 120)
+                elif roll < 0.55:
+                    item_id, qty = "gem", loot_rng.randint(2, 5)
+                elif roll < 0.70:
                     item_id, qty = "map_fragment", 1
+                elif roll < 0.85:
+                    item_id, qty = "iron_ingot", loot_rng.randint(3, 8)
                 else:
-                    item_id, qty = "iron_ingot", loot_rng.randint(2, 5)
+                    item_id, qty = "obsidian", loot_rng.randint(1, 3)
                 await add_to_inventory(db, user_id, item_id, qty)
                 label = item_id.replace("_", " ").title()
                 content = render_grid(grid, player,
