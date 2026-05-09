@@ -3160,7 +3160,7 @@ async def handle_plant(
         return
 
     grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-    vc_ = VIEWPORT_CENTER
+    vc_ = 4  # VIEWPORT_CENTER
     center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
     if center_t != "vil_farmland":
         content = render_grid(grid, player, "You're not standing on farmland.")
@@ -3215,7 +3215,7 @@ async def handle_plant_choice(
 
     inv_items = await get_inventory(db, user_id)
     has_seed = any(it["item_id"] == seed_type and it["qty"] > 0 for it in inv_items)
-    vc_ = VIEWPORT_CENTER
+    vc_ = 4  # VIEWPORT_CENTER
     center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
 
     if not has_seed:
@@ -5479,7 +5479,7 @@ async def handle_action(
     # ── Village (not in building): adjacent NPC/mill interactions ────────────
     if player.in_village and not player.in_house:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
-        vc = VIEWPORT_CENTER
+        vc = 4  # VIEWPORT_CENTER
         adj_terrains: set[str] = set()
         for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             r, c = vc + ro, vc + co
@@ -5511,7 +5511,7 @@ async def handle_action(
             return
 
         # ── Village farmland / crop / hoe interactions ────────────────────────
-        vc2 = VIEWPORT_CENTER
+        vc2 = 4  # VIEWPORT_CENTER
         center_vt = grid[vc2][vc2].terrain if len(grid) > vc2 and len(grid[vc2]) > vc2 else None
         hand_items_v: set[str] = set()
         if player.hand_1: hand_items_v.add(player.hand_1)
