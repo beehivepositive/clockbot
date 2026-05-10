@@ -7485,7 +7485,7 @@ async def handle_inv_item_dec(
         else:
             # Quantity hit zero, return to main inventory
             await handle_inv_item_back(interaction, guild_id, user_id)
-    else:
+    # else: item_id not in selections — nothing to do
 
 
 async def handle_inv_item_unsel(
@@ -9617,7 +9617,7 @@ async def handle_qswap(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
-    else:
+    # else: no quest offered — nothing to do
 
 
 async def handle_qswap_pass(
