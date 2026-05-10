@@ -1,10 +1,5 @@
 import discord
 from typing import Optional
-import anthropic
-from personality import SYSTEM_PROMPT, PRIMING_HISTORY
-from botc_knowledge import BOTC_KNOWLEDGE
-from db_search import is_db_query, context_for
-FULL_PROMPT = SYSTEM_PROMPT + chr(10)*2 + BOTC_KNOWLEDGE
 from discord.ext import commands, tasks
 from discord import app_commands
 import os, io, random, aiohttp, tempfile, re, asyncio, json
@@ -22,7 +17,6 @@ from game_state import load_whisper_state,save_whisper_state,get_game_state,set_
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
@@ -43,54 +37,6 @@ MAX_IMG_W = 150*mm
 MAX_IMG_H = 150*mm
 AVATAR_SIZE = 10*mm
 MAX_PDF_BYTES = 25 * 1024 * 1024
-BOTC_TOOLS = [{'name': 'run_botc_scenario', 'description': 'Run a BotC logic scenario. botc_logic is imported. Use print().', 'input_schema': {'type': 'object', 'properties': {'code': {'type': 'string', 'description': 'Python code'}, 'description': {'type': 'string', 'description': 'What it tests'}}, 'required': ['code', 'description']}}, {'name': 'lookup_character', 'description': 'Look up a BotC character ability text from wiki data', 'input_schema': {'type': 'object', 'properties': {'character_name': {'type': 'string'}}, 'required': ['character_name']}}, {'name': 'get_game_state', 'description': 'Get the current tracked game state for a channel/game', 'input_schema': {'type': 'object', 'properties': {'game_key': {'type': 'string', 'description': 'The game identifier'}}, 'required': ['game_key']}}]
-
-BOTC_SYSTEM_ADDITION = """
-== BOTC LOGIC TOOLS ==
-You have access to tools to run actual Blood on the Clocktower game logic code and look up character abilities.
-Use run_botc_scenario when asked mechanical questions about how abilities work, interact, or what happens in specific situations.
-Use lookup_character to get exact ability text.
-Use get_game_state to see the current tracked game state for a channel.
-Always run scenarios to verify mechanical rulings before answering -- don't guess at mechanics.
-"""
-
-
-def execute_botc_tool(name: str, params: dict, game_key: str = None) -> str:
-    if name == "run_botc_scenario":
-        return run_botc_code(params.get("code", ""))
-    elif name == "lookup_character":
-        return get_character_info(params.get("character_name", ""))
-    elif name == "get_game_state":
-        key = params.get("game_key") or game_key
-        g = get_game(key) if key else None
-        return format_game_state(g) if g else "No active game found for that key."
-    return f"Unknown tool: {name}"
-
-
-async def chat_with_botc_tools(messages: list, system: str, game_key: str = None) -> str:
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    all_messages = list(messages)
-    full_system = system + "\n\n" + BOTC_SYSTEM_ADDITION
-    for _ in range(6):
-        resp = client.messages.create(
-            model="claude-sonnet-4-6", max_tokens=1200,
-            system=full_system, tools=BOTC_TOOLS, messages=all_messages,
-        )
-        if resp.stop_reason == "end_turn":
-            text = next((b.text for b in resp.content if hasattr(b, "text")), "")
-            return text[:2000] or "(no response)"
-        if resp.stop_reason == "tool_use":
-            all_messages.append({"role": "assistant", "content": resp.content})
-            results = []
-            for block in resp.content:
-                if block.type == "tool_use":
-                    res = execute_botc_tool(block.name, block.input, game_key)
-                    results.append({"type":"tool_result","tool_use_id":block.id,"content":res[:3000]})
-            if results:
-                all_messages.append({"role": "user", "content": results})
-        else:
-            break
-    return "(Could not generate response)"
 
 
 
@@ -103,51 +49,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @bot.event
 async def on_ready():
-    global FULL_PROMPT
-    guild = discord.Object(id=1339575347032621191)
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
-    try:
-        import aiohttp as _ah, io as _io, pypdf as _pp
-        rch = discord.utils.get(bot.get_all_channels(), name="resources")
-        if rch:
-            chunks = []
-            async with _ah.ClientSession() as _s:
-                async for m in rch.history(limit=None, oldest_first=True):
-                    if m.content.strip():
-                        chunks.append(m.content.strip())
-                    for att in m.attachments:
-                        nl = att.filename.lower()
-                        try:
-                            async with _s.get(att.url) as r:
-                                data = await r.read()
-                            if nl.endswith(".pdf"):
-                                rd = _pp.PdfReader(_io.BytesIO(data))
-                                txt = "\n".join(pg.extract_text() or "" for pg in rd.pages).strip()
-                                if txt: chunks.append(f"[FILE: {att.filename}]\n{txt}")
-                            elif nl.endswith((".txt",".md")):
-                                chunks.append(f"[FILE: {att.filename}]\n{data.decode('utf-8','ignore').strip()}")
-                        except Exception as fe:
-                            print(f"Warn: {att.filename}: {fe}")
-            if chunks:
-                block = "== SERVER RESOURCES CHANNEL ==\n" + "\n\n".join(chunks)
-                FULL_PROMPT = SYSTEM_PROMPT + chr(10)*2 + BOTC_KNOWLEDGE + chr(10)*2 + block
-                chat_history.clear()
-                print(f"Loaded {len(chunks)} items from #resources")
-    except Exception as e:
-        print(f"Warning: could not load #resources: {e}")
-
-    # Inject player profiles
-    _pp = '/home/discord-bot/player_profiles.json'
-    if os.path.exists(_pp):
-        try:
-            import json as _j
-            profs = _j.load(open(_pp))
-            pb = "== PLAYER PROFILES ==\n" + "\n\n".join(f"[{n}]\n{t}" for n,t in profs.items())
-            FULL_PROMPT = FULL_PROMPT + chr(10)*2 + pb
-            print(f"Loaded {len(profs)} player profiles", flush=True)
-        except Exception as e:
-            print(f"Warning: profiles: {e}")
     if not game_clock.is_running():
         game_clock.start()
 
@@ -1147,9 +1050,6 @@ async def remove_common_name(i:discord.Interaction,common_name:str):
         await i.response.send_message(f"{common_name} removed.",ephemeral=True)
     else: await i.response.send_message(f"{common_name} not found.",ephemeral=True)
 
-chat_history = {}  # channel_id -> list of {role, content}
-MAX_HISTORY = 20
-
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -1160,109 +1060,36 @@ async def on_message(message):
         return
     await bot.process_commands(message)
     ch_name = message.channel.name
-    if (ch_name.endswith('-logs') or ch_name.endswith('-log'))             and 'whisper' not in ch_name             and DAY_PATTERN.match(message.content or ''):
+    if (ch_name.endswith('-logs') or ch_name.endswith('-log')) \
+            and 'whisper' not in ch_name \
+            and DAY_PATTERN.match(message.content or ''):
         await mirror_day_announcement(message)
         return
-    cat = getattr(message.channel,"category",None)
+    cat = getattr(message.channel, "category", None)
     cat_name = cat.name.lower() if cat else ""
     if "game chat" in cat_name or "game logs" in cat_name:
-        is_bot = bot.user in message.mentions
-        st_role = discord.utils.get(message.guild.roles,name="Storyteller") or discord.utils.get(message.guild.roles,name="storyteller")
+        st_role = discord.utils.get(message.guild.roles, name="Storyteller") or \
+                  discord.utils.get(message.guild.roles, name="storyteller")
         is_st_role = st_role is not None and st_role in message.role_mentions
-        if is_bot or is_st_role:
+        if is_st_role or bot.user in message.mentions:
             stripped = message.content
             for u in message.mentions:
-                stripped = stripped.replace(f"<@{u.id}>","").replace(f"<@!{u.id}>","")
+                stripped = stripped.replace(f"<@{u.id}>", "").replace(f"<@!{u.id}>", "")
             for r in message.role_mentions:
-                stripped = stripped.replace(f"<@&{r.id}>","")
+                stripped = stripped.replace(f"<@&{r.id}>", "")
             clean = stripped.strip()
             if NOM_TRIGGER.match(clean):
                 await handle_nomination(message)
                 return
-            # Juggler: "juggle PlayerA:CharA, PlayerB:CharB"
-            _jm=JUGGLE_TRIGGER.match(message.content.strip())
-            if _jm and not is_bot and not is_st_role:
-                await _handle_juggle(message)
-                return
-            # Yaggababble phrase tracking
-            await _check_yagg_phrase(message)
-            # Mezepheles word detection (any player)
-            await _check_mez_word(message)
-            if is_bot and clean and ANTHROPIC_KEY:
-                gk = get_game_key(message.channel.name)
-                ch_id = message.channel.id
-                if ch_id not in chat_history:
-                    chat_history[ch_id] = list(PRIMING_HISTORY)
-                history = chat_history[ch_id]
-                game_ctx = ""
-                if gk:
-                    g = get_game(gk)
-                    if g:
-                        game_ctx = f"\n\n== CURRENT GAME STATE ({gk}) ==\n{format_game_state(g)}"
-                history.append({"role": "user", "content": f"{message.author.display_name}: {clean or 'hey'}"})
-                if len(history) > MAX_HISTORY:
-                    chat_history[ch_id] = history[-MAX_HISTORY:]
-                async with message.channel.typing():
-                    try:
-                        reply_text = await chat_with_botc_tools(
-                            chat_history[ch_id], FULL_PROMPT + game_ctx, game_key=gk)
-                    except Exception as e:
-                        reply_text = f"broke: {e}"
-                chat_history[ch_id].append({"role": "assistant", "content": reply_text})
-                if len(reply_text) > 2000:
-                    reply_text = reply_text[:1997] + "..."
-                await message.reply(reply_text, mention_author=False)
-        return
-    is_mentioned = bot.user in message.mentions
-    is_reply = (message.reference is not None
-        and getattr(message.reference.resolved, "author", None) == bot.user)
-    if not (is_mentioned or is_reply):
-        return
-    if ch_name == "general":
-        return
-
-    if not ANTHROPIC_KEY:
-        await message.reply("Set ANTHROPIC_API_KEY in .env to enable chat.", mention_author=False)
-        return
-    content = message.content
-    for u in message.mentions:
-        content = content.replace(f"<@{u.id}>", "").replace(f"<@!{u.id}>", "")
-    content = content.strip() or "hey"
-    ch_id = message.channel.id
-    if ch_id not in chat_history:
-        chat_history[ch_id] = list(PRIMING_HISTORY)
-    history = chat_history[ch_id]
-    history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
-    if len(history) > MAX_HISTORY:
-        chat_history[ch_id] = history[-MAX_HISTORY:]
-    db_ctx=context_for(content) if is_db_query(content) else ""
-    sys_prompt=FULL_PROMPT+(chr(10)*2+db_ctx if db_ctx else "")
-    BOTC_KEYWORDS = {"monk","imp","demon","townsfolk","outsider","minion","poisoner","empath",
-                     "fortune teller","scarlet woman","ability","protect","night","kill","drunk","poison",
-                     "vortox","assassin","exorcist","undertaker","washerwoman","librarian","chef",
-                     "clocktower","botc","blood on"}
-    content_lower = content.lower()
-    use_tools = any(kw in content_lower for kw in BOTC_KEYWORDS)
-    async with message.channel.typing():
-        try:
-            if use_tools:
-                reply_text = await chat_with_botc_tools(chat_history[ch_id], sys_prompt)
-            else:
-                client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-                resp = client.messages.create(
-                    model="claude-haiku-4-5",
-                    max_tokens=400,
-                    system=sys_prompt,
-                    messages=chat_history[ch_id],
-                )
-                reply_text = resp.content[0].text
-        except Exception as e:
-            reply_text = f"broke: {e}"
-
-    chat_history[ch_id].append({"role": "assistant", "content": reply_text})
-    if len(reply_text) > 2000:
-        reply_text = reply_text[:1997] + "..."
-    await message.reply(reply_text, mention_author=False)
+        # Juggler: "juggle PlayerA:CharA, PlayerB:CharB"
+        _jm = JUGGLE_TRIGGER.match(message.content.strip())
+        if _jm:
+            await _handle_juggle(message)
+            return
+        # Yaggababble phrase tracking
+        await _check_yagg_phrase(message)
+        # Mezepheles word detection (any player)
+        await _check_mez_word(message)
 
 
 
