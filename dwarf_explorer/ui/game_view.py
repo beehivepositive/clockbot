@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re as _re
 import random as _random
@@ -7454,6 +7454,7 @@ async def handle_inv_item_inc(
             view=InventoryItemView(guild_id, user_id, new_qty)
         )
     else:
+        pass  # no matching item in selections
 
 
 async def handle_inv_item_dec(
