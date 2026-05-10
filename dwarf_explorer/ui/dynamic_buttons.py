@@ -99,6 +99,9 @@ _OCEAN_MOVE_ACTIONS = {
     "ocean_up", "ocean_down", "ocean_left", "ocean_right",
     "ocean_upleft", "ocean_upright", "ocean_downleft", "ocean_downright",
 }
+# Actions that open a modal — must NOT defer first (send_modal IS the response)
+_MODAL_ACTIONS = {"inv_qty_modal", "bank_qty_modal", "shop_qty_modal"}
+
 _IGNORED_ACTIONS = {
     "ship_hp_sp",
     "sp1", "sp2", "sp3", "sp4", "sp5", "c_wait", "csp0", "csp1", "c_free",
@@ -163,6 +166,11 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             return
 
         gid, uid, act = self.guild_id, self.user_id, self.action
+
+        # Defer immediately so Discord releases the button loading state right away.
+        # Modal-opening actions skip this — send_modal() is their own response type.
+        if act not in _MODAL_ACTIONS:
+            await interaction.response.defer()
 
         try:
             if act in _OCEAN_MOVE_ACTIONS:
