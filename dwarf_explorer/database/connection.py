@@ -353,6 +353,38 @@ class Database:
                 "ALTER TABLE ground_items ADD COLUMN cave_id INTEGER DEFAULT NULL",
                 "ALTER TABLE ground_items ADD COLUMN cave_x INTEGER DEFAULT NULL",
                 "ALTER TABLE ground_items ADD COLUMN cave_y INTEGER DEFAULT NULL",
+                # Sky temples system
+                """CREATE TABLE IF NOT EXISTS sky_temples (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    world_x     INTEGER NOT NULL,
+                    world_y     INTEGER NOT NULL,
+                    temple_type TEXT    NOT NULL DEFAULT 'outer',
+                    sky_id      INTEGER DEFAULT NULL,
+                    UNIQUE(world_x, world_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS temple_tiles (
+                    temple_id INTEGER NOT NULL,
+                    local_x   INTEGER NOT NULL,
+                    local_y   INTEGER NOT NULL,
+                    tile_type TEXT    NOT NULL,
+                    PRIMARY KEY (temple_id, local_x, local_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS temple_gear_slots (
+                    temple_id    INTEGER NOT NULL,
+                    slot_x       INTEGER NOT NULL,
+                    slot_y       INTEGER NOT NULL,
+                    required_gear TEXT   NOT NULL,
+                    is_filled    INTEGER NOT NULL DEFAULT 0,
+                    filled_by    INTEGER DEFAULT NULL,
+                    PRIMARY KEY (temple_id, slot_x, slot_y)
+                )""",
+                # Temple player state
+                "ALTER TABLE players ADD COLUMN in_temple INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN temple_id INTEGER DEFAULT NULL",
+                "ALTER TABLE players ADD COLUMN temple_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN temple_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN temple_wx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN temple_wy INTEGER NOT NULL DEFAULT 0",
             ]
             for mig_sql in migrations:
                 try:

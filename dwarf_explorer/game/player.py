@@ -6,7 +6,7 @@ from dwarf_explorer.config import (
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
     COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE, SHIP_WALKABLE,
-    SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE,
+    SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE, TEMPLE_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -87,6 +87,13 @@ class Player:
     sky_y: int = 0
     sky_portal_wx: int = 0  # overworld x of sky portal used to enter
     sky_portal_wy: int = 0  # overworld y of sky portal used to enter
+    # Temple interior state
+    in_temple: bool = False
+    temple_id: int | None = None
+    temple_x: int = 0
+    temple_y: int = 0
+    temple_wx: int = 0   # overworld x of temple tile entered
+    temple_wy: int = 0   # overworld y of temple tile entered
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
@@ -155,6 +162,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return _can_move_cave(target_tile)
     if getattr(player, "in_shipwreck", False):
         return can_move_shipwreck(target_tile)
+    if getattr(player, "in_temple", False):
+        return can_move_temple(target_tile)
     if getattr(player, "in_sky", False):
         return can_move_sky(target_tile)
 
@@ -220,4 +229,11 @@ def can_move_shipwreck(target_tile: TileData) -> tuple[bool, str]:
     """Walkability inside a sunken ship interior."""
     if target_tile.terrain not in SHIPWRECK_WALKABLE:
         return False, "A rotting hull wall blocks your path."
+    return True, ""
+
+
+def can_move_temple(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a sky temple interior."""
+    if target_tile.terrain not in TEMPLE_WALKABLE and target_tile.terrain != "temple_entrance":
+        return False, "⛔ Solid stone."
     return True, ""

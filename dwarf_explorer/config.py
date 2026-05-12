@@ -65,7 +65,9 @@ STRUCTURE_EMOJI = {
     "island": "\U0001F3DD️",  # 🏝️ high-seas island
     "volcano_island": "\U0001F30B",  # 🌋 volcano island
     "sundial": "\U0001F55B",        # 🕛 sundial ruins (rift portal)
-    "sky_portal": "\U0001F300",    # 🌀 sky portal on mountain tile
+    "sky_portal": "\U0001F300",    # 🌀 sky portal on mountain tile (legacy, no longer placed)
+    "sky_temple_outer": "\U0001F3DB️",  # 🏛️ outer/puzzle temple (overworld)
+    "sky_temple_main":  "\U0001F3F0",        # 🏰 main/portal temple (overworld)
 }
 
 ENTITY_EMOJI = {
@@ -176,6 +178,8 @@ ITEM_EMOJI = {
     "gust_of_aevos":    "🌬️",     # 🌬️  rare ingredient for breath_of_the_sea
     "hawk_feather":     "🪶",       # 🪶  dropped by storm_hawk in sky biome
     "gold_coin":        "🪙",       # 🪙  loose gold coin (shipwreck loot)
+    "small_gear": "⚙️",
+    "large_gear": "🔩",
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -203,7 +207,9 @@ WALKABLE_TILES = {
     "harbor",        # harbor dock — walkable
     "drop_box",      # item drop box — walkable, interact to pick up
     "sundial",       # sundial ruins — walkable (interact with star_fragment to open rift)
-    "sky_portal",    # sky portal on mountain — walkable (with climbing_boots; interact to enter sky)
+    "sky_portal",    # sky portal on mountain — walkable (legacy; kept for any existing portals)
+    "sky_temple_outer",  # outer puzzle temple — walkable overworld tile
+    "sky_temple_main",   # main portal temple — walkable overworld tile
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
     # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
     "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
@@ -225,7 +231,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -403,6 +409,9 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("iron_ingot", 1)}):                              {"result": "nail",            "qty": 18, "label": "📌 Forge Nails (×18)"},
     # Underwater breathing
     frozenset({("seaweed", 2), ("gust_of_aevos", 1)}):          {"result": "breath_of_the_sea", "qty": 1, "label": "🫧 Brew Breath of the Sea"},
+    # Sky temple gears
+    frozenset({("iron_ingot", 2)}):                              {"result": "small_gear",        "qty": 1, "label": "⚙️ Forge Small Gear"},
+    frozenset({("iron_ingot", 3)}):                              {"result": "large_gear",         "qty": 1, "label": "🔩 Forge Large Gear"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -434,6 +443,9 @@ SKY_EMOJI = {
     "sky_temple":   "\U0001F3DB️", # 🏛️ sky temple (walkable/interactive)
     "sky_altar":    "✨",           # ✨ sky altar (walkable/interactive)
     "sky_entrance": "\U0001F300",       # 🌀 sky entrance portal (exit back to world)
+    "sky_rune_stone":   "📜",
+    "sky_storm_tower":  "⚡",
+    "sky_wind_shrine":  "\U0001F32C️",  # 🌬️
     # Sky enemies
     "wind_wisp":    "\U0001F4A8",       # 💨
     "storm_hawk":   "\U0001F985",       # 🦅
@@ -442,6 +454,70 @@ SKY_EMOJI = {
 SKY_WALKABLE = {
     "sky_cloud", "sky_floor", "sky_bridge",
     "sky_chest", "sky_temple", "sky_altar", "sky_entrance",
+    "sky_rune_stone", "sky_storm_tower", "sky_wind_shrine",
+}
+
+TEMPLE_EMOJI = {
+    "temple_floor":         "🟫",
+    "temple_wall":          "🧱",
+    "temple_entrance":      "🚪",
+    "gear_slot_small":      "⚙️",
+    "gear_slot_large":      "🔩",
+    "gear_slot_filled_s":   "🟢",
+    "gear_slot_filled_l":   "🟠",
+    "temple_altar":         "🏺",
+    "temple_pillar":        "🪨",
+    "temple_portal_locked": "🔒",
+    "temple_portal_open":   "🌀",
+    "temple_rune":          "📜",
+}
+
+TEMPLE_WALKABLE = {
+    "temple_floor", "temple_entrance",
+    "gear_slot_small", "gear_slot_large",
+    "gear_slot_filled_s", "gear_slot_filled_l",
+    "temple_altar", "temple_portal_locked", "temple_portal_open",
+    "temple_rune",
+}
+
+SKY_LORE = {
+    "temple_altar": [
+        "🏺 The altar thrums with dormant energy.",
+        "Etched runes read: *'When the three machines turn, the sky opens its gate.'*",
+    ],
+    "temple_rune": [
+        "📜 *'The large gear drives the small. The small gear drives the world. Together, they lift you to our realm.'*",
+        "📜 *'Three temples guard the way. Only when all gears turn as one shall the portal awaken.'*",
+        "📜 *'We built these temples as a trial. Only those patient enough to gather the ancient gears may ascend.'*",
+    ],
+    "temple_portal_locked": [
+        "🔒 A massive archway carved from mountain stone. The portal is sealed.",
+        "Cold air emanates from the arch. A faint inscription: *'Three machines must turn before I open.'*",
+    ],
+    "temple_portal_open": [
+        "🌀 The portal swirls with otherworldly light. Step through to enter the Sky Realm.",
+    ],
+    "sky_altar": [
+        "✨ An altar of the sky-builders, worn smooth by wind and time.",
+        "Offerings of strange metalwork are scattered across its surface.",
+    ],
+    "sky_temple": [
+        "🏛️ A sky temple. The architecture matches the mountain temples far below.",
+        "Remnants of gear-work adorn the walls — whoever built this place descended to the world below.",
+    ],
+    "sky_rune_stone": [
+        "📜 *'We came from the mountains. We built our temples above the clouds. Now we are wind.'*",
+        "📜 *'The storm hawks were our guardians once. The wind wisps are the echoes of our builders.'*",
+        "📜 *'To return below: find the spiral portal and step through. The mountain will remember you.'*",
+    ],
+    "sky_storm_tower": [
+        "⚡ Lightning arcs between the tower's spires. A hum fills the air.",
+        "Enormous interlocked gears line the tower walls — the source of the mountain temples' power.",
+    ],
+    "sky_wind_shrine": [
+        "🌬️ A small shrine. Wind whirls gently around it despite the still air.",
+        "Tiny carved figures dance in the updraft, suspended by ancient magic.",
+    ],
 }
 
 SKY_ENCOUNTER_RATES = {

@@ -102,21 +102,24 @@ def generate_sky_biome(sky_id: int, world_seed: int) -> tuple[int, int, list[tup
                 tiles[(ex, ey)] = "sky_chest"
 
     # --- Satellite islands ---
-    num_satellites = rng.randint(3, 6)
+    num_satellites = rng.randint(5, 8)
     island_centers: list[tuple[int, int]] = [(SKY_ENTRY_X, SKY_ENTRY_Y)]
     all_cloud_tiles: list[tuple[int, int]] = list(entry_cloud)
+    island_radii: list[int] = [entry_radius]
 
-    for _ in range(num_satellites):
+    storm_tower_placed = False
+
+    for i in range(num_satellites):
         # Pick direction from a random existing island
         src = rng.choice(island_centers)
         angle = rng.uniform(0, 2 * math.pi)
-        dist = rng.randint(14, 22)
+        dist = rng.randint(12, 24)
         nx = int(round(src[0] + math.cos(angle) * dist))
         ny = int(round(src[1] + math.sin(angle) * dist))
         nx = max(3, min(SKY_WIDTH - 4, nx))
         ny = max(3, min(SKY_HEIGHT - 4, ny))
 
-        radius = rng.randint(2, 5)
+        radius = rng.randint(2, 6)
         cloud_tiles = _place_cloud_island(tiles, nx, ny, radius, rng)
         all_cloud_tiles.extend(cloud_tiles)
 
@@ -125,27 +128,62 @@ def generate_sky_biome(sky_id: int, world_seed: int) -> tuple[int, int, list[tup
         _bridge_to(tiles, nearest[0], nearest[1], nx, ny)
 
         island_centers.append((nx, ny))
+        island_radii.append(radius)
 
-        # Place structures on larger islands
-        if radius >= 4 and cloud_tiles:
-            roll = rng.random()
-            center_tile = (nx, ny)
-            if roll < 0.3:
-                tiles[center_tile] = "sky_temple"
-            elif roll < 0.5:
-                tiles[center_tile] = "sky_altar"
-            # chest on the far edge
+        # Place structures on islands based on size
+        if cloud_tiles:
             far_tiles = sorted(cloud_tiles, key=lambda p: _dist(p[0], p[1], nx, ny), reverse=True)
-            for ct in far_tiles:
-                if ct != center_tile:
-                    tiles[ct] = "sky_chest"
-                    break
-        elif radius >= 2 and cloud_tiles and rng.random() < 0.4:
-            # Small island — just a chest
-            for ct in cloud_tiles:
-                if ct != (nx, ny):
-                    tiles[ct] = "sky_chest"
-                    break
+            center_tile = (nx, ny)
+            if radius >= 5 and not storm_tower_placed:
+                # Large island: storm tower
+                tiles[center_tile] = "sky_storm_tower"
+                storm_tower_placed = True
+                # Chest on far edge
+                for ct in far_tiles:
+                    if ct != center_tile:
+                        tiles[ct] = "sky_chest"
+                        break
+            elif radius >= 4:
+                roll = rng.random()
+                if roll < 0.35:
+                    tiles[center_tile] = "sky_temple"
+                    # Rune stones flanking
+                    for ddx, ddy in [(2, 0), (-2, 0)]:
+                        rx, ry = nx + ddx, ny + ddy
+                        if (rx, ry) in tiles and tiles[(rx, ry)] == "sky_cloud":
+                            tiles[(rx, ry)] = "sky_rune_stone"
+                elif roll < 0.55:
+                    tiles[center_tile] = "sky_altar"
+                # Chest on far edge
+                for ct in far_tiles:
+                    if ct != center_tile:
+                        tiles[ct] = "sky_chest"
+                        break
+            elif radius >= 3:
+                roll = rng.random()
+                if roll < 0.4:
+                    tiles[center_tile] = "sky_rune_stone"
+                elif roll < 0.6:
+                    tiles[center_tile] = "sky_wind_shrine"
+                # Small chest chance
+                if rng.random() < 0.5:
+                    for ct in far_tiles:
+                        if ct != center_tile:
+                            tiles[ct] = "sky_chest"
+                            break
+            elif radius >= 2 and rng.random() < 0.35:
+                for ct in cloud_tiles:
+                    if ct != (nx, ny):
+                        tiles[ct] = "sky_chest"
+                        break
+
+    # Ensure at least one rune stone exists
+    if not any(v == "sky_rune_stone" for v in tiles.values()):
+        for c in island_centers[1:]:
+            cx_t, cy_t = c
+            if tiles.get((cx_t, cy_t)) == "sky_cloud":
+                tiles[(cx_t, cy_t)] = "sky_rune_stone"
+                break
 
     # --- Fill rest as sky_void ---
     result: list[tuple[int, int, str]] = []

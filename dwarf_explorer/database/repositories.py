@@ -175,6 +175,13 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             sky_y=row["sky_y"] if "sky_y" in cols else 0,
             sky_portal_wx=row["sky_portal_wx"] if "sky_portal_wx" in cols else 0,
             sky_portal_wy=row["sky_portal_wy"] if "sky_portal_wy" in cols else 0,
+            # Temple state
+            in_temple=bool(row["in_temple"]) if "in_temple" in cols else False,
+            temple_id=row["temple_id"] if "temple_id" in cols else None,
+            temple_x=row["temple_x"] if "temple_x" in cols else 0,
+            temple_y=row["temple_y"] if "temple_y" in cols else 0,
+            temple_wx=row["temple_wx"] if "temple_wx" in cols else 0,
+            temple_wy=row["temple_wy"] if "temple_wy" in cols else 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -299,6 +306,23 @@ async def update_player_sky_state(
         "sky_portal_wx=?, sky_portal_wy=?, last_active=datetime('now') "
         "WHERE user_id=?",
         (int(in_sky), sky_id, sky_x, sky_y, sky_portal_wx, sky_portal_wy, user_id),
+    )
+
+
+async def update_player_temple_state(
+    db: Database,
+    user_id: int,
+    in_temple: bool,
+    temple_id: int | None,
+    temple_x: int,
+    temple_y: int,
+    temple_wx: int = 0,
+    temple_wy: int = 0,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_temple=?, temple_id=?, temple_x=?, temple_y=?, temple_wx=?, temple_wy=?"
+        " WHERE user_id=?",
+        (int(in_temple), temple_id, temple_x, temple_y, temple_wx, temple_wy, user_id),
     )
 
 

@@ -452,30 +452,67 @@ def _generate_structures_sync(
         overrides.append((x, y, 'sundial'))
         sundial_placed = True
 
-    # --- Sky portals: place ~8-12 portals on mountain tiles near mountain ranges ---
-    # ~1 per 400 tiles, clustered near actual mountain terrain
-    sky_portal_count = rng.randint(8, 12)
-    found = 0
-    sky_portal_positions: list[tuple[int, int]] = []
-    for _ in range(3000):
-        if found >= sky_portal_count:
-            break
+    # --- Sky temples: 1 main temple near center + 3 outer temples maximally spread ---
+    # Collect candidate mountain tiles (must be part of a range, not isolated)
+    all_mountain_candidates: list[tuple[int, int]] = []
+    cx_w, cy_w = WORLD_SIZE // 2, WORLD_SIZE // 2
+    for _ in range(8000):
         x = rng.randint(3, WORLD_SIZE - 4)
         y = rng.randint(3, WORLD_SIZE - 4)
-        if _near_spawn(x, y):
+        if get_biome(x, y, seed) != 'mountain':
             continue
-        biome = get_biome(x, y, seed)
-        if biome != 'mountain':
-            continue
-        # Must be adjacent to another mountain tile (part of a range, not isolated)
         if not _is_adjacent_to(x, y, seed, 'mountain'):
             continue
-        # Space portals at least 30 tiles apart
-        if any(abs(x - px) + abs(y - py) < 30 for px, py in sky_portal_positions):
-            continue
-        overrides.append((x, y, 'sky_portal'))
-        sky_portal_positions.append((x, y))
-        found += 1
+        all_mountain_candidates.append((x, y))
+        if len(all_mountain_candidates) >= 200:
+            break
+
+    if all_mountain_candidates:
+        # Main temple: mountain tile closest to map center (within 50 tiles), not at spawn
+        center_candidates = [
+            (math.hypot(x - cx_w, y - cy_w), x, y)
+            for x, y in all_mountain_candidates
+            if math.hypot(x - cx_w, y - cy_w) <= 50 and not _near_spawn(x, y)
+        ]
+        center_candidates.sort()
+        if center_candidates:
+            _, mt_x, mt_y = center_candidates[0]
+            overrides.append((mt_x, mt_y, 'sky_temple_main'))
+            main_pos = (mt_x, mt_y)
+        else:
+            main_pos = None
+
+        # Outer temples: 3 tiles maximally spread (farthest-point greedy)
+        outer_pool = [
+            (x, y) for x, y in all_mountain_candidates
+            if not _near_spawn(x, y)
+            and (main_pos is None or math.hypot(x - main_pos[0], y - main_pos[1]) > 30)
+        ]
+        if len(outer_pool) >= 3:
+            # Start with tile farthest from center
+            outer_1 = max(outer_pool, key=lambda p: math.hypot(p[0] - cx_w, p[1] - cy_w))
+            # Second: farthest from outer_1
+            outer_2 = max(
+                (p for p in outer_pool if math.hypot(p[0] - outer_1[0], p[1] - outer_1[1]) > 30),
+                key=lambda p: math.hypot(p[0] - outer_1[0], p[1] - outer_1[1]),
+                default=None,
+            )
+            if outer_2:
+                # Third: maximizes min distance to outer_1 and outer_2
+                outer_3 = max(
+                    (
+                        p for p in outer_pool
+                        if math.hypot(p[0] - outer_1[0], p[1] - outer_1[1]) > 30
+                        and math.hypot(p[0] - outer_2[0], p[1] - outer_2[1]) > 30
+                    ),
+                    key=lambda p: min(
+                        math.hypot(p[0] - outer_1[0], p[1] - outer_1[1]),
+                        math.hypot(p[0] - outer_2[0], p[1] - outer_2[1]),
+                    ),
+                    default=None,
+                )
+                for tp in filter(None, [outer_1, outer_2, outer_3]):
+                    overrides.append((tp[0], tp[1], 'sky_temple_outer'))
 
     cave_groups = _group_caves(cave_positions, rng)
     return overrides, cave_groups

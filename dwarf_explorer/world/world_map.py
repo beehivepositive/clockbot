@@ -28,7 +28,8 @@ _LEGEND_ICON_ENTRIES = [
     ("cave",       "Cave",           (60,  40,  30),  "filled_circle"),
     ("shrine",     "Shrine",         (200, 50,  50),  "cross"),
     ("sundial",    "Sundial",        (220, 180, 60),  "cross"),
-    ("sky_portal", "Sky Portal",     (80,  200, 255), "filled_circle"),
+    ("sky_temple_outer", "Outer Temple",  (140, 200, 255), "filled_diamond"),
+    ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
 ]
 
 # Ocean-specific legend

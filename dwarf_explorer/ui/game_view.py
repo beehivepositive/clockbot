@@ -21,10 +21,19 @@ from dwarf_explorer.config import (
     SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, SHIPWRECK_SIZE, BREATH_MAX, BREATH_PER_STEP,
     SPAWN_X, SPAWN_Y,
     SKY_ENCOUNTER_RATES,
+    TEMPLE_WALKABLE, TEMPLE_EMOJI, SKY_LORE,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
 from dwarf_explorer.world.sky import (
     get_or_create_sky_biome, load_sky_viewport, load_sky_single_tile,
+)
+from dwarf_explorer.world.temples import (
+    get_or_create_outer_temple, get_or_create_main_temple,
+    load_temple_viewport, load_temple_single_tile,
+    fill_gear_slot, remove_gear_slot,
+    is_outer_temple_solved, are_all_outer_temples_solved,
+    get_main_temple_sky_id,
+    TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, OUTER_ENTRANCE_POS, MAIN_ENTRANCE_POS,
 )
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
@@ -87,6 +96,7 @@ from dwarf_explorer.database.repositories import (
     update_player_sky_state,
     is_sky_chest_looted,
     mark_sky_chest_looted,
+    update_player_temple_state,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -166,6 +176,8 @@ def _vp_cache_key(player) -> tuple:
     if getattr(player, "in_shipwreck", False):
         return ("shipwreck", getattr(player, "shipwreck_wx", 0), getattr(player, "shipwreck_wy", 0),
                 getattr(player, "shipwreck_x", 0), getattr(player, "shipwreck_y", 0))
+    if getattr(player, "in_temple", False):
+        return ("temple", getattr(player, "temple_id", 0), getattr(player, "temple_x", 0), getattr(player, "temple_y", 0))
     if getattr(player, "in_sky", False):
         return ("sky", getattr(player, "sky_id", 0), getattr(player, "sky_x", 0), getattr(player, "sky_y", 0))
     return ("world", player.world_x, player.world_y)
@@ -196,6 +208,12 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
             player.shipwreck_wx, player.shipwreck_wy,
             player.shipwreck_x, player.shipwreck_y, seed
         )
+    elif getattr(player, "in_temple", False):
+        temple_row = await db.fetch_one(
+            "SELECT temple_type FROM sky_temples WHERE id=?", (player.temple_id,)
+        )
+        is_main = temple_row and temple_row["temple_type"] == "main"
+        grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(is_main))
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -2039,6 +2057,10 @@ def _compute_context_labels(
                 center_label, center_enabled = "\U0001F300 Enter Sky", True
             else:
                 center_label, center_enabled = "\U0001F300 Sky Portal", False
+        elif s == "sky_temple_outer":
+            center_label, center_enabled = "🏛️ Enter Temple", True
+        elif s == "sky_temple_main":
+            center_label, center_enabled = "🏰 Enter Temple", True
         # Cave chest — use custom chest emoji if available
         elif t in CAVE_CHEST_TYPES:
             center_label, center_enabled = CAVE_EMOJI.get(t, "📦"), True
@@ -2764,6 +2786,35 @@ async def _move_steps(
         grid = await load_sky_viewport(player.sky_id, player.sky_x, player.sky_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
+    elif getattr(player, "in_temple", False):
+        _temple_row = await db.fetch_one(
+            "SELECT temple_type FROM sky_temples WHERE id=?", (player.temple_id,)
+        )
+        _is_main = _temple_row and _temple_row["temple_type"] == "main"
+        for _ in range(steps):
+            nx, ny = player.temple_x + dx, player.temple_y + dy
+            target = await load_temple_single_tile(player.temple_id, nx, ny, db, is_main=bool(_is_main))
+            if target.terrain == "temple_entrance":
+                # Auto-exit temple
+                wx, wy = player.temple_wx, player.temple_wy
+                player.in_temple = False
+                player.temple_id = None
+                await update_player_temple_state(db, user_id, False, None, 0, 0)
+                player.world_x, player.world_y = wx, wy
+                await update_player_position(db, user_id, wx, wy)
+                grid = await load_viewport(wx, wy, seed, db)
+                return render_grid(grid, player, "You exit the temple."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+            if target.terrain not in TEMPLE_WALKABLE:
+                grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(_is_main))
+                return render_grid(grid, player, "⛔ Solid stone."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+            player.temple_x, player.temple_y = nx, ny
+            await update_player_temple_state(db, user_id, True, player.temple_id,
+                                             nx, ny, player.temple_wx, player.temple_wy)
+        grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(_is_main))
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+
     elif player.in_cave:
         # Determine cave metadata (level, type, boss defeated)
         cave_meta_row = await db.fetch_one(
@@ -3069,6 +3120,8 @@ async def _finish_combat(
             death_items = [(r["item_id"], r["quantity"]) for r in inv_rows]
             if player.in_cave and player.cave_id is not None:
                 await create_cave_drop_box(db, player.cave_id, player.cave_x, player.cave_y, death_items)
+            elif getattr(player, "in_temple", False) and player.temple_id is not None:
+                await create_drop_box(db, player.temple_wx, player.temple_wy, death_items)
             else:
                 await create_drop_box(db, player.world_x, player.world_y, death_items)
             await db.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
@@ -3083,11 +3136,16 @@ async def _finish_combat(
         player.sky_id = None
         player.sky_x = player.sky_y = 0
         player.sky_portal_wx = player.sky_portal_wy = 0
+        player.in_temple = False
+        player.temple_id = None
+        player.temple_x = player.temple_y = 0
+        player.temple_wx = player.temple_wy = 0
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
         await update_player_sky_state(db, user_id, False, None, 0, 0)
+        await update_player_temple_state(db, user_id, False, None, 0, 0)
         # Respawn in the nearest village at full health
         death_x, death_y = player.world_x, player.world_y
         nearest = await find_nearest_village(seed, db, death_x, death_y)
@@ -5561,10 +5619,20 @@ async def handle_interact(
             sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
             sid = getattr(player, "sky_id", 0)
             grid = await load_sky_viewport(sid, sx, sy, db)
-            content = render_grid(grid, player,
-                "\U0001F3DB️ **Temple of Aevos** — Towering cloud-marble columns rise into the endless sky. "
-                "Faded murals depict a great storm-hawk deity. "
-                "Wind whispers through the archways... but the inner sanctum is sealed.")
+            lore_list = SKY_LORE.get("sky_temple", ["\U0001F3DB️ **Temple of Aevos** — Towering cloud-marble columns rise into the endless sky."])
+            lore_text = lore_list[hash((sid, sx, sy)) % len(lore_list)]
+            content = render_grid(grid, player, lore_text)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif sky_terrain in ("sky_rune_stone", "sky_storm_tower", "sky_wind_shrine"):
+            sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+            sid = getattr(player, "sky_id", 0)
+            grid = await load_sky_viewport(sid, sx, sy, db)
+            lore_list = SKY_LORE.get(sky_terrain, ["Nothing unusual here."])
+            lore_text = lore_list[hash((sid, sx, sy)) % len(lore_list)]
+            content = render_grid(grid, player, lore_text)
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
@@ -5576,6 +5644,135 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+    elif getattr(player, "in_temple", False):
+        temple_row = await db.fetch_one(
+            "SELECT temple_type FROM sky_temples WHERE id=?", (player.temple_id,)
+        )
+        is_main = temple_row and temple_row["temple_type"] == "main"
+        temple_tile = await load_temple_single_tile(
+            player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(is_main)
+        )
+        terrain = temple_tile.terrain
+
+        if terrain == "temple_entrance":
+            wx, wy = player.temple_wx, player.temple_wy
+            player.in_temple = False
+            player.temple_id = None
+            await update_player_temple_state(db, user_id, False, None, 0, 0)
+            player.world_x, player.world_y = wx, wy
+            await update_player_position(db, user_id, wx, wy)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "You exit the temple.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        elif terrain in ("gear_slot_small", "gear_slot_large"):
+            required = "small_gear" if terrain == "gear_slot_small" else "large_gear"
+            # Check if player has the required gear
+            inv = await get_inventory(db, user_id)
+            has_gear = any(r["item_id"] == required and r["quantity"] > 0 for r in inv)
+            if has_gear:
+                gear_placed = await fill_gear_slot(db, player.temple_id, player.temple_x, player.temple_y, user_id)
+                if gear_placed:
+                    await remove_from_inventory(db, user_id, required, 1)
+                    solved = await is_outer_temple_solved(db, player.temple_id)
+                    all_solved = await are_all_outer_temples_solved(db)
+                    msg = f"⚙️ You slot the {required.replace('_', ' ')} into place."
+                    if solved:
+                        msg += " ✨ **The mechanism clicks — this temple's puzzle is complete!**"
+                    if all_solved:
+                        msg += " 🌀 **All three temples are solved! The main temple portal has opened!**"
+                else:
+                    msg = "This slot is already filled."
+            else:
+                gear_name = "small gear (⚙️)" if required == "small_gear" else "large gear (🔩)"
+                msg = f"🔧 This slot requires a **{gear_name}**. Craft one from iron ingots or find it in chests."
+            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
+            content = render_grid(grid, player, msg)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        elif terrain in ("gear_slot_filled_s", "gear_slot_filled_l"):
+            removed = await remove_gear_slot(db, player.temple_id, player.temple_x, player.temple_y)
+            if removed:
+                await add_to_inventory(db, user_id, removed, 1)
+                gear_name = removed.replace("_", " ")
+                msg = f"🔧 You retrieve the {gear_name} from the slot."
+            else:
+                msg = "Nothing to remove."
+            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
+            content = render_grid(grid, player, msg)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        elif terrain in ("temple_altar", "temple_rune", "temple_pillar"):
+            lore_list = SKY_LORE.get(terrain, ["Nothing unusual here."])
+            lore_text = lore_list[hash((player.temple_id, player.temple_x, player.temple_y)) % len(lore_list)]
+            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(is_main))
+            content = render_grid(grid, player, lore_text)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        elif terrain == "temple_portal_locked":
+            lore = SKY_LORE.get("temple_portal_locked", ["🔒 The portal is sealed."])
+            solved_count = 0
+            outer_temples = await db.fetch_all("SELECT id FROM sky_temples WHERE temple_type='outer'")
+            for ot in outer_temples:
+                if await is_outer_temple_solved(db, ot["id"]):
+                    solved_count += 1
+            msg = lore[0] + f"\n\n*{solved_count}/3 outer temple puzzles completed.*"
+            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=True)
+            content = render_grid(grid, player, msg)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        elif terrain == "temple_portal_open":
+            sky_id = await get_main_temple_sky_id(db, player.temple_id, seed)
+            from dwarf_explorer.world.sky import SKY_ENTRY_X, SKY_ENTRY_Y
+            player.in_sky = True
+            player.sky_id = sky_id
+            player.sky_x = SKY_ENTRY_X
+            player.sky_y = SKY_ENTRY_Y
+            player.sky_portal_wx = player.temple_wx
+            player.sky_portal_wy = player.temple_wy
+            player.in_temple = False
+            await update_player_temple_state(db, user_id, False, None, 0, 0)
+            await update_player_sky_state(db, user_id, True, sky_id, SKY_ENTRY_X, SKY_ENTRY_Y,
+                                          player.temple_wx, player.temple_wy)
+            player.temple_id = None
+            grid = await load_sky_viewport(sky_id, SKY_ENTRY_X, SKY_ENTRY_Y, db)
+            content = render_grid(grid, player,
+                "🌀 You step through the portal — the mountain falls away below you as you soar into the **Sky Realm**!")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+
+        else:
+            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(is_main))
+            content = render_grid(grid, player, "Nothing to interact with here.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
             return
 
     elif player.in_cave:
@@ -6122,6 +6319,35 @@ async def handle_interact(
                 "\U0001F300 You step into the swirling portal — the world below vanishes as you soar upward "
                 "into the **Sky Realm**! Clouds stretch endlessly around you. "
                 "Return to the \U0001F300 entrance to descend.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif tile.structure == "sky_temple_outer":
+            temple_id = await get_or_create_outer_temple(db, wx, wy)
+            player.in_temple = True
+            player.temple_id = temple_id
+            player.temple_x, player.temple_y = TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y
+            player.temple_wx, player.temple_wy = wx, wy
+            await update_player_temple_state(db, user_id, True, temple_id,
+                                             TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, wx, wy)
+            grid = await load_temple_viewport(temple_id, TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, db, is_main=False)
+            content = render_grid(grid, player,
+                "🏛️ You enter the mountain temple. Ancient gear mechanisms line the walls.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif tile.structure == "sky_temple_main":
+            temple_id, ex, ey = await get_or_create_main_temple(db, wx, wy, seed)
+            player.in_temple = True
+            player.temple_id = temple_id
+            player.temple_x, player.temple_y = ex, ey
+            player.temple_wx, player.temple_wy = wx, wy
+            await update_player_temple_state(db, user_id, True, temple_id, ex, ey, wx, wy)
+            grid = await load_temple_viewport(temple_id, ex, ey, db, is_main=True)
+            content = render_grid(grid, player,
+                "🏰 You enter the main temple. A massive sealed archway dominates the chamber.")
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
