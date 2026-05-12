@@ -9678,6 +9678,9 @@ async def handle_chest_close(
 async def handle_map(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
+    # Defer immediately — map generation fetches avatar images and renders a PNG,
+    # which routinely exceeds Discord's 3-second interaction window.
+    await interaction.response.defer(ephemeral=True)
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
@@ -9705,7 +9708,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.response.send_message(file=file, ephemeral=True)
+        await interaction.followup.send(file=file, ephemeral=True)
         return
 
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
@@ -9729,7 +9732,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.response.send_message(file=file, ephemeral=True)
+        await interaction.followup.send(file=file, ephemeral=True)
         return
 
     other_players = await get_all_overworld_players(db, user_id)
@@ -9768,7 +9771,7 @@ async def handle_map(
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
     file = discord.File(buf, filename="world_map.png")
-    await interaction.response.send_message(file=file, ephemeral=True)
+    await interaction.followup.send(file=file, ephemeral=True)
 
 
 async def handle_help(
