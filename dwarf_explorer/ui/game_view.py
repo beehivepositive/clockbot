@@ -5186,8 +5186,7 @@ async def handle_interact(
                 return
 
             elif htile.terrain == "b_healer" and player.house_type == "hospital":
-                # ── Hospital healer — pay to heal ──────────────────────────────
-                from dwarf_explorer.config import HEAL_COST_PER_HP, HEAL_MINIMUM_COST
+                # ── Hospital healer — free heal ────────────────────────────────
                 grid = await _load_house_grid()
                 max_hp = getattr(player, "max_hp", 100)
                 missing = max_hp - player.hp
@@ -5195,18 +5194,11 @@ async def handle_interact(
                     content = render_grid(grid, player,
                         "\"You look in fine health! Nothing for me to do here.\"")
                 else:
-                    cost = max(HEAL_MINIMUM_COST, missing * HEAL_COST_PER_HP)
-                    _ui_state[user_id] = {
-                        **_ui_state.get(user_id, {}),
-                        "type": "heal_confirm",
-                        "heal_cost": cost,
-                    }
+                    player.hp = max_hp
+                    await update_player_stats(db, user_id, hp=max_hp)
                     content = render_grid(grid, player,
-                        f"\"I can restore you to full health for **{cost}🪙**.\"\n"
-                        f"You are missing **{missing} HP**. You have **{player.gold}🪙**.")
-                    view = HealConfirmView(guild_id, user_id, cost)
-                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                    return
+                        f"\"Rest easy — you're in good hands here.\"\n"
+                        f"❤️ Healed **{missing} HP** for free! ({player.hp}/{max_hp})")
 
             elif htile.terrain == "b_medicine_shelf":
                 grid = await _load_house_grid()
