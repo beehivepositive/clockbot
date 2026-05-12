@@ -135,16 +135,21 @@ class DwarfExplorer(commands.Cog):
             )
             return
 
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "Only the server admin can use this command.", ephemeral=True
+            )
+            return
+
         guild_id = interaction.guild.id
-        user_id = interaction.user.id
 
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
-        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
 
         sx, sy = await find_walkable_spawn(seed, db)
         await update_player_stats(
-            db, user_id,
+            db, ADMIN_PLAYER_ID,
             world_x=sx, world_y=sy,
             in_cave=0, cave_id=None, cave_x=0, cave_y=0,
             in_village=0, village_id=None, village_x=0, village_y=0,
@@ -162,10 +167,10 @@ class DwarfExplorer(commands.Cog):
 
         grid = await load_viewport(sx, sy, seed, db)
         content = render_grid(grid, player)
-        view = GameView(guild_id, user_id)
+        view = GameView(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
         msg = await interaction.original_response()
-        await update_player_message(db, user_id, msg.id, interaction.channel_id)
+        await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
     @app_commands.command(name="newworld", description="Reset and regenerate the world (admin only).")
