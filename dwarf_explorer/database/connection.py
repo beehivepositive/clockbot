@@ -297,6 +297,58 @@ class Database:
                     tile_type  TEXT    NOT NULL,
                     UNIQUE(user_id, village_id, tile_x, tile_y)
                 )""",
+                # Sunken ship (shipwreck) interior state
+                "ALTER TABLE players ADD COLUMN in_shipwreck INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN shipwreck_id INTEGER DEFAULT NULL",
+                "ALTER TABLE players ADD COLUMN shipwreck_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN shipwreck_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN shipwreck_wx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN shipwreck_wy INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN breath INTEGER NOT NULL DEFAULT 100",
+                # Track which shipwreck chests have been looted (per player)
+                """CREATE TABLE IF NOT EXISTS shipwreck_looted_chests (
+                    user_id    INTEGER NOT NULL,
+                    sw_wx      INTEGER NOT NULL,
+                    sw_wy      INTEGER NOT NULL,
+                    chest_x    INTEGER NOT NULL,
+                    chest_y    INTEGER NOT NULL,
+                    looted_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (user_id, sw_wx, sw_wy, chest_x, chest_y)
+                )""",
+                # Sky biome tables
+                """CREATE TABLE IF NOT EXISTS sky_biomes (
+                    sky_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    width   INTEGER NOT NULL,
+                    height  INTEGER NOT NULL
+                )""",
+                """CREATE TABLE IF NOT EXISTS sky_tiles (
+                    sky_id    INTEGER NOT NULL,
+                    local_x   INTEGER NOT NULL,
+                    local_y   INTEGER NOT NULL,
+                    tile_type TEXT    NOT NULL,
+                    PRIMARY KEY (sky_id, local_x, local_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS sky_portals (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    world_x INTEGER NOT NULL,
+                    world_y INTEGER NOT NULL,
+                    sky_id  INTEGER NOT NULL,
+                    UNIQUE(world_x, world_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS sky_chest_state (
+                    sky_id  INTEGER NOT NULL,
+                    local_x INTEGER NOT NULL,
+                    local_y INTEGER NOT NULL,
+                    looted  INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (sky_id, local_x, local_y)
+                )""",
+                # Sky biome player state columns
+                "ALTER TABLE players ADD COLUMN in_sky INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN sky_id INTEGER DEFAULT NULL",
+                "ALTER TABLE players ADD COLUMN sky_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN sky_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN sky_portal_wx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN sky_portal_wy INTEGER NOT NULL DEFAULT 0",
             ]
             for mig_sql in migrations:
                 try:

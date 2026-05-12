@@ -263,3 +263,44 @@ CREATE TABLE IF NOT EXISTS player_village_overrides (
     tile_type  TEXT    NOT NULL,
     UNIQUE(user_id, village_id, tile_x, tile_y)
 );
+
+-- Sky biomes
+CREATE TABLE IF NOT EXISTS sky_biomes (
+    sky_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    width    INTEGER NOT NULL,
+    height   INTEGER NOT NULL
+);
+
+-- Sky interior tiles
+CREATE TABLE IF NOT EXISTS sky_tiles (
+    sky_id   INTEGER NOT NULL REFERENCES sky_biomes(sky_id),
+    local_x  INTEGER NOT NULL,
+    local_y  INTEGER NOT NULL,
+    tile_type TEXT   NOT NULL,
+    PRIMARY KEY (sky_id, local_x, local_y)
+);
+
+-- Sky portals linking overworld mountain tiles to sky biomes
+CREATE TABLE IF NOT EXISTS sky_portals (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    world_x  INTEGER NOT NULL,
+    world_y  INTEGER NOT NULL,
+    sky_id   INTEGER NOT NULL REFERENCES sky_biomes(sky_id),
+    UNIQUE(world_x, world_y)
+);
+
+-- Sky chest loot state (tracks whether a chest has been opened/looted)
+CREATE TABLE IF NOT EXISTS sky_chest_state (
+    sky_id   INTEGER NOT NULL,
+    local_x  INTEGER NOT NULL,
+    local_y  INTEGER NOT NULL,
+    looted   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (sky_id, local_x, local_y)
+);
+
+-- Player sky biome state columns (added via ALTER TABLE for existing DBs)
+-- These ALTER TABLE statements are no-ops if columns already exist (SQLite limitation:
+-- we catch errors in the migration code instead).
+
+CREATE INDEX IF NOT EXISTS idx_sky_tiles_biome ON sky_tiles(sky_id, local_x, local_y);
+CREATE INDEX IF NOT EXISTS idx_sky_portals_pos ON sky_portals(world_x, world_y);

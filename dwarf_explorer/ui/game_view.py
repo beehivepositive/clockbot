@@ -17,8 +17,14 @@ from dwarf_explorer.config import (
     COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
     FARM_ANIMALS, FARMER_SHOP, FARM_CROPS,
     MAX_CREW_SIZE, CREW_HIRE_COST, CREW_NAMES, CREW_TASKS,
+    SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, SHIPWRECK_SIZE, BREATH_MAX, BREATH_PER_STEP,
+    SPAWN_X, SPAWN_Y,
+    SKY_ENCOUNTER_RATES,
 )
 from dwarf_explorer.world.ships import load_ship_viewport, get_door_target, HELM_SPAWN
+from dwarf_explorer.world.sky import (
+    get_or_create_sky_biome, load_sky_viewport, load_sky_single_tile,
+)
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world,
@@ -70,6 +76,14 @@ from dwarf_explorer.database.repositories import (
     hire_crew_member,
     fire_crew_member,
     set_crew_task,
+    get_player_village_overrides,
+    set_player_village_override,
+    update_player_shipwreck_state,
+    is_shipwreck_chest_looted,
+    mark_shipwreck_chest_looted,
+    update_player_sky_state,
+    is_sky_chest_looted,
+    mark_sky_chest_looted,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -96,8 +110,11 @@ from dwarf_explorer.world.villages import (
     get_or_create_village, get_or_create_harbor_village, get_building_at,
     load_village_viewport, load_village_single_tile,
     load_building_viewport, load_building_single_tile,
+    get_recruitable_npc_positions, is_npc_recruitable_for_player,
+    get_replacement_npc_position,
 )
-from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship, can_move_shipwreck
+from dwarf_explorer.world.shipwrecks import load_shipwreck_viewport, get_tile_at as get_shipwreck_tile
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
     render_ship_room, render_ship_chest, render_island,
@@ -143,6 +160,11 @@ def _vp_cache_key(player) -> tuple:
         return ("village", player.village_id, player.village_x, player.village_y)
     if player.in_cave:
         return ("cave", player.cave_id, player.cave_x, player.cave_y)
+    if getattr(player, "in_shipwreck", False):
+        return ("shipwreck", getattr(player, "shipwreck_wx", 0), getattr(player, "shipwreck_wy", 0),
+                getattr(player, "shipwreck_x", 0), getattr(player, "shipwreck_y", 0))
+    if getattr(player, "in_sky", False):
+        return ("sky", getattr(player, "sky_id", 0), getattr(player, "sky_x", 0), getattr(player, "sky_y", 0))
     return ("world", player.world_x, player.world_y)
 
 
@@ -166,6 +188,11 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    elif getattr(player, "in_shipwreck", False):
+        grid = load_shipwreck_viewport(
+            player.shipwreck_wx, player.shipwreck_wy,
+            player.shipwreck_x, player.shipwreck_y, seed
+        )
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -1717,6 +1744,26 @@ class CrewView(discord.ui.View):
         self.add_item(_btn("❌ Close", "crew_close", close_row, discord.ButtonStyle.secondary))
 
 
+class VillageRecruitView(discord.ui.View):
+    """Recruit / cancel buttons shown when player interacts with a recruitable harbour NPC."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label="⚓ Recruit",
+            custom_id=_custom_id(gid, uid, "village_recruit_confirm"),
+            row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Not now",
+            custom_id=_custom_id(gid, uid, "village_recruit_cancel"),
+            row=0,
+        ))
+
+
 # ── Gold cap helper ───────────────────────────────────────────────────────────
 
 def _apply_gold_cap(player: Player, amount: int) -> int:
@@ -1801,8 +1848,8 @@ def _inv_action_btn(
     ci = _cursor_item(visible, selected)
     if ci is not None:
         item_id = ci["item_id"]
-        if item_id in FOOD_HP_RESTORE:
-            return ("\U0001F357", "inv_eat")            # 🍗 eat
+        if item_id in FOOD_HP_RESTORE or item_id == "breath_of_the_sea":
+            return ("\U0001F357", "inv_eat")            # 🍗 eat / use
         if item_id in ITEM_EQUIP_SLOTS:
             if item_id in equipped.values():
                 return ("\U0001FAF4", "inv_equip")      # 🫴 palm up = give back
@@ -1923,6 +1970,26 @@ def _compute_context_labels(
                     center_label, center_enabled = "🕳️ Damage", False
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
+        # Shipwreck tile context
+        if getattr(player, "in_shipwreck", False):
+            if t == "sw_entrance":
+                center_label, center_enabled = "\U0001F300 Exit", True
+            elif t == "sw_chest":
+                center_label, center_enabled = "\U0001F4B0 Open", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+
+        # Sky biome tile context
+        if getattr(player, "in_sky", False):
+            if t == "sky_entrance":
+                center_label, center_enabled = "\U0001F300 Descend", True
+            elif t == "sky_chest":
+                center_label, center_enabled = "\U0001F4B0 Open", True
+            elif t == "sky_altar":
+                center_label, center_enabled = "✨ Inspect", True
+            elif t == "sky_temple":
+                center_label, center_enabled = "\U0001F3DB️ Inspect", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+
         # Island tile context
         if player.in_island:
             if t in ("island_dock", "vol_dock"):
@@ -1954,6 +2021,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🏠", True
         elif s == "cave":
             center_label, center_enabled = "🕳️", True
+        elif s == "shipwreck":
+            center_label, center_enabled = "⚓ Dive", True
         elif s == "village":
             center_label, center_enabled = "🏘️", True
         elif s == "shrine":
@@ -1962,6 +2031,11 @@ def _compute_context_labels(
             center_label, center_enabled = "🏚️", True
         elif s == "harbor":
             center_label, center_enabled = "🚢 Harbor", True
+        elif s == "sky_portal":
+            if player.boots == "climbing_boots":
+                center_label, center_enabled = "\U0001F300 Enter Sky", True
+            else:
+                center_label, center_enabled = "\U0001F300 Sky Portal", False
         # Cave chest — use custom chest emoji if available
         elif t in CAVE_CHEST_TYPES:
             center_label, center_enabled = CAVE_EMOJI.get(t, "📦"), True
@@ -2570,6 +2644,123 @@ async def _move_steps(
         grid = load_island_viewport(tiles, nx, ny)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
+    elif getattr(player, "in_shipwreck", False):
+        sw_wx = getattr(player, "shipwreck_wx", 0)
+        sw_wy = getattr(player, "shipwreck_wy", 0)
+        nx, ny = player.shipwreck_x + dx, player.shipwreck_y + dy
+        target = get_shipwreck_tile(sw_wx, sw_wy, nx, ny, seed)
+        ok, reason = can_move_shipwreck(target)
+        if not ok:
+            grid = load_shipwreck_viewport(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
+            return render_grid(grid, player, f"\U0001F6AB {reason}"), \
+                   _game_view(guild_id, user_id, player, grid=grid)
+        player.shipwreck_x, player.shipwreck_y = nx, ny
+        # Deduct breath per step
+        player.breath = max(0, getattr(player, "breath", BREATH_MAX) - BREATH_PER_STEP)
+        await update_player_shipwreck_state(db, user_id, True, sw_wx, sw_wy, nx, ny, player.breath)
+        # Check drowning
+        if player.breath <= 0:
+            # Player drowns — reset to spawn
+            player.in_shipwreck = False
+            player.shipwreck_wx = 0
+            player.shipwreck_wy = 0
+            player.shipwreck_x = 0
+            player.shipwreck_y = 0
+            player.breath = BREATH_MAX
+            player.world_x, player.world_y = SPAWN_X, SPAWN_Y
+            await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
+            await update_player_position(db, user_id, SPAWN_X, SPAWN_Y)
+            grid = await load_viewport(SPAWN_X, SPAWN_Y, seed, db)
+            return (render_grid(grid, player,
+                                "\U0001F4A7\U0001F480 You ran out of breath and drowned! "
+                                "You wake up gasping at the spawn point."),
+                    _game_view(guild_id, user_id, player, grid=grid))
+        # Exit check: sw_entrance tile at entry position exits the shipwreck
+        if target.terrain == "sw_entrance":
+            player.in_shipwreck = False
+            player.shipwreck_wx = 0
+            player.shipwreck_wy = 0
+            player.shipwreck_x = 0
+            player.shipwreck_y = 0
+            player.breath = BREATH_MAX
+            await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            return render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!"), \
+                   _game_view(guild_id, user_id, player, grid=grid)
+        grid = load_shipwreck_viewport(sw_wx, sw_wy, nx, ny, seed)
+        breath_warn = ""
+        if player.breath <= 40:
+            breath_warn = f"  ⚠️ Low breath: {player.breath}/{BREATH_MAX}!"
+        return render_grid(grid, player, breath_warn), _game_view(guild_id, user_id, player, grid=grid)
+
+    elif getattr(player, "in_sky", False):
+        for _ in range(steps):
+            nx, ny = player.sky_x + dx, player.sky_y + dy
+            target = await load_sky_single_tile(player.sky_id, nx, ny, db)
+            from dwarf_explorer.game.player import can_move_sky
+            ok, reason = can_move_sky(target)
+            if not ok:
+                grid = await load_sky_viewport(player.sky_id, player.sky_x, player.sky_y, db)
+                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
+
+            # Exit: stepping on sky_entrance returns to overworld
+            if target.terrain == "sky_entrance":
+                wx = getattr(player, "sky_portal_wx", player.world_x)
+                wy = getattr(player, "sky_portal_wy", player.world_y)
+                player.in_sky = False
+                player.sky_id = None
+                player.sky_x = player.sky_y = 0
+                player.sky_portal_wx = player.sky_portal_wy = 0
+                player.world_x, player.world_y = wx, wy
+                await update_player_sky_state(db, user_id, False, None, 0, 0)
+                await update_player_position(db, user_id, wx, wy)
+                grid = await load_viewport(wx, wy, seed, db)
+                return (
+                    render_grid(grid, player,
+                        "🌀 The portal swirls shut beneath you. You're back on solid ground."),
+                    _game_view(guild_id, user_id, player, grid=grid),
+                )
+
+            player.sky_x, player.sky_y = nx, ny
+            await update_player_sky_state(db, user_id, True, player.sky_id, nx, ny,
+                                          getattr(player, "sky_portal_wx", 0),
+                                          getattr(player, "sky_portal_wy", 0))
+
+            # Random encounter on sky tiles
+            if target.terrain in ("sky_cloud", "sky_bridge"):
+                enc_rates = SKY_ENCOUNTER_RATES
+                enc_rng = _random.Random(hash((user_id, nx, ny, player.sky_id, player.gold)))
+                total = sum(enc_rates.values())
+                if enc_rng.random() < total:
+                    # Pick enemy weighted by their rates (only cloud/bridge-appropriate)
+                    if target.terrain == "sky_bridge":
+                        enc_rates_filtered = {"storm_hawk": SKY_ENCOUNTER_RATES.get("storm_hawk", 0.06)}
+                    else:
+                        enc_rates_filtered = {"wind_wisp": SKY_ENCOUNTER_RATES.get("wind_wisp", 0.08)}
+                    enemy_type = _roll_encounter(enc_rng, enc_rates_filtered)
+                    if enemy_type:
+                        grid = await load_sky_viewport(player.sky_id, nx, ny, db)
+                        arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
+                        arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+                        player.in_combat = True
+                        player.combat_enemy_type = enemy_type
+                        player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+                        player.combat_enemy_x = ex
+                        player.combat_enemy_y = ey
+                        player.combat_player_x = ARENA_SIZE // 2
+                        player.combat_player_y = ARENA_SIZE // 2
+                        player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
+                        _ui_state[user_id] = {"type": "combat", "arena": arena}
+                        await save_combat_state(db, user_id, player)
+                        content = render_arena(arena, player)
+                        view = CombatView(guild_id, user_id,
+                                          trapped=arena["player_trapped"],
+                                          moves_left=player.combat_moves_left)
+                        return content, view
+
+        grid = await load_sky_viewport(player.sky_id, player.sky_x, player.sky_y, db)
+        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+
     elif player.in_cave:
         # Determine cave metadata (level, type, boss defeated)
         cave_meta_row = await db.fetch_one(
@@ -2791,7 +2982,11 @@ async def handle_move(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    steps = 2 if (player.sprinting and player.boots is not None) else 1
+    # No sprinting inside shipwreck (grid is only 7×7 and movement costs breath)
+    if getattr(player, "in_shipwreck", False):
+        steps = 1
+    else:
+        steps = 2 if (player.sprinting and player.boots is not None) else 1
     content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -2829,6 +3024,22 @@ async def _finish_combat(
             await add_to_inventory(db, user_id, "poison_sac", 1)
             extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
 
+    # Sky enemy drops on victory
+    if won and player.combat_enemy_type == "wind_wisp":
+        drop_rng = _random.Random(hash((user_id, getattr(player, "sky_x", 0), getattr(player, "sky_y", 0), "wisp_drop")))
+        if drop_rng.random() < 0.40:
+            await add_to_inventory(db, user_id, "gust_of_aevos", 1)
+            extra_msg += " \U0001F32C️ The wisp dispersed into a **Gust of Aevos**!"
+
+    if won and player.combat_enemy_type == "storm_hawk":
+        drop_rng = _random.Random(hash((user_id, getattr(player, "sky_x", 0), getattr(player, "sky_y", 0), "hawk_drop")))
+        if drop_rng.random() < 0.60:
+            await add_to_inventory(db, user_id, "gust_of_aevos", 1)
+            extra_msg += " \U0001F32C️ The hawk dropped a **Gust of Aevos**!"
+        if drop_rng.random() < 0.40:
+            await add_to_inventory(db, user_id, "hawk_feather", 1)
+            extra_msg += " \U0001FAB6 You pluck a **Hawk Feather** from the fallen storm hawk!"
+
     # Wyvern scale drop on victory
     if won and player.combat_enemy_type == "cave_wyvern":
         drop_rng = _random.Random(hash((user_id, player.cave_x, player.cave_y, "wyvern_scale")))
@@ -2860,11 +3071,19 @@ async def _finish_combat(
         player.in_canoe = False
         player.in_ocean = False
         player.in_high_seas = False
+        player.in_shipwreck = False
+        player.breath = BREATH_MAX
+        player.in_sky = False
+        player.sky_id = None
+        player.sky_x = player.sky_y = 0
+        player.sky_portal_wx = player.sky_portal_wy = 0
         await update_player_stats(db, user_id, hp=player.hp, in_canoe=0, in_ocean=0)
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
+        await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
+        await update_player_sky_state(db, user_id, False, None, 0, 0)
         await update_player_position(db, user_id, player.world_x, player.world_y)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player, grid=grid)
@@ -2893,6 +3112,11 @@ async def _finish_combat(
     if player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    if getattr(player, "in_sky", False):
+        sid = getattr(player, "sky_id", 0)
+        sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+        grid = await load_sky_viewport(sid, sx, sy, db)
+        return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player, grid=grid)
     if player.in_high_seas:
         from dwarf_explorer.world.terrain import get_coast_boundary as _gcb2
         _hs_ce, _ = _gcb2(seed)
@@ -4576,6 +4800,10 @@ async def handle_ocean_fish(
         # 0.6% chance (high seas only) — Star Fragment
         await add_to_inventory(db, user_id, "star_fragment", 1)
         msg = "🎣 ⭐ Something otherworldly on the line — a **Star Fragment**! The sundial calls to you."
+    elif roll < 0.522:
+        # ~0.6% chance — Gust of Aevos (rare ingredient for Breath of the Sea)
+        await add_to_inventory(db, user_id, "gust_of_aevos", 1)
+        msg = "\U0001F4A8 A magical current wraps around your line — you reel in a **Gust of Aevos**! *(Craft: 2 seaweed + 1 Gust of Aevos → Breath of the Sea)*"
     else:
         msg = "🎣 You cast your line... the fish got away."
 
@@ -5105,6 +5333,27 @@ async def handle_interact(
 
         elif vtile.terrain == "vil_villager":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+
+            # ── Check if this is a recruitable NPC in a harbour village ──────
+            _harbor_row = await db.fetch_one(
+                "SELECT 1 FROM village_tiles WHERE village_id = ? AND tile_type = 'vil_dock' LIMIT 1",
+                (player.village_id,),
+            )
+            _is_harbor_village = _harbor_row is not None
+
+            if _is_harbor_village:
+                _recruitable_positions = get_recruitable_npc_positions(
+                    player.village_id, player.village_wx, player.village_wy, seed
+                )
+                _npc_pos = (player.village_x, player.village_y)
+                if _npc_pos in _recruitable_positions and is_npc_recruitable_for_player(
+                    user_id, player.village_id, player.village_x, player.village_y
+                ):
+                    # This NPC can be recruited by this player
+                    await handle_village_recruit_npc(interaction, guild_id, user_id, player, seed, grid)
+                    return
+
+            # ── Regular villager gossip ───────────────────────────────────────
             _vil_gossip = [
                 "\"Beautiful day, isn't it?\"",
                 "\"Watch yourself on the roads at night.\"",
@@ -5161,6 +5410,159 @@ async def handle_interact(
 
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+    elif getattr(player, "in_shipwreck", False):
+        sw_wx = player.shipwreck_wx
+        sw_wy = player.shipwreck_wy
+        sw_tile = get_shipwreck_tile(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
+
+        if sw_tile.terrain == "sw_entrance":
+            # Exit the shipwreck
+            player.in_shipwreck = False
+            player.shipwreck_wx = 0
+            player.shipwreck_wy = 0
+            player.shipwreck_x = 0
+            player.shipwreck_y = 0
+            player.breath = BREATH_MAX
+            await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            content = render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif sw_tile.terrain == "sw_chest":
+            cx, cy = player.shipwreck_x, player.shipwreck_y
+            already_looted = await is_shipwreck_chest_looted(db, user_id, sw_wx, sw_wy, cx, cy)
+            if already_looted:
+                grid = load_shipwreck_viewport(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
+                content = render_grid(grid, player, "\U0001F4B0 This chest has already been picked clean.")
+            else:
+                # Generate loot
+                loot_rng = _random.Random(hash((user_id, sw_wx, sw_wy, cx, cy, seed, "sw_chest")))
+                loot_msgs: list[str] = []
+                # Iron ingots 1-4
+                n_iron = loot_rng.randint(1, 4)
+                await add_to_inventory(db, user_id, "iron_ingot", n_iron)
+                loot_msgs.append(f"{n_iron}x iron ingot")
+                # Gold coins 5-20
+                gold_found = loot_rng.randint(5, 20)
+                player.gold = min(player.gold + gold_found, COIN_PURSE_CAPACITY.get(player.coin_purse, 100))
+                await update_player_stats(db, user_id, gold=player.gold)
+                loot_msgs.append(f"{gold_found}g")
+                # Seaweed 1-3
+                n_seaweed = loot_rng.randint(1, 3)
+                await add_to_inventory(db, user_id, "seaweed", n_seaweed)
+                loot_msgs.append(f"{n_seaweed}x seaweed")
+                # Log/rope 1-2
+                n_log = loot_rng.randint(1, 2)
+                await add_to_inventory(db, user_id, "log", n_log)
+                loot_msgs.append(f"{n_log}x log")
+                # Rare: map_fragment (20% chance)
+                if loot_rng.random() < 0.20:
+                    await add_to_inventory(db, user_id, "map_fragment", 1)
+                    loot_msgs.append("1x map fragment!")
+                await mark_shipwreck_chest_looted(db, user_id, sw_wx, sw_wy, cx, cy)
+                grid = load_shipwreck_viewport(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
+                content = render_grid(grid, player,
+                    f"\U0001F4B0 You pry open a waterlogged chest! Found: {', '.join(loot_msgs)}")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        else:
+            grid = load_shipwreck_viewport(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
+            content = render_grid(grid, player, "Nothing to interact with here.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+    elif getattr(player, "in_sky", False):
+        sky_tile = await load_sky_single_tile(
+            getattr(player, "sky_id", 0), getattr(player, "sky_x", 0), getattr(player, "sky_y", 0), db
+        )
+        sky_terrain = sky_tile.terrain if sky_tile else "sky_void"
+
+        if sky_terrain == "sky_entrance":
+            # Exit the sky biome → return to overworld at the portal tile
+            wx = getattr(player, "sky_portal_wx", player.world_x)
+            wy = getattr(player, "sky_portal_wy", player.world_y)
+            player.in_sky = False
+            player.sky_id = None
+            player.sky_x = player.sky_y = 0
+            player.sky_portal_wx = player.sky_portal_wy = 0
+            player.world_x, player.world_y = wx, wy
+            await update_player_sky_state(db, user_id, False, None, 0, 0)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player,
+                "\U0001F300 You step back through the swirling portal and land on solid mountain ground.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif sky_terrain == "sky_chest":
+            sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+            sid = getattr(player, "sky_id", 0)
+            already_looted = await is_sky_chest_looted(db, sid, sx, sy)
+            if already_looted:
+                grid = await load_sky_viewport(sid, sx, sy, db)
+                content = render_grid(grid, player, "\U0001F4B0 This sky chest has already been looted.")
+            else:
+                loot_rng = _random.Random(hash((user_id, sid, sx, sy, seed, "sky_chest")))
+                loot_msgs: list[str] = []
+                gold_found = loot_rng.randint(20, 60)
+                _apply_gold_cap(player, gold_found)
+                await update_player_stats(db, user_id, gold=player.gold)
+                loot_msgs.append(f"{gold_found}g")
+                if loot_rng.random() < 0.50:
+                    await add_to_inventory(db, user_id, "gust_of_aevos", 1)
+                    loot_msgs.append("1x gust of aevos \U0001F32C️")
+                if loot_rng.random() < 0.30:
+                    await add_to_inventory(db, user_id, "hawk_feather", 1)
+                    loot_msgs.append("1x hawk feather \U0001FAB6")
+                if loot_rng.random() < 0.20:
+                    await add_to_inventory(db, user_id, "map_fragment", 1)
+                    loot_msgs.append("1x map fragment")
+                await mark_sky_chest_looted(db, sid, sx, sy)
+                grid = await load_sky_viewport(sid, sx, sy, db)
+                content = render_grid(grid, player,
+                    f"\U0001F4B0 You open the sky chest! Found: {', '.join(loot_msgs)}")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif sky_terrain == "sky_altar":
+            sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+            sid = getattr(player, "sky_id", 0)
+            grid = await load_sky_viewport(sid, sx, sy, db)
+            content = render_grid(grid, player,
+                "✨ **Ancient Sky Altar** — An altar carved from living cloud-stone, "
+                "etched with runes of the wind god Aevos. "
+                "The air hums with faint energy. Perhaps a **gust of aevos** offered here holds significance...")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif sky_terrain == "sky_temple":
+            sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+            sid = getattr(player, "sky_id", 0)
+            grid = await load_sky_viewport(sid, sx, sy, db)
+            content = render_grid(grid, player,
+                "\U0001F3DB️ **Temple of Aevos** — Towering cloud-marble columns rise into the endless sky. "
+                "Faded murals depict a great storm-hawk deity. "
+                "Wind whispers through the archways... but the inner sanctum is sealed.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        else:
+            sid = getattr(player, "sky_id", 0)
+            sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
+            grid = await load_sky_viewport(sid, sx, sy, db)
+            content = render_grid(grid, player, "Nothing to interact with here.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
     elif player.in_cave:
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
@@ -5569,6 +5971,27 @@ async def handle_interact(
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
+        elif tile.structure == "shipwreck":
+            # ── Enter sunken ship interior ──────────────────────────────────────
+            player.in_shipwreck = True
+            player.shipwreck_wx = wx
+            player.shipwreck_wy = wy
+            player.shipwreck_x = SHIPWRECK_ENTRY_X
+            player.shipwreck_y = SHIPWRECK_ENTRY_Y
+            player.breath = BREATH_MAX
+            await update_player_shipwreck_state(
+                db, user_id, True, wx, wy,
+                SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, BREATH_MAX,
+            )
+            grid = load_shipwreck_viewport(wx, wy, SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, seed)
+            content = render_grid(grid, player,
+                "\U0001F30A You dive into the wreck! Your breath is at 100. "
+                "Each step costs 20 breath — use \U0001FAB7 Breath of the Sea to refill. "
+                "Interact with \U0001F4B0 chests for loot. Step on the \U0001F573️ hatch (or interact) to exit.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
         elif tile.structure == "cave":
             cave_id, ex, ey = await get_or_create_cave(seed, wx, wy, db)
             # Step 4 tiles inward from the entrance edge so the viewport
@@ -5648,6 +6071,34 @@ async def handle_interact(
                 "🌀 The sundial pulses — the Star Fragment dissolves into light. "
                 "A rift tears open and pulls you through...")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif tile.structure == "sky_portal":
+            # ── Sky Portal: enter the sky biome (requires climbing_boots) ──────────
+            if player.boots != "climbing_boots":
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player,
+                    "\U0001F300 **Sky Portal** — A swirling vortex that leads to the Sky Realm. "
+                    "The wind howls violently. You'd need **climbing boots** to keep your footing long enough to enter.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+
+            sky_id, entry_x, entry_y = await get_or_create_sky_biome(seed, wx, wy, db)
+            player.in_sky = True
+            player.sky_id = sky_id
+            player.sky_x = entry_x
+            player.sky_y = entry_y
+            player.sky_portal_wx = wx
+            player.sky_portal_wy = wy
+            await update_player_sky_state(db, user_id, True, sky_id, entry_x, entry_y, wx, wy)
+            grid = await load_sky_viewport(sky_id, entry_x, entry_y, db)
+            content = render_grid(grid, player,
+                "\U0001F300 You step into the swirling portal — the world below vanishes as you soar upward "
+                "into the **Sky Realm**! Clouds stretch endlessly around you. "
+                "Return to the \U0001F300 entrance to descend.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
@@ -7431,6 +7882,32 @@ async def handle_inv_eat(
         return
 
     item_id = cur_item["item_id"]
+
+    # ── Breath of the Sea: restores breath when inside a shipwreck ──────────
+    if item_id == "breath_of_the_sea":
+        if not getattr(player, "in_shipwreck", False):
+            content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                                      inv_rows, inv_cols, state,
+                                      "\n*\U0001FAB7 You can only use Breath of the Sea underwater (inside a shipwreck).*",
+                                      gold=player.gold)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+        player.breath = BREATH_MAX
+        await update_player_shipwreck_state(
+            db, user_id, True,
+            player.shipwreck_wx, player.shipwreck_wy,
+            player.shipwreck_x, player.shipwreck_y,
+            BREATH_MAX,
+        )
+        await remove_from_inventory(db, user_id, item_id, 1)
+        items = await get_inventory(db, user_id)
+        content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                                  inv_rows, inv_cols, state,
+                                  f"\n*\U0001FAB7 You inhale a magical bubble — breath restored to {BREATH_MAX}/{BREATH_MAX}!*",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
     restore = FOOD_HP_RESTORE.get(item_id)
     if restore is None:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
@@ -7881,7 +8358,8 @@ async def handle_inv_drop(
     inv_rows, inv_cols = _inv_capacity(player)
 
     # Can't drop in caves, villages, buildings, or on the high seas
-    if player.in_cave or player.in_village or player.in_house or player.in_high_seas or player.in_ship or player.in_island:
+    if (player.in_cave or player.in_village or player.in_house or player.in_high_seas
+            or player.in_ship or player.in_island or getattr(player, "in_shipwreck", False)):
         content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                                   inv_rows, inv_cols, state,
                                   "\n*You can only drop items in the overworld.*",
@@ -9686,6 +10164,115 @@ async def handle_qpool_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     await handle_quest_close(interaction, guild_id, user_id)
+
+
+# ── Open-world harbour village recruitable NPC ───────────────────────────────
+
+async def handle_village_recruit_npc(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    player, seed: int, grid,
+) -> None:
+    """Show recruit dialogue when a player interacts with a recruitable villager NPC."""
+    db = await get_database(guild_id)
+    crew = await get_ship_crew(db, user_id)
+    crew_count = len(crew)
+
+    import hashlib as _hrn
+    _seed = abs(int(_hrn.md5(
+        f"recruit:{user_id}:{player.village_id}:{player.village_x}:{player.village_y}".encode()
+    ).hexdigest(), 16))
+    npc_name = CREW_NAMES[_seed % len(CREW_NAMES)]
+
+    if crew_count >= MAX_CREW_SIZE:
+        content = render_grid(grid, player,
+            f"**{npc_name}**: \"Yer ship's full already! Come back if ye ever need hands.\"")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Store recruit context in UI state then show the recruit view
+    _ui_state[user_id] = {
+        "type": "village_recruit_npc",
+        "npc_name": npc_name,
+        "npc_x": player.village_x,
+        "npc_y": player.village_y,
+        "village_id": player.village_id,
+        "village_wx": player.village_wx,
+        "village_wy": player.village_wy,
+        "seed": seed,
+    }
+    npc_text = (
+        f"**{npc_name}**: \"Aye, I've been looking for steady work on a ship. "
+        f"Could use someone like me, couldn't ye? "
+        f"(Crew: {crew_count}/{MAX_CREW_SIZE})\""
+    )
+    content = render_grid(grid, player, npc_text)
+    view = VillageRecruitView(guild_id, user_id)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_village_recruit_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player confirmed recruiting a village NPC."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.pop(user_id, {})
+    if state.get("type") != "village_recruit_npc":
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        content = render_grid(grid, player, "Something went wrong.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    crew = await get_ship_crew(db, user_id)
+    if len(crew) >= MAX_CREW_SIZE:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        content = render_grid(grid, player, "Your crew is already full!")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    npc_name = state["npc_name"]
+    npc_x = state["npc_x"]
+    npc_y = state["npc_y"]
+    village_id = state["village_id"]
+    village_wx = state["village_wx"]
+    village_wy = state["village_wy"]
+    seed_val = state["seed"]
+
+    # Hire the crew member
+    slot = await hire_crew_member(db, user_id, npc_name)
+
+    # Remove NPC from this player's view (replace with grass)
+    await set_player_village_override(db, user_id, village_id, npc_x, npc_y, "vil_grass")
+
+    # Place a replacement non-recruitable villager somewhere else in the village
+    rep_pos = await get_replacement_npc_position(
+        village_id, village_wx, village_wy, seed_val, user_id, npc_x, npc_y, db
+    )
+    if rep_pos is not None:
+        await set_player_village_override(db, user_id, village_id, rep_pos[0], rep_pos[1], "vil_villager")
+
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    content = render_grid(grid, player,
+        f"⚓ **{npc_name}** joins your crew! (slot {slot}) "
+        f"Assign them tasks from the ship's below deck.")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_village_recruit_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player cancelled recruiting a village NPC."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    _ui_state.pop(user_id, None)
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    content = render_grid(grid, player, "\"Safe travels, stranger.\"")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
 
 
 # ── Merchant quest offer ──────────────────────────────────────────────────────

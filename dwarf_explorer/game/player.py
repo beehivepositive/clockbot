@@ -6,6 +6,7 @@ from dwarf_explorer.config import (
     SPAWN_X, SPAWN_Y, DIRECTIONS, WORLD_SIZE,
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
     COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE, SHIP_WALKABLE,
+    SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -71,6 +72,21 @@ class Player:
     in_island: bool = False
     island_ox: int = 0         # ocean_x of the island tile entered
     island_oy: int = 0         # ocean_y of the island tile entered
+    # Shipwreck interior state
+    in_shipwreck: bool = False
+    shipwreck_id: int | None = None   # hash of (wx, wy) — deterministic
+    shipwreck_x: int = 0
+    shipwreck_y: int = 0
+    shipwreck_wx: int = 0             # overworld x of the shipwreck tile entered
+    shipwreck_wy: int = 0             # overworld y of the shipwreck tile entered
+    breath: int = BREATH_MAX          # 0–100 underwater breath
+    # Sky biome state
+    in_sky: bool = False
+    sky_id: int | None = None
+    sky_x: int = 0
+    sky_y: int = 0
+    sky_portal_wx: int = 0  # overworld x of sky portal used to enter
+    sky_portal_wy: int = 0  # overworld y of sky portal used to enter
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
@@ -120,6 +136,15 @@ def can_move_building(target_tile: TileData) -> tuple[bool, str]:
     return True, ""
 
 
+def can_move_sky(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside the sky biome."""
+    if target_tile.terrain == "sky_void":
+        return False, "There's nothing but open air — you'd plummet into the sky void!"
+    if target_tile.terrain not in SKY_WALKABLE:
+        return False, "You can't walk there."
+    return True, ""
+
+
 def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[bool, str]:
     """Check if the player can move in the given direction."""
     if player.in_house:
@@ -128,6 +153,10 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_village(target_tile)
     if player.in_cave:
         return _can_move_cave(target_tile)
+    if getattr(player, "in_shipwreck", False):
+        return can_move_shipwreck(target_tile)
+    if getattr(player, "in_sky", False):
+        return can_move_sky(target_tile)
 
     terrain = target_tile.structure or target_tile.terrain
 
@@ -184,4 +213,11 @@ def _can_move_cave(target_tile: TileData) -> tuple[bool, str]:
         return False, "You can't go that way."
     if target_tile.terrain not in CAVE_WALKABLE:
         return False, "A solid rock wall blocks your path."
+    return True, ""
+
+
+def can_move_shipwreck(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a sunken ship interior."""
+    if target_tile.terrain not in SHIPWRECK_WALKABLE:
+        return False, "A rotting hull wall blocks your path."
     return True, ""

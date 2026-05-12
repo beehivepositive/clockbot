@@ -452,6 +452,31 @@ def _generate_structures_sync(
         overrides.append((x, y, 'sundial'))
         sundial_placed = True
 
+    # --- Sky portals: place ~8-12 portals on mountain tiles near mountain ranges ---
+    # ~1 per 400 tiles, clustered near actual mountain terrain
+    sky_portal_count = rng.randint(8, 12)
+    found = 0
+    sky_portal_positions: list[tuple[int, int]] = []
+    for _ in range(3000):
+        if found >= sky_portal_count:
+            break
+        x = rng.randint(3, WORLD_SIZE - 4)
+        y = rng.randint(3, WORLD_SIZE - 4)
+        if _near_spawn(x, y):
+            continue
+        biome = get_biome(x, y, seed)
+        if biome != 'mountain':
+            continue
+        # Must be adjacent to another mountain tile (part of a range, not isolated)
+        if not _is_adjacent_to(x, y, seed, 'mountain'):
+            continue
+        # Space portals at least 30 tiles apart
+        if any(abs(x - px) + abs(y - py) < 30 for px, py in sky_portal_positions):
+            continue
+        overrides.append((x, y, 'sky_portal'))
+        sky_portal_positions.append((x, y))
+        found += 1
+
     cave_groups = _group_caves(cave_positions, rng)
     return overrides, cave_groups
 

@@ -72,6 +72,7 @@ from dwarf_explorer.ui.game_view import (
     handle_tavern_buy, handle_tavern_close,
     handle_crew_npc_talk, handle_dialogue_nav, handle_dialogue_confirm, handle_dialogue_cancel,
     handle_ship_crew_view, handle_crew_task_cycle, handle_crew_fire, handle_crew_close,
+    handle_village_recruit_confirm, handle_village_recruit_cancel,
     handle_heal_accept, handle_heal_decline,
     handle_lumber_convert_confirm, handle_lumber_convert_cancel,
     handle_lumber_craft_canoe,
@@ -540,6 +541,11 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_crew_close(interaction, gid, uid)
             elif act.startswith("crew_sp_"):
                 await interaction.response.defer()  # crew slot name label spacer
+            # Village open-world recruitable NPC
+            elif act == "village_recruit_confirm":
+                await handle_village_recruit_confirm(interaction, gid, uid)
+            elif act == "village_recruit_cancel":
+                await handle_village_recruit_cancel(interaction, gid, uid)
             # Hospital heal confirm
             elif act == "heal_accept":
                 await handle_heal_accept(interaction, gid, uid)

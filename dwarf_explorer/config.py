@@ -65,6 +65,7 @@ STRUCTURE_EMOJI = {
     "island": "\U0001F3DD️",  # 🏝️ high-seas island
     "volcano_island": "\U0001F30B",  # 🌋 volcano island
     "sundial": "\U0001F55B",        # 🕛 sundial ruins (rift portal)
+    "sky_portal": "\U0001F300",    # 🌀 sky portal on mountain tile
 }
 
 ENTITY_EMOJI = {
@@ -171,6 +172,10 @@ ITEM_EMOJI = {
     "canoe":            "🛶",       # 🛶  canoe
     "hammer":           "🔨",       # 🔨  hammer (ship repair)
     "nail":             "📌",       # 📌  nail (ship repair)
+    "breath_of_the_sea": "🫧",     # 🫧  breath of the sea (restores breath underwater)
+    "gust_of_aevos":    "🌬️",     # 🌬️  rare ingredient for breath_of_the_sea
+    "hawk_feather":     "🪶",       # 🪶  dropped by storm_hawk in sky biome
+    "gold_coin":        "🪙",       # 🪙  loose gold coin (shipwreck loot)
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -198,7 +203,10 @@ WALKABLE_TILES = {
     "harbor",        # harbor dock — walkable
     "drop_box",      # item drop box — walkable, interact to pick up
     "sundial",       # sundial ruins — walkable (interact with star_fragment to open rift)
+    "sky_portal",    # sky portal on mountain — walkable (with climbing_boots; interact to enter sky)
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
+    # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
+    "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
 }
 
 # Tile types passable by canoe (water + bridges)
@@ -217,7 +225,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -247,6 +255,9 @@ ENEMY_STATS = {
     "sea_serpent": (60, 22,  4, 50, 30),
     # Rift boss
     "temporal_echo": (200, 25, 5, 150, 0),  # high HP, no gold — drops chronolite instead
+    # Sky biome enemies
+    "wind_wisp":  (25,  6, 1,  8, 5),
+    "storm_hawk": (40,  9, 3, 15, 8),
 }
 
 # Player defaults
@@ -278,6 +289,9 @@ ENEMY_ABILITIES = {
     "sea_serpent": {"cobweb": False, "poison": True,  "hit_run": False, "roar": False, "slam": True},
     # Rift boss — custom AI, these flags are unused
     "temporal_echo": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
+    # Sky biome enemies
+    "wind_wisp":  {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "storm_hawk": {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
 }
 
 ARENA_EMOJI = {
@@ -387,6 +401,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("enchanted_gem_luck", 1),     ("gold_ring", 1)}): {"result": "ring_of_luck",     "qty": 1, "label": "🍀 Ring of Luck"},
     # Ship repair materials
     frozenset({("iron_ingot", 1)}):                              {"result": "nail",            "qty": 18, "label": "📌 Forge Nails (×18)"},
+    # Underwater breathing
+    frozenset({("seaweed", 2), ("gust_of_aevos", 1)}):          {"result": "breath_of_the_sea", "qty": 1, "label": "🫧 Brew Breath of the Sea"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -405,6 +421,32 @@ OCEAN_ENCOUNTER_RATES = {
     "shark":       0.05,
     "crab":        0.03,
     "sea_serpent": 0.02,
+}
+
+# --- Sky Biome ---
+
+SKY_EMOJI = {
+    "sky_void":     "\U0001F30C",       # 🌌 starry sky (impassable void)
+    "sky_cloud":    "☁️",     # ☁️ cloud tile (walkable)
+    "sky_floor":    "\U0001F324️", # 🌤️ partial-sun sky floor (walkable)
+    "sky_bridge":   "\U0001F7EB",       # 🟫 wooden sky bridge (walkable)
+    "sky_chest":    "\U0001F4B0",       # 💰 sky chest (walkable/interactive)
+    "sky_temple":   "\U0001F3DB️", # 🏛️ sky temple (walkable/interactive)
+    "sky_altar":    "✨",           # ✨ sky altar (walkable/interactive)
+    "sky_entrance": "\U0001F300",       # 🌀 sky entrance portal (exit back to world)
+    # Sky enemies
+    "wind_wisp":    "\U0001F4A8",       # 💨
+    "storm_hawk":   "\U0001F985",       # 🦅
+}
+
+SKY_WALKABLE = {
+    "sky_cloud", "sky_floor", "sky_bridge",
+    "sky_chest", "sky_temple", "sky_altar", "sky_entrance",
+}
+
+SKY_ENCOUNTER_RATES = {
+    "wind_wisp":  0.08,  # on sky_cloud tiles
+    "storm_hawk": 0.06,  # on sky_bridge tiles
 }
 
 # --- Ship System ---
@@ -472,6 +514,23 @@ CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_mediu
                  # Lava cave tiles
                  "lava_floor", "lava_bridge"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
+
+# --- Shipwreck System ---
+
+SHIPWRECK_EMOJI = {
+    "sw_floor":     "\U0001F30A",       # 🌊 flooded deck floor
+    "sw_wall":      "⬛",           # ⬛ hull wall (impassable)
+    "sw_chest":     "\U0001F4B0",       # 💰 treasure chest
+    "sw_entrance":  "\U0001F573️", # 🕳️ entrance/exit hatch
+    "sw_debris":    "\U0001FAB5",       # 🪵 wooden debris (walkable flavour)
+}
+
+SHIPWRECK_WALKABLE = {"sw_floor", "sw_chest", "sw_entrance", "sw_debris"}
+SHIPWRECK_SIZE = 7       # interior grid is 7×7
+SHIPWRECK_ENTRY_X = 3   # player spawns at column 3 (centre of bottom row)
+SHIPWRECK_ENTRY_Y = 5   # row 5 (one above the bottom wall)
+BREATH_MAX = 100
+BREATH_PER_STEP = 20
 
 CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
 
@@ -977,6 +1036,10 @@ ITEM_SELL_PRICES = {
     "carrot":            3,
     "potato":            3,
     "hoe":               12,
+    "breath_of_the_sea": 30,
+    "gust_of_aevos":     20,
+    "gold_coin":         1,
+    "seaweed":           3,
 }
 
 # --- World Map Image ---

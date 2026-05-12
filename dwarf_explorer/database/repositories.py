@@ -161,6 +161,20 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             pouch=equipped.get("pouch"),
             coin_purse=equipped.get("coin_purse"),
             avatar_emoji=row["avatar_emoji"] if "avatar_emoji" in cols else None,
+            # Shipwreck state
+            in_shipwreck=bool(row["in_shipwreck"]) if "in_shipwreck" in cols else False,
+            shipwreck_wx=row["shipwreck_wx"] if "shipwreck_wx" in cols else 0,
+            shipwreck_wy=row["shipwreck_wy"] if "shipwreck_wy" in cols else 0,
+            shipwreck_x=row["shipwreck_x"] if "shipwreck_x" in cols else 0,
+            shipwreck_y=row["shipwreck_y"] if "shipwreck_y" in cols else 0,
+            breath=row["breath"] if "breath" in cols else 100,
+            # Sky biome state
+            in_sky=bool(row["in_sky"]) if "in_sky" in cols else False,
+            sky_id=row["sky_id"] if "sky_id" in cols else None,
+            sky_x=row["sky_x"] if "sky_x" in cols else 0,
+            sky_y=row["sky_y"] if "sky_y" in cols else 0,
+            sky_portal_wx=row["sky_portal_wx"] if "sky_portal_wx" in cols else 0,
+            sky_portal_wy=row["sky_portal_wy"] if "sky_portal_wy" in cols else 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -258,6 +272,74 @@ async def update_player_cave_state(
         "UPDATE players SET in_cave = ?, cave_id = ?, cave_x = ?, cave_y = ?, "
         "last_active = datetime('now') WHERE user_id = ?",
         (int(in_cave), cave_id, cave_x, cave_y, user_id),
+    )
+
+
+async def update_player_shipwreck_state(
+    db: Database, user_id: int,
+    in_shipwreck: bool, shipwreck_wx: int, shipwreck_wy: int,
+    sw_x: int, sw_y: int,
+    breath: int,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_shipwreck=?, shipwreck_wx=?, shipwreck_wy=?, "
+        "shipwreck_x=?, shipwreck_y=?, breath=?, last_active=datetime('now') "
+        "WHERE user_id=?",
+        (int(in_shipwreck), shipwreck_wx, shipwreck_wy, sw_x, sw_y, breath, user_id),
+    )
+
+
+async def update_player_sky_state(
+    db: Database, user_id: int,
+    in_sky: bool, sky_id: int | None, sky_x: int, sky_y: int,
+    sky_portal_wx: int = 0, sky_portal_wy: int = 0,
+) -> None:
+    await db.execute(
+        "UPDATE players SET in_sky=?, sky_id=?, sky_x=?, sky_y=?, "
+        "sky_portal_wx=?, sky_portal_wy=?, last_active=datetime('now') "
+        "WHERE user_id=?",
+        (int(in_sky), sky_id, sky_x, sky_y, sky_portal_wx, sky_portal_wy, user_id),
+    )
+
+
+async def is_sky_chest_looted(
+    db: Database, sky_id: int, local_x: int, local_y: int
+) -> bool:
+    row = await db.fetch_one(
+        "SELECT looted FROM sky_chest_state WHERE sky_id=? AND local_x=? AND local_y=?",
+        (sky_id, local_x, local_y),
+    )
+    return bool(row and row["looted"])
+
+
+async def mark_sky_chest_looted(
+    db: Database, sky_id: int, local_x: int, local_y: int
+) -> None:
+    await db.execute(
+        "INSERT OR REPLACE INTO sky_chest_state (sky_id, local_x, local_y, looted) "
+        "VALUES (?, ?, ?, 1)",
+        (sky_id, local_x, local_y),
+    )
+
+
+async def is_shipwreck_chest_looted(
+    db: Database, user_id: int, sw_wx: int, sw_wy: int, chest_x: int, chest_y: int
+) -> bool:
+    row = await db.fetch_one(
+        "SELECT 1 FROM shipwreck_looted_chests "
+        "WHERE user_id=? AND sw_wx=? AND sw_wy=? AND chest_x=? AND chest_y=?",
+        (user_id, sw_wx, sw_wy, chest_x, chest_y),
+    )
+    return row is not None
+
+
+async def mark_shipwreck_chest_looted(
+    db: Database, user_id: int, sw_wx: int, sw_wy: int, chest_x: int, chest_y: int
+) -> None:
+    await db.execute(
+        "INSERT OR IGNORE INTO shipwreck_looted_chests (user_id, sw_wx, sw_wy, chest_x, chest_y) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (user_id, sw_wx, sw_wy, chest_x, chest_y),
     )
 
 

@@ -3,7 +3,7 @@ import math
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
-    EQUIP_BONUSES,
+    EQUIP_BONUSES, SHIPWRECK_EMOJI, BREATH_MAX, SKY_EMOJI,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -19,6 +19,10 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return _ISLAND_TERRAIN_EMOJI.get(tile.terrain, "🌊")
     if location == "cave":
         return CAVE_EMOJI.get(tile.terrain, _BLACK)
+    if location == "shipwreck":
+        return SHIPWRECK_EMOJI.get(tile.terrain, _BLACK)
+    if location == "sky":
+        return SKY_EMOJI.get(tile.terrain, SKY_EMOJI.get("sky_void", "🌌"))
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
@@ -68,6 +72,10 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "village"
     elif player.in_cave:
         location = "cave"
+    elif getattr(player, "in_shipwreck", False):
+        location = "shipwreck"
+    elif getattr(player, "in_sky", False):
+        location = "sky"
     else:
         location = "wilderness"
 
@@ -153,6 +161,12 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                         row_emojis.append(_tile_emoji(grid[row_y][col_x], location="cave"))
                     else:
                         row_emojis.append(_BLACK)
+            elif location == "shipwreck":
+                # Shipwreck is fully visible (bioluminescent water light)
+                if is_center:
+                    row_emojis.append(_player_emoji)
+                else:
+                    row_emojis.append(_tile_emoji(grid[row_y][col_x], location="shipwreck"))
             else:  # non-cave location
                 if is_center:
                     if (player.in_ocean or player.in_high_seas) and not player.in_ship:
@@ -174,8 +188,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         lines.append("".join(row_emojis))
 
     lines.append("")
-    # Ship HP replaces player HP display when inside the ship or on high seas
-    if player.in_ship or getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
+    # Breath meter / ship HP / normal HP (breathbar shows while in shipwreck)
+    if getattr(player, "in_shipwreck", False):
+        _breath = getattr(player, "breath", BREATH_MAX)
+        hp_bar = f"\U0001FAB7 {_breath}/{BREATH_MAX}"
+    elif player.in_ship or getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
         hp_bar = f"\U0001F6F3\uFE0F {player.ship_hp}/{player.ship_max_hp}"
     else:
         hp_bar = f"\u2764\uFE0F {player.hp}/{player.max_hp}"
@@ -203,6 +220,11 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
             _torch_emoji = ITEM_EMOJI.get("torch", "\U0001F526")
             dark_tag = "  ⚫ Darkness" if not torch_on else f"  {_torch_emoji}"
         pos = f"\U0001F4CD Cave ({player.cave_x},{player.cave_y}){dark_tag}"
+    elif getattr(player, "in_shipwreck", False):
+        _sw_breath = getattr(player, "breath", BREATH_MAX)
+        pos = f"\U0001F4CD Shipwreck ({getattr(player, 'shipwreck_x', 0)},{getattr(player, 'shipwreck_y', 0)})  \U0001FAB7 {_sw_breath}"
+    elif getattr(player, "in_sky", False):
+        pos = f"☁️ Sky ({getattr(player, 'sky_x', 0)},{getattr(player, 'sky_y', 0)})"
     elif getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
         pos = f"\U0001F30A High Seas ({player.ocean_x},{player.ocean_y}){sprint_tag}"
