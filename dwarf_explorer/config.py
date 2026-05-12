@@ -31,7 +31,7 @@ TERRAIN_EMOJI = {
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
     "river": "\U0001F30A",           # 🌊
-    "sand": "\U0001F3D6\uFE0F",     # 🏖️  (overridable with :sand:)
+    "sand": "🟨",            # 🟨  (overridable with :sand:)
     "plains": "\U0001F33E",          # 🌾  (overridable with :dry_grass:)
     "grass": "\U0001F33F",           # 🌿  (overridable with :grass:)
     "forest": "\U0001F332",          # 🌲
@@ -100,7 +100,8 @@ ITEM_EMOJI = {
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F5E1\uFE0F",    # 🗡️
-    "hiking_boots": "\U0001F97E",    # 🥾
+    "hiking_boots":    "\U0001F97E",    # 🥾
+    "climbing_boots":  "\U0001FA96",    # 🪖 (reuse helmet emoji for now — close enough)
     "torch": "\U0001F526",           # 🔦
     "axe": "\U0001FA93",             # 🪓
     "shovel": "\u26CF\uFE0F",       # ⛏️
@@ -644,6 +645,14 @@ SHOP_CATALOG = [
         "description": "Sturdy boots. Enables sprinting.",
     },
     {
+        "id": "climbing_boots",
+        "name": "Climbing Boots",
+        "emoji": "\U0001FA96",   # 🪖 military-style boot
+        "price": 150,
+        "equip_slot": "boots",
+        "description": "Reinforced boots. Traverse mountain tiles. Required for sky biome portals.",
+    },
+    {
         "id": "axe",
         "name": "Axe",
         "emoji": "\U0001FA93",
@@ -761,7 +770,8 @@ ITEM_EQUIP_SLOTS = {
     "iron_chestplate": "chest",
     "iron_leggings":   "legs",
     "sword":        "hand",
-    "hiking_boots": "boots",
+    "hiking_boots":   "boots",
+    "climbing_boots": "boots",
     "small_pouch":       "pouch",
     "medium_pouch":      "pouch",
     "large_pouch":       "pouch",
@@ -795,7 +805,8 @@ EQUIP_BONUSES = {
     "axe":          {"attack": 3},
     "pickaxe":      {"attack": 4},
     "slingshot":    {"attack": 4},
-    "hiking_boots": {},
+    "hiking_boots":   {},
+    "climbing_boots": {},
     "torch":        {},
     "shovel":       {},
     "watering_can": {},
@@ -890,7 +901,8 @@ SURFACE_ENCOUNTER_MOBS = {
 # Sell prices at the shop (60% of buy price for shop items)
 ITEM_SELL_PRICES = {
     "knife":        15,
-    "hiking_boots": 30,
+    "hiking_boots":   30,
+    "climbing_boots": 90,
     "axe":          24,
     "shovel":       36,
     "watering_can": 21,

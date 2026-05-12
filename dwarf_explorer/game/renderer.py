@@ -3,6 +3,7 @@ import math
 from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
+    EQUIP_BONUSES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -163,7 +164,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 elif (col_x, row_y) in _quest_vp:
                     row_emojis.append(_quest_vp[(col_x, row_y)])
                 elif _nav_edge and (col_x, row_y) == _nav_edge:
-                    row_emojis.append("\U0001F7E0")  # 🟠 nav target indicator
+                    row_emojis.append("♦️")  # ♦️ quest direction indicator
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
@@ -417,15 +418,29 @@ def render_inventory(
         item_id = equipped.get(slot)
         label = _EQUIP_SLOT_LABELS.get(slot, slot)
         if item_id:
-            lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}")
+            stats = EQUIP_BONUSES.get(item_id, {})
+            stat_parts: list[str] = []
+            if "defense" in stats:
+                stat_parts.append(f"+{stats['defense']} def")
+            if "attack" in stats:
+                stat_parts.append(f"+{stats['attack']} atk")
+            stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
+            lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}{stat_str}")
         else:
             lines.append(f"Cursor: **{label}** — *(empty)*")
     elif slot_map.get(selected):
         item = slot_map[selected]
         sel_qty = selections.get(item["item_id"], 0)
         sel_marker = f" ✚ {sel_qty} selected" if sel_qty else ""
+        stats = EQUIP_BONUSES.get(item["item_id"], {})
+        stat_parts: list[str] = []
+        if "defense" in stats:
+            stat_parts.append(f"+{stats['defense']} def")
+        if "attack" in stats:
+            stat_parts.append(f"+{stats['attack']} atk")
+        stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
         lines.append(
-            f"Cursor: **{item['item_id'].replace('_',' ').title()}** {item['quantity']}{sel_marker}"
+            f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}{stat_str}{sel_marker}"
         )
     else:
         lines.append("Cursor: *(empty slot)*")
@@ -672,7 +687,7 @@ def render_ship_chest(
 
 _ISLAND_TERRAIN_EMOJI: dict[str, str] = {
     "island_void":    "🌊",
-    "island_sand":    "🟡",
+    "island_sand":    "🟨",
     "island_grass":   "🌿",
     "island_forest":  "🌴",
     "island_tree":    "🌴",

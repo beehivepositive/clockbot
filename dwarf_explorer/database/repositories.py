@@ -1268,3 +1268,28 @@ async def get_crew_task(db: Database, user_id: int, task: str) -> bool:
         "SELECT 1 FROM ship_crew WHERE user_id=? AND task=?", (user_id, task)
     )
     return row is not None
+
+
+# --- Player village overrides ---
+
+async def get_player_village_overrides(
+    db: Database, user_id: int, village_id: int
+) -> dict[tuple[int, int], str]:
+    """Return {(tile_x, tile_y): tile_type} for all overrides this player has in this village."""
+    rows = await db.fetch_all(
+        "SELECT tile_x, tile_y, tile_type FROM player_village_overrides "
+        "WHERE user_id = ? AND village_id = ?",
+        (user_id, village_id),
+    )
+    return {(r["tile_x"], r["tile_y"]): r["tile_type"] for r in rows}
+
+
+async def set_player_village_override(
+    db: Database, user_id: int, village_id: int, x: int, y: int, tile_type: str
+) -> None:
+    """Insert or replace a single player-specific tile override for a village."""
+    await db.execute(
+        "INSERT OR REPLACE INTO player_village_overrides "
+        "(user_id, village_id, tile_x, tile_y, tile_type) VALUES (?, ?, ?, ?, ?)",
+        (user_id, village_id, x, y, tile_type),
+    )

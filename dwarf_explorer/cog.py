@@ -315,7 +315,7 @@ class DwarfExplorer(commands.Cog):
         guild_id = interaction.guild.id
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
-        player = await get_or_create_player(db, interaction.user.id, interaction.user.display_name)
+        player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
 
         # Find all harbor tile overrides
         harbor_rows = await db.fetch_all(
@@ -345,7 +345,7 @@ class DwarfExplorer(commands.Cog):
         player.in_ship = False
         player.world_x, player.world_y = hx, hy
         await update_player_stats(
-            db, player.user_id,
+            db, ADMIN_PLAYER_ID,
             world_x=hx, world_y=hy,
             in_cave=0, cave_id=None, cave_x=0, cave_y=0,
             in_village=0, village_id=None,
@@ -356,11 +356,11 @@ class DwarfExplorer(commands.Cog):
         grid = await load_viewport(hx, hy, seed, db)
         content = render_grid(grid, player, f"⚓ Teleported to harbor at ({hx}, {hy}).")
         from dwarf_explorer.ui.game_view import GameView as _GV
-        view = _GV(guild_id, player.user_id)
+        view = _GV(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
 
         msg = await interaction.original_response()
-        await update_player_message(db, player.user_id, msg.id, interaction.channel_id)
+        await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
     @app_commands.command(name="avatar", description="Set a custom emoji as your in-game character icon.")

@@ -252,3 +252,14 @@ CREATE TABLE IF NOT EXISTS ship_crew (
     task      TEXT    NOT NULL DEFAULT 'idle',
     UNIQUE(user_id, slot)
 );
+
+-- Per-player tile overrides inside villages (e.g. recruited NPC removed, replacement placed)
+CREATE TABLE IF NOT EXISTS player_village_overrides (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    village_id INTEGER NOT NULL,
+    tile_x     INTEGER NOT NULL,
+    tile_y     INTEGER NOT NULL,
+    tile_type  TEXT    NOT NULL,
+    UNIQUE(user_id, village_id, tile_x, tile_y)
+);

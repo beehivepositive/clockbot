@@ -36,7 +36,8 @@ from dwarf_explorer.ui.game_view import (
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
     handle_forge_iron, handle_forge_gold, handle_forge_gold_ring, handle_forge_close,
-    handle_anvil_dagger, handle_anvil_sword, handle_anvil_close,
+    handle_anvil_up, handle_anvil_down, handle_anvil_craft, handle_anvil_close,
+    handle_anvil_dagger, handle_anvil_sword,
     handle_anvil_helmet, handle_anvil_chestplate, handle_anvil_leggings,
     handle_anvil_cannonball, handle_anvil_iron_boots, handle_anvil_iron_shield,
     handle_anvil_wyvern_helmet, handle_anvil_wyvern_chestplate,
@@ -167,11 +168,6 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
 
         gid, uid, act = self.guild_id, self.user_id, self.action
 
-        # Defer immediately so Discord releases the button loading state right away.
-        # Modal-opening actions skip this — send_modal() is their own response type.
-        if act not in _MODAL_ACTIONS:
-            await interaction.response.defer()
-
         try:
             if act in _OCEAN_MOVE_ACTIONS:
                 direction = act[6:]  # strip "ocean_" prefix
@@ -257,7 +253,16 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_forge_gold_ring(interaction, gid, uid)
             elif act == "forge_close":
                 await handle_forge_close(interaction, gid, uid)
-            # Anvil
+            # Anvil (list-style navigation)
+            elif act == "anvil_up":
+                await handle_anvil_up(interaction, gid, uid)
+            elif act == "anvil_down":
+                await handle_anvil_down(interaction, gid, uid)
+            elif act == "anvil_craft":
+                await handle_anvil_craft(interaction, gid, uid)
+            elif act == "anvil_close":
+                await handle_anvil_close(interaction, gid, uid)
+            # Anvil (legacy individual-button handlers — kept for compatibility)
             elif act == "anvil_dagger":
                 await handle_anvil_dagger(interaction, gid, uid)
             elif act == "anvil_sword":
@@ -282,8 +287,6 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_anvil_wyvern_leggings(interaction, gid, uid)
             elif act == "anvil_wyvern_shield":
                 await handle_anvil_wyvern_shield(interaction, gid, uid)
-            elif act == "anvil_close":
-                await handle_anvil_close(interaction, gid, uid)
             # Shrine
             elif act.startswith("shrine_") and act[7:] in ("strength", "time", "defense", "sight", "luck"):
                 await handle_shrine_enchant(interaction, gid, uid, act[7:])

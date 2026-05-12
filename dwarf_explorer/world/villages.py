@@ -529,87 +529,137 @@ def _generate_harbor_village_interior(
     village_id: int, seed: int, world_x: int, world_y: int, ocean_edge: int = 0,
 ) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int],
            tuple[int, int], list[tuple[int, int, str]]]:
-    """Harbor village: water+dock at bottom edge, buildings+well above, entry at top.
+    """Harbor village: same size/layout as regular village, with a water+dock zone at one edge.
 
+    ocean_edge: 0=south water, 1=north water, 2=west water, 3=east water
     Returns (width, height, tiles, entry_pos, dock_pos, buildings).
     """
-    W, H = 16, 16
-    cx = W // 2   # centre column  = 8
-    cy = 7        # horizontal road row
+    W = H = 32
+    cx, cy = W // 2, H // 2   # centre = (16, 16)
+    WATER_DEPTH = 3            # rows/cols of ocean at the coast edge
 
     rng = random.Random(seed + _VILLAGE_SEED_OFFSET + village_id + world_x * 997 + world_y * 1009 + 42)
 
     grid: list[list[str]] = [["vil_grass"] * W for _ in range(H)]
 
-    # ── Water zone, dock, roads, well, and entry — oriented by ocean_edge ─────
-    cy = H // 2  # recalculate based on edge
-
-    if ocean_edge == 0:   # south — water at bottom
-        water_rows = range(H - 2, H)
-        dock_x, dock_y = cx, H - 2
-        shore_inner = H - 3
-        road_range = range(1, shore_inner + 1)
-        entry_x, entry_y = cx, 1
-        for yr in water_rows:
+    # ── Pre-fill water zone based on ocean_edge ────────────────────────────────
+    if ocean_edge == 0:    # south water
+        for yr in range(H - WATER_DEPTH, H):
             for xr in range(W): grid[yr][xr] = "vil_water"
-        for yr in road_range: grid[yr][cx] = "vil_path"
-        for xr in range(1, W - 1): grid[cy][xr] = "vil_path"
-    elif ocean_edge == 1: # north — water at top
-        water_rows = range(0, 2)
-        dock_x, dock_y = cx, 1
-        shore_inner = 2
-        road_range = range(shore_inner, H - 1)
-        entry_x, entry_y = cx, H - 2
-        for yr in water_rows:
+        dock_x, dock_y = cx, H - WATER_DEPTH
+        _shore_inner_dir = "S"
+        entry_dir = "N"
+    elif ocean_edge == 1:  # north water
+        for yr in range(WATER_DEPTH):
             for xr in range(W): grid[yr][xr] = "vil_water"
-        for yr in road_range: grid[yr][cx] = "vil_path"
-        for xr in range(1, W - 1): grid[cy][xr] = "vil_path"
-    elif ocean_edge == 2: # west — water at left
+        dock_x, dock_y = cx, WATER_DEPTH - 1
+        _shore_inner_dir = "N"
+        entry_dir = "S"
+    elif ocean_edge == 2:  # west water
         for yr in range(H):
-            grid[yr][0] = "vil_water"
-            grid[yr][1] = "vil_water"
-        dock_x, dock_y = 1, H // 2
-        shore_inner = 2
-        for xr in range(shore_inner, W - 1): grid[H // 2][xr] = "vil_path"
-        for yr in range(1, H - 1): grid[yr][cx] = "vil_path"
-        entry_x, entry_y = W - 2, H // 2
-    else:                 # east — water at right
+            for xr in range(WATER_DEPTH): grid[yr][xr] = "vil_water"
+        dock_x, dock_y = WATER_DEPTH - 1, cy
+        _shore_inner_dir = "W"
+        entry_dir = "E"
+    else:                  # east water
         for yr in range(H):
-            grid[yr][W - 1] = "vil_water"
-            grid[yr][W - 2] = "vil_water"
-        dock_x, dock_y = W - 2, H // 2
-        shore_inner = W - 3
-        for xr in range(1, shore_inner + 1): grid[H // 2][xr] = "vil_path"
-        for yr in range(1, H - 1): grid[yr][cx] = "vil_path"
-        entry_x, entry_y = 1, H // 2
+            for xr in range(W - WATER_DEPTH, W): grid[yr][xr] = "vil_water"
+        dock_x, dock_y = W - WATER_DEPTH, cy
+        _shore_inner_dir = "E"
+        entry_dir = "W"
 
     grid[dock_y][dock_x] = "vil_dock"
     grid[cy][cx] = "vil_well"
-    grid[entry_y][entry_x] = "vil_path"
+
+    # ── Meandering spoke roads (same style as regular village) ────────────────
+    off = lambda lo, hi: rng.randint(lo, hi)  # noqa: E731
+    n_inner = (cx + off(-5, 5), 4)
+    e_inner = (W - 5, cy + off(-5, 5))
+    s_inner = (cx + off(-5, 5), H - 5)
+    w_inner = (4, cy + off(-5, 5))
+
+    # Clamp inner spokes away from water zone
+    if ocean_edge == 0:
+        s_inner = (s_inner[0], H - WATER_DEPTH - 3)
+    elif ocean_edge == 1:
+        n_inner = (n_inner[0], WATER_DEPTH + 3)
+    elif ocean_edge == 2:
+        w_inner = (WATER_DEPTH + 3, w_inner[1])
+    else:
+        e_inner = (W - WATER_DEPTH - 3, e_inner[1])
+
+    for tx, ty in (n_inner, e_inner, s_inner, w_inner):
+        _draw_path(grid, cx, cy, tx, ty, W, H, rng, meander_chance=0.25)
+
+    # Diagonal spokes for extra variety
+    if rng.random() < 0.65:
+        _draw_path(grid, cx, cy, W - 6, 4 + off(0, 3), W, H, rng, 0.20)
+    if rng.random() < 0.50:
+        _draw_path(grid, cx, cy, 4 + off(0, 3), H - 6, W, H, rng, 0.20)
+    if rng.random() < 0.40:
+        _draw_path(grid, cx, cy, 4 + off(0, 3), 4 + off(0, 3), W, H, rng, 0.20)
+
+    # Cross-connectors between adjacent spokes
+    cross_candidates = [
+        (n_inner, e_inner, 0.70),
+        (s_inner, w_inner, 0.70),
+        (n_inner, w_inner, 0.55),
+        (e_inner, s_inner, 0.55),
+        (n_inner, s_inner, 0.35),
+        (e_inner, w_inner, 0.35),
+    ]
+    for (ax, ay), (bx2, by2), prob in cross_candidates:
+        if rng.random() < prob:
+            _draw_path(grid, ax, ay, bx2, by2, W, H, rng, meander_chance=0.30)
+
+    # ── Road spur from well toward dock ───────────────────────────────────────
+    _draw_path(grid, cx, cy, dock_x, dock_y, W, H, rng, meander_chance=0.15)
+    grid[dock_y][dock_x] = "vil_dock"   # restore dock tile after path drawing
+
+    # ── Extend spokes to border on non-water edges ────────────────────────────
+    # Entry is on the edge opposite the water.  One more edge exit is chosen randomly.
+    if entry_dir == "N":
+        ex_x, ex_y = _extend_to_edge(grid, n_inner[0], n_inner[1], W, H, "N")
+        if rng.random() < 0.55: _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
+        if rng.random() < 0.55: _extend_to_edge(grid, w_inner[0], w_inner[1], W, H, "W")
+    elif entry_dir == "S":
+        ex_x, ex_y = _extend_to_edge(grid, s_inner[0], s_inner[1], W, H, "S")
+        if rng.random() < 0.55: _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
+        if rng.random() < 0.55: _extend_to_edge(grid, w_inner[0], w_inner[1], W, H, "W")
+    elif entry_dir == "E":
+        ex_x, ex_y = _extend_to_edge(grid, e_inner[0], e_inner[1], W, H, "E")
+        if rng.random() < 0.55: _extend_to_edge(grid, n_inner[0], n_inner[1], W, H, "N")
+        if rng.random() < 0.55: _extend_to_edge(grid, s_inner[0], s_inner[1], W, H, "S")
+    else:
+        ex_x, ex_y = _extend_to_edge(grid, w_inner[0], w_inner[1], W, H, "W")
+        if rng.random() < 0.55: _extend_to_edge(grid, n_inner[0], n_inner[1], W, H, "N")
+        if rng.random() < 0.55: _extend_to_edge(grid, s_inner[0], s_inner[1], W, H, "S")
+
+    entry_x, entry_y = ex_x, ex_y
 
     # ── Occupied tracking ─────────────────────────────────────────────────────
     occupied: set[tuple[int, int]] = set()
     for yr in range(H):
         for xr in range(W):
-            if grid[yr][xr] == "vil_water":
+            if grid[yr][xr] in ("vil_water", "vil_dock", "vil_path", "vil_well"):
                 occupied.add((xr, yr))
     for x in range(W): occupied.add((x, 0)); occupied.add((x, H - 1))
     for y in range(H): occupied.add((0, y)); occupied.add((W - 1, y))
-    for x in range(W): occupied.add((x, cy))
-    for y in range(H): occupied.add((cx, y))
     occupied.add((cx, cy))
 
     buildings: list[tuple[int, int, str]] = []
 
-    # ── Required buildings ────────────────────────────────────────────────────
-    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith", "vil_tavern", "vil_hospital",
-                "vil_puzzle_board"]
+    # ── Required buildings (same list as regular village) ─────────────────────
+    required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
+                "vil_tavern", "vil_hospital", "vil_puzzle_board"]
     rng.shuffle(required)
     for btype in required:
-        for _ in range(200):
+        for _ in range(400):
             bx = rng.randint(2, W - 3)
             by = rng.randint(2, H - 3)
             if (bx, by) in occupied:
+                continue
+            if grid[by][bx] == "vil_water":
                 continue
             adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
             if not any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
@@ -621,14 +671,16 @@ def _generate_harbor_village_interior(
             _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
             break
 
-    # ── Houses ────────────────────────────────────────────────────────────────
-    house_count = rng.randint(2, 3)
-    for _ in range(200):
+    # ── Houses (5-9, same as regular village) ─────────────────────────────────
+    house_count = rng.randint(5, 9)
+    for _ in range(600):
         if sum(1 for _, _, t in buildings if t == "vil_house") >= house_count:
             break
         bx = rng.randint(2, W - 3)
         by = rng.randint(2, H - 3)
         if (bx, by) in occupied:
+            continue
+        if grid[by][bx] == "vil_water":
             continue
         adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
         if not any(0 <= ax < W and 0 <= ay < H
@@ -640,9 +692,24 @@ def _generate_harbor_village_interior(
         buildings.append((bx, by, "vil_house"))
         _connect_to_road(grid, bx, by, cx, cy, W, H, occupied)
 
-    # ── Trees at upper corners ─────────────────────────────────────────────────
-    for tx, ty in [(1, 1), (W - 2, 1)]:
-        if (tx, ty) not in occupied:
+    # ── NPCs ─────────────────────────────────────────────────────────────────
+    villager_count = rng.randint(4, 8)
+    placed_v = 0
+    for _ in range(600):
+        if placed_v >= villager_count:
+            break
+        vx, vy = rng.randint(2, W - 3), rng.randint(2, H - 3)
+        if (vx, vy) in occupied:
+            continue
+        if grid[vy][vx] not in ("vil_path", "vil_grass"):
+            continue
+        grid[vy][vx] = "vil_villager"
+        occupied.add((vx, vy))
+        placed_v += 1
+
+    # ── Corner trees ──────────────────────────────────────────────────────────
+    for tx, ty in [(1, 1), (W - 2, 1), (1, H - 2), (W - 2, H - 2)]:
+        if (tx, ty) not in occupied and grid[ty][tx] != "vil_water":
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
 
@@ -1168,8 +1235,77 @@ async def get_building_at(
     return None
 
 
+# ── Recruitable NPC helpers ────────────────────────────────────────────────────
+
+def get_recruitable_npc_positions(
+    village_id: int, world_x: int, world_y: int, seed: int
+) -> list[tuple[int, int]]:
+    """Return 3-5 fixed positions of potentially recruitable NPCs for this village.
+
+    Seeded by village parameters so the positions are stable across sessions.
+    """
+    rng = random.Random(seed + village_id * 137 + world_x * 997 + world_y * 1009 + 999)
+    count = rng.randint(3, 5)
+    positions: list[tuple[int, int]] = []
+    for _ in range(count * 20):
+        if len(positions) >= count:
+            break
+        x = rng.randint(4, 27)
+        y = rng.randint(4, 27)
+        if (x, y) not in positions:
+            positions.append((x, y))
+    return positions[:count]
+
+
+def is_npc_recruitable_for_player(
+    user_id: int, village_id: int, npc_x: int, npc_y: int
+) -> bool:
+    """60% chance an NPC is recruitable for a given player (deterministic per combination)."""
+    import hashlib
+    h = hashlib.md5(f"{user_id}:{village_id}:{npc_x}:{npc_y}".encode()).digest()
+    return (h[0] % 10) < 6
+
+
+async def get_replacement_npc_position(
+    village_id: int, world_x: int, world_y: int, seed: int,
+    user_id: int, recruited_x: int, recruited_y: int, db,
+) -> tuple[int, int] | None:
+    """Find a grass/path tile in the village interior to place a replacement NPC.
+
+    Returns (x, y) of a suitable tile, or None if no open tile found.
+    The position is deterministic per (user_id, village_id, recruited_x, recruited_y).
+    """
+    import hashlib
+    # Seed a deterministic RNG for this replacement
+    h_int = int(hashlib.md5(
+        f"rep:{user_id}:{village_id}:{recruited_x}:{recruited_y}".encode()
+    ).hexdigest(), 16)
+    rng = random.Random(h_int)
+
+    # Fetch all current tiles in the village so we can find a free grass/path spot
+    rows = await db.fetch_all(
+        "SELECT local_x, local_y, tile_type FROM village_tiles WHERE village_id = ?",
+        (village_id,),
+    )
+    open_tiles = [
+        (r["local_x"], r["local_y"])
+        for r in rows
+        if r["tile_type"] in ("vil_grass", "vil_path")
+        and 4 <= r["local_x"] <= 27 and 4 <= r["local_y"] <= 27
+    ]
+    if not open_tiles:
+        return None
+    # Shuffle deterministically and pick the first one not at the recruited position
+    rng.shuffle(open_tiles)
+    for pos in open_tiles:
+        if pos != (recruited_x, recruited_y):
+            return pos
+    return None
+
+
 async def load_village_viewport(
     village_id: int, center_x: int, center_y: int, db,
+    user_id: int | None = None,
 ) -> list[list[TileData]]:
     half = VIEWPORT_CENTER
     x_min, y_min = center_x - half, center_y - half
@@ -1179,6 +1315,13 @@ async def load_village_viewport(
         (village_id, x_min, center_x + half, y_min, center_y + half),
     )
     tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
+
+    # Apply per-player tile overrides if a user_id was provided
+    if user_id is not None:
+        from dwarf_explorer.database.repositories import get_player_village_overrides
+        overrides = await get_player_village_overrides(db, user_id, village_id)
+        tile_map.update(overrides)
+
     grid = []
     for local_y in range(VIEWPORT_SIZE):
         row_tiles = []

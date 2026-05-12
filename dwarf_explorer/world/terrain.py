@@ -117,9 +117,9 @@ def get_biome(x: int, y: int, seed: int) -> str:
     e = fbm(x, y, seed)
     m = fbm(x, y, seed + _MOISTURE_OFFSET)
 
-    if e > 0.72:
+    if e > 0.65:
         return "snow" if m > 0.55 else "mountain"
-    elif e > 0.58:
+    elif e > 0.52:
         if m > 0.55:  return "dense_forest"
         if m > 0.30:  return "forest"
         return "hills"

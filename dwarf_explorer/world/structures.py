@@ -609,7 +609,7 @@ def _generate_village_paths_sync(
 
     # ── 2. Bonus cross-connections (creates loops) ────────────────────────────
     used_pairs: set[frozenset] = {frozenset(e) for e in edges}
-    bonus_budget = max(2, len(nodes) // 4)
+    bonus_budget = max(6, len(nodes) // 2)
     candidates = sorted(
         [
             (_river_cross_weight(a, b), a, b)
@@ -623,9 +623,9 @@ def _generate_village_paths_sync(
     for dist_ab, a, b in candidates:
         if bonus_added >= bonus_budget:
             break
-        if dist_ab > 55:
+        if dist_ab > 100:
             break
-        if rng.random() < 0.45:
+        if rng.random() < 0.65:
             edges.append((a, b))
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1

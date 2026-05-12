@@ -163,9 +163,13 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return False, "You've reached the edge of the world!"
 
     if not target_tile.walkable:
+        # Climbing boots let the player traverse mountain and snow tiles
+        has_climbing_boots = player.boots == "climbing_boots"
+        if terrain in ("mountain", "snow") and has_climbing_boots:
+            return True, ""
         messages = {
-            "mountain": "A mountain blocks your path.",
-            "snow": "The snowy mountains are impassable.",
+            "mountain": "A mountain blocks your path. (Tip: 🪖 Climbing Boots from the shop let you scale mountains.)",
+            "snow": "The snowy peaks are impassable. (Tip: 🪖 Climbing Boots let you cross.)",
             "dense_forest": "The forest is too thick to pass through.",
             "shallow_water": "The water is too deep to cross.",
             "deep_water": "The ocean stretches endlessly before you.",

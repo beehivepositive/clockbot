@@ -163,7 +163,7 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif player.in_house:
         grid = await _load_house_grid(player, db)
     elif player.in_village:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     else:
@@ -1340,30 +1340,115 @@ class ForgeView(discord.ui.View):
             ))
 
 
+# ── Anvil recipe data ─────────────────────────────────────────────────────────
+
+_ANVIL_RECIPES: list[dict] = [
+    # category, item_id, emoji, name, cost_item, cost_qty, base_item, stat
+    {"category": "Iron Weapons",    "item_id": "dagger",           "emoji": "🗡️",  "name": "Dagger",           "cost_item": "iron_ingot",    "cost_qty": 1, "base_item": None,            "stat": "+8 atk"},
+    {"category": "Iron Weapons",    "item_id": "sword",            "emoji": "⚔️",  "name": "Sword",            "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+12 atk"},
+    {"category": "Iron Armor",      "item_id": "iron_helmet",      "emoji": "🪖",  "name": "Iron Helmet",      "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+3 def"},
+    {"category": "Iron Armor",      "item_id": "iron_chestplate",  "emoji": "🛡️",  "name": "Iron Chestplate",  "cost_item": "iron_ingot",    "cost_qty": 4, "base_item": None,            "stat": "+5 def"},
+    {"category": "Iron Armor",      "item_id": "iron_leggings",    "emoji": "👖",  "name": "Iron Leggings",    "cost_item": "iron_ingot",    "cost_qty": 3, "base_item": None,            "stat": "+4 def"},
+    {"category": "Iron Armor",      "item_id": "iron_boots",       "emoji": "🥾",  "name": "Iron Boots",       "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+2 def"},
+    {"category": "Iron Armor",      "item_id": "iron_shield",      "emoji": "🛡️",  "name": "Iron Shield",      "cost_item": "iron_ingot",    "cost_qty": 4, "base_item": None,            "stat": "+4 def"},
+    {"category": "Iron Ammo",       "item_id": "cannonball",       "emoji": "💣",  "name": "Cannonball",       "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "cannon ammo"},
+    {"category": "Wyvern Upgrades", "item_id": "wyvern_helmet",    "emoji": "🐉",  "name": "Wyvern Helmet",    "cost_item": "wyvern_scale",  "cost_qty": 2, "base_item": "iron_helmet",   "stat": "+5 def"},
+    {"category": "Wyvern Upgrades", "item_id": "wyvern_chestplate","emoji": "🐉",  "name": "Wyvern Chestplate","cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_chestplate","stat": "+8 def"},
+    {"category": "Wyvern Upgrades", "item_id": "wyvern_leggings",  "emoji": "🐉",  "name": "Wyvern Leggings",  "cost_item": "wyvern_scale",  "cost_qty": 3, "base_item": "iron_leggings", "stat": "+6 def"},
+    {"category": "Wyvern Upgrades", "item_id": "wyvern_shield",    "emoji": "🐉",  "name": "Wyvern Shield",    "cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_shield",   "stat": "+7 def"},
+]
+
+
+def _render_anvil(cursor_idx: int, inv_counts: dict[str, int]) -> str:
+    """Render the anvil recipe list as an embed string.
+
+    inv_counts: mapping of item_id -> quantity owned by the player.
+    """
+    iron_qty   = inv_counts.get("iron_ingot", 0)
+    scale_qty  = inv_counts.get("wyvern_scale", 0)
+
+    lines: list[str] = ["⚒️ **Anvil** — Select a recipe and press Craft\n"]
+    lines.append(f"🧱 Iron ingots: **{iron_qty}**  |  🐉 Wyvern scales: **{scale_qty}**\n")
+
+    current_category = None
+    for i, recipe in enumerate(_ANVIL_RECIPES):
+        if recipe["category"] != current_category:
+            current_category = recipe["category"]
+            lines.append(f"\n── {current_category} ──")
+
+        cursor = "▶ " if i == cursor_idx else "   "
+        emoji  = recipe["emoji"]
+        name   = recipe["name"]
+        cost_item = recipe["cost_item"]
+        cost_qty  = recipe["cost_qty"]
+        stat      = recipe["stat"]
+        have      = inv_counts.get(cost_item, 0)
+
+        if recipe["base_item"]:
+            base_have = inv_counts.get(recipe["base_item"], 0)
+            base_name = recipe["base_item"].replace("_", " ")
+            cost_str  = f"{cost_qty} scales + {base_name}"
+            avail_str = f"scales: {have}/{cost_qty}, base: {'✓' if base_have >= 1 else '✗'}"
+        else:
+            cost_str  = f"{cost_qty} iron ingot{'s' if cost_qty > 1 else ''}"
+            avail_str = f"have {have}/{cost_qty}"
+
+        lines.append(f"`{cursor}{emoji} {name:<18} {cost_str:<28} {stat:<10}` ({avail_str})")
+
+    return "\n".join(lines)
+
+
 class AnvilView(discord.ui.View):
-    """Anvil interaction menu: craft weapons and armor from iron ingots."""
+    """Anvil interaction menu — scrollable recipe list with D-pad navigation."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
-        for label, act, style, row in [
-            ("🗡️ Dagger (1 ingot)",            "anvil_dagger",           discord.ButtonStyle.primary, 0),
-            ("⚔️ Sword (2 ingots)",            "anvil_sword",            discord.ButtonStyle.primary, 0),
-            ("🪖 Helmet (2 ingots)",           "anvil_helmet",           discord.ButtonStyle.primary, 0),
-            ("🛡️ Chestplate (4 ingots)",       "anvil_chestplate",       discord.ButtonStyle.primary, 0),
-            ("👖 Leggings (3 ingots)",         "anvil_leggings",         discord.ButtonStyle.primary, 0),
-            ("🥾 Iron Boots (2 ingots)",       "anvil_iron_boots",       discord.ButtonStyle.primary, 1),
-            ("💣 Cannonball (4 ingots)",       "anvil_cannonball",       discord.ButtonStyle.primary, 1),
-            ("🛡️ Iron Shield (4 ingots)",      "anvil_iron_shield",      discord.ButtonStyle.primary, 1),
-            ("🐉 Wyvern Helmet (2 scales)",    "anvil_wyvern_helmet",    discord.ButtonStyle.success,  2),
-            ("🐉 Wyvern Chestplate (4 scales)","anvil_wyvern_chestplate",discord.ButtonStyle.success,  2),
-            ("🐉 Wyvern Leggings (3 scales)",  "anvil_wyvern_leggings",  discord.ButtonStyle.success,  2),
-            ("🐉 Wyvern Shield (4 scales)",    "anvil_wyvern_shield",    discord.ButtonStyle.success,  2),
-            ("❌ Close",                        "anvil_close",             discord.ButtonStyle.danger,   3),
-        ]:
-            self.add_item(discord.ui.Button(
-                style=style, label=label,
-                custom_id=_custom_id(guild_id, user_id, act), row=row,
-            ))
+        gid, uid = guild_id, user_id
+
+        _sp = lambda act, r: self.add_item(discord.ui.Button(  # noqa: E731
+            style=discord.ButtonStyle.secondary, label="​", disabled=True,
+            custom_id=_custom_id(gid, uid, act), row=r,
+        ))
+
+        # Row 0: [spacer] [⬆ Up] [spacer] [spacer] [spacer]
+        _sp("anvil_sp0a", 0)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="⬆️",
+            custom_id=_custom_id(gid, uid, "anvil_up"), row=0,
+        ))
+        _sp("anvil_sp0b", 0)
+        _sp("anvil_sp0c", 0)
+        _sp("anvil_sp0d", 0)
+
+        # Row 1: [spacer] [⚒️ Craft] [spacer] [spacer] [spacer]
+        _sp("anvil_sp1a", 1)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success, label="⚒️ Craft",
+            custom_id=_custom_id(gid, uid, "anvil_craft"), row=1,
+        ))
+        _sp("anvil_sp1b", 1)
+        _sp("anvil_sp1c", 1)
+        _sp("anvil_sp1d", 1)
+
+        # Row 2: [spacer] [⬇ Down] [spacer] [spacer] [spacer]
+        _sp("anvil_sp2a", 2)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="⬇️",
+            custom_id=_custom_id(gid, uid, "anvil_down"), row=2,
+        ))
+        _sp("anvil_sp2b", 2)
+        _sp("anvil_sp2c", 2)
+        _sp("anvil_sp2d", 2)
+
+        # Row 3: [❌ Close] [spacer] [spacer] [spacer] [spacer]
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Close",
+            custom_id=_custom_id(gid, uid, "anvil_close"), row=3,
+        ))
+        _sp("anvil_sp3a", 3)
+        _sp("anvil_sp3b", 3)
+        _sp("anvil_sp3c", 3)
+        _sp("anvil_sp3d", 3)
 
 
 class PlayerHouseEditView(discord.ui.View):
@@ -2394,7 +2479,7 @@ async def _move_steps(
                         db, user_id, True, player.village_id,
                         vx, vy, player.village_wx, player.village_wy,
                     )
-                    grid = await load_village_viewport(player.village_id, vx, vy, db)
+                    grid = await load_village_viewport(player.village_id, vx, vy, db, user_id=user_id)
                     return render_grid(grid, player, "You step outside."), \
                            _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_building(target)
@@ -2433,7 +2518,7 @@ async def _move_steps(
                 return render_grid(grid, player, "You leave the village."), _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_village(target)
             if not allowed:
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
             player.village_x, player.village_y = nx, ny
             await update_player_village_state(
@@ -2461,7 +2546,7 @@ async def _move_steps(
                     )
                     errand_msg = f"📜 Quest complete: **{q['title']}**! {reward_str}"
 
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         return render_grid(grid, player, errand_msg), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_island:
@@ -2708,7 +2793,7 @@ async def handle_move(
 
     steps = 2 if (player.sprinting and player.boots is not None) else 1
     content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Combat handlers ───────────────────────────────────────────────────────────
@@ -2844,7 +2929,7 @@ async def _after_player_action(
         if player.hp <= 0:
             content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                                  " ".join(arena["combat_log"][-4:]))
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
     is_naval = arena.get("naval", False)
@@ -2861,20 +2946,20 @@ async def _after_player_action(
             await save_combat_state(db, user_id, player)
             content = render_arena(arena, player)
             view = _combat_view(guild_id, user_id, arena, player)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]), won=True)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Player / ship dead?
     if _is_dead():
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]))
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Still has moves left?
@@ -2882,7 +2967,7 @@ async def _after_player_action(
         await save_combat_state(db, user_id, player)
         content = render_arena(arena, player)
         view = _combat_view(guild_id, user_id, arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # No moves left → enemy turn
@@ -2898,7 +2983,7 @@ async def _after_player_action(
     if _is_dead():
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]))
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if player.combat_enemy_hp <= 0:
@@ -2909,19 +2994,19 @@ async def _after_player_action(
             await save_combat_state(db, user_id, player)
             content = render_arena(arena, player)
             view = _combat_view(guild_id, user_id, arena, player)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         victory_msg = apply_victory(player)
         arena["combat_log"].append(victory_msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-4:]), won=True)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     await save_combat_state(db, user_id, player)
     content = render_arena(arena, player)
     view = _combat_view(guild_id, user_id, arena, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def _load_combat(
@@ -2942,7 +3027,7 @@ async def _load_combat(
             else:
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player, "Combat session lost — you escape unharmed.")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player)
             )
         return None
@@ -2981,7 +3066,7 @@ async def handle_combat_attack(
             arena["combat_log"].append("No rocks left! Mine cave_rocks with a pickaxe.")
             content = render_arena(arena, player)
             view = _combat_view(guild_id, user_id, arena, player)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         await remove_from_inventory(db, user_id, "rock", 1)
 
@@ -3002,7 +3087,7 @@ async def handle_combat_flee(
         arena["combat_log"].append(msg)
         content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                              " ".join(arena["combat_log"][-3:]))
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
     else:
         await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
 
@@ -3021,7 +3106,7 @@ async def handle_combat_eat(
         arena["combat_log"].append("⚓ You can't eat to repair the ship! Use logs from the cargo chest.")
         content = render_arena(arena, player)
         view = _combat_view(guild_id, user_id, arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Build list of consumables the player has
@@ -3039,7 +3124,7 @@ async def handle_combat_eat(
         arena["combat_log"].append("🍗 You have no food! Fish and cook at a hearth for HP recovery.")
         content = render_arena(arena, player)
         view = _combat_view(guild_id, user_id, arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     lines = ["**🍗 Consumables** — select an item to use (costs 1 turn):", ""]
@@ -3050,7 +3135,7 @@ async def handle_combat_eat(
         lines.append(f"• **{name}** ×{qty}  —  {desc}")
     content = "\n".join(lines)
     view = ConsumablesView(guild_id, user_id, available)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_combat_consume(
@@ -3069,7 +3154,7 @@ async def handle_combat_consume(
         arena["combat_log"].append(f"You no longer have any {item_id.replace('_', ' ')}.")
         content = render_arena(arena, player)
         view = _combat_view(guild_id, user_id, arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     await remove_from_inventory(db, user_id, item_id, 1)
@@ -3091,7 +3176,7 @@ async def handle_combat_consume_cancel(
     db, player, arena = result
     content = render_arena(arena, player)
     view = _combat_view(guild_id, user_id, arena, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 
@@ -3127,7 +3212,7 @@ async def handle_mine(
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "You need a pickaxe to mine that rock.")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
@@ -3135,7 +3220,7 @@ async def handle_mine(
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
         content = render_grid(grid, player, "That rock has already been mined.")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # ── Rift deposit: only minable after boss is defeated ──
@@ -3149,7 +3234,7 @@ async def handle_mine(
                 "💠 This Chronolite formation is protected by the Echo's power. "
                 "Defeat the Temporal Echo first.")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         # Mine the deposit
         rng_rift = _random.Random(hash((user_id, nx, ny, "rift")))
@@ -3165,7 +3250,7 @@ async def handle_mine(
         content = render_grid(grid, player,
             f"💠 You shatter the deposit! Got: {loot_str}.{drop_msg}")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     rng = _random.Random(hash((user_id, nx, ny, player.xp)))
@@ -3214,7 +3299,7 @@ async def handle_mine(
     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     content = render_grid(grid, player, f"You mine the rock! Got: {loot_str}.{drop_msg}")
     view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Sprint toggle ─────────────────────────────────────────────────────────────
@@ -3227,7 +3312,7 @@ async def handle_sprint(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if player.boots is None:
-        await interaction.followup.send("You need hiking boots to sprint.", ephemeral=True)
+        await interaction.response.send_message("You need hiking boots to sprint.", ephemeral=True)
         return
 
     player.sprinting = not player.sprinting
@@ -3238,7 +3323,7 @@ async def handle_sprint(
         grid = await _load_house_grid(player, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_village:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         view = _game_view(guild_id, user_id, player, grid=grid)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -3250,7 +3335,7 @@ async def handle_sprint(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player, status)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Canoe handlers ───────────────────────────────────────────────────────────
@@ -3264,13 +3349,13 @@ async def handle_canoe_move(
     if not player.in_canoe:
         # Fallback: player got off canoe somehow
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(render_grid(grid, player)), content=None,
             view=_game_view(guild_id, user_id, player),
         )
         return
     content, view = await _move_steps(player, direction, 1, seed, db, guild_id, user_id)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_canoe_dock(
@@ -3298,7 +3383,7 @@ async def handle_canoe_dock(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player, "No land nearby to dock at.")
         view = CanoeView(guild_id, user_id, dock_available=False)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     lx, ly = landing
@@ -3308,7 +3393,7 @@ async def handle_canoe_dock(
     grid = await load_viewport(lx, ly, seed, db)
     content = render_grid(grid, player, "🏞️ You pull the canoe ashore.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_embark(
@@ -3337,7 +3422,7 @@ async def handle_embark(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player, "No water to launch from nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     wx, wy = water_pos
@@ -3347,7 +3432,7 @@ async def handle_embark(
     grid = await load_viewport(wx, wy, seed, db)
     content = render_grid(grid, player, "🛶 You push off from the bank and onto the water.")
     view = CanoeView(guild_id, user_id, dock_available=False)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_feed_cat(
@@ -3380,7 +3465,7 @@ async def handle_feed_cat(
         content = render_grid(grid, player, "🐱 The cat eyes you hopefully. You have no fish to offer.")
 
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Plant seeds view (choose seed type) ───────────────────────────────────────
@@ -3417,12 +3502,12 @@ async def handle_plant(
     if not player.in_village or player.in_house:
         return
 
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
     vc_ = 4  # VIEWPORT_CENTER
     center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
     if center_t != "vil_farmland":
         content = render_grid(grid, player, "You're not standing on farmland.")
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
     # Check inventory for seed types
@@ -3433,7 +3518,7 @@ async def handle_plant(
     ]
     if not seed_types_held:
         content = render_grid(grid, player, "🌱 You have no seeds to plant.")
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
     if len(seed_types_held) == 1:
@@ -3442,15 +3527,15 @@ async def handle_plant(
         crop = FARM_CROPS[stype]
         await remove_from_inventory(db, user_id, stype, 1)
         await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         content = render_grid(grid, player, f"🌱 You plant {stype.replace('_',' ')} in the soil. Water it to grow!")
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
     # Multiple seed types — show selection menu
     seed_types_unique = list(dict.fromkeys(seed_types_held))  # deduplicated, preserves order
     content = render_grid(grid, player, "🌱 Which seeds do you want to plant?")
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=PlantSeedView(guild_id, user_id, seed_types_unique))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=PlantSeedView(guild_id, user_id, seed_types_unique))
 
 
 async def handle_plant_choice(
@@ -3463,11 +3548,11 @@ async def handle_plant_choice(
     if not player.in_village or player.in_house:
         return
 
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
     crop = FARM_CROPS.get(seed_type)
     if not crop:
         content = render_grid(grid, player, "Unknown seed type.")
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
     inv_items = await get_inventory(db, user_id)
@@ -3482,10 +3567,10 @@ async def handle_plant_choice(
     else:
         await remove_from_inventory(db, user_id, seed_type, 1)
         await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         content = render_grid(grid, player, f"🌱 You plant {seed_type.replace('_',' ')} in the soil. Water it to grow!")
 
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
 
 async def handle_plant_cancel(
@@ -3494,9 +3579,9 @@ async def handle_plant_cancel(
     """Cancel seed selection."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
     content = render_grid(grid, player, "Planting cancelled.")
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
 
 async def handle_canoe_sail(
@@ -3515,7 +3600,7 @@ async def handle_canoe_sail(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player, "No reachable landings found on this waterway.")
         landing = await _adjacent_landing(player, seed, db)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
         )
@@ -3533,7 +3618,7 @@ async def handle_canoe_sail(
         f"{dest_lines}\n\n"
         f"*{total} landing{'s' if total != 1 else ''} reachable on this waterway.*"
     )
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=CanoeDestView(guild_id, user_id, dests, page=0),
     )
@@ -3572,7 +3657,7 @@ async def handle_canoe_dest(
         _ui_state.pop(user_id, None)
         grid = await load_viewport(lx, ly, seed, db)
         content = render_grid(grid, player, f"You sail to the landing at ({lx},{ly}).")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player),
         )
@@ -3584,7 +3669,7 @@ async def handle_canoe_dest(
     _ui_state.pop(user_id, None)
     grid = await load_viewport(wx, wy, seed, db)
     content = render_grid(grid, player, f"You sail to the landing at ({lx},{ly}). Dock to go ashore.")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=CanoeView(guild_id, user_id, dock_available=True),
     )
@@ -3611,7 +3696,7 @@ async def handle_canoe_dest_nav(
         f"{dest_lines}\n\n"
         f"*{len(dests)} landing{'s' if len(dests) != 1 else ''} reachable.*"
     )
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=CanoeDestView(guild_id, user_id, dests, page=new_page),
     )
@@ -3627,7 +3712,7 @@ async def handle_canoe_dest_cancel(
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     landing = await _adjacent_landing(player, seed, db)
     content = render_grid(grid, player)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
     )
@@ -3717,11 +3802,11 @@ async def handle_ocean_move(
             player.village_wx, player.village_wy = hwx, hwy
             await update_player_ocean_state(db, user_id, False, 0, 0)
             await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
-            grid = await load_village_viewport(vid, dock_x, dock_y, db)
+            grid = await load_village_viewport(vid, dock_x, dock_y, db, user_id=user_id)
             delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
             _hs_msg = f"⚓ You sail back into the harbour.{' ' + delivery_msg if delivery_msg else ''}"
             content = render_grid(grid, player, _hs_msg)
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=_game_view(guild_id, user_id, player, grid=grid),
             )
@@ -3731,7 +3816,7 @@ async def handle_ocean_move(
             grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
             nav = _ui_state.get(user_id, {}).get("nav_target")
             content = render_grid(grid, player, "The vast ocean stretches endlessly in that direction.", nav_target=nav)
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=OceanView(guild_id, user_id,
                                dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge)),
@@ -3754,7 +3839,7 @@ async def handle_ocean_move(
                              dock_available=_hs_at_harbor(player.ocean_x, player.ocean_y, _hs_coast_edge),
                              island_nearby=True,
                              has_fishing_rod=has_rod)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         player.ocean_x, player.ocean_y = nx, ny
@@ -3782,7 +3867,7 @@ async def handle_ocean_move(
             view = CombatView(guild_id, user_id,
                               trapped=arena["player_trapped"],
                               moves_left=player.combat_moves_left)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         # Check all 8 neighbours for island tiles — show Island button if any found
@@ -3811,7 +3896,7 @@ async def handle_ocean_move(
         grid = load_ocean_viewport(nx, ny, seed)
         nav = _ui_state.get(user_id, {}).get("nav_target")
         content = render_grid(grid, player, nav_target=nav)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=OceanView(guild_id, user_id,
                            dock_available=_hs_at_harbor(nx, ny, _hs_coast_edge),
@@ -3841,7 +3926,7 @@ async def handle_ocean_move(
         )
         grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
         content = render_grid(grid, player, "🌊 You sail beyond the horizon into the open ocean!")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=OceanView(guild_id, user_id, dock_available=False, has_fishing_rod=has_rod),
         )
@@ -3854,7 +3939,7 @@ async def handle_ocean_move(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         harbor_adj = await _adjacent_harbor(player, seed, db)
         content = render_grid(grid, player, "Your boat can't sail onto land.")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=BoatView(guild_id, user_id, dock_available=(harbor_adj is not None)),
         )
@@ -3870,11 +3955,11 @@ async def handle_ocean_move(
         player.village_wx, player.village_wy = nx, ny
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_village_state(db, user_id, True, vid, vx, vy, nx, ny)
-        grid = await load_village_viewport(vid, vx, vy, db)
+        grid = await load_village_viewport(vid, vx, vy, db, user_id=user_id)
         delivery_msg = await _complete_delivery_quests_for_village(db, user_id, nx, ny)
         _harbour_msg = f"⚓ You sail into the harbour.{' ' + delivery_msg if delivery_msg else ''}"
         content = render_grid(grid, player, _harbour_msg)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -3887,7 +3972,7 @@ async def handle_ocean_move(
     harbor_adj = await _adjacent_harbor(player, seed, db)
     grid = await load_viewport(nx, ny, seed, db)
     content = render_grid(grid, player)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=BoatView(guild_id, user_id, dock_available=(harbor_adj is not None)),
     )
@@ -3907,25 +3992,25 @@ async def handle_ocean_dock(
         if harbor is None:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
             content = render_grid(grid, player, "No harbour nearby to dock at.")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=BoatView(guild_id, user_id, dock_available=False),
             )
             return
         hwx, hwy = harbor
-        vid, vx, vy, _dk_x, _dk_y = await get_or_create_harbor_village(seed, hwx, hwy, db)
+        vid, _vx, _vy, dock_x, dock_y = await get_or_create_harbor_village(seed, hwx, hwy, db)
         player.in_ocean = False
         player.in_village = True
         player.village_id = vid
-        player.village_x, player.village_y = vx, vy
+        player.village_x, player.village_y = dock_x, dock_y
         player.village_wx, player.village_wy = hwx, hwy
         await update_player_ocean_state(db, user_id, False, 0, 0)
-        await update_player_village_state(db, user_id, True, vid, vx, vy, hwx, hwy)
-        grid = await load_village_viewport(vid, vx, vy, db)
+        await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
+        grid = await load_village_viewport(vid, dock_x, dock_y, db, user_id=user_id)
         delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
         _dock_msg = f"⚓ You dock at the harbour and step ashore.{' ' + delivery_msg if delivery_msg else ''}"
         content = render_grid(grid, player, _dock_msg)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -3937,7 +4022,7 @@ async def handle_ocean_dock(
             grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
             content = render_grid(grid, player,
                                   "You must sail back to the shoreline (row 0) to dock.")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=OceanView(guild_id, user_id, dock_available=False),
             )
@@ -3951,11 +4036,11 @@ async def handle_ocean_dock(
         player.village_wx, player.village_wy = hwx, hwy
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_village_state(db, user_id, True, vid, dock_x, dock_y, hwx, hwy)
-        grid = await load_village_viewport(vid, dock_x, dock_y, db)
+        grid = await load_village_viewport(vid, dock_x, dock_y, db, user_id=user_id)
         delivery_msg = await _complete_delivery_quests_for_village(db, user_id, hwx, hwy)
         _hs_dock_msg = f"⚓ You dock at the harbour and step ashore.{' ' + delivery_msg if delivery_msg else ''}"
         content = render_grid(grid, player, _hs_dock_msg)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -3994,7 +4079,7 @@ async def handle_boat_grapple(
     if player.in_high_seas:
         grid = load_ocean_viewport(player.ocean_x, player.ocean_y, seed)
         content = render_grid(grid, player, msg)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=OceanView(guild_id, user_id, dock_available=(player.ocean_y == 0)),
         )
@@ -4002,7 +4087,7 @@ async def handle_boat_grapple(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         harbor_adj = await _adjacent_harbor(player, seed, db)
         content = render_grid(grid, player, msg)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=BoatView(guild_id, user_id, dock_available=(harbor_adj is not None)),
         )
@@ -4028,7 +4113,7 @@ async def handle_ship_enter(
     grid = load_ship_viewport("helm", player.ship_x, player.ship_y, player=player)
     content = render_grid(grid, player, "\u2693 You board your ship at the helm.")
     view = _ship_game_view(guild_id, user_id, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_leave(
@@ -4061,7 +4146,7 @@ async def handle_ship_leave(
         content = render_grid(grid, player, "⚓ You return to the helm and take the wheel.")
         view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None),
                         has_fishing_rod=has_rod)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_move(
@@ -4085,7 +4170,7 @@ async def handle_ship_move(
         grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
         content = render_grid(grid, player, f"\U0001F6AB {msg}")
         view = _ship_game_view(guild_id, user_id, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Check for door at target position
@@ -4099,7 +4184,7 @@ async def handle_ship_move(
         grid = load_ship_viewport(new_room, new_x, new_y, player=player)
         content = render_grid(grid, player, f"\U0001F6AA You enter {room_names.get(new_room, new_room)}.")
         view = _ship_game_view(guild_id, user_id, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Normal move
@@ -4108,7 +4193,7 @@ async def handle_ship_move(
     grid = load_ship_viewport(player.ship_room, nx, ny, player=player)
     content = render_grid(grid, player, "")
     view = _ship_game_view(guild_id, user_id, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_room(
@@ -4136,7 +4221,7 @@ async def handle_ship_room(
         content = render_ship_room(player)
         view = ShipView(guild_id, user_id, room=room,
                         ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_repair(
@@ -4159,7 +4244,7 @@ async def handle_ship_repair(
            "walk to a 🕳️ hull damage tile, and press Interact to patch it (+5 HP per hole, costs 2 nails + 1 plank).")
     content = render_grid(grid, player, msg)
     view = _ship_game_view(guild_id, user_id, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def _open_ship_chest(
@@ -4188,7 +4273,7 @@ async def _open_ship_chest(
     content = render_ship_chest(chest_items, player_items, 0, "player",
                                 chest_name, player, inv_rows, inv_cols)
     view = ShipChestView(guild_id, user_id, chest_type, "player")
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_chest_open_personal(
@@ -4263,7 +4348,7 @@ async def _ship_chest_action(
     if msg:
         content += f"\n> {msg}"
     view = ShipChestView(guild_id, user_id, chest_type, view_mode)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ship_chest_close(
@@ -4280,13 +4365,13 @@ async def handle_ship_chest_close(
         _ui_state[user_id] = {"type": "combat", "arena": prev_arena}
         content = render_arena(prev_arena, player)
         view = _combat_view(guild_id, user_id, prev_arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
     content = render_grid(grid, player, "\U0001F4E6 You close the chest.")
     view = _ship_game_view(guild_id, user_id, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Island handlers ───────────────────────────────────────────────────────────
@@ -4329,7 +4414,7 @@ async def handle_island_arrive(
     # Clear any island_target from high-seas ui_state
     _ui_state.pop(user_id, None)
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_island_move(
@@ -4361,21 +4446,21 @@ async def handle_island_move(
         grid = load_island_viewport(tiles, px, py)
         content = render_grid(grid, player, "🔥 The lava is impassable!")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if target_terrain == "vol_crater":
         grid = load_island_viewport(tiles, px, py)
         content = render_grid(grid, player, "🌑 The volcano crater is too dangerous to enter!")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if target_terrain not in ISLAND_WALKABLE:
         grid = load_island_viewport(tiles, px, py)
         content = render_grid(grid, player, "You can't go that way.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     player.ocean_x, player.ocean_y = nx, ny
@@ -4384,7 +4469,7 @@ async def handle_island_move(
     grid = load_island_viewport(tiles, nx, ny)
     content = render_grid(grid, player)
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_island_loot(
@@ -4408,7 +4493,7 @@ async def handle_island_loot(
     if already:
         content = render_grid(grid, player, "💰 The chest has already been looted.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     await mark_island_looted(db, ox, oy)
@@ -4429,7 +4514,7 @@ async def handle_island_loot(
 
     content = render_grid(grid, player, f"💰 You pry open the chest — **{label} ×{qty}**!")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_island_leave(
@@ -4454,7 +4539,7 @@ async def handle_island_leave(
     grid = load_ocean_viewport(ox, oy, seed)
     content = render_grid(grid, player, "⛵ You row back to your boat.")
     view = OceanView(guild_id, user_id, dock_available=(oy == 0), has_fishing_rod=has_rod)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_ocean_fish(
@@ -4509,7 +4594,7 @@ async def handle_ocean_fish(
                         dock_available=(harbor_adj is not None),
                         has_fishing_rod=has_rod)
     content = render_grid(grid, player, msg)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_island_dock_hs(
@@ -4535,7 +4620,7 @@ async def handle_merchant_nav(
     if state.get("type") != "merchant":
         seed = await get_or_create_world(db, guild_id)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(render_grid(grid, player)), content=None,
             view=_game_view(guild_id, user_id, player),
         )
@@ -4544,7 +4629,7 @@ async def handle_merchant_nav(
     new_sel = (state["selected"] + delta) % max(1, len(catalog))
     _ui_state[user_id]["selected"] = new_sel
     content = _render_merchant(catalog, new_sel, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=MerchantView(guild_id, user_id))
 
 
@@ -4557,7 +4642,7 @@ async def handle_merchant_buy(
     if state.get("type") != "merchant":
         seed = await get_or_create_world(db, guild_id)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(render_grid(grid, player)), content=None,
             view=_game_view(guild_id, user_id, player),
         )
@@ -4569,14 +4654,14 @@ async def handle_merchant_buy(
     item = catalog[sel]
     if player.gold < item["price"]:
         content = _render_merchant(catalog, sel, player) + f"\n\n*Not enough gold!*"
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=MerchantView(guild_id, user_id))
         return
     player.gold -= item["price"]
     await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"], 1)
     content = _render_merchant(catalog, sel, player) + f"\n\n*Bought {item['name']}!*"
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=MerchantView(guild_id, user_id))
 
 
@@ -4589,7 +4674,7 @@ async def handle_merchant_close(
     _ui_state.pop(user_id, None)
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, "The merchant waves farewell and continues on their way.")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -4649,7 +4734,7 @@ async def handle_interact(
                 grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
                 content = render_grid(grid, player, "🔨 You need a **hammer** equipped to repair hull damage.")
                 view = _ship_game_view(guild_id, user_id, player)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             inv = await get_inventory(db, user_id)
             nail_count = sum(r["quantity"] for r in inv if r["item_id"] == "nail")
@@ -4663,7 +4748,7 @@ async def handle_interact(
                 grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
                 content = render_grid(grid, player, f"🔨 Need {' and '.join(need)} to patch this hole.")
                 view = _ship_game_view(guild_id, user_id, player)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             # Consume materials and heal 5 HP
             await remove_from_inventory(db, user_id, "nail", 2)
@@ -4674,7 +4759,7 @@ async def handle_interact(
             content = render_grid(grid, player,
                 f"🔨 Hull patched! Ship HP: {player.ship_hp}/{player.ship_max_hp}. Used 2 nails + 1 plank.")
             view = _ship_game_view(guild_id, user_id, player)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         else:
             return
@@ -4701,7 +4786,7 @@ async def handle_interact(
                     grid = await load_cave_viewport(cid, vx, vy, db)
                     content = render_grid(grid, player, "You step outside.")
                     view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 else:
                     player.world_x, player.world_y = vx, vy
@@ -4709,14 +4794,14 @@ async def handle_interact(
                     grid = await load_viewport(vx, vy, seed, db)
                     content = render_grid(grid, player, "You step outside.")
                     view = _game_view(guild_id, user_id, player, grid=grid)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
             player.village_x, player.village_y = vx, vy
             await update_player_village_state(
                 db, user_id, True, player.village_id,
                 vx, vy, player.village_wx, player.village_wy,
             )
-            grid = await load_village_viewport(player.village_id, vx, vy, db)
+            grid = await load_village_viewport(player.village_id, vx, vy, db, user_id=user_id)
             content = render_grid(grid, player, "You step outside.")
 
         elif htile.terrain == "b_bank_npc" and player.house_type == "bank":
@@ -4742,7 +4827,7 @@ async def handle_interact(
             }
             content = render_chest(chest_inv, player_inv, 0, "chest",
                                    htile.terrain, inv_rows, inv_cols)
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=ChestView(guild_id, user_id, "chest"),
             )
@@ -4807,19 +4892,19 @@ async def handle_interact(
                 resin_count = sum(r["quantity"] for r in resin_rows)
                 ingot_count = sum(r["quantity"] for r in ingot_rows)
                 torch_batches = min(stick_count, resin_count)
-                cannonball_batches = ingot_count // 4
+                cannonball_batches = ingot_count // 2
                 grid = await _load_house_grid()
                 if cannonball_batches > 0:
-                    await remove_from_inventory(db, user_id, "iron_ingot", cannonball_batches * 4)
+                    await remove_from_inventory(db, user_id, "iron_ingot", cannonball_batches * 2)
                     await add_to_inventory(db, user_id, "cannonball", cannonball_batches)
-                    content = render_grid(grid, player, f"⚒️ Forged {cannonball_batches} cannonball{'s' if cannonball_batches > 1 else ''} from {cannonball_batches * 4} iron ingots!")
+                    content = render_grid(grid, player, f"⚒️ Forged {cannonball_batches} cannonball{'s' if cannonball_batches > 1 else ''} from {cannonball_batches * 2} iron ingots!")
                 elif torch_batches > 0:
                     await remove_from_inventory(db, user_id, "stick", torch_batches)
                     await remove_from_inventory(db, user_id, "resin", torch_batches)
                     await add_to_inventory(db, user_id, "torch", torch_batches)
                     content = render_grid(grid, player, f"⚒️ Crafted {torch_batches} torch{'es' if torch_batches > 1 else ''} from sticks & resin.")
                 else:
-                    content = render_grid(grid, player, "\"1 stick + 1 resin = 1 torch. 4 iron ingots = 1 cannonball. Use 🔥 Forge to smelt ore, ⚒️ Anvil to craft weapons.\"")
+                    content = render_grid(grid, player, "\"1 stick + 1 resin = 1 torch. 2 iron ingots = 1 cannonball. Use 🔥 Forge to smelt ore, ⚒️ Anvil to craft weapons.\"")
 
             elif htile.terrain == "b_anvil":
                 grid = await _load_house_grid()
@@ -4842,7 +4927,7 @@ async def handle_interact(
                 content = render_grid(grid, player,
                     f"\"What'll it be, stranger?\"\n{menu_lines}\n\nUse the buttons below to order.")
                 view = TavernBuyView(guild_id, user_id)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
             elif htile.terrain == "b_tavern_npc" and player.house_type == "tavern":
@@ -4894,7 +4979,7 @@ async def handle_interact(
                         f"\"I can restore you to full health for **{cost}🪙**.\"\n"
                         f"You are missing **{missing} HP**. You have **{player.gold}🪙**.")
                     view = HealConfirmView(guild_id, user_id, cost)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
 
             elif htile.terrain == "b_medicine_shelf":
@@ -4920,7 +5005,7 @@ async def handle_interact(
                         "Bring me logs and I'll turn them into planks. " +
                         f"You have **{log_count} logs**. Convert to **{log_count*2} planks**?")
                     view = LumberConvertView(guild_id, user_id, log_count)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 else:
                     content = render_grid(grid, player, "\"Bring me logs and I'll turn them into planks.\"")
@@ -4976,7 +5061,7 @@ async def handle_interact(
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_village:
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
@@ -5007,7 +5092,7 @@ async def handle_interact(
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
             else:
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
         elif vtile.terrain == "vil_puzzle_board":
@@ -5015,11 +5100,11 @@ async def handle_interact(
             return
 
         elif vtile.terrain == "vil_well":
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             content = render_grid(grid, player, "⛲ The well gurgles softly.")
 
         elif vtile.terrain == "vil_villager":
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             _vil_gossip = [
                 "\"Beautiful day, isn't it?\"",
                 "\"Watch yourself on the roads at night.\"",
@@ -5037,7 +5122,7 @@ async def handle_interact(
             content = render_grid(grid, player, _vil_gossip[_vidx])
 
         elif vtile.terrain == "vil_guard":
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             _guard_lines = [
                 "\"Move along, stranger. Keep your weapons sheathed in the village.\"",
                 "\"We've had trouble with wolves on the north road. Stay sharp.\"",
@@ -5067,15 +5152,15 @@ async def handle_interact(
             content = render_grid(grid, player,
                 "⚓ You cast off from the dock! Sail into the ocean or use ⚓ Dock to return.")
             view = BoatView(guild_id, user_id, dock_available=(harbor_adj is not None))
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         else:
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_cave:
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
@@ -5112,7 +5197,7 @@ async def handle_interact(
                     grid = load_island_viewport(island_tiles, ret_lx, ret_ly)
                     content = render_grid(grid, player, "🌋 You climb back out of the lava cave.")
                     view = _game_view(guild_id, user_id, player, grid=grid)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 else:
                     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -5161,7 +5246,7 @@ async def handle_interact(
                 grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                 content = render_grid(grid, player, "Nothing to interact with here.")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif cave_tile.terrain in CAVE_CHEST_TYPES:
@@ -5181,7 +5266,7 @@ async def handle_interact(
             content = render_chest(chest_inv, [], 0, "chest", cave_tile.terrain,
                                    inv_rows, inv_cols)
             view = ChestView(guild_id, user_id, "chest")
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         else:
@@ -5189,7 +5274,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif player.in_island:
         from dwarf_explorer.world.islands import get_or_create_island_data, load_island_viewport
@@ -5218,7 +5303,7 @@ async def handle_interact(
             content = render_grid(grid, player, "⛵ You row back to your boat.")
             view = OceanView(guild_id, user_id, dock_available=(oy == 0),
                              has_fishing_rod=has_rod)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif current_terrain == "vol_cave":
@@ -5232,7 +5317,7 @@ async def handle_interact(
                 grid = load_island_viewport(tiles, px, py)
                 content = render_grid(grid, player, "⛰️ The cave entrance is unstable...")
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             iid = island_id_row["island_id"]
             cave_id = await create_island_lava_cave(seed, iid, px, py, db)
@@ -5255,7 +5340,7 @@ async def handle_interact(
             grid = await load_cave_viewport(cave_id, ent_x, ent_y, db)
             content = render_grid(grid, player, "🌋 You descend into the lava cave!")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif current_terrain == "vol_outpost":
@@ -5265,7 +5350,7 @@ async def handle_interact(
             inv_rows, inv_cols = _inv_capacity(player)
             _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
             content_shop = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content_shop), content=None,
                 view=ShopView(guild_id, user_id, "shop")
             )
@@ -5302,7 +5387,7 @@ async def handle_interact(
                 content = render_grid(grid, player,
                                       f"💰 You pry open the chest — **{label} ×{qty}**!")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif current_terrain == "island_chest":
@@ -5336,7 +5421,7 @@ async def handle_interact(
                 content = render_grid(grid, player,
                                       f"💰 You pry open the chest — **{label} ×{qty}**!")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif current_terrain in ("island_forest", "island_tree") and "axe" in hand_items:
@@ -5358,14 +5443,14 @@ async def handle_interact(
             content = render_grid(grid, player,
                 f"🪓 You chop down the palm tree! Got a log{extra_str}. A sapling remains.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         else:
             grid = load_island_viewport(tiles, px, py)
             content = render_grid(grid, player, "Nothing to interact with here.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
     else:
@@ -5401,7 +5486,7 @@ async def handle_interact(
                     content = render_grid(grid, player,
                         f"🪙 Your shovel strikes something! You dig up **{gold_found}g** and a **{reward_item.replace('_', ' ')}**!")
                     view = _game_view(guild_id, user_id, player)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
 
         # Map fragment assembly: equip map_fragment + have 5+ in inventory
@@ -5416,7 +5501,7 @@ async def handle_interact(
                     content = render_grid(grid, player,
                         f"🗺️ You already have an active treasure map! The X is near ({existing[0]}, {existing[1]}).")
                     view = _game_view(guild_id, user_id, player)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 await remove_from_inventory(db, user_id, "map_fragment", 5)
                 await _auto_unequip_depleted(db, user_id, "map_fragment", player)
@@ -5429,7 +5514,7 @@ async def handle_interact(
                     f"The X is marked near coordinates **({tx}, {ty})**. "
                     f"Dig there with your shovel to claim the treasure!")
                 view = _game_view(guild_id, user_id, player)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
         if terrain == "river_landing":
@@ -5455,7 +5540,7 @@ async def handle_interact(
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "There's no water here to launch a canoe.")
                 view = _game_view(guild_id, user_id, player)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif tile.structure == "player_house":
@@ -5526,7 +5611,7 @@ async def handle_interact(
             player.village_x, player.village_y = vx, vy
             player.village_wx, player.village_wy = wx, wy
             await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
-            grid = await load_village_viewport(vid, vx, vy, db)
+            grid = await load_village_viewport(vid, vx, vy, db, user_id=user_id)
             delivery_msg = await _complete_delivery_quests_for_village(db, user_id, wx, wy)
             _entry_msg = f"You enter the village.{' ' + delivery_msg if delivery_msg else ''}"
             content = render_grid(grid, player, _entry_msg)
@@ -5543,7 +5628,7 @@ async def handle_interact(
                     "🕛 **Sundial Ruins** — an ancient portal frozen in time. "
                     "You sense it needs a ⭐ **Star Fragment** to open. "
                     "Fish in the high seas and hope the ocean yields one.")
-                await interaction.edit_original_response(embed=_embed(content), content=None,
+                await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=_game_view(guild_id, user_id, player, grid=grid))
                 return
 
@@ -5563,7 +5648,7 @@ async def handle_interact(
                 "🌀 The sundial pulses — the Star Fragment dissolves into light. "
                 "A rift tears open and pulls you through...")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif tile.structure == "shrine":
@@ -5595,7 +5680,7 @@ async def handle_interact(
                     "Choose a sacrifice to imbue the gem with power.\n"
                     "The resulting enchanted gem can be combined with a **gold ring** to craft a special ring."
                 )
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
         elif tile.structure == "ruins_looted":
@@ -5633,11 +5718,11 @@ async def handle_interact(
             player.village_x, player.village_y = vx, vy
             player.village_wx, player.village_wy = wx, wy
             await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
-            grid = await load_village_viewport(vid, vx, vy, db)
+            grid = await load_village_viewport(vid, vx, vy, db, user_id=user_id)
             content = render_grid(grid, player,
                 "🚢 You enter the harbour village. Head to the ⚓ dock to set sail.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif terrain == "drop_box":
@@ -5797,7 +5882,7 @@ async def handle_interact(
             content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Action button handlers (adjacent-tile interactions) ───────────────────────
@@ -5823,7 +5908,7 @@ async def handle_action(
             grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player, "Only the house owner can edit this house.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
         state = _ui_state.get(user_id, {})
         _ui_state[user_id] = {**state, "type": "house_edit"}
@@ -5831,7 +5916,7 @@ async def handle_action(
         cursor = (player.house_x, player.house_y)
         content = render_grid(grid, player, "✏️ **Edit mode** — Move around and use ➕ Add / ✖ Remove to decorate tiles.",
                               cursor_pos=cursor)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=PlayerHouseEditView(guild_id, user_id),
         )
@@ -5850,7 +5935,7 @@ async def handle_action(
                     adj_terrains.add(t)
 
         if "b_forge" in adj_terrains:
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed("🔥 **Forge** — What would you like to smelt?"),
                 content=None,
                 view=ForgeView(guild_id, user_id),
@@ -5858,8 +5943,12 @@ async def handle_action(
             return
 
         if "b_anvil" in adj_terrains:
-            await interaction.edit_original_response(
-                embed=_embed("⚒️ **Anvil** — What would you like to craft?"),
+            _ui_state[user_id] = {"type": "anvil", "anvil_cursor": 0}
+            inv_rows_anvil = await get_inventory(db, user_id)
+            inv_counts_anvil = {r["item_id"]: r["quantity"] for r in inv_rows_anvil}
+            content_anvil = _render_anvil(0, inv_counts_anvil)
+            await interaction.response.edit_message(
+                embed=_embed(content_anvil),
                 content=None,
                 view=AnvilView(guild_id, user_id),
             )
@@ -5880,7 +5969,7 @@ async def handle_action(
             )
             content = render_grid(grid, player,
                 f"\"What'll it be, stranger?\"\n{menu_lines}")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=TavernBuyView(guild_id, user_id),
             )
@@ -5893,14 +5982,14 @@ async def handle_action(
             if missing <= 0:
                 content = render_grid(grid, player, "\"You look in fine health! Nothing for me to do here.\"")
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             else:
                 cost = max(HEAL_MINIMUM_COST, missing * HEAL_COST_PER_HP)
                 _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "heal_confirm", "heal_cost": cost}
                 content = render_grid(grid, player,
                     f"\"I can restore you to full health for **{cost}🪙**.\"\n"
                     f"Missing **{missing} HP** · You have **{player.gold}🪙**")
-                await interaction.edit_original_response(
+                await interaction.response.edit_message(
                     embed=_embed(content), content=None,
                     view=HealConfirmView(guild_id, user_id, cost),
                 )
@@ -5921,7 +6010,7 @@ async def handle_action(
             _gi = int(_rh.md5(f"{player.house_id}{player.house_x}{player.house_y}".encode()).hexdigest(), 16) % len(_gossip)
             content = render_grid(grid, player, _gossip[_gi])
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         if "b_pet" in adj_terrains:
@@ -5935,17 +6024,17 @@ async def handle_action(
             else:
                 content = render_grid(grid, player, "🐱 The cat eyes you curiously from across the room.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # ── Village (not in building): adjacent NPC/mill interactions ────────────
     if player.in_village and not player.in_house:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         vc = 4  # VIEWPORT_CENTER
         adj_terrains: set[str] = set()
         for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -5968,7 +6057,7 @@ async def handle_action(
             else:
                 content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
                 view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         if "b_farmer_npc" in adj_terrains:
@@ -5988,12 +6077,12 @@ async def handle_action(
             )
             if crop_info:
                 await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop_info["mature"])
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 content = render_grid(grid, player, f"💧 You water the seeds. A {crop_info['emoji']} crop sprouts!")
             else:
                 content = render_grid(grid, player, "💧 You water the soil.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         if center_vt in _VIL_CROP_TILES:
@@ -6005,21 +6094,21 @@ async def handle_action(
                 await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
                 qty = _random.randint(1, crop_info["yield_qty"] + 1)
                 await add_to_inventory(db, user_id, crop_info["yield"], qty)
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}.")
             else:
                 content = render_grid(grid, player, "You harvest the crop.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         if center_vt == "vil_grass" and "hoe" in hand_items_v:
             # Till grass → farmland
             await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             content = render_grid(grid, player, "🟤 You till the soil into farmland.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         _vil_gossip_act = [
@@ -6058,7 +6147,7 @@ async def handle_action(
             content = render_grid(grid, player, "Nothing to interact with nearby.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # ── Island: fishing adjacent to ocean ────────────────────────────────────
@@ -6086,11 +6175,11 @@ async def handle_action(
                     msg = "🎣 You cast your line... the fish got away."
                 content = render_grid(grid, player, msg)
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # ── Build a player house (requires house_kit equipped) ───────────────────
@@ -6112,7 +6201,7 @@ async def handle_action(
                     grid = await load_viewport(wx, wy, seed, db)
                     content = render_grid(grid, player, "🏠 A house already exists here.")
                     view = _game_view(guild_id, user_id, player, grid=grid)
-                    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 # Consume house_kit: unequip from whichever hand, remove from inventory
                 if player.hand_1 == "house_kit":
@@ -6127,7 +6216,7 @@ async def handle_action(
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
         # Fishing (overworld)
@@ -6145,7 +6234,7 @@ async def handle_action(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, msg)
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         # ── Drop-box pickup ──────────────────────────────────────────────────
@@ -6162,7 +6251,7 @@ async def handle_action(
                 msg = "📦 The box is empty."
             content = render_grid(grid, player, msg)
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         # ── Investigation quest completion (ruins / shrine tiles) ────────────
@@ -6185,13 +6274,13 @@ async def handle_action(
                     f"📜 Quest complete: **{q['title']}**! You investigate the {struct}. {reward_str}"
                 )
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
         grid = await load_viewport(wx, wy, seed, db)
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # ── Cave: build a player house (requires house_kit equipped) ─────────────
@@ -6210,7 +6299,7 @@ async def handle_action(
                 grid = await load_cave_viewport(player.cave_id, cx, cy, db)
                 content = render_grid(grid, player, "🏠 A house already exists here.")
                 view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             # Consume house_kit
             if player.hand_1 == "house_kit":
@@ -6229,14 +6318,14 @@ async def handle_action(
             grid = await load_cave_viewport(player.cave_id, cx, cy, db)
             content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
     # Fallback
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, "Nothing to interact with nearby.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Player-house edit handlers ────────────────────────────────────────────────
@@ -6253,7 +6342,7 @@ async def _ph_edit_response(
     grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
     cursor = (player.house_x, player.house_y)
     content = render_grid(grid, player, msg, cursor_pos=cursor)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=PlayerHouseEditView(guild_id, user_id),
     )
@@ -6311,7 +6400,7 @@ async def handle_house_add(
     cursor = (player.house_x, player.house_y)
     content = render_grid(grid, player, "🪑 Choose a decoration to place on the blue tile:",
                           cursor_pos=cursor)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=HouseDecorationView(guild_id, user_id, page=0, selected=0),
     )
@@ -6387,7 +6476,7 @@ async def handle_house_delete(
 
     _ui_state[user_id] = {}
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_house_edit_close(
@@ -6406,7 +6495,7 @@ async def handle_house_edit_close(
     grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "✅ Exited edit mode.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_house_deco_nav(
@@ -6430,7 +6519,7 @@ async def handle_house_deco_nav(
     grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
     cursor = (player.house_x, player.house_y)
     content = render_grid(grid, player, "🪑 Choose a decoration:", cursor_pos=cursor)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=HouseDecorationView(guild_id, user_id, page=page, selected=selected),
     )
@@ -6452,7 +6541,7 @@ async def handle_house_deco_sel(
     item = HOUSE_DECORATION_CATALOG[idx] if idx < len(HOUSE_DECORATION_CATALOG) else None
     msg = f"🪑 Selected **{item['name']}** — press 🏗️ Place to confirm." if item else "🪑 Choose a decoration:"
     content = render_grid(grid, player, msg, cursor_pos=cursor)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=HouseDecorationView(guild_id, user_id, page=page, selected=idx),
     )
@@ -6547,7 +6636,7 @@ async def handle_forge_iron(
     else:
         msg = "🔥 You need iron ore to smelt ingots."
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
     )
 
@@ -6573,7 +6662,7 @@ async def handle_forge_gold(
     else:
         msg = "🟡 You need gold ore to smelt gold ingots."
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
     )
 
@@ -6598,7 +6687,7 @@ async def handle_forge_gold_ring(
     else:
         msg = f"💍 You need 2 gold ingots to craft a gold ring. (Have: {ingot_count})"
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
     )
 
@@ -6611,7 +6700,102 @@ async def handle_forge_close(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You step away from the forge.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def _anvil_refresh(
+    interaction: discord.Interaction, guild_id: int, user_id: int, msg: str | None = None
+) -> None:
+    """Re-render the anvil list and edit the message."""
+    db = await get_database(guild_id)
+    state = _ui_state.get(user_id, {"anvil_cursor": 0})
+    cursor = state.get("anvil_cursor", 0)
+    inv_rows = await get_inventory(db, user_id)
+    inv_counts = {r["item_id"]: r["quantity"] for r in inv_rows}
+    content = _render_anvil(cursor, inv_counts)
+    if msg:
+        content = msg + "\n\n" + content
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None, view=AnvilView(guild_id, user_id)
+    )
+
+
+async def handle_anvil_up(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Move the anvil cursor up."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0})
+    cursor = state.get("anvil_cursor", 0)
+    cursor = (cursor - 1) % len(_ANVIL_RECIPES)
+    _ui_state[user_id] = {**state, "anvil_cursor": cursor}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_down(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Move the anvil cursor down."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0})
+    cursor = state.get("anvil_cursor", 0)
+    cursor = (cursor + 1) % len(_ANVIL_RECIPES)
+    _ui_state[user_id] = {**state, "anvil_cursor": cursor}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_craft(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft the currently selected recipe."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0})
+    cursor = state.get("anvil_cursor", 0)
+    cursor = max(0, min(cursor, len(_ANVIL_RECIPES) - 1))
+    recipe = _ANVIL_RECIPES[cursor]
+
+    db = await get_database(guild_id)
+
+    if recipe["base_item"]:
+        # Wyvern upgrade: needs base iron piece + wyvern scales
+        base_row = await db.fetch_one(
+            "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id=?",
+            (user_id, recipe["base_item"]),
+        )
+        scale_row = await db.fetch_one(
+            "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id='wyvern_scale'",
+            (user_id,),
+        )
+        base_qty  = (base_row["total"] or 0) if base_row else 0
+        scale_qty = (scale_row["total"] or 0) if scale_row else 0
+        cost_qty  = recipe["cost_qty"]
+
+        if base_qty >= 1 and scale_qty >= cost_qty:
+            await remove_from_inventory(db, user_id, recipe["base_item"], 1)
+            await remove_from_inventory(db, user_id, "wyvern_scale", cost_qty)
+            await add_to_inventory(db, user_id, recipe["item_id"], 1)
+            msg = f"🐉 You forge a **{recipe['name']}**! ({recipe['stat']})"
+        elif base_qty < 1:
+            base_name = recipe["base_item"].replace("_", " ")
+            msg = f"🐉 You need a **{base_name}** to upgrade."
+        else:
+            msg = f"🐉 You need {cost_qty} wyvern scales (have {scale_qty})."
+    else:
+        # Iron crafting
+        ingot_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ingot'", (user_id,)
+        )
+        ingot_count = ingot_row["quantity"] if ingot_row else 0
+        cost_qty    = recipe["cost_qty"]
+
+        if ingot_count >= cost_qty:
+            await remove_from_inventory(db, user_id, "iron_ingot", cost_qty)
+            await add_to_inventory(db, user_id, recipe["item_id"], 1)
+            msg = f"⚒️ You craft a **{recipe['name']}**! ({recipe['stat']})"
+        else:
+            msg = (
+                f"⚒️ You need {cost_qty} iron ingot{'s' if cost_qty > 1 else ''} "
+                f"to craft a {recipe['name']} (have {ingot_count})."
+            )
+
+    await _anvil_refresh(interaction, guild_id, user_id, msg)
 
 
 async def handle_anvil_dagger(
@@ -6633,7 +6817,7 @@ async def handle_anvil_dagger(
     else:
         msg = "⚒️ You need 1 iron ingot to craft a dagger."
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
     )
 
@@ -6657,7 +6841,7 @@ async def handle_anvil_sword(
     else:
         msg = "⚒️ You need 2 iron ingots to forge a sword."
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
     )
 
@@ -6676,7 +6860,7 @@ async def _anvil_craft(interaction: discord.Interaction, guild_id: int, user_id:
         msg = f"⚒️ You craft a **{name}**! ({stat_desc})"
     else:
         msg = f"⚒️ You need {ingot_cost} iron ingot{'s' if ingot_cost > 1 else ''} to craft a {name}."
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
     )
 
@@ -6694,7 +6878,7 @@ async def handle_anvil_leggings(interaction: discord.Interaction, guild_id: int,
 
 
 async def handle_anvil_cannonball(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
-    await _anvil_craft(interaction, guild_id, user_id, "cannonball", 4, "Cannonball", "ammunition for ship cannons")
+    await _anvil_craft(interaction, guild_id, user_id, "cannonball", 2, "Cannonball", "ammunition for ship cannons")
 
 
 async def handle_anvil_iron_boots(interaction: discord.Interaction, guild_id: int, user_id: int) -> None:
@@ -6732,7 +6916,7 @@ async def _anvil_wyvern_upgrade(
         msg = f"🐉 You need a **{base_name}** to upgrade."
     else:
         msg = f"🐉 You need {scale_cost} wyvern scales to upgrade (have {scale_qty})."
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
     )
 
@@ -6769,7 +6953,7 @@ async def handle_anvil_close(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You step away from the anvil.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Shrine handlers ───────────────────────────────────────────────────────────
@@ -6801,7 +6985,7 @@ async def handle_shrine_enchant(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player, "⛩️ You no longer have a gem equipped.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Check sacrifice items
@@ -6826,7 +7010,7 @@ async def handle_shrine_enchant(
             f"⛩️ Not enough {sac_item.replace('_', ' ')} — need {sac_qty}, have {have}.\n"
             "Choose a different enchantment or gather more materials."
         )
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Consume gem (unequip + remove from inventory)
@@ -6846,7 +7030,7 @@ async def handle_shrine_enchant(
         f"Combine it with a **gold ring** in your inventory to craft a special ring."
     )
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_shrine_cancel(
@@ -6859,7 +7043,7 @@ async def handle_shrine_cancel(
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, "⛩️ You step away from the shrine.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Inventory handlers ────────────────────────────────────────────────────────
@@ -6887,7 +7071,7 @@ async def handle_inventory(
         content = render_ship_chest(chest_items, player_items, 0, "chest",
                                     "Ship Cargo", player, inv_rows, inv_cols)
         view = ShipChestView(guild_id, user_id, "cargo", "chest")
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # In combat (not on ship) → normal inventory, preserving prev_arena
@@ -6905,7 +7089,7 @@ async def handle_inventory(
     inv_rows, inv_cols = _inv_capacity(player)
     content, view = _inv_view(guild_id, user_id, items, 0, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_nav(
@@ -6936,7 +7120,7 @@ async def handle_inv_nav(
 
     content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
                               equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_up(
@@ -6967,7 +7151,7 @@ async def handle_inv_up(
     equipped = _equipped_dict(player)
     content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
                               equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_down(
@@ -6994,7 +7178,7 @@ async def handle_inv_down(
     equipped = _equipped_dict(player)
     content, view = _inv_view(guild_id, user_id, items, _ui_state[user_id].get("selected", 0),
                               equipped, inv_rows, inv_cols, _ui_state[user_id], gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict,
@@ -7086,7 +7270,7 @@ async def handle_inv_equip(
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item selected)*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     item_id = cur_item["item_id"]
@@ -7103,7 +7287,7 @@ async def handle_inv_equip(
                                   inv_rows, inv_cols, state,
                                   f"\n*{item_id.replace('_', ' ').title()} cannot be equipped.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Pouch unequip capacity check (if equipping a smaller pouch to replace)
@@ -7120,7 +7304,7 @@ async def handle_inv_equip(
                                           inv_rows, inv_cols, state,
                                           "\n*Your hands must be free for a two-handed item.*",
                                           gold=player.gold)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             await equip_item(db, user_id, "hand_1", item_id)
             await equip_item(db, user_id, "hand_2", item_id)
@@ -7134,7 +7318,7 @@ async def handle_inv_equip(
                                           inv_rows, inv_cols, state,
                                           "\n*Both hands are full.*",
                                           gold=player.gold)
-                await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
             await equip_item(db, user_id, resolved_slot, item_id)
     else:
@@ -7154,7 +7338,7 @@ async def handle_inv_equip(
                               inv_rows, inv_cols, state,
                               f"\n*Equipped {item_id.replace('_', ' ').title()}!*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_unequip(
@@ -7179,7 +7363,7 @@ async def handle_inv_unequip(
         content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0),
                                   equipped, inv_rows, inv_cols, state,
                                   "\n*(Nothing equipped in that slot.)*", gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Special: coin purse unequip with overflow
@@ -7204,7 +7388,7 @@ async def handle_inv_unequip(
                 equipped, inv_rows, inv_cols, state,
                 f"\n*Can't unequip: inventory has {len(visible)} items but smaller pouch fits {new_capacity}. Remove items first.*",
                 gold=player.gold)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
     if item_id in TWO_HANDED_ITEMS:
@@ -7222,7 +7406,7 @@ async def handle_inv_unequip(
                               equipped, inv_rows, inv_cols, state,
                               f"\n*Unequipped {item_id.replace('_', ' ').title()}.*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_eat(
@@ -7243,7 +7427,7 @@ async def handle_inv_eat(
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item selected)*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     item_id = cur_item["item_id"]
@@ -7253,7 +7437,7 @@ async def handle_inv_eat(
                                   inv_rows, inv_cols, state,
                                   f"\n*{item_id.replace('_', ' ').title()} is not food.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if player.hp >= player.max_hp:
@@ -7261,7 +7445,7 @@ async def handle_inv_eat(
                                   inv_rows, inv_cols, state,
                                   "\n*You're already at full health!*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     new_hp = min(player.max_hp, player.hp + restore)
@@ -7289,7 +7473,7 @@ async def handle_inv_eat(
                               inv_rows, inv_cols, state,
                               f"\n*🍗 Ate {item_id.replace('_', ' ')}. HP: {new_hp}/{player.max_hp}*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_select(
@@ -7351,7 +7535,7 @@ async def handle_inv_select(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_unselect_all(
@@ -7369,7 +7553,7 @@ async def handle_inv_unselect_all(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], "\n*Cleared all selections.*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_item_btn(
@@ -7406,7 +7590,7 @@ async def handle_inv_item_btn(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_toggle_mode(
@@ -7427,7 +7611,7 @@ async def handle_inv_toggle_mode(
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*Mode switched to {mode_name}*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_item_inc(
@@ -7449,7 +7633,7 @@ async def handle_inv_item_inc(
         content = (f"🎒 **Item Detail: {item_id.replace('_', ' ').title()}**\n"
                    f"Selected quantity: **×{new_qty}** (have ×{have})\n"
                    f"Use + More / − Less to adjust, or Unselect to remove.")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=InventoryItemView(guild_id, user_id, new_qty)
         )
@@ -7478,7 +7662,7 @@ async def handle_inv_item_dec(
             content = (f"🎒 **Item Detail: {item_id.replace('_', ' ').title()}**\n"
                        f"Selected quantity: **×{new_qty}**\n"
                        f"Use + More / − Less to adjust, or Unselect to remove.")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=InventoryItemView(guild_id, user_id, new_qty)
             )
@@ -7516,7 +7700,7 @@ async def handle_inv_item_back(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_craft(
@@ -7539,7 +7723,7 @@ async def handle_inv_craft(
                                   inv_rows, inv_cols, state,
                                   "\n*No matching recipe for the selected items.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Verify player has enough of each ingredient (sum across all stacks)
@@ -7552,7 +7736,7 @@ async def handle_inv_craft(
                                       inv_rows, inv_cols, state,
                                       f"\n*Not enough {item_id.replace('_', ' ')} to craft.*",
                                       gold=player.gold)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
     # Consume ingredients and add result
@@ -7569,7 +7753,7 @@ async def handle_inv_craft(
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*✨ Crafted {recipe['qty']}× {recipe['result'].replace('_', ' ').title()}!*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_close(
@@ -7589,7 +7773,7 @@ async def handle_inv_close(
         _ui_state[user_id] = {"type": "combat", "arena": prev_arena}
         content = render_arena(prev_arena, player)
         view = _combat_view(guild_id, user_id, prev_arena, player)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     grid = await _cached_grid(user_id, player, seed, db)
     if player.in_cave:
@@ -7597,7 +7781,7 @@ async def handle_inv_close(
     else:
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_sel_inc(
@@ -7639,7 +7823,7 @@ async def handle_inv_sel_inc(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_sel_dec(
@@ -7681,7 +7865,7 @@ async def handle_inv_sel_dec(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_drop(
@@ -7702,7 +7886,7 @@ async def handle_inv_drop(
                                   inv_rows, inv_cols, state,
                                   "\n*You can only drop items in the overworld.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # Can't drop on structure tiles
@@ -7714,7 +7898,7 @@ async def handle_inv_drop(
                                   inv_rows, inv_cols, state,
                                   "\n*You can't drop items on a structure tile.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     if not selections:
@@ -7722,7 +7906,7 @@ async def handle_inv_drop(
                                   inv_rows, inv_cols, state,
                                   "\n*Select items first (use Select/Desel, then ➖/➕ to set qty).*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     drop_pairs: list[tuple[str, int]] = []
@@ -7740,7 +7924,7 @@ async def handle_inv_drop(
         content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                                   inv_rows, inv_cols, state, "\n*Nothing to drop.*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     for item_id, qty in drop_pairs:
@@ -7763,7 +7947,7 @@ async def handle_inv_drop(
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*🫳 Dropped: {drop_desc}.*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_move(
@@ -7784,7 +7968,7 @@ async def handle_inv_move(
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state, "\n*(No item to move)*",
                                   gold=player.gold)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
     # move_qty_max = total of this item across ALL stacks (user can consolidate)
@@ -7799,7 +7983,7 @@ async def handle_inv_move(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_move_confirm(
@@ -7911,7 +8095,7 @@ async def handle_inv_move_confirm(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_move_cancel(
@@ -7932,7 +8116,7 @@ async def handle_inv_move_cancel(
                               inv_rows, inv_cols, _ui_state[user_id],
                               "\n*↔️ Move cancelled.*",
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_move_qty_inc(
@@ -7955,7 +8139,7 @@ async def handle_inv_move_qty_inc(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_move_qty_dec(
@@ -7978,7 +8162,7 @@ async def handle_inv_move_qty_dec(
     content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               gold=player.gold)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_inv_qty_modal(
@@ -8038,7 +8222,7 @@ async def _open_shop(
     inv_rows, inv_cols = _inv_capacity(player)
     _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
     content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop"))
 
 
@@ -8053,7 +8237,7 @@ async def _open_farmer_shop(
     _ui_state[user_id] = {"type": "farmer_shop", "selected": 0, "shop_view": "shop",
                           "qty": 1, "farmer_mode": True}
     content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           farmer_mode=True))
 
@@ -8089,7 +8273,7 @@ async def _shop_nav(
     new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
                                                           farmer_mode=bool(new_state.get("farmer_mode"))))
 
@@ -8139,7 +8323,7 @@ async def handle_shop_qty_inc(
     new_state = {**state, "qty": new_qty}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode"))))
 
@@ -8172,7 +8356,7 @@ async def handle_shop_qty_dec(
     new_state = {**state, "qty": new_qty}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode"))))
 
@@ -8192,7 +8376,7 @@ async def handle_shop_buy(
     _catalog = FARMER_SHOP if _farmer else SHOP_CATALOG
     if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop",
                                                               farmer_mode=_farmer))
         return
@@ -8201,7 +8385,7 @@ async def handle_shop_buy(
     if player.gold < total_cost:
         suffix = f"\n*Not enough gold! Need {total_cost}g for ×{qty}.*"
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop",
                                                               farmer_mode=_farmer))
         return
@@ -8213,7 +8397,7 @@ async def handle_shop_buy(
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           farmer_mode=_farmer))
 
@@ -8235,7 +8419,7 @@ async def handle_shop_sell(
     item = slot_map.get(sel)
     if item is None:
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + "\n*(No item at cursor)*"
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "player"))
         return
     item_id = item["item_id"]
@@ -8243,7 +8427,7 @@ async def handle_shop_sell(
     if price == 0:
         suffix = f"\n*The shop won't buy {item_id.replace('_', ' ').title()}.*"
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "player"))
         return
     actual_qty = min(qty, item["quantity"])
@@ -8256,7 +8440,7 @@ async def handle_shop_sell(
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "player"))
 
 
@@ -8273,7 +8457,7 @@ async def handle_shop_switch(
     # Farmer shop has no sell tab — treat switch as a no-op
     if state.get("farmer_mode"):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop",
                                                               farmer_mode=True))
         return
@@ -8281,7 +8465,7 @@ async def handle_shop_switch(
     new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, new_view))
 
 
@@ -8330,7 +8514,7 @@ async def _open_bank(
     inv_rows, inv_cols = _inv_capacity(player)
     content = _bank_render(_ui_state[user_id], player_items, bank_items,
                            equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
 
 
@@ -8409,7 +8593,7 @@ async def _bank_nav(
                  "equipped_cursor": eq_cur}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
 
@@ -8468,7 +8652,7 @@ async def handle_bank_qty_inc(
     new_state = {**state, "qty": new_qty}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
 
@@ -8509,7 +8693,7 @@ async def handle_bank_qty_dec(
     new_state = {**state, "qty": new_qty}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, bv))
 
 
@@ -8587,7 +8771,7 @@ async def handle_bank_switch(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, new_view))
 
 
@@ -8681,7 +8865,7 @@ async def handle_bank_deposit(
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "player"))
 
 
@@ -8732,7 +8916,7 @@ async def handle_bank_withdraw(
         new_state = {**state, "qty": 1}
         _ui_state[user_id] = new_state
         content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "bank"))
         return
 
@@ -8744,7 +8928,7 @@ async def handle_bank_withdraw(
     if item is None:
         suffix = "\n*(Empty slot)*"
         content = _bank_render(state, player_items, bank_items, equipped, player.gold, inv_rows, inv_cols) + suffix
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "bank"))
         return
     actual_qty = min(qty, item["quantity"])
@@ -8759,7 +8943,7 @@ async def handle_bank_withdraw(
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=BankView(guild_id, user_id, "bank"))
 
 
@@ -8832,7 +9016,7 @@ async def handle_chest_nav(
     inv_rows, inv_cols = _inv_capacity(player)
     content = render_chest(chest_inv, player_inv, new_sel, view_mode,
                            chest_type, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ChestView(guild_id, user_id, view_mode))
 
 
@@ -8853,7 +9037,7 @@ async def handle_chest_switch(
     inv_rows, inv_cols = _inv_capacity(player)
     content = render_chest(chest_inv, player_inv, 0, new_view,
                            chest_type, inv_rows, inv_cols)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ChestView(guild_id, user_id, new_view))
 
 
@@ -8900,7 +9084,7 @@ async def handle_chest_take(
     _ui_state[user_id]["selected"] = new_sel
     content = render_chest(chest_inv, player_inv, new_sel, "chest",
                            chest_type, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ChestView(guild_id, user_id, "chest"))
 
 
@@ -8946,7 +9130,7 @@ async def handle_chest_give(
     _ui_state[user_id]["selected"] = new_sel
     content = render_chest(chest_inv, player_inv, new_sel, "player",
                            chest_type, inv_rows, inv_cols) + suffix
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ChestView(guild_id, user_id, "player"))
 
 
@@ -9001,7 +9185,7 @@ async def handle_chest_lootall(
     content = render_chest(chest_inv, player_inv, 0, "chest",
                            chest_type, inv_rows, inv_cols) + suffix
     _ui_state[user_id]["selected"] = 0
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ChestView(guild_id, user_id, "chest"))
 
 
@@ -9043,7 +9227,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file, ephemeral=True)
+        await interaction.response.send_message(file=file, ephemeral=True)
         return
 
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
@@ -9067,7 +9251,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file, ephemeral=True)
+        await interaction.response.send_message(file=file, ephemeral=True)
         return
 
     other_players = await get_all_overworld_players(db, user_id)
@@ -9106,7 +9290,7 @@ async def handle_map(
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
     file = discord.File(buf, filename="world_map.png")
-    await interaction.followup.send(file=file, ephemeral=True)
+    await interaction.response.send_message(file=file, ephemeral=True)
 
 
 async def handle_help(
@@ -9133,7 +9317,7 @@ async def handle_help(
         emoji="\U0001F5FA\uFE0F",
         custom_id=f"dex:{guild_id}:{user_id}:help_back", row=0,
     ))
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 WALKABLE_WILDERNESS = {"sand", "plains", "grass", "forest", "hills", "path",
@@ -9152,7 +9336,7 @@ async def handle_help_back(
     else:
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Quest handlers ────────────────────────────────────────────────────────────
@@ -9168,7 +9352,7 @@ async def handle_quests(
     _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
     from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
     content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=QuestView(guild_id, user_id))
 
 
@@ -9185,7 +9369,7 @@ async def handle_quest_nav(
     new_idx = (current + delta) % max(1, len(quests))
     _ui_state[user_id] = {"type": "quest_log", "quest_index": new_idx}
     content = await render_quest_list(db, user_id, new_idx, in_village=player.in_village)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=QuestView(guild_id, user_id))
 
 
@@ -9200,7 +9384,7 @@ async def handle_quest_cancel(
     idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
     content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
     content += "\n\n⚠️ *Abandon this quest? All progress will be lost.*"
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=QuestView(guild_id, user_id, quest_index=idx,
                                                            confirm_cancel=True))
 
@@ -9225,7 +9409,7 @@ async def handle_quest_cancel_confirm(
         content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
     else:
         content = "No quest to cancel."
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=QuestView(guild_id, user_id))
 
 
@@ -9238,7 +9422,7 @@ async def handle_quest_cancel_back(
     idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
     from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
     content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=QuestView(guild_id, user_id, quest_index=idx))
 
 
@@ -9260,7 +9444,7 @@ async def handle_quest_set_target(
         if tx is not None and ty is not None:
             _ui_state[user_id] = {"type": "quest_log", "quest_index": idx,
                                   "nav_target": (int(tx), int(ty))}
-            content = "📍 **Target set!** Orange marker will appear on your viewport edge.\n\n"
+            content = "📍 **Target set!** A ♦️ diamond will appear at the edge of your viewport pointing toward the quest target.\n\n"
             content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
         else:
             _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
@@ -9268,7 +9452,7 @@ async def handle_quest_set_target(
             content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
     else:
         content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=QuestView(guild_id, user_id, quest_index=idx),
     )
@@ -9289,7 +9473,7 @@ async def handle_quest_close(
     nav = _ui_state.get(user_id, {}).get("nav_target")
     content = render_grid(grid, player, nav_target=nav)
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── NPC quest button ─────────────────────────────────────────────────────────
@@ -9310,7 +9494,7 @@ async def handle_npc_quest(
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     elif player.in_village:
         grid = await load_village_viewport(
-            player.village_id, player.village_x, player.village_y, db
+            player.village_id, player.village_x, player.village_y, db, user_id=user_id
         )
     else:
         return
@@ -9358,7 +9542,7 @@ async def handle_npc_quest(
         else:
             content = render_grid(grid, player, "\"I have no work for you today, stranger.\"")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
     elif "vil_guard" in adj_npc:
         import hashlib as _hguard
@@ -9369,7 +9553,7 @@ async def handle_npc_quest(
         else:
             content = render_grid(grid, player, "\"I have no work for you today, stranger.\"")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
     elif "b_resident" in adj_npc:
         import hashlib as _hres
@@ -9380,7 +9564,7 @@ async def handle_npc_quest(
         else:
             content = render_grid(grid, player, "\"I'm just a resident here.\"")
             view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
     else:
         # Fallback: combined pool first entry
@@ -9398,7 +9582,7 @@ async def handle_npc_quest(
 
     content = render_grid(grid, player, f"📋 {source_label} has no work available right now.")
     view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Quest pool (village / bounty board) ──────────────────────────────────────
@@ -9417,7 +9601,7 @@ async def handle_open_quest_pool(
         "source_label": source_label, "source_type": source_type,
     }
     content = await render_quest_pool(pool, active_quests, 0, source_label)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=QuestPoolView(guild_id, user_id, quest_count=len(pool)),
     )
@@ -9438,7 +9622,7 @@ async def handle_qpool_nav(
     sel    = (state.get("selected", 0) + delta) % max(1, len(avail))
     _ui_state[user_id]["selected"] = sel
     content = await render_quest_pool(pool, active, sel, state["source_label"])
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=QuestPoolView(guild_id, user_id, quest_count=len(avail), selected=sel),
     )
@@ -9463,7 +9647,7 @@ async def handle_qpool_accept(
     avail  = [q for q in pool if (q.get("id") or q.get("quest_id")) not in {a["quest_id"] for a in active}]
     sel    = state.get("selected", 0)
     if not avail or sel >= len(avail):
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed("No quest selected."), content=None,
             view=QuestPoolView(guild_id, user_id, 0),
         )
@@ -9473,7 +9657,7 @@ async def handle_qpool_accept(
     if count >= MAX_PLAYER_QUESTS:
         content = (f"⚠️ Your quest log is full "
                    f"({MAX_PLAYER_QUESTS}/{MAX_PLAYER_QUESTS}). Abandon a quest first.")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=QuestPoolView(guild_id, user_id, len(avail), sel),
         )
@@ -9489,10 +9673,10 @@ async def handle_qpool_accept(
         _ui_state[user_id] = {"type": "quest_log", "quest_index": 0}
         content = f"✅ Quest accepted: **{q['title']}**\n\n"
         content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
-        await interaction.edit_original_response(embed=_embed(content), content=None,
+        await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=QuestView(guild_id, user_id))
     else:
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed("Could not accept quest (already accepted or log full)."), content=None,
             view=QuestPoolView(guild_id, user_id, len(avail), sel),
         )
@@ -9519,7 +9703,7 @@ async def handle_merchant_quest_offer(
         from dwarf_explorer.game.quests import generate_merchant_quest
         merch_quest = await generate_merchant_quest(db, seed, player.world_x, player.world_y)
         if merch_quest is None:
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed("\U0001f9d1 The merchant shrugs. 'No deliveries today.'"),
                 content=None, view=MerchantView(guild_id, user_id),
             )
@@ -9532,13 +9716,13 @@ async def handle_merchant_quest_offer(
         active  = await get_active_quests(db, user_id)
         content = await render_quest_swap(active, merch_quest)
         _ui_state[user_id]["type"] = "merch_swap"
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=QuestSwapView(guild_id, user_id, len(active)),
         )
     else:
         content = render_quest_offer(merch_quest, "Travelling Merchant")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=QuestOfferView(guild_id, user_id),
         )
@@ -9562,12 +9746,12 @@ async def handle_quest_offer_accept(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player,
                               f"\U0001f4cb Quest accepted: **{merch_quest['title']}**")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
     else:
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed("Quest log full."), content=None,
             view=MerchantView(guild_id, user_id),
         )
@@ -9583,7 +9767,7 @@ async def handle_quest_offer_decline(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     catalog = state.get("catalog", [])
     content = _render_merchant(catalog, state.get("selected", 0), player)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=MerchantView(guild_id, user_id))
 
 
@@ -9613,7 +9797,7 @@ async def handle_qswap(
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player,
                               f"\U0001f4cb Quest accepted: **{merch_quest['title']}**")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -9630,7 +9814,7 @@ async def handle_qswap_pass(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     catalog = state.get("catalog", [])
     content = _render_merchant(catalog, state.get("selected", 0), player)
-    await interaction.edit_original_response(embed=_embed(content), content=None,
+    await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=MerchantView(guild_id, user_id))
 
 
@@ -9663,7 +9847,7 @@ async def handle_tavern_buy(
         content = render_grid(grid, player,
             f"\"Enjoy your {item['name']}!\" 🍺 Bought 1× {item['name']} for {cost}🪙.")
 
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=TavernBuyView(guild_id, user_id),
     )
@@ -9677,7 +9861,7 @@ async def handle_tavern_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You step away from the bar.")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9733,7 +9917,7 @@ async def handle_crew_npc_talk(
     _ui_state[user_id] = state
     content = _render_dialogue(npc_name, npc_text, options, 0)
     view = DialogueView(guild_id, user_id, options, 0)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_dialogue_nav(
@@ -9750,7 +9934,7 @@ async def handle_dialogue_nav(
     _ui_state[user_id] = state
     content = _render_dialogue(state["npc_name"], state["text"], options, sel)
     view = DialogueView(guild_id, user_id, options, sel)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_dialogue_confirm(
@@ -9766,7 +9950,7 @@ async def handle_dialogue_confirm(
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
         content = render_grid(grid, player, "Farewell.")
         _ui_state.pop(user_id, None)
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -9778,7 +9962,7 @@ async def handle_dialogue_confirm(
         if len(crew) >= MAX_CREW_SIZE:
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player, "Your crew is already full!")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=_game_view(guild_id, user_id, player, grid=grid),
             )
@@ -9787,7 +9971,7 @@ async def handle_dialogue_confirm(
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player,
                 f"\"You don't have enough coin, friend.\" (need {CREW_HIRE_COST}🪙, have {player.gold}🪙)")
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 embed=_embed(content), content=None,
                 view=_game_view(guild_id, user_id, player, grid=grid),
             )
@@ -9800,7 +9984,7 @@ async def handle_dialogue_confirm(
         content = render_grid(grid, player,
             f"⚓ **{npc_name}** joins your crew! (slot {slot}) "
             f"Assign them tasks from below deck. (-{CREW_HIRE_COST}🪙)")
-        await interaction.edit_original_response(
+        await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
         )
@@ -9810,7 +9994,7 @@ async def handle_dialogue_confirm(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "Goodbye.")
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9825,7 +10009,7 @@ async def handle_dialogue_cancel(
     _ui_state.pop(user_id, None)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You end the conversation.")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9859,7 +10043,7 @@ async def handle_ship_crew_view(
     crew = await get_ship_crew(db, user_id)
     content = _render_crew(crew)
     view = CrewView(guild_id, user_id, crew)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_crew_task_cycle(
@@ -9880,7 +10064,7 @@ async def handle_crew_task_cycle(
     crew = await get_ship_crew(db, user_id)
     content = _render_crew(crew)
     view = CrewView(guild_id, user_id, crew)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_crew_fire(
@@ -9893,7 +10077,7 @@ async def handle_crew_fire(
     crew = await get_ship_crew(db, user_id)
     content = _render_crew(crew)
     view = CrewView(guild_id, user_id, crew)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_crew_close(
@@ -9906,7 +10090,7 @@ async def handle_crew_close(
     content = render_ship_room(player)
     view = ShipView(guild_id, user_id, room="lower_deck",
                     ship_hp=player.ship_hp, ship_max_hp=player.ship_max_hp)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Hospital handlers ─────────────────────────────────────────────────────────
@@ -9936,7 +10120,7 @@ async def handle_heal_accept(
             f"✨ The healer tends your wounds. You are fully restored! (-{cost}🪙)")
 
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9951,7 +10135,7 @@ async def handle_heal_decline(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "\"Come back if you change your mind.\"")
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9977,7 +10161,7 @@ async def handle_lumber_convert_confirm(
         content = render_grid(grid, player,
             f"🪵 Converted **{log_count} logs** into **{plank_count} planks**!")
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -9992,7 +10176,7 @@ async def handle_lumber_convert_cancel(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "Come back when you're ready.")
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -10010,7 +10194,7 @@ async def handle_lumber_craft_canoe(
     if log_count < 10:
         content = render_grid(grid, player, f"You need **10 logs** to build a canoe. You have {log_count}.")
         view = LumberConvertView(guild_id, user_id, log_count)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     # Check if player already has a canoe
     canoe_rows = await db.fetch_all(
@@ -10021,7 +10205,7 @@ async def handle_lumber_craft_canoe(
     if canoe_total >= 1:
         content = render_grid(grid, player, "You already have a canoe — you don't need another one.")
         view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     await remove_from_inventory(db, user_id, "log", 10)
     await add_to_inventory(db, user_id, "canoe", 1)
@@ -10029,7 +10213,7 @@ async def handle_lumber_craft_canoe(
         "🛶 The mill worker shapes the logs into a **canoe**! "
         "Equip it and stand next to a river to embark.")
     _ui_state.pop(user_id, None)
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -10057,7 +10241,7 @@ async def handle_farmer_buy(
         await add_to_inventory(db, user_id, item_id, 1)
         content = render_grid(grid, player,
             f"🌾 Bought 1× {item['name']} for {cost}🪙.")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=FarmerShopView(guild_id, user_id),
     )
@@ -10071,7 +10255,7 @@ async def handle_farmer_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "Come back any time!")
-    await interaction.edit_original_response(
+    await interaction.response.edit_message(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
@@ -10120,7 +10304,7 @@ async def _open_puzzle(
     content = _puzzle_content(state)
     view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"],
                       claim_available=False)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_puzzle_move(
@@ -10179,7 +10363,7 @@ async def handle_puzzle_move(
                              moves=state["moves"], min_moves=puzzle["min_moves"],
                              claim_available=False)
 
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_puzzle_reset(
@@ -10195,7 +10379,7 @@ async def handle_puzzle_reset(
     content = _puzzle_content(state)
     view = PuzzleView(guild_id, user_id, moves=0, min_moves=puzzle["min_moves"],
                       claim_available=False)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_puzzle_close(
@@ -10207,7 +10391,7 @@ async def handle_puzzle_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     if player.in_village:
         grid    = await load_village_viewport(
-            player.village_id, player.village_x, player.village_y, db
+            player.village_id, player.village_x, player.village_y, db, user_id=user_id
         )
         content = render_grid(grid, player, "")
         view    = _game_view(guild_id, user_id, player, grid=grid)
@@ -10215,4 +10399,4 @@ async def handle_puzzle_close(
         grid    = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player)
         view    = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), content=None, view=view)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)

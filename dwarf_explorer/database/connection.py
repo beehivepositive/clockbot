@@ -287,6 +287,16 @@ class Database:
                     task    TEXT    NOT NULL DEFAULT 'idle',
                     UNIQUE(user_id, slot)
                 )""",
+                # Per-player village tile overrides (recruitable NPC removal / replacement)
+                """CREATE TABLE IF NOT EXISTS player_village_overrides (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    INTEGER NOT NULL,
+                    village_id INTEGER NOT NULL,
+                    tile_x     INTEGER NOT NULL,
+                    tile_y     INTEGER NOT NULL,
+                    tile_type  TEXT    NOT NULL,
+                    UNIQUE(user_id, village_id, tile_x, tile_y)
+                )""",
             ]
             for mig_sql in migrations:
                 try:
