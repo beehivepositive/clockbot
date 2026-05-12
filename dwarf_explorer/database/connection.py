@@ -445,7 +445,22 @@ class Database:
                 except Exception as e:
                     _log.error("Equip migration error: %s", e)
 
-            # ── ground_items rebuild (remove UNIQUE, add is_drop) ─────────────────
+            # ── ground_items: create if missing, then ensure is_drop column ────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ground_items (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    world_x    INTEGER NOT NULL,
+                    world_y    INTEGER NOT NULL,
+                    item_id    TEXT    NOT NULL,
+                    quantity   INTEGER NOT NULL DEFAULT 1,
+                    is_drop    INTEGER NOT NULL DEFAULT 0,
+                    spawned_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ground_items_pos ON ground_items(world_x, world_y)"
+            )
+            conn.commit()
             gi_cols = {row[1] for row in conn.execute("PRAGMA table_info(ground_items)").fetchall()}
             if "is_drop" not in gi_cols:
                 try:

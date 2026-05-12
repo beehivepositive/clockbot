@@ -530,6 +530,29 @@ async def swap_inventory_slots(db: Database, user_id: int, slot_a: int, slot_b: 
 
 # --- Drop boxes ---
 
+async def _find_free_tile_override_pos(db: Database, wx: int, wy: int) -> tuple[int, int]:
+    """Spiral outward from (wx, wy) to find the nearest position with no tile_override.
+
+    Used by create_drop_box so that a drop box is never silently swallowed by an
+    existing cave/village/structure tile at the same coordinate.
+    """
+    from dwarf_explorer.config import WORLD_SIZE
+    for radius in range(1, 10):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                if abs(dx) != radius and abs(dy) != radius:
+                    continue  # only the ring at this radius
+                nx, ny = wx + dx, wy + dy
+                if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
+                    continue
+                row = await db.fetch_one(
+                    "SELECT 1 FROM tile_overrides WHERE world_x=? AND world_y=?", (nx, ny)
+                )
+                if not row:
+                    return nx, ny
+    return wx, wy  # fallback: original position (rare edge case)
+
+
 async def create_drop_box(
     db: Database, world_x: int, world_y: int, items: list[tuple[str, int]]
 ) -> None:
@@ -537,7 +560,19 @@ async def create_drop_box(
 
     Items dropped on an existing box are merged into it.
     A tile_override of 'drop_box' is inserted (or left existing) so the renderer shows 📦.
+
+    If the target tile is already occupied by a different structure (cave, village, etc.),
+    the box is placed on the nearest free tile so it is always visible and reachable.
     """
+    # Check whether the target tile already has a non-drop_box override
+    existing_override = await db.fetch_one(
+        "SELECT tile_type FROM tile_overrides WHERE world_x=? AND world_y=?",
+        (world_x, world_y),
+    )
+    if existing_override and existing_override["tile_type"] != "drop_box":
+        # Occupied by a cave/village/structure — find the nearest free tile instead
+        world_x, world_y = await _find_free_tile_override_pos(db, world_x, world_y)
+
     # Upsert the tile_override
     await db.execute(
         "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'drop_box')",
