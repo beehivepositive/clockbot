@@ -88,8 +88,72 @@ def build_arena_from_viewport(
         "poison_turns": 0,
         "golem_slam_used": False,
         "combat_log": [],
+        "extra_enemies": [],   # list of {"x","y","hp","type"} for simultaneous enemies
     }
     return arena, ex, ey
+
+
+def spawn_extra_enemies(
+    arena: dict,
+    rng: random.Random,
+    enemy_type: str,
+    count: int,
+    primary_x: int,
+    primary_y: int,
+    player_center: tuple[int, int],
+) -> None:
+    """Add `count` extra enemies of the same type to arena["extra_enemies"].
+
+    Each is placed at a random passable tile 2-4 tiles from the primary enemy,
+    avoiding the player start position and any already-placed enemies.
+    """
+    from dwarf_explorer.config import ENEMY_STATS
+    base_hp = ENEMY_STATS[enemy_type][0]
+    px, py = player_center
+    for _ in range(count):
+        occupied = {(px, py), (primary_x, primary_y)}
+        occupied.update((e["x"], e["y"]) for e in arena["extra_enemies"])
+        placed = False
+        for _attempt in range(60):
+            angle = rng.uniform(0, 2 * math.pi)
+            dist = rng.uniform(2.0, 4.0)
+            cx = max(1, min(ARENA_SIZE - 2, int(round(primary_x + math.cos(angle) * dist))))
+            cy = max(1, min(ARENA_SIZE - 2, int(round(primary_y + math.sin(angle) * dist))))
+            if _passable(arena["grid"], cx, cy) and (cx, cy) not in occupied:
+                arena["extra_enemies"].append(
+                    {"x": cx, "y": cy, "hp": base_hp, "type": enemy_type}
+                )
+                placed = True
+                break
+        if not placed:
+            # Fallback: place anywhere passable not occupied
+            for fy in range(1, ARENA_SIZE - 1):
+                for fx in range(1, ARENA_SIZE - 1):
+                    if _passable(arena["grid"], fx, fy) and (fx, fy) not in occupied:
+                        arena["extra_enemies"].append(
+                            {"x": fx, "y": fy, "hp": base_hp, "type": enemy_type}
+                        )
+                        placed = True
+                        break
+                if placed:
+                    break
+
+
+def promote_extra_enemy(arena: dict, player) -> bool:
+    """Promote the first living extra enemy to primary. Returns True if promoted."""
+    # Purge dead extras
+    arena["extra_enemies"] = [
+        e for e in arena.get("extra_enemies", []) if e["hp"] > 0
+    ]
+    extras = arena["extra_enemies"]
+    if not extras:
+        return False
+    next_e = extras.pop(0)
+    player.combat_enemy_hp = next_e["hp"]
+    player.combat_enemy_x = next_e["x"]
+    player.combat_enemy_y = next_e["y"]
+    # type stays the same (swarm of same enemy type)
+    return True
 
 
 # ── Player actions ────────────────────────────────────────────────────────────
@@ -123,9 +187,13 @@ def action_move(arena: dict, player, direction: str, rng: random.Random) -> str:
         player.combat_moves_left -= 1
         return "Something blocks your path."
 
-    if (nx, ny) == (player.combat_enemy_x, player.combat_enemy_y):
+    occupied_by_enemy = {(player.combat_enemy_x, player.combat_enemy_y)}
+    occupied_by_enemy.update(
+        (e["x"], e["y"]) for e in arena.get("extra_enemies", []) if e["hp"] > 0
+    )
+    if (nx, ny) in occupied_by_enemy:
         player.combat_moves_left -= 1
-        return "The enemy is standing there!"
+        return "An enemy is standing there!"
 
     player.combat_player_x = nx
     player.combat_player_y = ny
@@ -324,6 +392,35 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = Fa
                 player.combat_enemy_x, player.combat_enemy_y = away
                 msgs.append(f"🦇 The {name} darts away!")
 
+    # ── Extra simultaneous enemies act ───────────────────────────────────────
+    for extra in arena.get("extra_enemies", []):
+        if extra["hp"] <= 0:
+            continue
+        if player.hp <= 0:
+            break
+        ex_type = extra["type"]
+        _ex_hp, ex_atk, ex_def, _, _ = ENEMY_STATS[ex_type]
+        ex_actions = 2 if ex_type == "cave_bat" else 1
+        ex_abilities = ENEMY_ABILITIES.get(ex_type, {})
+        ex_x, ex_y = extra["x"], extra["y"]
+        px2, py2 = player.combat_player_x, player.combat_player_y
+        for _ea in range(ex_actions):
+            new_ex_x, new_ex_y = _step_toward(ex_x, ex_y, px2, py2, arena["grid"], (px2, py2))
+            extra["x"], extra["y"] = new_ex_x, new_ex_y
+            ex_x, ex_y = new_ex_x, new_ex_y
+            if _adjacent(ex_x, ex_y, px2, py2):
+                dmg = max(1, ex_atk - player.defense // 2)
+                player.hp = max(0, player.hp - dmg)
+                msgs.append(f"🦇 Another bat swoops for **{dmg}**! ({player.hp}/{player.max_hp} HP)")
+                if ex_abilities.get("hit_run") and rng.random() < 0.50:
+                    away = _step_toward(ex_x, ex_y,
+                                        ARENA_SIZE - 1 - px2, ARENA_SIZE - 1 - py2,
+                                        arena["grid"], (px2, py2))
+                    extra["x"], extra["y"] = away[0], away[1]
+                    ex_x, ex_y = away[0], away[1]
+            if player.hp <= 0:
+                break
+
     # ── Poison tick (land combat only) ──
     if not naval and arena["poison_turns"] > 0:
         player.hp = max(0, player.hp - 2)
@@ -430,6 +527,11 @@ def render_arena(arena: dict, player) -> str:
     # Use ship emoji for player in naval combat
     player_icon = ENTITY_EMOJI.get("player_boat", "⛵") if is_naval else ENTITY_EMOJI["player"]
 
+    # Build extra enemy position lookup (skip dead ones)
+    extra_positions = {
+        (e["x"], e["y"]) for e in arena.get("extra_enemies", []) if e["hp"] > 0
+    }
+
     for row_y in range(ARENA_SIZE):
         cells: list[str] = []
         for col_x in range(ARENA_SIZE):
@@ -437,6 +539,8 @@ def render_arena(arena: dict, player) -> str:
                 cells.append(player_icon)
             elif col_x == ex and row_y == ey:
                 cells.append(enemy_emoji)
+            elif (col_x, row_y) in extra_positions:
+                cells.append(enemy_emoji)   # same emoji for swarm members
             elif (col_x, row_y) in echo_deposits:
                 cells.append("💠")  # chronolite deposit hazard
             elif (col_x, row_y) in objects:
@@ -453,9 +557,12 @@ def render_arena(arena: dict, player) -> str:
         hp_bar = f"🛳️ {player.ship_hp}/{player.ship_max_hp}"
     else:
         hp_bar = f"❤️ {player.hp}/{player.max_hp}"
-    bat_swarm = arena.get("bat_remaining", 1)
-    swarm_suffix = f" ×{bat_swarm}" if player.combat_enemy_type == "cave_bat" and bat_swarm > 1 else ""
-    enemy_bar = f"💀 {name}{swarm_suffix} {player.combat_enemy_hp}/{enemy_max_hp}hp"
+    living_extras = [e for e in arena.get("extra_enemies", []) if e["hp"] > 0]
+    if living_extras:
+        extra_hp_str = "  ".join(f"🦇{e['hp']}/{enemy_max_hp}" for e in living_extras)
+        enemy_bar = f"💀 {name} {player.combat_enemy_hp}/{enemy_max_hp}hp  {extra_hp_str}"
+    else:
+        enemy_bar = f"💀 {name} {player.combat_enemy_hp}/{enemy_max_hp}hp"
     moves_bar = f"⚡ {player.combat_moves_left} move{'s' if player.combat_moves_left != 1 else ''} left"
 
     rows.append("")

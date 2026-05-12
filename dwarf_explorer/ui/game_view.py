@@ -90,7 +90,7 @@ from dwarf_explorer.game.combat import (
     action_move, action_attack, action_flee, action_use_potion,
     resolve_enemy_turn, apply_victory, apply_death_reset,
     render_arena, ARENA_SIZE,
-    resolve_echo_deposits, maybe_next_bat,
+    resolve_echo_deposits, spawn_extra_enemies, promote_extra_enemy,
 )
 from dwarf_explorer.world.rift import (
     create_rift, get_rift_for_sundial,
@@ -2896,15 +2896,15 @@ async def _move_steps(
                     grid = await load_cave_viewport(player.cave_id, nx, ny, db)
                     arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
                     arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
-                    # Bat swarm: 25% chance of 2 bats, 5% chance of 3 bats
+                    # Bat swarm: 25% chance of 2 simultaneous bats, 5% chance of 3
                     if enemy_type == "cave_bat":
                         _swarm_roll = enc_rng.random()
-                        if _swarm_roll < 0.05:
-                            arena["bat_remaining"] = 3
-                        elif _swarm_roll < 0.30:
-                            arena["bat_remaining"] = 2
-                        else:
-                            arena["bat_remaining"] = 1
+                        _n_extra = 2 if _swarm_roll < 0.05 else (1 if _swarm_roll < 0.30 else 0)
+                        if _n_extra > 0:
+                            spawn_extra_enemies(
+                                arena, arena_rng, enemy_type, _n_extra,
+                                ex, ey, (ARENA_SIZE // 2, ARENA_SIZE // 2),
+                            )
                     player.in_combat = True
                     player.combat_enemy_type = enemy_type
                     player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
@@ -3163,9 +3163,8 @@ async def _after_player_action(
 
     # Enemy dead?
     if player.combat_enemy_hp <= 0:
-        _swarm_rng = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y, "swarm")))
-        if maybe_next_bat(arena, player, _swarm_rng):
-            # Another bat — reset moves and continue combat
+        if promote_extra_enemy(arena, player):
+            # Another bat in the swarm — reset moves and continue combat
             player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
             await save_combat_state(db, user_id, player)
             content = render_arena(arena, player)
@@ -3211,9 +3210,8 @@ async def _after_player_action(
         return
 
     if player.combat_enemy_hp <= 0:
-        _swarm_rng2 = _random.Random(hash((user_id, player.combat_enemy_x, player.combat_enemy_y, "swarm2")))
-        if maybe_next_bat(arena, player, _swarm_rng2):
-            # Another bat — reset moves and continue combat
+        if promote_extra_enemy(arena, player):
+            # Another bat in the swarm — reset moves and continue combat
             player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
             await save_combat_state(db, user_id, player)
             content = render_arena(arena, player)
