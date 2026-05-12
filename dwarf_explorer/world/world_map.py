@@ -23,11 +23,12 @@ _LEGEND_ENTRIES = [
     ("path",          "Path"),
 ]
 _LEGEND_ICON_ENTRIES = [
-    ("village",   "Village",        (200, 160, 60),  "filled_diamond"),
-    ("harbor",    "Harbor Village", (40,  80,  200), "filled_diamond"),
-    ("cave",      "Cave",           (60,  40,  30),  "filled_circle"),
-    ("shrine",    "Shrine",         (200, 50,  50),  "cross"),
-    ("sundial",   "Sundial",        (220, 180, 60),  "cross"),
+    ("village",    "Village",        (200, 160, 60),  "filled_diamond"),
+    ("harbor",     "Harbor Village", (40,  80,  200), "filled_diamond"),
+    ("cave",       "Cave",           (60,  40,  30),  "filled_circle"),
+    ("shrine",     "Shrine",         (200, 50,  50),  "cross"),
+    ("sundial",    "Sundial",        (220, 180, 60),  "cross"),
+    ("sky_portal", "Sky Portal",     (80,  200, 255), "filled_circle"),
 ]
 
 # Ocean-specific legend

@@ -632,9 +632,36 @@ def _generate_village_paths_sync(
         in_tree.add(best_b)             # type: ignore[arg-type]
         remaining.discard(best_b)       # type: ignore[arg-type]
 
-    # ── 2. Bonus cross-connections (creates loops) ────────────────────────────
+    # ── 2. Close Y-junctions into triangles ──────────────────────────────────
+    # For every MST hub with ≥2 neighbours, add the missing edge between each
+    # pair of those neighbours — converting each Y into a filled triangle.
     used_pairs: set[frozenset] = {frozenset(e) for e in edges}
-    bonus_budget = max(6, len(nodes) // 2)
+
+    # Compute median MST edge length to set a sensible triangle-close threshold.
+    mst_dists = sorted(
+        math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in edges
+    )
+    _median_mst = mst_dists[len(mst_dists) // 2] if mst_dists else 80.0
+    _TRIANGLE_MAX_DIST = max(120.0, _median_mst * 2.2)
+
+    mst_adj: dict[tuple, list] = {}
+    for a, b in list(edges):  # snapshot — don't iterate while appending
+        mst_adj.setdefault(a, []).append(b)
+        mst_adj.setdefault(b, []).append(a)
+
+    for hub, neighbours in mst_adj.items():
+        nb = sorted(set(neighbours))  # dedup + deterministic order
+        for i in range(len(nb)):
+            for j in range(i + 1, len(nb)):
+                a, b = nb[i], nb[j]
+                pair = frozenset([a, b])
+                if pair not in used_pairs:
+                    if _river_cross_weight(a, b) <= _TRIANGLE_MAX_DIST:
+                        edges.append((a, b))
+                        used_pairs.add(pair)
+
+    # ── 2b. Bonus short-range cross-connections (extra variety) ──────────────
+    bonus_budget = max(3, len(nodes) // 3)
     candidates = sorted(
         [
             (_river_cross_weight(a, b), a, b)
@@ -648,9 +675,9 @@ def _generate_village_paths_sync(
     for dist_ab, a, b in candidates:
         if bonus_added >= bonus_budget:
             break
-        if dist_ab > 100:
+        if dist_ab > 80:
             break
-        if rng.random() < 0.65:
+        if rng.random() < 0.5:
             edges.append((a, b))
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1
