@@ -185,7 +185,7 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif player.in_house:
         grid = await _load_house_grid(player, db)
     elif player.in_village:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=uid)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     elif getattr(player, "in_shipwreck", False):
