@@ -478,18 +478,15 @@ def apply_victory(player) -> str:
 
 
 def apply_death_reset(player) -> str:
-    """Reset player to spawn with 1 HP after being knocked out."""
-    from dwarf_explorer.config import SPAWN_X, SPAWN_Y
-    player.hp = 1
-    player.world_x = SPAWN_X
-    player.world_y = SPAWN_Y
+    """Reset player state after being knocked out. HP restored to full; position set by caller."""
+    player.hp = player.max_hp
     player.in_cave = False
     player.cave_id = None
     player.in_village = False
     player.village_id = None
     player.in_house = False
     player.house_id = None
-    return "💀 You've been knocked out and wake up at the spawn point with 1 HP."
+    return "💀 You've been knocked out! You wake up in the nearest village, fully healed."
 
 
 # ── Renderer ──────────────────────────────────────────────────────────────────

@@ -254,6 +254,23 @@ async def find_walkable_near(seed: int, db, px: int, py: int) -> tuple[int, int]
     return await find_walkable_spawn(seed, db)
 
 
+async def find_nearest_village(seed: int, db, px: int, py: int) -> tuple[int, int, int, int, int] | None:
+    """Return (world_x, world_y, village_id, entry_x, entry_y) for the village closest to (px, py).
+
+    Falls back to find_village_spawn if no villages exist yet.
+    """
+    from dwarf_explorer.world.villages import get_or_create_village
+    rows = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides WHERE tile_type IN ('village', 'harbor')"
+    )
+    if not rows:
+        return await find_village_spawn(seed, db)
+    best = min(rows, key=lambda r: (r["world_x"] - px) ** 2 + (r["world_y"] - py) ** 2)
+    wx, wy = best["world_x"], best["world_y"]
+    village_id, entry_x, entry_y = await get_or_create_village(seed, wx, wy, db)
+    return (wx, wy, village_id, entry_x, entry_y)
+
+
 async def find_village_spawn(seed: int, db) -> tuple[int, int, int, int, int] | None:
     """Return (world_x, world_y, village_id, entry_x, entry_y) for a starter village.
 

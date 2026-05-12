@@ -98,7 +98,7 @@ from dwarf_explorer.world.rift import (
     RIFT_BOSS_SPAWN_X, RIFT_BOSS_SPAWN_Y,
     RIFT_ENTRANCE_X, RIFT_ENTRANCE_Y,
 )
-from dwarf_explorer.world.generator import load_viewport, load_single_tile
+from dwarf_explorer.world.generator import load_viewport, load_single_tile, find_nearest_village
 from dwarf_explorer.world.ocean import load_ocean_viewport, load_ocean_single_tile
 from dwarf_explorer.world.caves import get_or_create_cave, load_cave_viewport, load_cave_single_tile, populate_chest_loot
 from dwarf_explorer.world.player_houses import (
@@ -3077,16 +3077,33 @@ async def _finish_combat(
         player.sky_id = None
         player.sky_x = player.sky_y = 0
         player.sky_portal_wx = player.sky_portal_wy = 0
-        await update_player_stats(db, user_id, hp=player.hp, in_canoe=0, in_ocean=0)
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
-        await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
         await update_player_sky_state(db, user_id, False, None, 0, 0)
-        await update_player_position(db, user_id, player.world_x, player.world_y)
-        grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        return render_grid(grid, player, f"{extra_msg} {msg}"), _game_view(guild_id, user_id, player, grid=grid)
+        # Respawn in the nearest village at full health
+        death_x, death_y = player.world_x, player.world_y
+        nearest = await find_nearest_village(seed, db, death_x, death_y)
+        if nearest:
+            vwx, vwy, vid, vex, vey = nearest
+            player.world_x, player.world_y = vwx, vwy
+            player.in_village = True
+            player.village_id = vid
+            player.village_x, player.village_y = vex, vey
+            player.village_wx, player.village_wy = vwx, vwy
+            await update_player_position(db, user_id, vwx, vwy)
+            await update_player_village_state(db, user_id, True, vid, vex, vey, vwx, vwy)
+            await update_player_stats(db, user_id, hp=player.hp, in_canoe=0, in_ocean=0)
+            grid = await load_village_viewport(vid, vex, vey, db, user_id=user_id)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+        else:
+            await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
+            await update_player_stats(db, user_id, hp=player.hp, in_canoe=0, in_ocean=0)
+            await update_player_position(db, user_id, player.world_x, player.world_y)
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, f"{extra_msg} {msg}"), view
 
     # Ship sank during naval combat
     if player.ship_hp <= 0:
@@ -6417,23 +6434,18 @@ async def handle_action(
             return
 
         if "b_healer" in adj_terrains:
-            from dwarf_explorer.config import HEAL_COST_PER_HP, HEAL_MINIMUM_COST
             max_hp = getattr(player, "max_hp", 100)
             missing = max_hp - player.hp
             if missing <= 0:
                 content = render_grid(grid, player, "\"You look in fine health! Nothing for me to do here.\"")
-                view = _game_view(guild_id, user_id, player, grid=grid)
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             else:
-                cost = max(HEAL_MINIMUM_COST, missing * HEAL_COST_PER_HP)
-                _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "heal_confirm", "heal_cost": cost}
+                player.hp = max_hp
+                await update_player_stats(db, user_id, hp=max_hp)
                 content = render_grid(grid, player,
-                    f"\"I can restore you to full health for **{cost}🪙**.\"\n"
-                    f"Missing **{missing} HP** · You have **{player.gold}🪙**")
-                await interaction.response.edit_message(
-                    embed=_embed(content), content=None,
-                    view=HealConfirmView(guild_id, user_id, cost),
-                )
+                    f"\"Rest easy — you're in good hands here.\"\n"
+                    f"❤️ Healed **{missing} HP** for free! ({player.hp}/{max_hp})")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         if "b_farmer_npc" in adj_terrains:
