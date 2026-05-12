@@ -643,6 +643,64 @@ async def cleanup_expired_drop_boxes(db: Database) -> None:
         )
 
 
+async def create_cave_drop_box(
+    db: Database, cave_id: int, cave_x: int, cave_y: int, items: list[tuple[str, int]]
+) -> None:
+    """Create a drop box inside a cave at (cave_id, cave_x, cave_y) with given items.
+
+    Items dropped on an existing box are merged into it.
+    Unlike overworld drops, cave drops store cave_id/cave_x/cave_y; the
+    load_cave_viewport overlay renders them as "drop_box" terrain.
+    """
+    for item_id, qty in items:
+        existing = await db.fetch_one(
+            "SELECT id, quantity FROM ground_items "
+            "WHERE cave_id=? AND cave_x=? AND cave_y=? AND item_id=? AND is_drop=1",
+            (cave_id, cave_x, cave_y, item_id),
+        )
+        if existing:
+            await db.execute(
+                "UPDATE ground_items SET quantity=quantity+?, spawned_at=datetime('now') WHERE id=?",
+                (qty, existing["id"]),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO ground_items (world_x, world_y, cave_id, cave_x, cave_y, item_id, quantity, is_drop)"
+                " VALUES (0, 0, ?, ?, ?, ?, ?, 1)",
+                (cave_id, cave_x, cave_y, item_id, qty),
+            )
+
+
+async def pickup_cave_drop(
+    db: Database, cave_id: int, cave_x: int, cave_y: int, user_id: int
+) -> list[tuple[str, int]]:
+    """Pick up all items in a cave drop box at (cave_id, cave_x, cave_y).
+
+    Returns list of (item_id, qty) actually picked up.
+    """
+    items = await db.fetch_all(
+        "SELECT id, item_id, quantity FROM ground_items "
+        "WHERE cave_id=? AND cave_x=? AND cave_y=? AND is_drop=1",
+        (cave_id, cave_x, cave_y),
+    )
+    picked = []
+    for row in items:
+        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+        await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
+        picked.append((row["item_id"], row["quantity"]))
+    return picked
+
+
+async def get_cave_drop_positions(db: Database, cave_id: int) -> set[tuple[int, int]]:
+    """Return set of (cave_x, cave_y) positions with active drops inside cave_id."""
+    rows = await db.fetch_all(
+        "SELECT DISTINCT cave_x, cave_y FROM ground_items "
+        "WHERE cave_id=? AND is_drop=1",
+        (cave_id,),
+    )
+    return {(r["cave_x"], r["cave_y"]) for r in rows}
+
+
 # --- Gold cap ---
 
 async def add_player_gold(db: Database, user_id: int, delta: int, capacity: int) -> tuple[int, int]:

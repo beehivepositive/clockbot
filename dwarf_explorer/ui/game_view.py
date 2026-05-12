@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import discord
 
 from dwarf_explorer.config import (
+    ADMIN_PLAYER_ID,
     DIRECTIONS, SHOP_CATALOG, EQUIP_BONUSES, ITEM_EQUIP_SLOTS,
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, LAVA_CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
@@ -53,6 +54,8 @@ from dwarf_explorer.database.repositories import (
     swap_inventory_slots,
     create_drop_box,
     pickup_drop_box,
+    create_cave_drop_box,
+    pickup_cave_drop,
     get_bank_items,
     bank_deposit,
     bank_withdraw,
@@ -3064,7 +3067,10 @@ async def _finish_combat(
         inv_rows = await get_inventory(db, user_id)
         if inv_rows:
             death_items = [(r["item_id"], r["quantity"]) for r in inv_rows]
-            await create_drop_box(db, player.world_x, player.world_y, death_items)
+            if player.in_cave and player.cave_id is not None:
+                await create_cave_drop_box(db, player.cave_id, player.cave_x, player.cave_y, death_items)
+            else:
+                await create_drop_box(db, player.world_x, player.world_y, death_items)
             await db.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
             extra_msg += " 📦 Your belongings lie where you fell."
         msg = apply_death_reset(player)
@@ -4895,13 +4901,14 @@ async def handle_merchant_buy(
     if sel >= len(catalog):
         return
     item = catalog[sel]
-    if player.gold < item["price"]:
+    if user_id != ADMIN_PLAYER_ID and player.gold < item["price"]:
         content = _render_merchant(catalog, sel, player) + f"\n\n*Not enough gold!*"
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=MerchantView(guild_id, user_id))
         return
-    player.gold -= item["price"]
-    await update_player_stats(db, user_id, gold=player.gold)
+    if user_id != ADMIN_PLAYER_ID:
+        player.gold -= item["price"]
+        await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"], 1)
     content = _render_merchant(catalog, sel, player) + f"\n\n*Bought {item['name']}!*"
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -5677,6 +5684,16 @@ async def handle_interact(
             view = ChestView(guild_id, user_id, "chest")
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
+
+        elif cave_tile.terrain == "drop_box":
+            # Pick up items from a drop box inside the cave
+            picked = await pickup_cave_drop(db, player.cave_id, player.cave_x, player.cave_y, user_id)
+            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            if picked:
+                desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in picked)
+                content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
+            else:
+                content = render_grid(grid, player, "🤲 The box is empty.")
 
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
@@ -8862,15 +8879,16 @@ async def handle_shop_buy(
         return
     item = _catalog[sel]
     total_cost = item["price"] * qty
-    if player.gold < total_cost:
+    if user_id != ADMIN_PLAYER_ID and player.gold < total_cost:
         suffix = f"\n*Not enough gold! Need {total_cost}g for ×{qty}.*"
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop",
                                                               farmer_mode=_farmer))
         return
-    player.gold -= total_cost
-    await update_player_stats(db, user_id, gold=player.gold)
+    if user_id != ADMIN_PLAYER_ID:
+        player.gold -= total_cost
+        await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"], qty)
     player_items = await get_inventory(db, user_id)
     suffix = f"\n*Purchased {qty}× {item['name']} for {total_cost}g!*"
@@ -10429,12 +10447,13 @@ async def handle_tavern_buy(
     cost = item["price"]
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
 
-    if player.gold < cost:
+    if user_id != ADMIN_PLAYER_ID and player.gold < cost:
         content = render_grid(grid, player,
             f"\"You don't have enough coin for that.\" (need {cost}🪙, have {player.gold}🪙)")
     else:
-        player.gold -= cost
-        await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+        if user_id != ADMIN_PLAYER_ID:
+            player.gold -= cost
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
         await add_to_inventory(db, user_id, item_id, 1)
         content = render_grid(grid, player,
             f"\"Enjoy your {item['name']}!\" 🍺 Bought 1× {item['name']} for {cost}🪙.")
@@ -10559,7 +10578,7 @@ async def handle_dialogue_confirm(
                 view=_game_view(guild_id, user_id, player, grid=grid),
             )
             return
-        if player.gold < CREW_HIRE_COST:
+        if user_id != ADMIN_PLAYER_ID and player.gold < CREW_HIRE_COST:
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
             content = render_grid(grid, player,
                 f"\"You don't have enough coin, friend.\" (need {CREW_HIRE_COST}🪙, have {player.gold}🪙)")
@@ -10568,8 +10587,9 @@ async def handle_dialogue_confirm(
                 view=_game_view(guild_id, user_id, player, grid=grid),
             )
             return
-        player.gold -= CREW_HIRE_COST
-        await update_player_stats(db, user_id, gold=player.gold)
+        if user_id != ADMIN_PLAYER_ID:
+            player.gold -= CREW_HIRE_COST
+            await update_player_stats(db, user_id, gold=player.gold)
         slot = await hire_crew_member(db, user_id, npc_name)
         _ui_state.pop(user_id, None)
         grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
@@ -10698,13 +10718,14 @@ async def handle_heal_accept(
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
 
     max_hp = getattr(player, "max_hp", 100)
-    if player.gold < cost:
+    if user_id != ADMIN_PLAYER_ID and player.gold < cost:
         content = render_grid(grid, player,
             f"\"I'm afraid you don't have the coin.\" (need {cost}🪙, have {player.gold}🪙)")
     elif player.hp >= max_hp:
         content = render_grid(grid, player, "\"You are already in perfect health!\"")
     else:
-        player.gold -= cost
+        if user_id != ADMIN_PLAYER_ID:
+            player.gold -= cost
         player.hp = max_hp
         await db.execute("UPDATE players SET gold=?, hp=? WHERE user_id=?",
                          (player.gold, player.hp, user_id))
@@ -10824,12 +10845,13 @@ async def handle_farmer_buy(
         return
     cost = item["price"]
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    if player.gold < cost:
+    if user_id != ADMIN_PLAYER_ID and player.gold < cost:
         content = render_grid(grid, player,
             f"That'll be {cost}🪙 and you've only got {player.gold}🪙.")
     else:
-        player.gold -= cost
-        await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+        if user_id != ADMIN_PLAYER_ID:
+            player.gold -= cost
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
         await add_to_inventory(db, user_id, item_id, 1)
         content = render_grid(grid, player,
             f"🌾 Bought 1× {item['name']} for {cost}🪙.")

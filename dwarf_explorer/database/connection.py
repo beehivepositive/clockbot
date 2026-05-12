@@ -349,6 +349,10 @@ class Database:
                 "ALTER TABLE players ADD COLUMN sky_y INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN sky_portal_wx INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN sky_portal_wy INTEGER NOT NULL DEFAULT 0",
+                # Cave-located ground items (for drops inside caves)
+                "ALTER TABLE ground_items ADD COLUMN cave_id INTEGER DEFAULT NULL",
+                "ALTER TABLE ground_items ADD COLUMN cave_x INTEGER DEFAULT NULL",
+                "ALTER TABLE ground_items ADD COLUMN cave_y INTEGER DEFAULT NULL",
             ]
             for mig_sql in migrations:
                 try:

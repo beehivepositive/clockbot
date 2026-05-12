@@ -10,10 +10,11 @@ from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world, update_player_message,
     update_player_stats,
+    update_player_village_state,
     is_world_initialized, mark_world_initialized,
     reset_world_seed,
 )
-from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn
+from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn, find_nearest_village
 from dwarf_explorer.world.villages import load_village_viewport
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
@@ -55,6 +56,25 @@ async def _player_grid(player, seed: int, db):
     if player.in_village:
         return await load_village_viewport(player.village_id, player.village_x, player.village_y, db)
     return await load_viewport(player.world_x, player.world_y, seed, db)
+
+
+async def _ensure_admin_resources(db, player_id: int) -> None:
+    """Top up admin gold to 999999 and ensure at least 81 cooked fish."""
+    await db.execute("UPDATE players SET gold=999999 WHERE user_id=?", (player_id,))
+    existing = await db.fetch_one(
+        "SELECT id, quantity FROM inventory WHERE user_id=? AND item_id='cooked_fish' ORDER BY slot_index LIMIT 1",
+        (player_id,)
+    )
+    if not existing:
+        await db.execute(
+            "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, 'cooked_fish', 81, 0)",
+            (player_id,)
+        )
+    elif existing["quantity"] < 81:
+        await db.execute(
+            "UPDATE inventory SET quantity=81 WHERE id=?",
+            (existing["id"],)
+        )
 
 
 class DwarfExplorer(commands.Cog):
@@ -146,6 +166,10 @@ class DwarfExplorer(commands.Cog):
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
         player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        # Ensure admin always has max resources
+        await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+        player.gold = 999999
 
         sx, sy = await find_walkable_spawn(seed, db)
         await update_player_stats(
@@ -288,6 +312,10 @@ class DwarfExplorer(commands.Cog):
 
         player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
 
+        # Ensure admin always has max resources
+        await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+        player.gold = 999999
+
         # Relocate if standing on impassable terrain in the new world
         if not player.in_cave and not player.in_village and not player.in_house:
             sx, sy = await find_walkable_near(seed, db, player.world_x, player.world_y)
@@ -321,6 +349,10 @@ class DwarfExplorer(commands.Cog):
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
         player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        # Ensure admin always has max resources
+        await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+        player.gold = 999999
 
         # Find all harbor tile overrides
         harbor_rows = await db.fetch_all(
@@ -360,6 +392,68 @@ class DwarfExplorer(commands.Cog):
 
         grid = await load_viewport(hx, hy, seed, db)
         content = render_grid(grid, player, f"⚓ Teleported to harbor at ({hx}, {hy}).")
+        from dwarf_explorer.ui.game_view import GameView as _GV
+        view = _GV(guild_id, ADMIN_PLAYER_ID)
+        await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
+
+        msg = await interaction.original_response()
+        await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+
+
+    @app_commands.command(name="village", description="Teleport to the nearest village (admin only).")
+    async def village(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "You don't have permission to use this command.", ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+        seed = await get_or_create_world(db, guild_id)
+        player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        # Ensure admin always has max resources
+        await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+        player.gold = 999999
+
+        nearest = await find_nearest_village(seed, db, player.world_x, player.world_y)
+        if not nearest:
+            await interaction.response.send_message(
+                "No villages found in this world.", ephemeral=True
+            )
+            return
+
+        vwx, vwy, vid, vex, vey = nearest
+
+        # Clear any in-cave/house/ocean/sky state, place inside village
+        player.in_cave = False
+        player.in_village = True
+        player.village_id = vid
+        player.village_x, player.village_y = vex, vey
+        player.village_wx, player.village_wy = vwx, vwy
+        player.in_house = False
+        player.in_ocean = False
+        player.in_high_seas = False
+        player.in_island = False
+        player.in_ship = False
+        await update_player_stats(
+            db, ADMIN_PLAYER_ID,
+            world_x=vwx, world_y=vwy,
+            in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+            in_village=1, village_id=vid,
+            in_house=0, house_id=None,
+            in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+        )
+        from dwarf_explorer.world.villages import load_village_viewport as _lvv
+        await update_player_village_state(db, ADMIN_PLAYER_ID, True, vid, vex, vey, vwx, vwy)
+        grid = await _lvv(vid, vex, vey, db)
+        content = render_grid(grid, player, f"🏘️ Teleported to village at ({vwx}, {vwy}).")
         from dwarf_explorer.ui.game_view import GameView as _GV
         view = _GV(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)

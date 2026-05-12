@@ -704,6 +704,11 @@ async def load_cave_viewport(
         (cave_id, x_min, center_x + half, y_min, center_y + half),
     )
     tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
+    # Overlay cave drop boxes
+    from dwarf_explorer.database.repositories import get_cave_drop_positions
+    drop_positions = await get_cave_drop_positions(db, cave_id)
+    for (dx, dy) in drop_positions:
+        tile_map[(dx, dy)] = "drop_box"
     grid: list[list[TileData]] = []
     for local_y in range(VIEWPORT_SIZE):
         row: list[TileData] = []
