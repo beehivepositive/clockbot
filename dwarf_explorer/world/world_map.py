@@ -43,17 +43,27 @@ _OCEAN_LEGEND_ICON_ENTRIES = [
     ("shipwreck",      "Shipwreck",      (100, 80,  50), "outline_square"),
 ]
 
-_LEGEND_SWATCH = 12
-_LEGEND_ROW_H  = 14
-_LEGEND_MARGIN = 6
-_LEGEND_COL_W  = 120
-_LEGEND_COLS   = 2
+_LEGEND_SWATCH  = 16   # px square per legend swatch (was 12)
+_LEGEND_ROW_H   = 18   # px per legend row (was 14)
+_LEGEND_MARGIN  = 8
+_LEGEND_COL_W   = 130
+_LEGEND_COLS    = 2
+_LEGEND_ICON_R  = 5    # radius used when drawing icons inside legend swatches
 
 # Special tiles painted as large icons instead of plain colored squares
 _ICON_TILES = {entry[0] for entry in _LEGEND_ICON_ENTRIES}
 
-# Temple tiles get a larger icon so they're easy to spot on the map
-_LARGE_ICON_TILES = {"sky_temple_outer", "sky_temple_main"}
+# Per-tile-type icon radius (r).  Higher = bigger icon on map.
+_ICON_R: dict[str, int] = {
+    "sky_temple_main":  9,   # gold diamond — most prominent landmark
+    "sky_temple_outer": 7,   # light-blue diamond — major landmark
+    "village":          6,   # tan diamond
+    "harbor":           6,   # blue diamond
+    "cave":             5,   # brown circle
+    "shrine":           5,   # red cross
+    "sundial":          5,   # yellow cross
+}
+_DEFAULT_ICON_R = 5   # fallback for any unlisted icon type
 
 # ── Base-map cache ─────────────────────────────────────────────────────────────
 # Wilderness map: keyed by guild_id → (seed, n_overrides, timestamp, png_bytes)
@@ -144,9 +154,11 @@ def _legend_block(draw, all_legend: list, map_w: int, font) -> None:
         else:
             draw.rectangle([x0, y0, x0 + _LEGEND_SWATCH - 1, y0 + _LEGEND_SWATCH - 1],
                            fill=(30, 30, 30))
-            _draw_icon(draw, cx_l, cy_l, style, color)
+            _draw_icon(draw, cx_l, cy_l, style, color, r=_LEGEND_ICON_R)
 
-        draw.text((x0 + _LEGEND_SWATCH + 3, y0), label, fill=(220, 220, 220), font=font)
+        # Vertically centre the text within the swatch height
+        text_y = y0 + (_LEGEND_SWATCH - 11) // 2
+        draw.text((x0 + _LEGEND_SWATCH + 4, text_y), label, fill=(220, 220, 220), font=font)
 
 
 # ── Wilderness base-map renderer ──────────────────────────────────────────────
@@ -163,10 +175,10 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
         [(k, label, TILE_COLORS.get(k, (80, 80, 80)), "square") for k, label in _LEGEND_ENTRIES]
         + [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]
         + [
-            ("__player__", "You",           (255, 0,   0),   "dot_red"),
+            ("__player__", "You",           (255,  40,  40), "dot_red"),
             ("__other__",  "Other Player",  (60,  120, 255), "dot_blue"),
-            ("__quest__",  "Quest Target",  (255, 140, 0),   "filled_diamond"),
-            ("__ocean__",  "Ocean Quest ▸",  (255, 140, 0),   "arrow_right"),
+            ("__quest__",  "Quest Target",  (220,  30,  30), "filled_diamond"),
+            ("__ocean__",  "Ocean Quest ▸", (255, 140,   0), "arrow_right"),
         ]
     )
 
@@ -202,15 +214,15 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
             color, style = _icon_style[tile_type]
             cx = wx * scale + scale // 2
             cy = wy * scale + scale // 2
-            icon_r = 5 if tile_type in _LARGE_ICON_TILES else 3
+            icon_r = _ICON_R.get(tile_type, _DEFAULT_ICON_R)
             _draw_icon(draw, cx, cy, style, color, r=icon_r)
 
     # ── Legend ────────────────────────────────────────────────────────────────
     try:
-        font = ImageFont.truetype("arial.ttf", 10)
+        font = ImageFont.truetype("arial.ttf", 11)
     except Exception:
         try:
-            font = ImageFont.load_default(size=10)
+            font = ImageFont.load_default(size=11)
         except Exception:
             font = ImageFont.load_default()
 
@@ -289,12 +301,12 @@ def _composite_players_sync(
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
 
-    # Overworld quest markers — orange diamonds
+    # Overworld quest markers — red diamonds
     if quest_markers:
         for qx, qy, _ in quest_markers:
             cx_q = qx * scale + scale // 2
             cy_q = qy * scale + scale // 2
-            _draw_icon(draw, cx_q, cy_q, "filled_diamond", (255, 140, 0))
+            _draw_icon(draw, cx_q, cy_q, "filled_diamond", (220, 30, 30), r=6)
 
     # Ocean quest edge markers — arrow + diamond at the ocean-facing edge
     if ocean_quest_markers:
@@ -413,10 +425,10 @@ def _generate_ocean_base_map_sync(seed: int) -> bytes:
 
     # ── Legend ────────────────────────────────────────────────────────────────
     try:
-        font = ImageFont.truetype("arial.ttf", 10)
+        font = ImageFont.truetype("arial.ttf", 11)
     except Exception:
         try:
-            font = ImageFont.load_default(size=10)
+            font = ImageFont.load_default(size=11)
         except Exception:
             font = ImageFont.load_default()
 
