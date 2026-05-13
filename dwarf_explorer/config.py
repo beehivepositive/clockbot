@@ -492,8 +492,25 @@ TEMPLE_EMOJI: dict[str, str] = {
     "temple_portal_locked":   "🔒",
     "temple_portal_open":     "🌀",
     "temple_rune":            "📜",
-    # Gear machine panel (interactable — opens the gear puzzle UI)
+    # Gear machine panel (interactable — opens the gear puzzle viewport)
     "gear_machine":           "⚙️",
+    # ── Gear slot tiles — used inside the machine viewport ─────────────────────
+    # Empty sockets
+    "gear_slot_s_empty":      "⬡",
+    "gear_slot_l_empty":      "⬡",
+    # Small gear — filled (single tile)
+    "gear_slot_s_cw":         _ge("gear_small",         "⚙️"),
+    "gear_slot_s_ccw":        _ge("gear_small_reverse", "⚙️"),
+    # Large gear — filled clockwise (2×2, four quadrant tiles)
+    "gear_slot_l_cw_tl":      _ge("gear_top_left",            "🔩"),
+    "gear_slot_l_cw_tr":      _ge("gear_top_right",           "🔩"),
+    "gear_slot_l_cw_bl":      _ge("gear_bottom_left",         "🔩"),
+    "gear_slot_l_cw_br":      _ge("gear_bottom_right",        "🔩"),
+    # Large gear — filled counter-clockwise (2×2, four quadrant tiles)
+    "gear_slot_l_ccw_tl":     _ge("gear_top_left_reverse",    "🔩"),
+    "gear_slot_l_ccw_tr":     _ge("gear_top_right_reverse",   "🔩"),
+    "gear_slot_l_ccw_bl":     _ge("gear_bottom_left_reverse", "🔩"),
+    "gear_slot_l_ccw_br":     _ge("gear_bottom_right_reverse","🔩"),
 }
 
 TEMPLE_WALKABLE: frozenset[str] = frozenset({

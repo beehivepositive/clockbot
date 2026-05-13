@@ -33,6 +33,7 @@ from dwarf_explorer.world.temples import (
     fill_gear_slot, remove_gear_slot,
     is_outer_temple_solved, are_all_outer_temples_solved,
     get_main_temple_sky_id,
+    build_machine_grid,
     TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, OUTER_ENTRANCE_POS, MAIN_ENTRANCE_POS,
 )
 from dwarf_explorer.database.connection import get_database
@@ -1085,36 +1086,16 @@ class GearMachineView(discord.ui.View):
         ))
 
 
-def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool) -> str:
-    """Render the gear machine UI as text."""
-    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS, GEAR_SLOT_IS_CW
-
-    lines = ["⚙️ **Gear Machine**", ""]
-    lines.append("This ancient mechanism has four gear sockets.")
-    lines.append("Insert the correct gears to power the temple.\n")
-
-    _SLOT_NAMES = ["North-West", "North-East", "South-West", "South-East"]
-    _DIRS = {True: "clockwise ↻", False: "counter-clockwise ↺"}
-
-    for i, (required, is_filled) in enumerate(slot_states):
-        ax, ay, _ = OUTER_GEAR_SLOTS[i]
-        cw = GEAR_SLOT_IS_CW.get((ax, ay), True)
-        gear_size = "small" if required == "small_gear" else "large"
-        gear_icon = "⚙️" if required == "small_gear" else "🔩"
-        dir_label = _DIRS[cw]
-        status = "✅ **Installed**" if is_filled else "⬡ *Empty*"
-        lines.append(f"**Slot {i+1} — {_SLOT_NAMES[i]}**")
-        lines.append(f"  Requires: {gear_icon} {gear_size} gear ({dir_label})")
-        lines.append(f"  Status: {status}")
-
-    lines.append("")
+def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool, player) -> str:
+    """Render the gear machine as a 9×9 viewport + status line."""
+    machine_grid = build_machine_grid(slot_states)
+    filled = sum(1 for _, f in slot_states if f)
+    total  = len(slot_states)
     if solved:
-        lines.append("✨ **All gears installed — this temple is active!**")
+        status = "✨ All gears installed — temple active!"
     else:
-        filled = sum(1 for _, f in slot_states if f)
-        lines.append(f"*{filled}/{len(slot_states)} gears installed.*")
-
-    return "\n".join(lines)
+        status = f"⚙️ Gear Machine — {filled}/{total} gears installed"
+    return render_grid(machine_grid, player, status)
 
 
 class CombatView(discord.ui.View):
@@ -10070,7 +10051,7 @@ async def _open_gear_machine(
     inv_item_ids = {r["item_id"] for r in inv if r["quantity"] > 0}
 
     solved = await is_outer_temple_solved(db, player.temple_id)
-    content = _render_gear_machine(slot_states, solved)
+    content = _render_gear_machine(slot_states, solved, player)
     view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)
     await interaction.response.edit_message(content=None, embed=_embed(content), view=view)
 
@@ -10144,7 +10125,7 @@ async def handle_gear_slot(
     solved2 = await is_outer_temple_solved(db, player.temple_id)
     inv2 = await get_inventory(db, user_id)
     inv_item_ids = {r["item_id"] for r in inv2 if r["quantity"] > 0}
-    content = _render_gear_machine(slot_states, solved2)
+    content = _render_gear_machine(slot_states, solved2, player)
     if msg:
         content = msg + "\n\n" + content
     view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)

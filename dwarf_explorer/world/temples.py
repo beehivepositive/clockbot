@@ -43,10 +43,68 @@ MAIN_ENTRANCE_POS     = (5, 9)
 # Quadrant offsets for a 2×2 large gear: (dx, dy) → quadrant name
 _LARGE_GEAR_QUADS = {(0, 0): "tl", (1, 0): "tr", (0, 1): "bl", (1, 1): "br"}
 
+# ── Machine viewport layout ────────────────────────────────────────────────────
+# The gear machine opens as a 9×9 viewport (matching normal explore size).
+# Slots are placed at fixed positions within this virtual grid:
+#   Slot 0 (small, CW)    → (1,1)              — top-left
+#   Slot 1 (large, CCW)   → anchor (5,1)       — top-right  2×2: (5,1)(6,1)(5,2)(6,2)
+#   Slot 2 (large, CW)    → anchor (1,5)       — bottom-left 2×2: (1,5)(2,5)(1,6)(2,6)
+#   Slot 3 (small, CCW)   → (6,6)              — bottom-right
+# Player shown at center (4,4).
+MACHINE_SIZE = 9
+MACHINE_CENTER = 4  # player shown here
+
+# Each entry: (slot_index, anchor_x, anchor_y) where anchor = top-left of slot tile
+MACHINE_SLOT_POSITIONS: list[tuple[int, int, int]] = [
+    (0, 1, 1),   # slot 0 — small gear, NW
+    (1, 5, 1),   # slot 1 — large gear, NE  (occupies 5-6, 1-2)
+    (2, 1, 5),   # slot 2 — large gear, SW  (occupies 1-2, 5-6)
+    (3, 6, 6),   # slot 3 — small gear, SE
+]
+
 
 def _large_gear_tiles(ax: int, ay: int) -> list[tuple[int, int, str]]:
     """Return [(x, y, quad), ...] for all 4 tiles of a large gear anchored at (ax, ay)."""
     return [(ax + dx, ay + dy, q) for (dx, dy), q in _LARGE_GEAR_QUADS.items()]
+
+
+def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileData"]]:
+    """Build the 9×9 TileData grid for the gear machine viewport.
+
+    slot_states: list of (required_gear, is_filled) for each slot in MACHINE_SLOT_POSITIONS order.
+    Returns a 9×9 grid ready for render_grid (player placed at MACHINE_CENTER).
+    """
+    # Fill with walls on border, floor on interior
+    tiles: dict[tuple[int, int], str] = {}
+    for y in range(MACHINE_SIZE):
+        for x in range(MACHINE_SIZE):
+            if x == 0 or x == MACHINE_SIZE - 1 or y == 0 or y == MACHINE_SIZE - 1:
+                tiles[(x, y)] = "temple_wall"
+            else:
+                tiles[(x, y)] = "temple_floor"
+
+    # Place gear slot tiles for each slot
+    for slot_idx, ax, ay in MACHINE_SLOT_POSITIONS:
+        required, is_filled = slot_states[slot_idx]
+        is_large = (required == "large_gear")
+        is_cw = (slot_idx % 2 == 0)   # even = CW, odd = CCW
+        dir_s = "cw" if is_cw else "ccw"
+
+        if is_large:
+            for gx, gy, quad in _large_gear_tiles(ax, ay):
+                if 0 <= gx < MACHINE_SIZE and 0 <= gy < MACHINE_SIZE:
+                    tiles[(gx, gy)] = f"gear_slot_l_{dir_s}_{quad}" if is_filled else "gear_slot_l_empty"
+        else:
+            tiles[(ax, ay)] = f"gear_slot_s_{dir_s}" if is_filled else "gear_slot_s_empty"
+
+    # Build 9×9 TileData grid
+    grid: list[list[TileData]] = []
+    for y in range(MACHINE_SIZE):
+        row: list[TileData] = []
+        for x in range(MACHINE_SIZE):
+            row.append(TileData(terrain=tiles.get((x, y), "temple_wall"), world_x=x, world_y=y))
+        grid.append(row)
+    return grid
 
 
 def find_gear_slot_anchor(local_x: int, local_y: int) -> tuple[int, int] | None:
