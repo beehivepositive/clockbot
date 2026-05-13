@@ -1,5 +1,6 @@
 """Sky temple system — interior generation, gear puzzle, portal management."""
 from __future__ import annotations
+from typing import NamedTuple
 
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.config import VIEWPORT_SIZE, VIEWPORT_CENTER
@@ -49,43 +50,93 @@ MAIN_ENTRANCE_POS     = (5, 9)
 # Quadrant offsets for a 2×2 large gear: (dx, dy) → quadrant name
 _LARGE_GEAR_QUADS = {(0, 0): "tl", (1, 0): "tr", (0, 1): "bl", (1, 1): "br"}
 
-# ── Machine viewport layout ────────────────────────────────────────────────────
+# ── Machine viewport layout system ────────────────────────────────────────────
 # The gear machine opens as a 9×9 viewport (no border — all floor).
+# Each outer temple picks one of several pre-verified layout templates based
+# on (temple_id % len(MACHINE_LAYOUTS)).  Layouts vary in the direction power
+# flows (left, right, top, bottom, diagonal) and path shape.
 #
-# CHAIN (left → right, centre row):
+# Direction rule (universal): Power = CW → Slot0 = CCW → Slot1 = CW →
+#   Slot2 = CCW → Slot3 = CW → Target = CCW.  Formula: is_cw = (slot_idx % 2 == 1)
 #
-#   Col:  0       1      2-3      4-5      6       7-8
-#         Power   S0    [L1 2×2] [L2 2×2]  S3    [Target 2×2]
-#         (fixed) slot0  slot1    slot2   slot3    (fixed)
-#
-#  Power source: right half of an off-screen large CW gear (visible at col 0, rows 3-4).
-#  Target:       full large CCW gear at anchor (7,3), spins when entire chain is connected.
-#
-#  Adjacency chain (all at row 4 level):
-#    (0,4)_power ↔ (1,4)_S0 ↔ (2,4)_L1_bl ↔ (4,4)_L2_bl ↔ (6,4)_S3 ↔ (7,4)_Target_bl
-#
-#  Directions (power is CW → each adjacent slot alternates):
-#    S0(idx 0)=CCW  L1(idx 1)=CW  L2(idx 2)=CCW  S3(idx 3)=CW  Target=CCW
+# Partial-gear edge cuts: power/target tiles may be a subset of a 2×2 gear when
+# the anchor is off-screen.  power_tiles and target_tiles each map (x,y)→quad_name
+# for the visible portion; the rest is implied to be off-grid.
 MACHINE_SIZE   = 9
 MACHINE_CENTER = 4   # kept for API compatibility
 
-# Power source: right half of large CW gear anchored off-screen at (-1,3)
-# Visible tiles: (0,3)=top-right quad, (0,4)=bottom-right quad
-MACHINE_POWER_TILES: dict[tuple[int, int], str] = {(0, 3): "tr", (0, 4): "br"}
-MACHINE_POWER_IS_CW = True    # power source always spins clockwise
 
-# Target: full large gear at anchor (7,3), covering (7-8, 3-4)
-MACHINE_TARGET_ANCHOR   = (7, 3)
-MACHINE_TARGET_IS_CW    = False   # target is CCW (opposite of last slot, which is CW)
+class MachineLayout(NamedTuple):
+    """Describes the visual layout of one gear machine puzzle.
 
-# Each entry: (slot_index, anchor_x, anchor_y) where anchor = top-left of slot tile
-# Slot gear-types come from OUTER_GEAR_SLOTS: [small, large, large, small]
-MACHINE_SLOT_POSITIONS: list[tuple[int, int, int]] = [
-    (0, 1, 4),   # slot 0 — small gear at (1,4)         adjacent to power (0,4)
-    (1, 2, 3),   # slot 1 — large gear, anchor (2,3)    covers (2-3, 3-4)
-    (2, 4, 3),   # slot 2 — large gear, anchor (4,3)    covers (4-5, 3-4)
-    (3, 6, 4),   # slot 3 — small gear at (6,4)         adjacent to target (7,4)
-]
+    power_tiles  : visible tiles of the fixed CW power-source gear  {(x,y): quad}
+    slot_anchors : top-left anchor for each of the 4 player slots    [(ax,ay)]
+                   Index matches OUTER_GEAR_SLOTS (0=small,1=large,2=large,3=small)
+    target_tiles : visible tiles of the fixed CCW target gear        {(x,y): quad}
+    """
+    power_tiles:  dict[tuple[int, int], str]
+    slot_anchors: list[tuple[int, int]]
+    target_tiles: dict[tuple[int, int], str]
+
+
+# ── Six pre-verified layout templates ─────────────────────────────────────────
+# Each chain has been manually verified for adjacency (no gaps):
+#   power ↔ S0(small) ↔ L1(large 2×2) ↔ L2(large 2×2) ↔ S3(small) ↔ target
+#
+# Layout 0: Left → Right (horizontal, centre rows 3-4)
+#   power(0,3-4) → S0(1,4) → L1(2-3,3-4) → L2(4-5,3-4) → S3(6,4) → target(7-8,3-4)
+_L0 = MachineLayout(
+    power_tiles  = {(0, 3): "tr", (0, 4): "br"},   # left edge, right half visible
+    slot_anchors = [(1, 4), (2, 3), (4, 3), (6, 4)],
+    target_tiles = {(7, 3): "tl", (8, 3): "tr", (7, 4): "bl", (8, 4): "br"},  # right edge, full
+)
+
+# Layout 1: Top → Bottom (vertical, left cols 1-2)
+#   power(1-2,0) → S0(1,1) → L1(1-2,2-3) → L2(1-2,4-5) → S3(1,6) → target(1-2,7-8)
+_L1 = MachineLayout(
+    power_tiles  = {(1, 0): "bl", (2, 0): "br"},   # top edge, bottom half visible
+    slot_anchors = [(1, 1), (1, 2), (1, 4), (1, 6)],
+    target_tiles = {(1, 7): "tl", (2, 7): "tr", (1, 8): "bl", (2, 8): "br"},  # bottom edge, full
+)
+
+# Layout 2: Top-right → Middle-left (stair down-left)
+#   power(7-8,0) → S0(7,1) → L1(5-6,1-2) → L2(4-5,3-4) → S3(3,4) → target(1-2,3-4)
+_L2 = MachineLayout(
+    power_tiles  = {(7, 0): "bl", (8, 0): "br"},   # top-right edge, bottom half visible
+    slot_anchors = [(7, 1), (5, 1), (4, 3), (3, 4)],
+    target_tiles = {(1, 3): "tl", (2, 3): "tr", (1, 4): "bl", (2, 4): "br"},  # left-centre, full
+)
+
+# Layout 3: Left-bottom → Right-upper (stair up-right)
+#   power(0,6-7) → S0(1,6) → L1(2-3,5-6) → L2(4-5,4-5) → S3(6,4) → target(6-7,2-3)
+_L3 = MachineLayout(
+    power_tiles  = {(0, 6): "tr", (0, 7): "br"},   # left edge lower, right half visible
+    slot_anchors = [(1, 6), (2, 5), (4, 4), (6, 4)],
+    target_tiles = {(6, 2): "tl", (7, 2): "tr", (6, 3): "bl", (7, 3): "br"},  # upper-right, full
+)
+
+# Layout 4: Right → Left (horizontal, lower rows 4-5)
+#   power(8,4-5) → S0(7,5) → L1(5-6,4-5) → L2(3-4,4-5) → S3(2,5) → target(0-1,4-5)
+_L4 = MachineLayout(
+    power_tiles  = {(8, 4): "tl", (8, 5): "bl"},   # right edge, left half visible
+    slot_anchors = [(7, 5), (5, 4), (3, 4), (2, 5)],
+    target_tiles = {(0, 4): "tl", (1, 4): "tr", (0, 5): "bl", (1, 5): "br"},  # left edge, full
+)
+
+# Layout 5: Top-left corner → Middle-right (diagonal right-down)
+#   power(0,0) → S0(1,0) → L1(2-3,0-1) → L2(4-5,1-2) → S3(6,2) → target(7-8,2-3)
+_L5 = MachineLayout(
+    power_tiles  = {(0, 0): "br"},                  # top-left corner — single quad
+    slot_anchors = [(1, 0), (2, 0), (4, 1), (6, 2)],
+    target_tiles = {(7, 2): "tl", (8, 2): "tr", (7, 3): "bl", (8, 3): "br"},  # right-centre, full
+)
+
+MACHINE_LAYOUTS: list[MachineLayout] = [_L0, _L1, _L2, _L3, _L4, _L5]
+
+
+def get_machine_layout(temple_id: int) -> MachineLayout:
+    """Return the layout template for a given outer temple."""
+    return MACHINE_LAYOUTS[temple_id % len(MACHINE_LAYOUTS)]
 
 
 def _large_gear_tiles(ax: int, ay: int) -> list[tuple[int, int, str]]:
@@ -94,29 +145,28 @@ def _large_gear_tiles(ax: int, ay: int) -> list[tuple[int, int, str]]:
 
 
 def _slot_tile_positions(required: str, ax: int, ay: int) -> set[tuple[int, int]]:
-    """Return all machine-grid positions occupied by this slot."""
+    """Return all in-bounds machine-grid positions occupied by this slot."""
     if required == "large_gear":
         return {
             (ax + dx, ay + dy)
             for dx in range(2) for dy in range(2)
             if 0 <= ax + dx < MACHINE_SIZE and 0 <= ay + dy < MACHINE_SIZE
         }
-    return {(ax, ay)}
+    return {(ax, ay)} if 0 <= ax < MACHINE_SIZE and 0 <= ay < MACHINE_SIZE else set()
 
 
 def _compute_powered_slots(
     slot_states: list[tuple[str, bool]],
+    layout: MachineLayout,
 ) -> tuple[set[int], dict[int, set[tuple[int, int]]]]:
-    """BFS from the fixed power source.
+    """BFS from the fixed power source tiles.
 
     Returns (powered_slot_indices, slot_tile_map).
-    Only *filled* slots propagate power; the direction alternation is handled
-    by the caller — here we only care about connectivity.
+    Only *filled* slots propagate power.
     """
-    # Build tile→slot and slot→tiles maps for *filled* slots only
     tile_to_slot: dict[tuple[int, int], int] = {}
     slot_tile_map: dict[int, set[tuple[int, int]]] = {}
-    for slot_idx, ax, ay in MACHINE_SLOT_POSITIONS:
+    for slot_idx, (ax, ay) in enumerate(layout.slot_anchors):
         required, is_filled = slot_states[slot_idx]
         if not is_filled:
             continue
@@ -125,10 +175,10 @@ def _compute_powered_slots(
         for pos in tset:
             tile_to_slot[pos] = slot_idx
 
-    # Seed: filled slots that are directly adjacent to a power-source tile
+    # Seed: filled slots directly adjacent to any power tile
     visited: set[int] = set()
     queue:   list[int] = []
-    for px, py in MACHINE_POWER_TILES:
+    for px, py in layout.power_tiles:
         for nx, ny in ((px - 1, py), (px + 1, py), (px, py - 1), (px, py + 1)):
             if (nx, ny) in tile_to_slot:
                 sidx = tile_to_slot[(nx, ny)]
@@ -136,7 +186,7 @@ def _compute_powered_slots(
                     visited.add(sidx)
                     queue.append(sidx)
 
-    # BFS: propagate through adjacent filled slots
+    # BFS: spread through touching filled slots
     while queue:
         sidx = queue.pop(0)
         for tx, ty in slot_tile_map.get(sidx, set()):
@@ -150,15 +200,18 @@ def _compute_powered_slots(
     return visited, slot_tile_map
 
 
-def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileData"]]:
+def build_machine_grid(
+    slot_states: list[tuple[str, bool]],
+    temple_id: int = 0,
+) -> list[list["TileData"]]:
     """Build the 9×9 TileData grid for the gear machine viewport.
 
-    No border — all temple_floor with gear tiles overlaid.
-    Power source is fixed at the left edge (col 0, rows 3-4); target at the right
-    (cols 7-8, rows 3-4).  Only gears connected to the power source spin.
-
-    slot_states: list of (required_gear, is_filled) indexed by slot_index.
+    Picks a layout template from MACHINE_LAYOUTS based on temple_id.
+    All floor — no border.  Only gears connected to the power source spin;
+    isolated filled gears show their still variant.
     """
+    layout = get_machine_layout(temple_id)
+
     # All floor — no border
     tiles: dict[tuple[int, int], str] = {
         (x, y): "temple_floor"
@@ -166,22 +219,21 @@ def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileDa
         for x in range(MACHINE_SIZE)
     }
 
-    # ── Fixed power source (always CW, right half of off-screen large gear) ──
-    power_dir = "cw" if MACHINE_POWER_IS_CW else "ccw"
-    for (px, py), quad in MACHINE_POWER_TILES.items():
-        tiles[(px, py)] = f"gear_slot_l_{power_dir}_{quad}"
+    # ── Fixed power source (always CW) ───────────────────────────────────────
+    for (px, py), quad in layout.power_tiles.items():
+        tiles[(px, py)] = f"gear_slot_l_cw_{quad}"
 
-    # ── Compute which player slots are powered ────────────────────────────────
-    powered_indices, slot_tile_map = _compute_powered_slots(slot_states)
+    # ── Compute powered connectivity ──────────────────────────────────────────
+    powered_indices, slot_tile_map = _compute_powered_slots(slot_states, layout)
 
     # ── Player slots ──────────────────────────────────────────────────────────
-    for slot_idx, ax, ay in MACHINE_SLOT_POSITIONS:
+    # Direction: Power=CW → slot0=CCW → slot1=CW → slot2=CCW → slot3=CW
+    for slot_idx, (ax, ay) in enumerate(layout.slot_anchors):
         required, is_filled = slot_states[slot_idx]
-        is_large = (required == "large_gear")
-        # Direction: slot 0=CCW, 1=CW, 2=CCW, 3=CW (power is CW, first slot is opposite)
-        is_cw = (slot_idx % 2 == 1)
-        dir_s = "cw" if is_cw else "ccw"
-        powered = slot_idx in powered_indices
+        is_large  = (required == "large_gear")
+        is_cw     = (slot_idx % 2 == 1)   # 0=CCW, 1=CW, 2=CCW, 3=CW
+        dir_s     = "cw" if is_cw else "ccw"
+        powered   = slot_idx in powered_indices
 
         if is_large:
             for gx, gy, quad in _large_gear_tiles(ax, ay):
@@ -192,18 +244,14 @@ def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileDa
                         t = "gear_slot_l_empty"
                     tiles[(gx, gy)] = t
         else:
-            if is_filled:
-                tiles[(ax, ay)] = f"gear_slot_s_{dir_s}" if powered else "gear_slot_s_still"
-            else:
-                tiles[(ax, ay)] = "gear_slot_s_empty"
+            if 0 <= ax < MACHINE_SIZE and 0 <= ay < MACHINE_SIZE:
+                if is_filled:
+                    tiles[(ax, ay)] = f"gear_slot_s_{dir_s}" if powered else "gear_slot_s_still"
+                else:
+                    tiles[(ax, ay)] = "gear_slot_s_empty"
 
-    # ── Fixed target gear (spins CCW when any powered slot is adjacent to it) ─
-    tax, tay = MACHINE_TARGET_ANCHOR
-    target_tile_set = {
-        (tax + dx, tay + dy)
-        for dx in range(2) for dy in range(2)
-        if 0 <= tax + dx < MACHINE_SIZE and 0 <= tay + dy < MACHINE_SIZE
-    }
+    # ── Fixed target gear (CCW; spins when a powered slot is adjacent) ────────
+    target_tile_set = set(layout.target_tiles.keys())
     target_powered = False
     for sidx, stiles in slot_tile_map.items():
         if sidx not in powered_indices:
@@ -213,11 +261,11 @@ def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileDa
                 if (nx, ny) in target_tile_set:
                     target_powered = True
                     break
-    target_dir = "ccw" if not MACHINE_TARGET_IS_CW else "cw"
-    for gx, gy, quad in _large_gear_tiles(tax, tay):
-        if 0 <= gx < MACHINE_SIZE and 0 <= gy < MACHINE_SIZE:
-            t = f"gear_slot_l_{target_dir}_{quad}" if target_powered else f"gear_slot_l_still_{quad}"
-            tiles[(gx, gy)] = t
+        if target_powered:
+            break
+    for (tx, ty), quad in layout.target_tiles.items():
+        t = f"gear_slot_l_ccw_{quad}" if target_powered else f"gear_slot_l_still_{quad}"
+        tiles[(tx, ty)] = t
 
     # ── Assemble TileData grid ────────────────────────────────────────────────
     grid: list[list[TileData]] = []

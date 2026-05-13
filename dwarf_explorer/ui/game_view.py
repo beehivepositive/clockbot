@@ -1086,13 +1086,18 @@ class GearMachineView(discord.ui.View):
         ))
 
 
-def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool, player=None) -> str:
+def _render_gear_machine(
+    slot_states: list[tuple[str, bool]],
+    solved: bool,
+    player=None,
+    temple_id: int = 0,
+) -> str:
     """Render the gear machine as a plain 9×9 emoji grid (no player icon)."""
     from dwarf_explorer.config import TEMPLE_EMOJI
-    machine_grid = build_machine_grid(slot_states)
+    machine_grid = build_machine_grid(slot_states, temple_id=temple_id)
     lines: list[str] = []
     for row in machine_grid:
-        lines.append("".join(TEMPLE_EMOJI.get(cell.terrain, "🧱") for cell in row))
+        lines.append("".join(TEMPLE_EMOJI.get(cell.terrain, "⬛") for cell in row))
     filled = sum(1 for _, f in slot_states if f)
     total  = len(slot_states)
     lines.append("")
@@ -10056,7 +10061,7 @@ async def _open_gear_machine(
     inv_item_ids = {r["item_id"] for r in inv if r["quantity"] > 0}
 
     solved = await is_outer_temple_solved(db, player.temple_id)
-    content = _render_gear_machine(slot_states, solved, player)
+    content = _render_gear_machine(slot_states, solved, player, temple_id=player.temple_id)
     view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)
     await interaction.response.edit_message(content=None, embed=_embed(content), view=view)
 
@@ -10130,7 +10135,7 @@ async def handle_gear_slot(
     solved2 = await is_outer_temple_solved(db, player.temple_id)
     inv2 = await get_inventory(db, user_id)
     inv_item_ids = {r["item_id"] for r in inv2 if r["quantity"] > 0}
-    content = _render_gear_machine(slot_states, solved2, player)
+    content = _render_gear_machine(slot_states, solved2, player, temple_id=player.temple_id)
     if msg:
         content = msg + "\n\n" + content
     view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)
