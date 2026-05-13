@@ -2081,6 +2081,20 @@ def _compute_context_labels(
                 center_label, center_enabled = "\U0001F4B0 Open", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
+        # Temple tile context (outer & main)
+        if getattr(player, "in_temple", False):
+            if t == "gear_machine":
+                center_label, center_enabled = "⚙️ Gears", True
+            elif t == "temple_entrance":
+                center_label, center_enabled = "🚪 Exit", True
+            elif t in ("temple_altar", "temple_rune"):
+                center_label, center_enabled = "📜 Inspect", True
+            elif t == "temple_portal_open":
+                center_label, center_enabled = "🌀 Enter", True
+            elif t == "temple_portal_locked":
+                center_label, center_enabled = "🔒 Locked", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+
         # Sky biome tile context
         if getattr(player, "in_sky", False):
             if t == "sky_entrance":
@@ -2254,7 +2268,9 @@ def _compute_context_labels(
             if adj.structure:
                 adj_terrains.add(adj.structure)
 
-    if "b_forge" in adj_terrains:
+    if "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
+        action_label, action_enabled = "⚙️ Gears", True
+    elif "b_forge" in adj_terrains:
         action_label, action_enabled = "🔥 Forge", True
     elif "b_anvil" in adj_terrains:
         action_label, action_enabled = "⚒️ Smith", True
@@ -6811,6 +6827,25 @@ async def handle_action(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        content = render_grid(grid, player, "Nothing to interact with nearby.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Temple: adjacent gear_machine interaction ─────────────────────────────
+    if getattr(player, "in_temple", False):
+        grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db)
+        vc = 4
+        adj_terrains: set[str] = set()
+        for ro, co in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            r, c = vc + ro, vc + co
+            if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
+                t = grid[r][c].terrain
+                if t:
+                    adj_terrains.add(t)
+        if "gear_machine" in adj_terrains:
+            await _open_gear_machine(interaction, guild_id, user_id)
+            return
         content = render_grid(grid, player, "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
