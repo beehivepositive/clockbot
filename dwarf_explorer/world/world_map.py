@@ -23,12 +23,12 @@ _LEGEND_ENTRIES = [
     ("path",          "Path"),
 ]
 _LEGEND_ICON_ENTRIES = [
-    ("village",    "Village",        (200, 160, 60),  "filled_diamond"),
-    ("harbor",     "Harbor Village", (40,  80,  200), "filled_diamond"),
-    ("cave",       "Cave",           (60,  40,  30),  "filled_circle"),
-    ("shrine",     "Shrine",         (200, 50,  50),  "cross"),
-    ("sundial",    "Sundial",        (220, 180, 60),  "cross"),
-    ("sky_temple_outer", "Outer Temple",  (140, 200, 255), "filled_diamond"),
+    ("village",    "Village",        (230, 190,  80),  "filled_diamond"),
+    ("harbor",     "Harbor Village", ( 60, 120, 240),  "filled_diamond"),
+    ("cave",       "Cave",           (120,  80,  50),  "filled_circle"),
+    ("shrine",     "Shrine",         (220,  50,  50),  "cross"),
+    ("sundial",    "Sundial",        (240, 200,  50),  "cross"),
+    ("sky_temple_outer", "Outer Temple",  (  0, 220, 200), "filled_diamond"),
     ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
 ]
 
@@ -55,13 +55,13 @@ _ICON_TILES = {entry[0] for entry in _LEGEND_ICON_ENTRIES}
 
 # Per-tile-type icon radius (r).  Higher = bigger icon on map.
 _ICON_R: dict[str, int] = {
-    "sky_temple_main":  9,   # gold diamond — most prominent landmark
-    "sky_temple_outer": 7,   # light-blue diamond — major landmark
-    "village":          6,   # tan diamond
-    "harbor":           6,   # blue diamond
-    "cave":             5,   # brown circle
-    "shrine":           5,   # red cross
-    "sundial":          5,   # yellow cross
+    "sky_temple_main":  10,  # gold diamond — most prominent landmark
+    "sky_temple_outer":  8,  # teal diamond — major landmark
+    "village":           6,  # tan diamond
+    "harbor":            6,  # blue diamond
+    "cave":              5,  # brown circle
+    "shrine":            5,  # red cross
+    "sundial":           5,  # yellow cross
 }
 _DEFAULT_ICON_R = 5   # fallback for any unlisted icon type
 
@@ -103,10 +103,16 @@ def invalidate_ocean_map_cache(guild_id: int) -> None:
 def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple, r: int = 3) -> None:
     """Draw a distinctive icon centred at (cx, cy). r controls half-size (default 3)."""
     white = (255, 255, 255)
+    black = (0, 0, 0)
+    h = r + 2   # halo radius (dark outline for contrast against any terrain)
     if style == "filled_diamond":
+        # Dark halo first, then coloured diamond on top
+        halo = [(cx, cy - h), (cx + h, cy), (cx, cy + h), (cx - h, cy)]
+        draw.polygon(halo, fill=black)
         pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
         draw.polygon(pts, fill=color, outline=white)
     elif style == "filled_circle":
+        draw.ellipse([cx - h, cy - h, cx + h, cy + h], fill=black)
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color, outline=white)
     elif style == "cross":
         draw.rectangle([cx - r, cy - 1, cx + r, cy + 1], fill=color)
