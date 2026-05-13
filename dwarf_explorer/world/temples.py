@@ -79,56 +79,63 @@ class MachineLayout(NamedTuple):
     target_tiles: dict[tuple[int, int], str]
 
 
-# ── Six pre-verified layout templates ─────────────────────────────────────────
-# Each chain has been manually verified for adjacency (no gaps):
+# ── Six meander-verified layout templates ─────────────────────────────────────
+# Each chain bends at least twice so no path looks like a straight run.
+# Adjacency notation (→ direction from each element to the next):
 #   power ↔ S0(small) ↔ L1(large 2×2) ↔ L2(large 2×2) ↔ S3(small) ↔ target
 #
-# Layout 0: Left → Right (horizontal, centre rows 3-4)
-#   power(0,3-4) → S0(1,4) → L1(2-3,3-4) → L2(4-5,3-4) → S3(6,4) → target(7-8,3-4)
+# Layout 0 — Z-shape  (top-right ↓ ← ↓ → right-edge)
+#   power(7-8,0) ↓ S0(7,1) ← L1(5-6,1-2) ↓ L2(5-6,3-4) → S3(7,3) → target(8,3-4)
+#   Directions: DOWN → LEFT → DOWN → RIGHT → RIGHT
 _L0 = MachineLayout(
-    power_tiles  = {(0, 3): "tr", (0, 4): "br"},   # left edge, right half visible
-    slot_anchors = [(1, 4), (2, 3), (4, 3), (6, 4)],
-    target_tiles = {(7, 3): "tl", (8, 3): "tr", (7, 4): "bl", (8, 4): "br"},  # right edge, full
+    power_tiles  = {(7, 0): "bl", (8, 0): "br"},       # top-right edge (bottom half visible)
+    slot_anchors = [(7, 1), (5, 1), (5, 3), (7, 3)],
+    target_tiles = {(8, 3): "tl", (8, 4): "bl"},       # right-edge cut (left half visible)
 )
 
-# Layout 1: Top → Bottom (vertical, left cols 1-2)
-#   power(1-2,0) → S0(1,1) → L1(1-2,2-3) → L2(1-2,4-5) → S3(1,6) → target(1-2,7-8)
+# Layout 1 — S-curve  (left-middle → right ↓ right → right-centre)
+#   power(0,2-3) → S0(1,2) → L1(2-3,2-3) ↓ L2(2-3,4-5) → S3(4,5) → target(5-6,4-5)
+#   Directions: RIGHT → RIGHT → DOWN → RIGHT → RIGHT
 _L1 = MachineLayout(
-    power_tiles  = {(1, 0): "bl", (2, 0): "br"},   # top edge, bottom half visible
-    slot_anchors = [(1, 1), (1, 2), (1, 4), (1, 6)],
-    target_tiles = {(1, 7): "tl", (2, 7): "tr", (1, 8): "bl", (2, 8): "br"},  # bottom edge, full
+    power_tiles  = {(0, 2): "tr", (0, 3): "br"},       # left edge mid (right half visible)
+    slot_anchors = [(1, 2), (2, 2), (2, 4), (4, 5)],
+    target_tiles = {(5, 4): "tl", (6, 4): "tr", (5, 5): "bl", (6, 5): "br"},  # centre-right
 )
 
-# Layout 2: Top-right → Middle-left (stair down-left)
-#   power(7-8,0) → S0(7,1) → L1(5-6,1-2) → L2(4-5,3-4) → S3(3,4) → target(1-2,3-4)
+# Layout 2 — Reverse-Z  (bottom-centre ↑ → ↑ ← left-centre)
+#   power(4-5,8) ↑ S0(4,7) → L1(5-6,6-7) ↑ L2(5-6,4-5) ← S3(4,5) ← target(2-3,5-6)
+#   Directions: UP → RIGHT → UP → LEFT → LEFT
 _L2 = MachineLayout(
-    power_tiles  = {(7, 0): "bl", (8, 0): "br"},   # top-right edge, bottom half visible
-    slot_anchors = [(7, 1), (5, 1), (4, 3), (3, 4)],
-    target_tiles = {(1, 3): "tl", (2, 3): "tr", (1, 4): "bl", (2, 4): "br"},  # left-centre, full
+    power_tiles  = {(4, 8): "tl", (5, 8): "tr"},       # bottom edge (top half visible)
+    slot_anchors = [(4, 7), (5, 6), (5, 4), (4, 5)],
+    target_tiles = {(2, 5): "tl", (3, 5): "tr", (2, 6): "bl", (3, 6): "br"},  # left-centre
 )
 
-# Layout 3: Left-bottom → Right-upper (stair up-right)
-#   power(0,6-7) → S0(1,6) → L1(2-3,5-6) → L2(4-5,4-5) → S3(6,4) → target(6-7,2-3)
+# Layout 3 — Reverse-L / ⌐  (top-right corner ← ↓ → right-edge)
+#   power(8,0) ← S0(7,0) ← L1(5-6,0-1) ↓ L2(5-6,2-3) → S3(7,2) → target(8,2-3)
+#   Directions: LEFT → LEFT → DOWN → RIGHT → RIGHT
 _L3 = MachineLayout(
-    power_tiles  = {(0, 6): "tr", (0, 7): "br"},   # left edge lower, right half visible
-    slot_anchors = [(1, 6), (2, 5), (4, 4), (6, 4)],
-    target_tiles = {(6, 2): "tl", (7, 2): "tr", (6, 3): "bl", (7, 3): "br"},  # upper-right, full
+    power_tiles  = {(8, 0): "bl"},                     # top-right corner (single quad)
+    slot_anchors = [(7, 0), (5, 0), (5, 2), (7, 2)],
+    target_tiles = {(8, 2): "tl", (8, 3): "bl"},       # right-edge cut
 )
 
-# Layout 4: Right → Left (horizontal, lower rows 4-5)
-#   power(8,4-5) → S0(7,5) → L1(5-6,4-5) → L2(3-4,4-5) → S3(2,5) → target(0-1,4-5)
+# Layout 4 — Rising-Z  (left-lower → right ↑ right → upper-right)
+#   power(0,6-7) → S0(1,6) → L1(2-3,5-6) ↑ L2(4-5,4-5) → S3(6,4) → target(7-8,3-4)
+#   Directions: RIGHT → RIGHT → UP → RIGHT → RIGHT
 _L4 = MachineLayout(
-    power_tiles  = {(8, 4): "tl", (8, 5): "bl"},   # right edge, left half visible
-    slot_anchors = [(7, 5), (5, 4), (3, 4), (2, 5)],
-    target_tiles = {(0, 4): "tl", (1, 4): "tr", (0, 5): "bl", (1, 5): "br"},  # left edge, full
+    power_tiles  = {(0, 6): "tr", (0, 7): "br"},       # left edge lower (right half visible)
+    slot_anchors = [(1, 6), (2, 5), (4, 4), (6, 4)],
+    target_tiles = {(7, 3): "tl", (8, 3): "tr", (7, 4): "bl", (8, 4): "br"},  # upper-right
 )
 
-# Layout 5: Top-left corner → Middle-right (diagonal right-down)
-#   power(0,0) → S0(1,0) → L1(2-3,0-1) → L2(4-5,1-2) → S3(6,2) → target(7-8,2-3)
+# Layout 5 — Long traverse  (right-middle ← ↑ ← upper-left)
+#   power(8,5-6) ← S0(7,6) ← L1(5-6,5-6) ↑ L2(4-5,3-4) ← S3(3,3) ← target(1-2,2-3)
+#   Directions: LEFT → LEFT → UP → LEFT → LEFT
 _L5 = MachineLayout(
-    power_tiles  = {(0, 0): "br"},                  # top-left corner — single quad
-    slot_anchors = [(1, 0), (2, 0), (4, 1), (6, 2)],
-    target_tiles = {(7, 2): "tl", (8, 2): "tr", (7, 3): "bl", (8, 3): "br"},  # right-centre, full
+    power_tiles  = {(8, 5): "tl", (8, 6): "bl"},       # right edge mid (left half visible)
+    slot_anchors = [(7, 6), (5, 5), (4, 3), (3, 3)],
+    target_tiles = {(1, 2): "tl", (2, 2): "tr", (1, 3): "bl", (2, 3): "br"},  # upper-left
 )
 
 MACHINE_LAYOUTS: list[MachineLayout] = [_L0, _L1, _L2, _L3, _L4, _L5]
