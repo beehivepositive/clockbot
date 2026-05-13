@@ -1219,7 +1219,11 @@ CREW_TASKS = {
 # --- Custom Emoji Resolution ---
 
 def apply_custom_emojis(guild_emojis: list) -> None:
-    cache = {e.name: f"<:{e.name}:{e.id}>" for e in guild_emojis}
+    # Build separate caches for static and animated emojis
+    cache = {}
+    for e in guild_emojis:
+        fmt = f"<a:{e.name}:{e.id}>" if getattr(e, "animated", False) else f"<:{e.name}:{e.id}>"
+        cache[e.name] = fmt
 
     _replace = [
         (TERRAIN_EMOJI,  "sand",              "sand"),
@@ -1301,3 +1305,27 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     if "gold_ore" in cache:
         CAVE_EMOJI["gold_ore_deposit"] = cache["gold_ore"]
         ITEM_EMOJI["gold_ore"] = cache["gold_ore"]
+
+    # ── Gear emojis — update TEMPLE_EMOJI and ITEM_EMOJI entries ──────────────
+    # Maps TEMPLE_EMOJI tile key → emoji name on the server
+    _gear_tile_map: list[tuple[str, str]] = [
+        ("gear_slot_s_cw",       "gear_small"),
+        ("gear_slot_s_ccw",      "gear_small_reverse"),
+        ("gear_slot_l_cw_tl",    "gear_top_left"),
+        ("gear_slot_l_cw_tr",    "gear_top_right"),
+        ("gear_slot_l_cw_bl",    "gear_bottom_left"),
+        ("gear_slot_l_cw_br",    "gear_bottom_right"),
+        ("gear_slot_l_ccw_tl",   "gear_top_left_reverse"),
+        ("gear_slot_l_ccw_tr",   "gear_top_right_reverse"),
+        ("gear_slot_l_ccw_bl",   "gear_bottom_left_reverse"),
+        ("gear_slot_l_ccw_br",   "gear_bottom_right_reverse"),
+    ]
+    for tile_key, emoji_name in _gear_tile_map:
+        if emoji_name in cache:
+            TEMPLE_EMOJI[tile_key] = cache[emoji_name]
+
+    # Item icon for small_gear uses the still (non-animated) variant if available
+    if "gear_small_still" in cache:
+        ITEM_EMOJI["small_gear"] = cache["gear_small_still"]
+    elif "gear_small" in cache:
+        ITEM_EMOJI["small_gear"] = cache["gear_small"]

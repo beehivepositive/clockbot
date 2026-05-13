@@ -1086,16 +1086,21 @@ class GearMachineView(discord.ui.View):
         ))
 
 
-def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool, player) -> str:
-    """Render the gear machine as a 9×9 viewport + status line."""
+def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool, player=None) -> str:
+    """Render the gear machine as a plain 9×9 emoji grid (no player icon)."""
+    from dwarf_explorer.config import TEMPLE_EMOJI
     machine_grid = build_machine_grid(slot_states)
+    lines: list[str] = []
+    for row in machine_grid:
+        lines.append("".join(TEMPLE_EMOJI.get(cell.terrain, "🧱") for cell in row))
     filled = sum(1 for _, f in slot_states if f)
     total  = len(slot_states)
+    lines.append("")
     if solved:
-        status = "✨ All gears installed — temple active!"
+        lines.append("✨ All gears installed — temple active!")
     else:
-        status = f"⚙️ Gear Machine — {filled}/{total} gears installed"
-    return render_grid(machine_grid, player, status)
+        lines.append(f"⚙️ Gear Machine — {filled}/{total} gears installed")
+    return "\n".join(lines)
 
 
 class CombatView(discord.ui.View):
