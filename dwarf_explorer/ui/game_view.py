@@ -874,16 +874,16 @@ class PuzzleView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        def _info(label, act, row):
+        def _sp(act, row):
             return discord.ui.Button(
-                style=discord.ButtonStyle.secondary, label=label, disabled=True,
+                style=discord.ButtonStyle.secondary, label="​", disabled=True,
                 custom_id=_custom_id(gid, uid, act), row=row,
             )
 
-        # Row 0: Moves counter | ⬆️ | Optimal hint
-        self.add_item(_info(f"Moves: {moves}", "pzsp0a", 0))
+        # Row 0: [spacer] | ⬆️ | [spacer]
+        self.add_item(_sp("pzsp0a", 0))
         self.add_item(_btn("⬆️", "puzzle_up", 0))
-        self.add_item(_info(f"Optimal: {min_moves}", "pzsp0b", 0))
+        self.add_item(_sp("pzsp0b", 0))
 
         # Row 1: ⬅️ | 🔄 (emoji only) | ➡️
         self.add_item(_btn("⬅️", "puzzle_left", 1))
@@ -1471,47 +1471,58 @@ _ANVIL_RECIPES: list[dict] = [
 ]
 
 
-def _render_anvil(cursor_idx: int, inv_counts: dict[str, int]) -> str:
+_ANVIL_MATERIALS = ["iron_ingot", "wyvern_scale"]
+_ANVIL_MATERIAL_LABELS = ["🧱 Iron", "🐉 Wyvern"]
+
+
+def _anvil_filtered_recipes(material_idx: int) -> list[dict]:
+    """Return recipes for the active material."""
+    cost_key = _ANVIL_MATERIALS[material_idx % len(_ANVIL_MATERIALS)]
+    return [r for r in _ANVIL_RECIPES if r["cost_item"] == cost_key]
+
+
+def _render_anvil(cursor_idx: int, inv_counts: dict[str, int], material_idx: int = 0) -> str:
     """Render the anvil recipe list as an embed string.
 
-    inv_counts: mapping of item_id -> quantity owned by the player.
+    cursor_idx  : index within the filtered recipe list for the active material.
+    inv_counts  : mapping of item_id -> quantity owned by the player.
+    material_idx: 0 = Iron, 1 = Wyvern.
     """
     iron_qty   = inv_counts.get("iron_ingot", 0)
     scale_qty  = inv_counts.get("wyvern_scale", 0)
 
-    lines: list[str] = ["⚒️ **Anvil** — Select a recipe and press Craft\n"]
+    mat_label  = _ANVIL_MATERIAL_LABELS[material_idx % len(_ANVIL_MATERIAL_LABELS)]
+    other_idx  = (material_idx + 1) % len(_ANVIL_MATERIALS)
+    other_label = _ANVIL_MATERIAL_LABELS[other_idx]
+
+    lines: list[str] = [f"⚒️ **Anvil** — {mat_label}  *(⬅️ ➡️ to switch)*\n"]
     lines.append(f"🧱 Iron ingots: **{iron_qty}**  |  🐉 Wyvern scales: **{scale_qty}**\n")
 
-    current_category = None
-    for i, recipe in enumerate(_ANVIL_RECIPES):
-        if recipe["category"] != current_category:
-            current_category = recipe["category"]
-            lines.append(f"\n── {current_category} ──")
-
+    recipes = _anvil_filtered_recipes(material_idx)
+    for i, recipe in enumerate(recipes):
         cursor = "▶ " if i == cursor_idx else "   "
         emoji  = recipe["emoji"]
         name   = recipe["name"]
-        cost_item = recipe["cost_item"]
         cost_qty  = recipe["cost_qty"]
         stat      = recipe["stat"]
-        have      = inv_counts.get(cost_item, 0)
+        have      = inv_counts.get(recipe["cost_item"], 0)
 
         if recipe["base_item"]:
             base_have = inv_counts.get(recipe["base_item"], 0)
             base_name = recipe["base_item"].replace("_", " ")
-            cost_str  = f"{cost_qty} scales + {base_name}"
-            avail_str = f"scales: {have}/{cost_qty}, base: {'✓' if base_have >= 1 else '✗'}"
+            cost_str  = f"{cost_qty}× scale + {base_name}"
+            avail_str = f"scales:{have}/{cost_qty} base:{'✓' if base_have >= 1 else '✗'}"
         else:
-            cost_str  = f"{cost_qty} iron ingot{'s' if cost_qty > 1 else ''}"
+            cost_str  = f"{cost_qty}× ingot{'s' if cost_qty > 1 else ''}"
             avail_str = f"have {have}/{cost_qty}"
 
-        lines.append(f"`{cursor}{emoji} {name:<18} {cost_str:<28} {stat:<10}` ({avail_str})")
+        lines.append(f"`{cursor}{emoji} {name:<18} {cost_str:<26} {stat:<10}` ({avail_str})")
 
     return "\n".join(lines)
 
 
 class AnvilView(discord.ui.View):
-    """Anvil interaction menu — scrollable recipe list with D-pad navigation."""
+    """Anvil recipe menu — shop-style layout with ⬅️/➡️ to switch material pages."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
@@ -1522,45 +1533,41 @@ class AnvilView(discord.ui.View):
             custom_id=_custom_id(gid, uid, act), row=r,
         ))
 
-        # Row 0: [spacer] [⬆ Up] [spacer] [spacer] [spacer]
+        # Row 0: [spacer] [⬆️] [spacer]
         _sp("anvil_sp0a", 0)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="⬆️",
             custom_id=_custom_id(gid, uid, "anvil_up"), row=0,
         ))
         _sp("anvil_sp0b", 0)
-        _sp("anvil_sp0c", 0)
-        _sp("anvil_sp0d", 0)
 
-        # Row 1: [spacer] [⚒️ Craft] [spacer] [spacer] [spacer]
-        _sp("anvil_sp1a", 1)
+        # Row 1: [⬅️ prev material] [⚒️ Craft] [➡️ next material]
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji="⬅️",
+            custom_id=_custom_id(gid, uid, "anvil_prev"), row=1,
+        ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.success, label="⚒️ Craft",
             custom_id=_custom_id(gid, uid, "anvil_craft"), row=1,
         ))
-        _sp("anvil_sp1b", 1)
-        _sp("anvil_sp1c", 1)
-        _sp("anvil_sp1d", 1)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji="➡️",
+            custom_id=_custom_id(gid, uid, "anvil_next"), row=1,
+        ))
 
-        # Row 2: [spacer] [⬇ Down] [spacer] [spacer] [spacer]
+        # Row 2: [spacer] [⬇️] [spacer]
         _sp("anvil_sp2a", 2)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="⬇️",
             custom_id=_custom_id(gid, uid, "anvil_down"), row=2,
         ))
         _sp("anvil_sp2b", 2)
-        _sp("anvil_sp2c", 2)
-        _sp("anvil_sp2d", 2)
 
-        # Row 3: [❌ Close] [spacer] [spacer] [spacer] [spacer]
+        # Row 3: [❌ Close]
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.danger, label="❌ Close",
             custom_id=_custom_id(gid, uid, "anvil_close"), row=3,
         ))
-        _sp("anvil_sp3a", 3)
-        _sp("anvil_sp3b", 3)
-        _sp("anvil_sp3c", 3)
-        _sp("anvil_sp3d", 3)
 
 
 class PlayerHouseEditView(discord.ui.View):
@@ -1658,22 +1665,24 @@ class HouseDecorationView(discord.ui.View):
 # ── Tavern buy view ───────────────────────────────────────────────────────────
 
 class TavernBuyView(discord.ui.View):
-    """One button per menu item + a close button."""
+    """One button per menu item (up to 4 per row) + a close button."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
         from dwarf_explorer.config import TAVERN_MENU
         gid, uid = guild_id, user_id
-        for item in TAVERN_MENU:
+        _items_per_row = 4
+        for idx, item in enumerate(TAVERN_MENU):
             label = f"{item['name']} {item['price']}🪙"
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary, label=label,
                 custom_id=_custom_id(gid, uid, f"tavern_buy_{item['id']}"),
-                row=0,
+                row=idx // _items_per_row,
             ))
+        close_row = (len(TAVERN_MENU) - 1) // _items_per_row + 1
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.danger, label="❌ Leave",
-            custom_id=_custom_id(gid, uid, "tavern_close"), row=1,
+            custom_id=_custom_id(gid, uid, "tavern_close"), row=close_row,
         ))
 
 
@@ -3587,7 +3596,21 @@ async def handle_combat_consume(
         return
 
     await remove_from_inventory(db, user_id, item_id, 1)
-    heal_amt = FOOD_HP_RESTORE.get(item_id, CONSUMABLE_ITEMS.get(item_id, {}).get("hp", 10))
+
+    # Coward's Ale: guaranteed escape with no parting blow
+    item_info = CONSUMABLE_ITEMS.get(item_id, {})
+    if item_info.get("escape"):
+        msg = "🍺 You chug the Coward's Ale and bolt for the exit — guaranteed escape!"
+        arena["combat_log"].append(msg)
+        content, view = await _finish_combat(
+            db, guild_id, user_id, player, arena,
+            " ".join(arena["combat_log"][-3:]),
+            won=False,
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    heal_amt = FOOD_HP_RESTORE.get(item_id, item_info.get("hp", 10))
     heal = min(heal_amt, player.max_hp - player.hp)
     player.hp += heal
     player.combat_moves_left -= 1
@@ -7509,11 +7532,12 @@ async def _anvil_refresh(
 ) -> None:
     """Re-render the anvil list and edit the message."""
     db = await get_database(guild_id)
-    state = _ui_state.get(user_id, {"anvil_cursor": 0})
-    cursor = state.get("anvil_cursor", 0)
+    state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    cursor   = state.get("anvil_cursor", 0)
+    mat_idx  = state.get("anvil_material", 0)
     inv_rows = await get_inventory(db, user_id)
     inv_counts = {r["item_id"]: r["quantity"] for r in inv_rows}
-    content = _render_anvil(cursor, inv_counts)
+    content = _render_anvil(cursor, inv_counts, mat_idx)
     if msg:
         content = msg + "\n\n" + content
     await interaction.response.edit_message(
@@ -7524,10 +7548,12 @@ async def _anvil_refresh(
 async def handle_anvil_up(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move the anvil cursor up."""
-    state = _ui_state.get(user_id, {"anvil_cursor": 0})
-    cursor = state.get("anvil_cursor", 0)
-    cursor = (cursor - 1) % len(_ANVIL_RECIPES)
+    """Move the anvil cursor up within the active material's recipe list."""
+    state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = state.get("anvil_material", 0)
+    cursor  = state.get("anvil_cursor", 0)
+    count   = len(_anvil_filtered_recipes(mat_idx))
+    cursor  = (cursor - 1) % max(count, 1)
     _ui_state[user_id] = {**state, "anvil_cursor": cursor}
     await _anvil_refresh(interaction, guild_id, user_id)
 
@@ -7535,11 +7561,33 @@ async def handle_anvil_up(
 async def handle_anvil_down(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move the anvil cursor down."""
-    state = _ui_state.get(user_id, {"anvil_cursor": 0})
-    cursor = state.get("anvil_cursor", 0)
-    cursor = (cursor + 1) % len(_ANVIL_RECIPES)
+    """Move the anvil cursor down within the active material's recipe list."""
+    state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = state.get("anvil_material", 0)
+    cursor  = state.get("anvil_cursor", 0)
+    count   = len(_anvil_filtered_recipes(mat_idx))
+    cursor  = (cursor + 1) % max(count, 1)
     _ui_state[user_id] = {**state, "anvil_cursor": cursor}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_prev(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the previous material page (wraps)."""
+    state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = (state.get("anvil_material", 0) - 1) % len(_ANVIL_MATERIALS)
+    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_next(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the next material page (wraps)."""
+    state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = (state.get("anvil_material", 0) + 1) % len(_ANVIL_MATERIALS)
+    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
     await _anvil_refresh(interaction, guild_id, user_id)
 
 
@@ -7547,10 +7595,15 @@ async def handle_anvil_craft(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     """Craft the currently selected recipe."""
-    state = _ui_state.get(user_id, {"anvil_cursor": 0})
-    cursor = state.get("anvil_cursor", 0)
-    cursor = max(0, min(cursor, len(_ANVIL_RECIPES) - 1))
-    recipe = _ANVIL_RECIPES[cursor]
+    state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = state.get("anvil_material", 0)
+    cursor  = state.get("anvil_cursor", 0)
+    recipes = _anvil_filtered_recipes(mat_idx)
+    if not recipes:
+        await _anvil_refresh(interaction, guild_id, user_id, "No recipes available.")
+        return
+    cursor = max(0, min(cursor, len(recipes) - 1))
+    recipe = recipes[cursor]
 
     db = await get_database(guild_id)
 

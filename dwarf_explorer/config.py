@@ -127,7 +127,7 @@ ITEM_EMOJI = {
     "key": "\U0001F511",             # 🔑
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
-    "knife": "\U0001F5E1\uFE0F",    # 🗡️
+    "knife": "\U0001F52A",    # 🗡️
     "hiking_boots":    "\U0001F97E",    # 🥾
     "climbing_boots":  "\U0001F97E",    # 🥾 (same as hiking boots)
     "torch": "\U0001F526",           # 🔦
@@ -332,18 +332,21 @@ ARENA_EMOJI = {
 FOOD_HP_RESTORE = {"fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20}
 
 # Consumable items: shown in combat food menu
+# "escape": True  → guaranteed combat escape with no parting blow (e.g. Coward's Ale)
 CONSUMABLE_ITEMS = {
-    "fish":        {"hp": 5,   "desc": "+5 HP"},
-    "cooked_fish": {"hp": 15,  "desc": "+15 HP"},
-    "bread":       {"hp": 10,  "desc": "+10 HP"},
-    "meat_stew":   {"hp": 20,  "desc": "+20 HP"},
+    "fish":         {"hp": 5,   "desc": "+5 HP"},
+    "cooked_fish":  {"hp": 15,  "desc": "+15 HP"},
+    "bread":        {"hp": 10,  "desc": "+10 HP"},
+    "meat_stew":    {"hp": 20,  "desc": "+20 HP"},
+    "cowards_ale":  {"hp": 0,   "desc": "Guaranteed escape — no parting blow", "escape": True},
 }
 
 # Tavern food/drink menu (price in gold)
 TAVERN_MENU = [
-    {"id": "bread",     "name": "Bread",     "price": 4,  "hp": 10},
-    {"id": "ale",       "name": "Ale",       "price": 6,  "hp": 0},
-    {"id": "meat_stew", "name": "Meat Stew", "price": 10, "hp": 20},
+    {"id": "bread",       "name": "Bread",        "price": 4,  "hp": 10},
+    {"id": "ale",         "name": "Ale",           "price": 6,  "hp": 0},
+    {"id": "meat_stew",   "name": "Meat Stew",     "price": 10, "hp": 20},
+    {"id": "cowards_ale", "name": "Coward's Ale",  "price": 10, "hp": 0},
 ]
 
 # Farm animal types for farmhouse enclosures
@@ -817,7 +820,7 @@ SHOP_CATALOG = [
     {
         "id": "knife",
         "name": "Knife",
-        "emoji": "\U0001F5E1\uFE0F",
+        "emoji": "\U0001F52A",
         "price": 25,
         "equip_slot": "hand",
         "description": "A sharp blade. +5 attack. Cut grass & plains.",
@@ -1343,3 +1346,5 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ITEM_EMOJI["small_gear"] = cache["gear_small_still"]
     elif "gear_small" in cache:
         ITEM_EMOJI["small_gear"] = cache["gear_small"]
+
+
