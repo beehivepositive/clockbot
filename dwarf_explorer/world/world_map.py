@@ -51,7 +51,9 @@ _LEGEND_COLS   = 2
 
 # Special tiles painted as large icons instead of plain colored squares
 _ICON_TILES = {entry[0] for entry in _LEGEND_ICON_ENTRIES}
-_ICON_SIZE  = 7   # pixel radius (drawn as 7×7 centred on tile centre)
+
+# Temple tiles get a larger icon so they're easy to spot on the map
+_LARGE_ICON_TILES = {"sky_temple_outer", "sky_temple_main"}
 
 # ── Base-map cache ─────────────────────────────────────────────────────────────
 # Wilderness map: keyed by guild_id → (seed, n_overrides, timestamp, png_bytes)
@@ -88,9 +90,8 @@ def invalidate_ocean_map_cache(guild_id: int) -> None:
     _OCEAN_BASE_CACHE.pop(guild_id, None)
 
 
-def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
-    """Draw a distinctive icon centred at (cx, cy)."""
-    r = 3   # half-size
+def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple, r: int = 3) -> None:
+    """Draw a distinctive icon centred at (cx, cy). r controls half-size (default 3)."""
     white = (255, 255, 255)
     if style == "filled_diamond":
         pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
@@ -105,19 +106,19 @@ def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple) -> None:
         draw.rectangle([cx - r, cy - r, cx + r, cy + r], fill=color, outline=white)
         draw.rectangle([cx - r + 2, cy - r + 2, cx + r - 2, cy + r - 2], fill=(30, 30, 30))
     elif style == "arrow_down":
-        ar = 4
+        ar = r + 1
         pts = [(cx, cy + ar), (cx - ar, cy - ar), (cx + ar, cy - ar)]
         draw.polygon(pts, fill=color, outline=white)
     elif style == "arrow_up":
-        ar = 4
+        ar = r + 1
         pts = [(cx, cy - ar), (cx - ar, cy + ar), (cx + ar, cy + ar)]
         draw.polygon(pts, fill=color, outline=white)
     elif style == "arrow_left":
-        ar = 4
+        ar = r + 1
         pts = [(cx - ar, cy), (cx + ar, cy - ar), (cx + ar, cy + ar)]
         draw.polygon(pts, fill=color, outline=white)
     elif style == "arrow_right":
-        ar = 4
+        ar = r + 1
         pts = [(cx + ar, cy), (cx - ar, cy - ar), (cx - ar, cy + ar)]
         draw.polygon(pts, fill=color, outline=white)
     else:  # dot
@@ -201,7 +202,8 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
             color, style = _icon_style[tile_type]
             cx = wx * scale + scale // 2
             cy = wy * scale + scale // 2
-            _draw_icon(draw, cx, cy, style, color)
+            icon_r = 5 if tile_type in _LARGE_ICON_TILES else 3
+            _draw_icon(draw, cx, cy, style, color, r=icon_r)
 
     # ── Legend ────────────────────────────────────────────────────────────────
     try:
