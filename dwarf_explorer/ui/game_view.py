@@ -1039,12 +1039,8 @@ class ChestView(discord.ui.View):
 class GearMachineView(discord.ui.View):
     """Gear-puzzle machine UI — opened by stepping onto the gear_machine tile in an outer temple.
 
-    Row 0: [Slot 0] [Slot 1]
-    Row 1: [Slot 2] [Slot 3]
-    Row 2: [❌ Close]
-
-    Each slot button dynamically shows its state; clicking places or removes the gear.
-    slot_states: list of (required_gear, is_filled) for the 4 slots in OUTER_GEAR_SLOTS order.
+    2 slot buttons per row; close button on the row after the last slot row.
+    slot_states: list of (required_gear, is_filled) in chain order (variable length per layout).
     """
 
     def __init__(
@@ -1055,34 +1051,29 @@ class GearMachineView(discord.ui.View):
         inv_item_ids: set[str],
     ):
         super().__init__(timeout=None)
-        _SLOT_LABELS = [
-            "Slot 1 (NW)", "Slot 2 (NE)", "Slot 3 (SW)", "Slot 4 (SE)",
-        ]
         for i, (required, is_filled) in enumerate(slot_states):
             gear_icon = "⚙️" if required == "small_gear" else "🔩"
             if is_filled:
-                label = f"🔧 {_SLOT_LABELS[i]} — Remove"
+                label = f"🔧 Slot {i + 1} — Remove"
                 style = discord.ButtonStyle.danger
-                disabled = False
             else:
                 has_gear = required in inv_item_ids
-                label = f"{gear_icon} {_SLOT_LABELS[i]} — Place"
+                label = f"{gear_icon} Slot {i + 1} — Place"
                 style = discord.ButtonStyle.success if has_gear else discord.ButtonStyle.secondary
-                disabled = False  # allow clicking even without gear — handler shows a hint
 
             self.add_item(discord.ui.Button(
                 style=style,
                 label=label,
                 custom_id=_custom_id(guild_id, user_id, f"gear_slot_{i}"),
                 row=i // 2,
-                disabled=disabled,
             ))
 
+        close_row = len(slot_states) // 2
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="❌ Close",
             custom_id=_custom_id(guild_id, user_id, "gear_machine_close"),
-            row=2,
+            row=close_row,
         ))
 
 
@@ -10049,13 +10040,14 @@ async def _open_gear_machine(
         await interaction.response.send_message("No gear machine here.", ephemeral=True)
         return
 
-    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS
+    from dwarf_explorer.world.temples import get_layout_gear_slots
+    layout_slots = get_layout_gear_slots(player.temple_id)
     slot_rows = await db.fetch_all(
         "SELECT slot_x, slot_y, required_gear, is_filled FROM temple_gear_slots WHERE temple_id=?",
         (player.temple_id,),
     )
     slot_map = {(r["slot_x"], r["slot_y"]): (r["required_gear"], bool(r["is_filled"])) for r in slot_rows}
-    slot_states = [slot_map.get((ax, ay), (req, False)) for ax, ay, req in OUTER_GEAR_SLOTS]
+    slot_states = [slot_map.get((ax, ay), (req, False)) for ax, ay, req in layout_slots]
 
     inv = await get_inventory(db, user_id)
     inv_item_ids = {r["item_id"] for r in inv if r["quantity"] > 0}
@@ -10076,13 +10068,14 @@ async def handle_gear_slot(
         await interaction.response.send_message("Not in a temple.", ephemeral=True)
         return
 
-    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS
+    from dwarf_explorer.world.temples import get_layout_gear_slots
+    layout_slots = get_layout_gear_slots(player.temple_id)
 
-    if slot_index < 0 or slot_index >= len(OUTER_GEAR_SLOTS):
+    if slot_index < 0 or slot_index >= len(layout_slots):
         await interaction.response.send_message("Invalid slot.", ephemeral=True)
         return
 
-    ax, ay, required = OUTER_GEAR_SLOTS[slot_index]
+    ax, ay, required = layout_slots[slot_index]
     sr = await db.fetch_one(
         "SELECT required_gear, is_filled FROM temple_gear_slots WHERE temple_id=? AND slot_x=? AND slot_y=?",
         (player.temple_id, ax, ay),
@@ -10131,7 +10124,7 @@ async def handle_gear_slot(
         (player.temple_id,),
     )
     slot_map = {(r["slot_x"], r["slot_y"]): (r["required_gear"], bool(r["is_filled"])) for r in slot_rows}
-    slot_states = [slot_map.get((ax2, ay2), (req2, False)) for ax2, ay2, req2 in OUTER_GEAR_SLOTS]
+    slot_states = [slot_map.get((ax2, ay2), (req2, False)) for ax2, ay2, req2 in layout_slots]
     solved2 = await is_outer_temple_solved(db, player.temple_id)
     inv2 = await get_inventory(db, user_id)
     inv_item_ids = {r["item_id"] for r in inv2 if r["quantity"] > 0}

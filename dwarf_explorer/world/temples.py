@@ -9,22 +9,6 @@ TEMPLE_SIZE = 11
 TEMPLE_ENTRY_X = 5
 TEMPLE_ENTRY_Y = 8   # player spawns one tile inside the entrance
 
-# Gear slots in each outer temple.
-# Large gears are 2×2 tiles anchored at (slot_x, slot_y).
-# CW/CCW alternates by slot index (even = CW, odd = CCW) so adjacent gears mesh.
-OUTER_GEAR_SLOTS: list[tuple[int, int, str]] = [
-    (2, 2, "small_gear"),   # index 0 — CW,  top-left corner
-    (7, 2, "large_gear"),   # index 1 — CCW, top-right  (covers 7-8, 2-3)
-    (2, 7, "large_gear"),   # index 2 — CW,  bottom-left (covers 2-3, 7-8)
-    (8, 8, "small_gear"),   # index 3 — CCW, bottom-right corner
-]
-
-# Is this gear slot clockwise? (derived from index parity at module load)
-GEAR_SLOT_IS_CW: dict[tuple[int, int], bool] = {
-    (ax, ay): (idx % 2 == 0)
-    for idx, (ax, ay, _) in enumerate(OUTER_GEAR_SLOTS)
-}
-
 # All gear-slot tile-type names (used by game_view to detect interact targets)
 GEAR_SLOT_TERRAIN: frozenset[str] = frozenset({
     "gear_slot_s_empty", "gear_slot_l_empty",
@@ -35,12 +19,6 @@ GEAR_SLOT_TERRAIN: frozenset[str] = frozenset({
 
 OUTER_ALTAR_POS    = (5, 5)
 OUTER_ENTRANCE_POS = (5, 9)
-
-# Indices into OUTER_GEAR_SLOTS that are pre-installed when a temple is first created.
-# Slot 0 (small, first in chain) and slot 3 (small, last in chain) come pre-filled.
-# Slot 0 is adjacent to the power source → spins immediately.
-# Slot 3 is isolated (not yet connected) → shows as still until the player bridges the gap.
-OUTER_GEAR_PREFILLED: frozenset[int] = frozenset({0, 3})
 
 MAIN_PORTAL_POS       = (5, 5)
 MAIN_RUNE_POSITIONS   = [(5, 4), (4, 5), (6, 5), (5, 6)]
@@ -69,73 +47,143 @@ MACHINE_CENTER = 4   # kept for API compatibility
 class MachineLayout(NamedTuple):
     """Describes the visual layout of one gear machine puzzle.
 
-    power_tiles  : visible tiles of the fixed CW power-source gear  {(x,y): quad}
-    slot_anchors : top-left anchor for each of the 4 player slots    [(ax,ay)]
-                   Index matches OUTER_GEAR_SLOTS (0=small,1=large,2=large,3=small)
-    target_tiles : visible tiles of the fixed CCW target gear        {(x,y): quad}
+    power_tiles : visible tiles of the fixed CW power-source gear  {(x,y): quad}
+    slots       : player gear slots in chain order [(ax, ay, gear_type), ...]
+                  slot 0 = power-adjacent (pre-filled, spins at once)
+                  slot N = target-adjacent (pre-filled, still until bridged)
+    target_tiles: visible tiles of the fixed CCW target gear        {(x,y): quad}
+    prefilled   : slot indices that start pre-installed             frozenset[int]
     """
     power_tiles:  dict[tuple[int, int], str]
-    slot_anchors: list[tuple[int, int]]
+    slots:        list[tuple[int, int, str]]
     target_tiles: dict[tuple[int, int], str]
+    prefilled:    frozenset[int]
 
 
-# ── Six meander-verified layout templates ─────────────────────────────────────
-# Each chain bends at least twice so no path looks like a straight run.
-# Adjacency notation (→ direction from each element to the next):
-#   power ↔ S0(small) ↔ L1(large 2×2) ↔ L2(large 2×2) ↔ S3(small) ↔ target
+# ── Six edge-to-opposite-edge layouts ─────────────────────────────────────────
+# Every layout starts at one board edge and terminates at the OPPOSITE edge.
+# Each path changes direction at least 3 times so it meanders visibly.
+# 6 player slots each (mix of small 1×1 and large 2×2).
+# prefilled = {0, 5}: slot 0 (power-adjacent, spins immediately) and
+#                      slot 5 (target-adjacent, still until player bridges gap).
 #
-# Layout 0 — Z-shape  (top-right ↓ ← ↓ → right-edge)
-#   power(7-8,0) ↓ S0(7,1) ← L1(5-6,1-2) ↓ L2(5-6,3-4) → S3(7,3) → target(8,3-4)
-#   Directions: DOWN → LEFT → DOWN → RIGHT → RIGHT
+# Adjacency verification key:
+#   S(x,y)        = small gear at (x,y)
+#   L(ax,ay)→{tiles} = large gear anchored (ax,ay), occupying (ax,ay),(ax+1,ay),(ax,ay+1),(ax+1,ay+1)
+#   "adj" = shares a non-diagonal edge
+
+# ── L0: LEFT edge → RIGHT edge ──────────────────────────────────────────────
+# power(0,4)tr,(0,5)br  → S(1,4) ↑ L(1,2) → L(3,1) → S(5,2) → L(6,2) ↓ S(7,4) → target(8,3-4)
+# Directions: R → UP → R → R → R → DOWN → R  (4 bends)
+# Adjacency: power(0,4)→S(1,4)  S(1,4)→L(1,3)  L(2,2)→L(3,2)  L(4,2)→S(5,2)
+#            S(5,2)→L(6,2)  L(7,3)→S(7,4)  S(7,4)→target(8,4)
 _L0 = MachineLayout(
-    power_tiles  = {(7, 0): "bl", (8, 0): "br"},       # top-right edge (bottom half visible)
-    slot_anchors = [(7, 1), (5, 1), (5, 3), (7, 3)],
-    target_tiles = {(8, 3): "tl", (8, 4): "bl"},       # right-edge cut (left half visible)
+    power_tiles  = {(0, 4): "tr", (0, 5): "br"},        # left edge — right half of off-screen gear
+    slots = [
+        (1, 4, "small_gear"),    # S0 — adj to power(0,4) right
+        (1, 2, "large_gear"),    # L1 — adj to S0(1,4) via up to (1,3)
+        (3, 1, "large_gear"),    # L2 — adj to L1(2,2) right to (3,2)
+        (5, 2, "small_gear"),    # S3 — adj to L2(4,2) right
+        (6, 2, "large_gear"),    # L4 — adj to S3(5,2) right to (6,2)
+        (7, 4, "small_gear"),    # S5 — adj to L4(7,3) down; touches target
+    ],
+    target_tiles = {(8, 3): "tl", (8, 4): "bl"},        # right edge — left half of off-screen gear
+    prefilled    = frozenset({0, 5}),
 )
 
-# Layout 1 — S-curve  (left-middle → right ↓ right → right-centre)
-#   power(0,2-3) → S0(1,2) → L1(2-3,2-3) ↓ L2(2-3,4-5) → S3(4,5) → target(5-6,4-5)
-#   Directions: RIGHT → RIGHT → DOWN → RIGHT → RIGHT
+# ── L1: RIGHT edge → LEFT edge ──────────────────────────────────────────────
+# power(8,4)tl,(8,5)bl  → S(7,5) ← L(5,4) ↑ S(5,3) ← L(3,2) ↓ L(2,4) ← S(1,4) → target(0,3-4)
+# Directions: L → L → UP → L → DOWN → L → L  (4 bends)
+# Adjacency: power(8,5)→S(7,5)  S(7,5)→L(6,5)  L(5,4)→S(5,3) up  S(5,3)→L(4,3) left
+#            L(3,3)→L(3,4) down  L(2,4)→S(1,4)  S(1,4)→target(0,4)
 _L1 = MachineLayout(
-    power_tiles  = {(0, 2): "tr", (0, 3): "br"},       # left edge mid (right half visible)
-    slot_anchors = [(1, 2), (2, 2), (2, 4), (4, 5)],
-    target_tiles = {(5, 4): "tl", (6, 4): "tr", (5, 5): "bl", (6, 5): "br"},  # centre-right
+    power_tiles  = {(8, 4): "tl", (8, 5): "bl"},        # right edge — left half
+    slots = [
+        (7, 5, "small_gear"),    # S0 — adj to power(8,5) left
+        (5, 4, "large_gear"),    # L1 — adj to S0(7,5) via left to (6,5)
+        (5, 3, "small_gear"),    # S2 — adj to L1(5,4) up
+        (3, 2, "large_gear"),    # L3 — adj to S2(5,3) via left to (4,3)
+        (2, 4, "large_gear"),    # L4 — adj to L3(3,3) down to (3,4)
+        (1, 4, "small_gear"),    # S5 — adj to L4(2,4) left; touches target
+    ],
+    target_tiles = {(0, 3): "tr", (0, 4): "br"},        # left edge — right half
+    prefilled    = frozenset({0, 5}),
 )
 
-# Layout 2 — Reverse-Z  (bottom-centre ↑ → ↑ ← left-centre)
-#   power(4-5,8) ↑ S0(4,7) → L1(5-6,6-7) ↑ L2(5-6,4-5) ← S3(4,5) ← target(2-3,5-6)
-#   Directions: UP → RIGHT → UP → LEFT → LEFT
+# ── L2: TOP edge → BOTTOM edge ──────────────────────────────────────────────
+# power(3,0)bl,(4,0)br  → S(4,1) ↓ L(4,2) → S(6,3) ↓ L(6,4) ← S(5,5) ↓ L(4,6) → target(4-5,8)
+# Directions: D → D → R → D → L → D → D  (4 bends)
+# Adjacency: power(4,0)→S(4,1)  S(4,1)→L(4,2) down  L(5,3)→S(6,3) right
+#            S(6,3)→L(6,4) down  L(6,5)→S(5,5) left  S(5,5)→L(5,6) down  L(4,7)→target(4,8)
 _L2 = MachineLayout(
-    power_tiles  = {(4, 8): "tl", (5, 8): "tr"},       # bottom edge (top half visible)
-    slot_anchors = [(4, 7), (5, 6), (5, 4), (4, 5)],
-    target_tiles = {(2, 5): "tl", (3, 5): "tr", (2, 6): "bl", (3, 6): "br"},  # left-centre
+    power_tiles  = {(3, 0): "bl", (4, 0): "br"},        # top edge — bottom half
+    slots = [
+        (4, 1, "small_gear"),    # S0 — adj to power(4,0) down
+        (4, 2, "large_gear"),    # L1 — adj to S0(4,1) down to (4,2)
+        (6, 3, "small_gear"),    # S2 — adj to L1(5,3) right
+        (6, 4, "large_gear"),    # L3 — adj to S2(6,3) down to (6,4)
+        (5, 5, "small_gear"),    # S4 — adj to L3(6,5) left
+        (4, 6, "large_gear"),    # L5 — adj to S4(5,5) down to (5,6); (4,7)→target
+    ],
+    target_tiles = {(4, 8): "tl", (5, 8): "tr"},        # bottom edge — top half
+    prefilled    = frozenset({0, 5}),
 )
 
-# Layout 3 — Reverse-L / ⌐  (top-right corner ← ↓ → right-edge)
-#   power(8,0) ← S0(7,0) ← L1(5-6,0-1) ↓ L2(5-6,2-3) → S3(7,2) → target(8,2-3)
-#   Directions: LEFT → LEFT → DOWN → RIGHT → RIGHT
+# ── L3: BOTTOM edge → TOP edge ──────────────────────────────────────────────
+# power(4,8)tl,(5,8)tr  → S(4,7) ↑ L(4,5) ← S(3,5) ↑ L(2,3) → S(4,3) ↑ L(4,1) → target(3-4,0)
+# Directions: U → U → L → U → R → U → U  (4 bends)
+# Adjacency: power(4,8)→S(4,7)  S(4,7)→L(4,6) up  L(4,5)→S(3,5) left
+#            S(3,5)→L(3,4) up  L(3,3)→S(4,3) right  S(4,3)→L(4,2) up  L(4,1)→target(4,0)
 _L3 = MachineLayout(
-    power_tiles  = {(8, 0): "bl"},                     # top-right corner (single quad)
-    slot_anchors = [(7, 0), (5, 0), (5, 2), (7, 2)],
-    target_tiles = {(8, 2): "tl", (8, 3): "bl"},       # right-edge cut
+    power_tiles  = {(4, 8): "tl", (5, 8): "tr"},        # bottom edge — top half
+    slots = [
+        (4, 7, "small_gear"),    # S0 — adj to power(4,8) up
+        (4, 5, "large_gear"),    # L1 — adj to S0(4,7) via up to (4,6)
+        (3, 5, "small_gear"),    # S2 — adj to L1(4,5) left
+        (2, 3, "large_gear"),    # L3 — adj to S2(3,5) via up to (3,4)
+        (4, 3, "small_gear"),    # S4 — adj to L3(3,3) right
+        (4, 1, "large_gear"),    # L5 — adj to S4(4,3) via up to (4,2); (4,1)→target(4,0)
+    ],
+    target_tiles = {(3, 0): "bl", (4, 0): "br"},        # top edge — bottom half
+    prefilled    = frozenset({0, 5}),
 )
 
-# Layout 4 — Rising-Z  (left-lower → right ↑ right → upper-right)
-#   power(0,6-7) → S0(1,6) → L1(2-3,5-6) ↑ L2(4-5,4-5) → S3(6,4) → target(7-8,3-4)
-#   Directions: RIGHT → RIGHT → UP → RIGHT → RIGHT
+# ── L4: TOP-RIGHT → BOTTOM-LEFT ─────────────────────────────────────────────
+# power(6,0)bl,(7,0)br  → S(6,1) ← L(4,1) ↓ L(4,3) ← S(3,4) ↓ L(2,5) ↓ S(2,7) → target(1-2,8)
+# Directions: D → L → D → L → D → D → D  (3 bends)
+# Adjacency: power(6,0)→S(6,1)  S(6,1)→L(5,1) left  L(4,2)→L(4,3) down
+#            L(4,4)→S(3,4) left  S(3,4)→L(3,5) down  L(2,6)→S(2,7)  S(2,7)→target(2,8)
 _L4 = MachineLayout(
-    power_tiles  = {(0, 6): "tr", (0, 7): "br"},       # left edge lower (right half visible)
-    slot_anchors = [(1, 6), (2, 5), (4, 4), (6, 4)],
-    target_tiles = {(7, 3): "tl", (8, 3): "tr", (7, 4): "bl", (8, 4): "br"},  # upper-right
+    power_tiles  = {(6, 0): "bl", (7, 0): "br"},        # top edge right side
+    slots = [
+        (6, 1, "small_gear"),    # S0 — adj to power(6,0) down
+        (4, 1, "large_gear"),    # L1 — adj to S0(6,1) via left to (5,1)
+        (4, 3, "large_gear"),    # L2 — adj to L1(4,2) down to (4,3)
+        (3, 4, "small_gear"),    # S3 — adj to L2(4,4) left
+        (2, 5, "large_gear"),    # L4 — adj to S3(3,4) down to (3,5)
+        (2, 7, "small_gear"),    # S5 — adj to L4(2,6) down; touches target
+    ],
+    target_tiles = {(1, 8): "tl", (2, 8): "tr"},        # bottom edge left side
+    prefilled    = frozenset({0, 5}),
 )
 
-# Layout 5 — Long traverse  (right-middle ← ↑ ← upper-left)
-#   power(8,5-6) ← S0(7,6) ← L1(5-6,5-6) ↑ L2(4-5,3-4) ← S3(3,3) ← target(1-2,2-3)
-#   Directions: LEFT → LEFT → UP → LEFT → LEFT
+# ── L5: TOP-LEFT → BOTTOM-RIGHT ─────────────────────────────────────────────
+# power(1,0)bl,(2,0)br  → S(2,1) → L(3,1) ↓ L(4,3) → S(6,4) ↓ L(6,5) ↓ S(7,7) → target(6-7,8)
+# Directions: D → R → D → R → D → D → D  (3 bends)
+# Adjacency: power(2,0)→S(2,1)  S(2,1)→L(3,1) right  L(4,2)→L(4,3) down
+#            L(5,4)→S(6,4) right  S(6,4)→L(6,5) down  L(7,6)→S(7,7)  S(7,7)→target(7,8)
 _L5 = MachineLayout(
-    power_tiles  = {(8, 5): "tl", (8, 6): "bl"},       # right edge mid (left half visible)
-    slot_anchors = [(7, 6), (5, 5), (4, 3), (3, 3)],
-    target_tiles = {(1, 2): "tl", (2, 2): "tr", (1, 3): "bl", (2, 3): "br"},  # upper-left
+    power_tiles  = {(1, 0): "bl", (2, 0): "br"},        # top edge left side
+    slots = [
+        (2, 1, "small_gear"),    # S0 — adj to power(2,0) down
+        (3, 1, "large_gear"),    # L1 — adj to S0(2,1) right to (3,1)
+        (4, 3, "large_gear"),    # L2 — adj to L1(4,2) down to (4,3)
+        (6, 4, "small_gear"),    # S3 — adj to L2(5,4) right
+        (6, 5, "large_gear"),    # L4 — adj to S3(6,4) down to (6,5)
+        (7, 7, "small_gear"),    # S5 — adj to L4(7,6) down; touches target
+    ],
+    target_tiles = {(6, 8): "tl", (7, 8): "tr"},        # bottom edge right side
+    prefilled    = frozenset({0, 5}),
 )
 
 MACHINE_LAYOUTS: list[MachineLayout] = [_L0, _L1, _L2, _L3, _L4, _L5]
@@ -144,6 +192,15 @@ MACHINE_LAYOUTS: list[MachineLayout] = [_L0, _L1, _L2, _L3, _L4, _L5]
 def get_machine_layout(temple_id: int) -> MachineLayout:
     """Return the layout template for a given outer temple."""
     return MACHINE_LAYOUTS[temple_id % len(MACHINE_LAYOUTS)]
+
+
+def get_layout_gear_slots(temple_id: int) -> list[tuple[int, int, str]]:
+    """Return [(ax, ay, gear_type), ...] in chain order for the given temple's layout.
+
+    Use this instead of the old OUTER_GEAR_SLOTS constant — slot count and
+    positions vary per layout.
+    """
+    return list(get_machine_layout(temple_id).slots)
 
 
 def _large_gear_tiles(ax: int, ay: int) -> list[tuple[int, int, str]]:
@@ -173,8 +230,8 @@ def _compute_powered_slots(
     """
     tile_to_slot: dict[tuple[int, int], int] = {}
     slot_tile_map: dict[int, set[tuple[int, int]]] = {}
-    for slot_idx, (ax, ay) in enumerate(layout.slot_anchors):
-        required, is_filled = slot_states[slot_idx]
+    for slot_idx, (ax, ay, required) in enumerate(layout.slots):
+        _, is_filled = slot_states[slot_idx]
         if not is_filled:
             continue
         tset = _slot_tile_positions(required, ax, ay)
@@ -234,9 +291,9 @@ def build_machine_grid(
     powered_indices, slot_tile_map = _compute_powered_slots(slot_states, layout)
 
     # ── Player slots ──────────────────────────────────────────────────────────
-    # Direction: Power=CW → slot0=CCW → slot1=CW → slot2=CCW → slot3=CW
-    for slot_idx, (ax, ay) in enumerate(layout.slot_anchors):
-        required, is_filled = slot_states[slot_idx]
+    # Direction: Power=CW → slot0=CCW → slot1=CW → slot2=CCW → …
+    for slot_idx, (ax, ay, required) in enumerate(layout.slots):
+        _, is_filled = slot_states[slot_idx]
         is_large  = (required == "large_gear")
         is_cw     = (slot_idx % 2 == 1)   # 0=CCW, 1=CW, 2=CCW, 3=CW
         dir_s     = "cw" if is_cw else "ccw"
@@ -282,22 +339,6 @@ def build_machine_grid(
             row.append(TileData(terrain=tiles.get((x, y), "temple_floor"), world_x=x, world_y=y))
         grid.append(row)
     return grid
-
-
-def find_gear_slot_anchor(local_x: int, local_y: int) -> tuple[int, int] | None:
-    """Return the anchor (slot_x, slot_y) if (local_x, local_y) is any part of a gear slot.
-
-    Handles single-tile small gears and 2×2 large gears.
-    Returns None if the position is not a gear slot.
-    """
-    for ax, ay, gear_type in OUTER_GEAR_SLOTS:
-        if gear_type == "large_gear":
-            if (local_x, local_y) in {(ax, ay), (ax + 1, ay), (ax, ay + 1), (ax + 1, ay + 1)}:
-                return (ax, ay)
-        else:
-            if (local_x, local_y) == (ax, ay):
-                return (ax, ay)
-    return None
 
 
 GEAR_MACHINE_POS = (5, 1)   # centre of north interior row — the interactable machine panel
@@ -374,7 +415,7 @@ async def get_or_create_outer_temple(db, world_x: int, world_y: int) -> int:
     )
     if row:
         temple_id = row["id"]
-        # Migrate old layout: remove any legacy gear-slot floor tiles and add the machine panel
+        # ── Migrate legacy floor gear-slot tiles ─────────────────────────────
         legacy = await db.fetch_all(
             "SELECT local_x, local_y FROM temple_tiles WHERE temple_id=? AND tile_type IN ({})".format(
                 ",".join("?" * len(_OLD_GEAR_SLOT_TILES))
@@ -382,19 +423,39 @@ async def get_or_create_outer_temple(db, world_x: int, world_y: int) -> int:
             (temple_id, *_OLD_GEAR_SLOT_TILES),
         )
         if legacy:
-            # Delete old gear-slot tiles
             await db.execute(
                 "DELETE FROM temple_tiles WHERE temple_id=? AND tile_type IN ({})".format(
                     ",".join("?" * len(_OLD_GEAR_SLOT_TILES))
                 ),
                 (temple_id, *_OLD_GEAR_SLOT_TILES),
             )
-            # Place gear_machine tile (upsert)
             mx, my = GEAR_MACHINE_POS
             await db.execute(
                 "INSERT OR REPLACE INTO temple_tiles (temple_id, local_x, local_y, tile_type) VALUES (?,?,?,'gear_machine')",
                 (temple_id, mx, my),
             )
+        # ── Reconcile gear slots with current layout ──────────────────────────
+        layout = get_machine_layout(temple_id)
+        layout_positions = {(ax, ay) for ax, ay, _ in layout.slots}
+        existing = await db.fetch_all(
+            "SELECT slot_x, slot_y FROM temple_gear_slots WHERE temple_id=?",
+            (temple_id,),
+        )
+        existing_positions = {(r["slot_x"], r["slot_y"]) for r in existing}
+        # Remove stale slots no longer in this layout
+        for sx, sy in existing_positions - layout_positions:
+            await db.execute(
+                "DELETE FROM temple_gear_slots WHERE temple_id=? AND slot_x=? AND slot_y=?",
+                (temple_id, sx, sy),
+            )
+        # Add any slots that are missing
+        for i, (ax, ay, req) in enumerate(layout.slots):
+            if (ax, ay) not in existing_positions:
+                await db.execute(
+                    "INSERT OR IGNORE INTO temple_gear_slots"
+                    " (temple_id, slot_x, slot_y, required_gear, is_filled) VALUES (?,?,?,?,?)",
+                    (temple_id, ax, ay, req, 1 if i in layout.prefilled else 0),
+                )
         return temple_id
 
     cur = await db.execute(
@@ -407,13 +468,14 @@ async def get_or_create_outer_temple(db, world_x: int, world_y: int) -> int:
         "INSERT OR IGNORE INTO temple_tiles (temple_id, local_x, local_y, tile_type) VALUES (?,?,?,?)",
         [(temple_id, x, y, t) for x, y, t in tile_list],
     )
-    # One gear_slot row per anchor position; slots in OUTER_GEAR_PREFILLED start pre-filled
+    # Insert gear slots from the layout chosen for this temple_id
+    layout = get_machine_layout(temple_id)
     await db.executemany(
         "INSERT OR IGNORE INTO temple_gear_slots"
         " (temple_id, slot_x, slot_y, required_gear, is_filled) VALUES (?,?,?,?,?)",
         [
-            (temple_id, sx, sy, req, 1 if i in OUTER_GEAR_PREFILLED else 0)
-            for i, (sx, sy, req) in enumerate(OUTER_GEAR_SLOTS)
+            (temple_id, ax, ay, req, 1 if i in layout.prefilled else 0)
+            for i, (ax, ay, req) in enumerate(layout.slots)
         ],
     )
     return temple_id
@@ -438,25 +500,6 @@ async def get_or_create_main_temple(db, world_x: int, world_y: int, world_seed: 
         [(temple_id, x, y, t) for x, y, t in tile_list],
     )
     return temple_id, TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y
-
-
-def _overlay_gear_slots(
-    tile_map: dict[tuple[int, int], str],
-    slot_rows: list,
-) -> None:
-    """Overlay dynamic gear-slot states onto tile_map in-place."""
-    for sr in slot_rows:
-        ax, ay = sr["slot_x"], sr["slot_y"]
-        req    = sr["required_gear"]
-        filled = bool(sr["is_filled"])
-        is_cw  = GEAR_SLOT_IS_CW.get((ax, ay), True)
-        dir_s  = "cw" if is_cw else "ccw"
-
-        if req == "small_gear":
-            tile_map[(ax, ay)] = f"gear_slot_s_{dir_s}" if filled else "gear_slot_s_empty"
-        else:  # large_gear — 2×2 block
-            for gx, gy, quad in _large_gear_tiles(ax, ay):
-                tile_map[(gx, gy)] = f"gear_slot_l_{dir_s}_{quad}" if filled else "gear_slot_l_empty"
 
 
 async def load_temple_viewport(
