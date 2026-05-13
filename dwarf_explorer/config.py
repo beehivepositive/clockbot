@@ -494,25 +494,30 @@ TEMPLE_EMOJI: dict[str, str] = {
     "temple_rune":            "📜",
     # Gear machine panel (interactable — opens the gear puzzle viewport)
     "gear_machine":           "⚙️",
-    # Machine viewport border — dark stone frame (distinct from brick temple_wall)
-    "machine_wall":           "⬛",
     # ── Gear slot tiles — used inside the machine viewport ─────────────────────
-    # Empty sockets
-    "gear_slot_s_empty":      "⬡",
-    "gear_slot_l_empty":      "⬡",
-    # Small gear — filled (single tile)
+    # Empty sockets — ⭕ is emoji-width, unlike the old ⬡ text character
+    "gear_slot_s_empty":      "⭕",
+    "gear_slot_l_empty":      "⭕",
+    # Small gear — spinning (animated CW / CCW)
     "gear_slot_s_cw":         _ge("gear_small",         "⚙️"),
     "gear_slot_s_ccw":        _ge("gear_small_reverse", "⚙️"),
-    # Large gear — filled clockwise (2×2, four quadrant tiles)
+    # Small gear — still (not connected to power)
+    "gear_slot_s_still":      _ge("gear_small_still",   "⚙️"),
+    # Large gear — spinning clockwise (2×2)
     "gear_slot_l_cw_tl":      _ge("gear_top_left",            "🔩"),
     "gear_slot_l_cw_tr":      _ge("gear_top_right",           "🔩"),
     "gear_slot_l_cw_bl":      _ge("gear_bottom_left",         "🔩"),
     "gear_slot_l_cw_br":      _ge("gear_bottom_right",        "🔩"),
-    # Large gear — filled counter-clockwise (2×2, four quadrant tiles)
+    # Large gear — spinning counter-clockwise (2×2)
     "gear_slot_l_ccw_tl":     _ge("gear_top_left_reverse",    "🔩"),
     "gear_slot_l_ccw_tr":     _ge("gear_top_right_reverse",   "🔩"),
     "gear_slot_l_ccw_bl":     _ge("gear_bottom_left_reverse", "🔩"),
     "gear_slot_l_ccw_br":     _ge("gear_bottom_right_reverse","🔩"),
+    # Large gear — still / not connected to power (2×2)
+    "gear_slot_l_still_tl":   _ge("gear_top_left_still",      "🔩"),
+    "gear_slot_l_still_tr":   _ge("gear_top_right_still",     "🔩"),
+    "gear_slot_l_still_bl":   _ge("gear_bottom_left_still",   "🔩"),
+    "gear_slot_l_still_br":   _ge("gear_bottom_right_still",  "🔩"),
 }
 
 TEMPLE_WALKABLE: frozenset[str] = frozenset({
@@ -1311,16 +1316,23 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     # ── Gear emojis — update TEMPLE_EMOJI and ITEM_EMOJI entries ──────────────
     # Maps TEMPLE_EMOJI tile key → emoji name on the server
     _gear_tile_map: list[tuple[str, str]] = [
-        ("gear_slot_s_cw",       "gear_small"),
-        ("gear_slot_s_ccw",      "gear_small_reverse"),
-        ("gear_slot_l_cw_tl",    "gear_top_left"),
-        ("gear_slot_l_cw_tr",    "gear_top_right"),
-        ("gear_slot_l_cw_bl",    "gear_bottom_left"),
-        ("gear_slot_l_cw_br",    "gear_bottom_right"),
-        ("gear_slot_l_ccw_tl",   "gear_top_left_reverse"),
-        ("gear_slot_l_ccw_tr",   "gear_top_right_reverse"),
-        ("gear_slot_l_ccw_bl",   "gear_bottom_left_reverse"),
-        ("gear_slot_l_ccw_br",   "gear_bottom_right_reverse"),
+        # Spinning variants
+        ("gear_slot_s_cw",         "gear_small"),
+        ("gear_slot_s_ccw",        "gear_small_reverse"),
+        ("gear_slot_s_still",      "gear_small_still"),
+        ("gear_slot_l_cw_tl",      "gear_top_left"),
+        ("gear_slot_l_cw_tr",      "gear_top_right"),
+        ("gear_slot_l_cw_bl",      "gear_bottom_left"),
+        ("gear_slot_l_cw_br",      "gear_bottom_right"),
+        ("gear_slot_l_ccw_tl",     "gear_top_left_reverse"),
+        ("gear_slot_l_ccw_tr",     "gear_top_right_reverse"),
+        ("gear_slot_l_ccw_bl",     "gear_bottom_left_reverse"),
+        ("gear_slot_l_ccw_br",     "gear_bottom_right_reverse"),
+        # Still variants — server may have gear_top_left_still etc.
+        ("gear_slot_l_still_tl",   "gear_top_left_still"),
+        ("gear_slot_l_still_tr",   "gear_top_right_still"),
+        ("gear_slot_l_still_bl",   "gear_bottom_left_still"),
+        ("gear_slot_l_still_br",   "gear_bottom_right_still"),
     ]
     for tile_key, emoji_name in _gear_tile_map:
         if emoji_name in cache:
