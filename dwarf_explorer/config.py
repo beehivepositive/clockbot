@@ -85,6 +85,31 @@ ENTITY_EMOJI = {
     "temporal_echo": "\U0001F47B",   # 👻 ghostly temporal apparition
 }
 
+# ── Custom gear emoji IDs ──────────────────────────────────────────────────────
+# Replace each 0 with the actual Discord emoji ID once uploaded to your server.
+# Animated emojis use <a:name:id>; static emojis use <:name:id>.
+# Leave as 0 to use the Unicode fallback (⚙️ / 🔩).
+_GEAR_IDS: dict[str, int] = {
+    "gear_small":                0,   # small gear CW (animated)
+    "gear_small_reverse":        0,   # small gear CCW (animated)
+    "gear_small_still":          0,   # small gear static (item icon)
+    "gear_top_left":             0,   # large gear top-left CW
+    "gear_top_right":            0,   # large gear top-right CW
+    "gear_bottom_left":          0,   # large gear bottom-left CW
+    "gear_bottom_right":         0,   # large gear bottom-right CW
+    "gear_top_left_reverse":     0,   # large gear top-left CCW
+    "gear_top_right_reverse":    0,   # large gear top-right CCW
+    "gear_bottom_left_reverse":  0,   # large gear bottom-left CCW
+    "gear_bottom_right_reverse": 0,   # large gear bottom-right CCW
+}
+
+
+def _ge(name: str, fallback: str = "⚙️") -> str:
+    """Return Discord animated emoji string if an ID is set, else the fallback."""
+    eid = _GEAR_IDS.get(name, 0)
+    return f"<a:{name}:{eid}>" if eid else fallback
+
+
 ITEM_EMOJI = {
     # Farming & crops
     "wheat_seed":  "\U0001F330",     # 🌰
@@ -178,7 +203,7 @@ ITEM_EMOJI = {
     "gust_of_aevos":    "🌬️",     # 🌬️  rare ingredient for breath_of_the_sea
     "hawk_feather":     "🪶",       # 🪶  dropped by storm_hawk in sky biome
     "gold_coin":        "🪙",       # 🪙  loose gold coin (shipwreck loot)
-    "small_gear": "⚙️",
+    "small_gear": _ge("gear_small_still", "⚙️"),
     "large_gear": "🔩",
 }
 
@@ -457,28 +482,43 @@ SKY_WALKABLE = {
     "sky_rune_stone", "sky_storm_tower", "sky_wind_shrine",
 }
 
-TEMPLE_EMOJI = {
-    "temple_floor":         "🟫",
-    "temple_wall":          "🧱",
-    "temple_entrance":      "🚪",
-    "gear_slot_small":      "⚙️",
-    "gear_slot_large":      "🔩",
-    "gear_slot_filled_s":   "🟢",
-    "gear_slot_filled_l":   "🟠",
-    "temple_altar":         "🏺",
-    "temple_pillar":        "🪨",
-    "temple_portal_locked": "🔒",
-    "temple_portal_open":   "🌀",
-    "temple_rune":          "📜",
+TEMPLE_EMOJI: dict[str, str] = {
+    # Structure tiles
+    "temple_floor":           "🟫",
+    "temple_wall":            "🧱",
+    "temple_entrance":        "🚪",
+    "temple_altar":           "🏺",
+    "temple_pillar":          "🪨",
+    "temple_portal_locked":   "🔒",
+    "temple_portal_open":     "🌀",
+    "temple_rune":            "📜",
+    # Gear slots — empty (motionless socket indicator)
+    "gear_slot_s_empty":      "⬡",     # empty small-gear socket
+    "gear_slot_l_empty":      "⬡",     # empty large-gear socket (4 tiles share this)
+    # Small gears — filled
+    "gear_slot_s_cw":         _ge("gear_small",          "⚙️"),   # clockwise
+    "gear_slot_s_ccw":        _ge("gear_small_reverse",  "⚙️"),   # counter-clockwise
+    # Large gears — filled clockwise (4 quadrants)
+    "gear_slot_l_cw_tl":      _ge("gear_top_left",            "🔩"),
+    "gear_slot_l_cw_tr":      _ge("gear_top_right",           "🔩"),
+    "gear_slot_l_cw_bl":      _ge("gear_bottom_left",         "🔩"),
+    "gear_slot_l_cw_br":      _ge("gear_bottom_right",        "🔩"),
+    # Large gears — filled counter-clockwise (4 quadrants)
+    "gear_slot_l_ccw_tl":     _ge("gear_top_left_reverse",    "🔩"),
+    "gear_slot_l_ccw_tr":     _ge("gear_top_right_reverse",   "🔩"),
+    "gear_slot_l_ccw_bl":     _ge("gear_bottom_left_reverse", "🔩"),
+    "gear_slot_l_ccw_br":     _ge("gear_bottom_right_reverse","🔩"),
 }
 
-TEMPLE_WALKABLE = {
+TEMPLE_WALKABLE: frozenset[str] = frozenset({
     "temple_floor", "temple_entrance",
-    "gear_slot_small", "gear_slot_large",
-    "gear_slot_filled_s", "gear_slot_filled_l",
     "temple_altar", "temple_portal_locked", "temple_portal_open",
     "temple_rune",
-}
+    "gear_slot_s_empty", "gear_slot_l_empty",
+    "gear_slot_s_cw", "gear_slot_s_ccw",
+    "gear_slot_l_cw_tl",  "gear_slot_l_cw_tr",  "gear_slot_l_cw_bl",  "gear_slot_l_cw_br",
+    "gear_slot_l_ccw_tl", "gear_slot_l_ccw_tr", "gear_slot_l_ccw_bl", "gear_slot_l_ccw_br",
+})
 
 SKY_LORE = {
     "temple_altar": [

@@ -136,7 +136,10 @@
       "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"pm2 restart discord-bot && sleep 2 && pm2 logs discord-bot --lines 20 --nostream\")",
       "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && sleep 2 && pm2 logs discord-bot --lines 5 --nostream\")",
       "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && sleep 3 && pm2 logs discord-bot --lines 10 --nostream\")",
-      "Bash(py _patch_well.py)"
+      "Bash(py _patch_well.py)",
+      "PowerShell(scp -i ~/.ssh/do_key C:\\\\ClaudeCode\\\\check_drops.py root@64.23.151.82:/tmp/check_drops.py)",
+      "PowerShell(ssh -i ~/.ssh/do_key root@64.23.151.82 \"python3 /tmp/check_drops.py\")",
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && pm2 logs discord-bot --lines 15 --nostream\")"
     ]
   }
 }

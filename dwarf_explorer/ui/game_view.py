@@ -33,6 +33,7 @@ from dwarf_explorer.world.temples import (
     fill_gear_slot, remove_gear_slot,
     is_outer_temple_solved, are_all_outer_temples_solved,
     get_main_temple_sky_id,
+    find_gear_slot_anchor, GEAR_SLOT_TERRAIN,
     TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, OUTER_ENTRANCE_POS, MAIN_ENTRANCE_POS,
 )
 from dwarf_explorer.database.connection import get_database
@@ -5671,43 +5672,44 @@ async def handle_interact(
             )
             return
 
-        elif terrain in ("gear_slot_small", "gear_slot_large"):
-            required = "small_gear" if terrain == "gear_slot_small" else "large_gear"
-            # Check if player has the required gear
-            inv = await get_inventory(db, user_id)
-            has_gear = any(r["item_id"] == required and r["quantity"] > 0 for r in inv)
-            if has_gear:
-                gear_placed = await fill_gear_slot(db, player.temple_id, player.temple_x, player.temple_y, user_id)
-                if gear_placed:
-                    await remove_from_inventory(db, user_id, required, 1)
-                    solved = await is_outer_temple_solved(db, player.temple_id)
-                    all_solved = await are_all_outer_temples_solved(db)
-                    msg = f"⚙️ You slot the {required.replace('_', ' ')} into place."
-                    if solved:
-                        msg += " ✨ **The mechanism clicks — this temple's puzzle is complete!**"
-                    if all_solved:
-                        msg += " 🌀 **All three temples are solved! The main temple portal has opened!**"
+        elif terrain in GEAR_SLOT_TERRAIN:
+            # Resolve anchor position (handles both single-tile small and 2×2 large gears)
+            anchor = find_gear_slot_anchor(player.temple_x, player.temple_y)
+            if anchor is None:
+                msg = "⚙️ Nothing to interact with here."
+            else:
+                ax, ay = anchor
+                slot_is_empty = terrain in ("gear_slot_s_empty", "gear_slot_l_empty")
+                is_large = terrain == "gear_slot_l_empty" or "_l_cw" in terrain or "_l_ccw" in terrain
+                if slot_is_empty:
+                    required = "large_gear" if is_large else "small_gear"
+                    inv = await get_inventory(db, user_id)
+                    has_gear = any(r["item_id"] == required and r["quantity"] > 0 for r in inv)
+                    if has_gear:
+                        gear_placed = await fill_gear_slot(db, player.temple_id, ax, ay, user_id)
+                        if gear_placed:
+                            await remove_from_inventory(db, user_id, required, 1)
+                            solved    = await is_outer_temple_solved(db, player.temple_id)
+                            all_solved = await are_all_outer_temples_solved(db)
+                            msg = f"⚙️ You slot the {required.replace('_', ' ')} into place."
+                            if solved:
+                                msg += " ✨ **The mechanism clicks — this temple's puzzle is complete!**"
+                            if all_solved:
+                                msg += " 🌀 **All three temples are solved! The main temple portal has opened!**"
+                        else:
+                            msg = "This slot is already filled."
+                    else:
+                        gear_name = "small gear (⚙️)" if required == "small_gear" else "large gear (🔩)"
+                        msg = f"🔧 This slot requires a **{gear_name}**. Craft one from iron ingots or find it in chests."
                 else:
-                    msg = "This slot is already filled."
-            else:
-                gear_name = "small gear (⚙️)" if required == "small_gear" else "large gear (🔩)"
-                msg = f"🔧 This slot requires a **{gear_name}**. Craft one from iron ingots or find it in chests."
-            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
-            content = render_grid(grid, player, msg)
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=_game_view(guild_id, user_id, player, grid=grid),
-            )
-            return
-
-        elif terrain in ("gear_slot_filled_s", "gear_slot_filled_l"):
-            removed = await remove_gear_slot(db, player.temple_id, player.temple_x, player.temple_y)
-            if removed:
-                await add_to_inventory(db, user_id, removed, 1)
-                gear_name = removed.replace("_", " ")
-                msg = f"🔧 You retrieve the {gear_name} from the slot."
-            else:
-                msg = "Nothing to remove."
+                    # Slot is filled — retrieve the gear
+                    removed = await remove_gear_slot(db, player.temple_id, ax, ay)
+                    if removed:
+                        await add_to_inventory(db, user_id, removed, 1)
+                        gear_name = removed.replace("_", " ")
+                        msg = f"🔧 You retrieve the {gear_name} from the slot."
+                    else:
+                        msg = "Nothing to remove."
             grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
             content = render_grid(grid, player, msg)
             await interaction.response.edit_message(
