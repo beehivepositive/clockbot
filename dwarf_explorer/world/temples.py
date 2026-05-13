@@ -35,6 +35,11 @@ GEAR_SLOT_TERRAIN: frozenset[str] = frozenset({
 OUTER_ALTAR_POS    = (5, 5)
 OUTER_ENTRANCE_POS = (5, 9)
 
+# Indices into OUTER_GEAR_SLOTS that are pre-installed when a temple is first created.
+# Slot 0 (small, CW, NW corner) and slot 1 (large, CCW, NE corner) come pre-filled —
+# the player supplies the remaining two to complete the chain.
+OUTER_GEAR_PREFILLED: frozenset[int] = frozenset({0, 1})
+
 MAIN_PORTAL_POS       = (5, 5)
 MAIN_RUNE_POSITIONS   = [(5, 4), (4, 5), (6, 5), (5, 6)]
 MAIN_PILLAR_POSITIONS = [(2, 2), (8, 2), (2, 8), (8, 8)]
@@ -74,12 +79,12 @@ def build_machine_grid(slot_states: list[tuple[str, bool]]) -> list[list["TileDa
     slot_states: list of (required_gear, is_filled) for each slot in MACHINE_SLOT_POSITIONS order.
     Returns a 9×9 grid ready for render_grid (player placed at MACHINE_CENTER).
     """
-    # Fill with walls on border, floor on interior
+    # Fill with machine_wall border (⬛ dark stone, not brick), floor on interior
     tiles: dict[tuple[int, int], str] = {}
     for y in range(MACHINE_SIZE):
         for x in range(MACHINE_SIZE):
             if x == 0 or x == MACHINE_SIZE - 1 or y == 0 or y == MACHINE_SIZE - 1:
-                tiles[(x, y)] = "temple_wall"
+                tiles[(x, y)] = "machine_wall"
             else:
                 tiles[(x, y)] = "temple_floor"
 
@@ -230,10 +235,14 @@ async def get_or_create_outer_temple(db, world_x: int, world_y: int) -> int:
         "INSERT OR IGNORE INTO temple_tiles (temple_id, local_x, local_y, tile_type) VALUES (?,?,?,?)",
         [(temple_id, x, y, t) for x, y, t in tile_list],
     )
-    # One gear_slot row per anchor position (small or large)
+    # One gear_slot row per anchor position; slots in OUTER_GEAR_PREFILLED start pre-filled
     await db.executemany(
-        "INSERT OR IGNORE INTO temple_gear_slots (temple_id, slot_x, slot_y, required_gear) VALUES (?,?,?,?)",
-        [(temple_id, sx, sy, req) for sx, sy, req in OUTER_GEAR_SLOTS],
+        "INSERT OR IGNORE INTO temple_gear_slots"
+        " (temple_id, slot_x, slot_y, required_gear, is_filled) VALUES (?,?,?,?,?)",
+        [
+            (temple_id, sx, sy, req, 1 if i in OUTER_GEAR_PREFILLED else 0)
+            for i, (sx, sy, req) in enumerate(OUTER_GEAR_SLOTS)
+        ],
     )
     return temple_id
 

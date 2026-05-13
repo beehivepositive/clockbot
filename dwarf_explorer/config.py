@@ -494,6 +494,8 @@ TEMPLE_EMOJI: dict[str, str] = {
     "temple_rune":            "📜",
     # Gear machine panel (interactable — opens the gear puzzle viewport)
     "gear_machine":           "⚙️",
+    # Machine viewport border — dark stone frame (distinct from brick temple_wall)
+    "machine_wall":           "⬛",
     # ── Gear slot tiles — used inside the machine viewport ─────────────────────
     # Empty sockets
     "gear_slot_s_empty":      "⬡",
