@@ -167,6 +167,54 @@ def _legend_block(draw, all_legend: list, map_w: int, font) -> None:
         draw.text((x0 + _LEGEND_SWATCH + 4, text_y), label, fill=(220, 220, 220), font=font)
 
 
+# ── Coordinate ruler ─────────────────────────────────────────────────────────
+
+def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
+    """Draw tick marks + labels along the left (Y) and bottom (X) edges of the map.
+
+    Minor ticks every 50 tiles; major ticks every 100 tiles (longer, wider line).
+    """
+    white  = (255, 255, 255)
+    shadow = (0, 0, 0)
+    scale  = MAP_PIXEL_SCALE
+
+    minor_len = 5    # pixels the tick extends inward from the edge
+    major_len = 11   # pixels for a major tick
+
+    for coord in range(0, WORLD_SIZE + 1, 50):
+        coord = min(coord, WORLD_SIZE)
+        # Pixel position of this tile boundary
+        px = coord * scale
+        # Clamp to image bounds
+        px = max(0, min(px, map_w - 1))
+
+        is_major = (coord % 100 == 0)
+        tick = major_len if is_major else minor_len
+        lw   = 2      if is_major else 1
+        label = str(coord)
+
+        # ── Y-axis ruler (left edge, horizontal ticks extending right) ──────
+        if coord <= WORLD_SIZE:
+            py = min(coord * scale, map_h - 1)
+            draw.line([(0, py), (tick, py)], fill=white, width=lw)
+            if is_major:
+                # Text with 1-pixel black shadow for readability
+                draw.text((tick + 3, py - 5), label, fill=shadow, font=font)
+                draw.text((tick + 2, py - 6), label, fill=white,  font=font)
+            else:
+                draw.text((tick + 2, py - 5), label, fill=(180, 180, 180), font=font)
+
+        # ── X-axis ruler (bottom edge, vertical ticks extending up) ─────────
+        if coord <= WORLD_SIZE:
+            px2 = min(coord * scale, map_w - 1)
+            draw.line([(px2, map_h - tick), (px2, map_h - 1)], fill=white, width=lw)
+            if is_major:
+                draw.text((px2 + 2, map_h - tick - 12), label, fill=shadow, font=font)
+                draw.text((px2 + 1, map_h - tick - 13), label, fill=white,  font=font)
+            else:
+                draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
+
+
 # ── Wilderness base-map renderer ──────────────────────────────────────────────
 
 def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
@@ -232,6 +280,7 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
         except Exception:
             font = ImageFont.load_default()
 
+    _draw_coord_rulers(draw, map_w, map_h, font)
     _legend_block(draw, all_legend_entries, map_w, font)
 
     buf = io.BytesIO()

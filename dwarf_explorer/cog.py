@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID, WORLD_SIZE
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world, update_player_message,
@@ -458,6 +458,60 @@ class DwarfExplorer(commands.Cog):
         view = _GV(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
 
+        msg = await interaction.original_response()
+        await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+
+
+    @app_commands.command(name="tp", description="Teleport admin character to overworld coordinates.")
+    @app_commands.describe(x="World X coordinate (0–447)", y="World Y coordinate (0–447)")
+    async def tp(self, interaction: discord.Interaction, x: int, y: int) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "You don't have permission to use this command.", ephemeral=True
+            )
+            return
+
+        # Clamp to world bounds
+        x = max(0, min(WORLD_SIZE - 1, x))
+        y = max(0, min(WORLD_SIZE - 1, y))
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+        seed = await get_or_create_world(db, guild_id)
+        await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+
+        # Reset all sub-location state and place admin at overworld coordinates
+        await update_player_stats(
+            db, ADMIN_PLAYER_ID,
+            world_x=x, world_y=y,
+            in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+            in_village=0, village_id=None,
+            in_house=0, house_id=None,
+            in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+        )
+        # Clear sky/temple state directly (not all in update_player_stats signature)
+        await db.execute(
+            "UPDATE players SET in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
+            "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0 WHERE user_id=?",
+            (ADMIN_PLAYER_ID,)
+        )
+
+        player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+        player.gold = 999999
+
+        grid = await load_viewport(x, y, seed, db)
+        content = render_grid(grid, player, f"🗺️ Teleported to ({x}, {y}).")
+        view = GameView(guild_id, ADMIN_PLAYER_ID)
+        await interaction.response.send_message(
+            embed=discord.Embed(description=content), view=view
+        )
         msg = await interaction.original_response()
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
