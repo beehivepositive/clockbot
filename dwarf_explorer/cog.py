@@ -129,6 +129,8 @@ class DwarfExplorer(commands.Cog):
             view = GameView(guild_id, user_id)
             await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         else:
+            # Defer immediately — DB + world-gen calls can exceed Discord's 3-second window
+            await interaction.response.defer()
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
             if player.xp == 0 and player.level == 1 and not player.in_village:
                 await _place_in_village(db, seed, user_id, player)
@@ -140,7 +142,7 @@ class DwarfExplorer(commands.Cog):
             grid = await _player_grid(player, seed, db)
             content = render_grid(grid, player)
             view = GameView(guild_id, user_id)
-            await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
+            await interaction.followup.send(embed=discord.Embed(description=content), view=view)
 
         # Store the message reference for future use
         msg = await interaction.original_response()
