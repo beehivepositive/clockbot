@@ -1,4 +1,4 @@
-CHUNK_SIZE = 7
+﻿CHUNK_SIZE = 7
 WORLD_CHUNKS = 64
 WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 448
 
@@ -36,9 +36,9 @@ TERRAIN_EMOJI = {
     "grass": "\U0001F33F",           # 🌿  (overridable with :grass:)
     "forest": "\U0001F332",          # 🌲
     "dense_forest": "\U0001F333",    # 🌳
-    "hills": "\u26F0\uFE0F",        # ⛰️
-    "mountain": "\U0001F3D4\uFE0F", # 🏔️
-    "snow": "❄️",           # snowy mountains — impassable
+    "hills": "⛰️",        # ⛰️  (placeholder — swap for custom :hills: emoji)
+    "mountain": "⛰️",      # ⛰️  :mountain: (no snow cap)
+    "snow": "\U0001F3D4️",    # 🏔️  :mountain_snow: — impassable snowy peaks
     "path": "\U0001F7EB",           # 🟫
     "void": "\u2B1B",               # ⬛
     "river_landing": "\u26F5",      # ⛵ canoe launch point
@@ -129,7 +129,7 @@ ITEM_EMOJI = {
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F5E1\uFE0F",    # 🗡️
     "hiking_boots":    "\U0001F97E",    # 🥾
-    "climbing_boots":  "\U0001F9D7",    # 🧗 person climbing
+    "climbing_boots":  "\U0001F97E",    # 🥾 (same as hiking boots)
     "torch": "\U0001F526",           # 🔦
     "axe": "\U0001FA93",             # 🪓
     "shovel": "\u26CF\uFE0F",       # ⛏️
@@ -492,32 +492,15 @@ TEMPLE_EMOJI: dict[str, str] = {
     "temple_portal_locked":   "🔒",
     "temple_portal_open":     "🌀",
     "temple_rune":            "📜",
-    # Gear slots — empty (motionless socket indicator)
-    "gear_slot_s_empty":      "⬡",     # empty small-gear socket
-    "gear_slot_l_empty":      "⬡",     # empty large-gear socket (4 tiles share this)
-    # Small gears — filled
-    "gear_slot_s_cw":         _ge("gear_small",          "⚙️"),   # clockwise
-    "gear_slot_s_ccw":        _ge("gear_small_reverse",  "⚙️"),   # counter-clockwise
-    # Large gears — filled clockwise (4 quadrants)
-    "gear_slot_l_cw_tl":      _ge("gear_top_left",            "🔩"),
-    "gear_slot_l_cw_tr":      _ge("gear_top_right",           "🔩"),
-    "gear_slot_l_cw_bl":      _ge("gear_bottom_left",         "🔩"),
-    "gear_slot_l_cw_br":      _ge("gear_bottom_right",        "🔩"),
-    # Large gears — filled counter-clockwise (4 quadrants)
-    "gear_slot_l_ccw_tl":     _ge("gear_top_left_reverse",    "🔩"),
-    "gear_slot_l_ccw_tr":     _ge("gear_top_right_reverse",   "🔩"),
-    "gear_slot_l_ccw_bl":     _ge("gear_bottom_left_reverse", "🔩"),
-    "gear_slot_l_ccw_br":     _ge("gear_bottom_right_reverse","🔩"),
+    # Gear machine panel (interactable — opens the gear puzzle UI)
+    "gear_machine":           "⚙️",
 }
 
 TEMPLE_WALKABLE: frozenset[str] = frozenset({
     "temple_floor", "temple_entrance",
     "temple_altar", "temple_portal_locked", "temple_portal_open",
     "temple_rune",
-    "gear_slot_s_empty", "gear_slot_l_empty",
-    "gear_slot_s_cw", "gear_slot_s_ccw",
-    "gear_slot_l_cw_tl",  "gear_slot_l_cw_tr",  "gear_slot_l_cw_bl",  "gear_slot_l_cw_br",
-    "gear_slot_l_ccw_tl", "gear_slot_l_ccw_tr", "gear_slot_l_ccw_bl", "gear_slot_l_ccw_br",
+    "gear_machine",   # player steps onto the machine panel to open the puzzle UI
 })
 
 SKY_LORE = {
@@ -536,6 +519,10 @@ SKY_LORE = {
     ],
     "temple_portal_open": [
         "🌀 The portal swirls with otherworldly light. Step through to enter the Sky Realm.",
+    ],
+    "gear_machine": [
+        "⚙️ A wall-mounted gear mechanism. Heavy iron brackets hold four sockets of varying size.",
+        "⚙️ Faded engravings around each socket show small and large gear outlines. The machine awaits its gears.",
     ],
     "sky_altar": [
         "✨ An altar of the sky-builders, worn smooth by wind and time.",
@@ -822,7 +809,7 @@ SHOP_CATALOG = [
     {
         "id": "climbing_boots",
         "name": "Climbing Boots",
-        "emoji": "\U0001F9D7",   # 🧗 person climbing
+        "emoji": "\U0001F97E",   # 🥾 hiking boot (same as hiking boots)
         "price": 150,
         "equip_slot": "boots",
         "description": "Reinforced boots. Traverse mountain tiles. Required for sky biome portals.",

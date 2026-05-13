@@ -85,6 +85,8 @@ from dwarf_explorer.ui.game_view import (
     handle_puzzle_move,
     handle_puzzle_reset,
     handle_puzzle_close,
+    handle_gear_slot,
+    handle_gear_machine_close,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -583,6 +585,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_puzzle_reset(interaction, gid, uid)
             elif act == "puzzle_close":
                 await handle_puzzle_close(interaction, gid, uid)
+            elif act == "gear_machine_close":
+                await handle_gear_machine_close(interaction, gid, uid)
+            elif act.startswith("gear_slot_"):
+                try:
+                    slot_idx = int(act[len("gear_slot_"):])
+                    await handle_gear_slot(interaction, gid, uid, slot_idx)
+                except (ValueError, IndexError):
+                    pass
 
         except discord.NotFound:
             await interaction.followup.send(

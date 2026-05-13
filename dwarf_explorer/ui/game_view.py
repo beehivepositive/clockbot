@@ -33,7 +33,6 @@ from dwarf_explorer.world.temples import (
     fill_gear_slot, remove_gear_slot,
     is_outer_temple_solved, are_all_outer_temples_solved,
     get_main_temple_sky_id,
-    find_gear_slot_anchor, GEAR_SLOT_TERRAIN,
     TEMPLE_ENTRY_X, TEMPLE_ENTRY_Y, OUTER_ENTRANCE_POS, MAIN_ENTRANCE_POS,
 )
 from dwarf_explorer.database.connection import get_database
@@ -1034,6 +1033,88 @@ class ChestView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, "chest_lootall"),
                 row=1,
             ))
+
+
+class GearMachineView(discord.ui.View):
+    """Gear-puzzle machine UI — opened by stepping onto the gear_machine tile in an outer temple.
+
+    Row 0: [Slot 0] [Slot 1]
+    Row 1: [Slot 2] [Slot 3]
+    Row 2: [❌ Close]
+
+    Each slot button dynamically shows its state; clicking places or removes the gear.
+    slot_states: list of (required_gear, is_filled) for the 4 slots in OUTER_GEAR_SLOTS order.
+    """
+
+    def __init__(
+        self,
+        guild_id: int,
+        user_id: int,
+        slot_states: list[tuple[str, bool]],
+        inv_item_ids: set[str],
+    ):
+        super().__init__(timeout=None)
+        _SLOT_LABELS = [
+            "Slot 1 (NW)", "Slot 2 (NE)", "Slot 3 (SW)", "Slot 4 (SE)",
+        ]
+        for i, (required, is_filled) in enumerate(slot_states):
+            gear_icon = "⚙️" if required == "small_gear" else "🔩"
+            if is_filled:
+                label = f"🔧 {_SLOT_LABELS[i]} — Remove"
+                style = discord.ButtonStyle.danger
+                disabled = False
+            else:
+                has_gear = required in inv_item_ids
+                label = f"{gear_icon} {_SLOT_LABELS[i]} — Place"
+                style = discord.ButtonStyle.success if has_gear else discord.ButtonStyle.secondary
+                disabled = False  # allow clicking even without gear — handler shows a hint
+
+            self.add_item(discord.ui.Button(
+                style=style,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, f"gear_slot_{i}"),
+                row=i // 2,
+                disabled=disabled,
+            ))
+
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="❌ Close",
+            custom_id=_custom_id(guild_id, user_id, "gear_machine_close"),
+            row=2,
+        ))
+
+
+def _render_gear_machine(slot_states: list[tuple[str, bool]], solved: bool) -> str:
+    """Render the gear machine UI as text."""
+    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS, GEAR_SLOT_IS_CW
+
+    lines = ["⚙️ **Gear Machine**", ""]
+    lines.append("This ancient mechanism has four gear sockets.")
+    lines.append("Insert the correct gears to power the temple.\n")
+
+    _SLOT_NAMES = ["North-West", "North-East", "South-West", "South-East"]
+    _DIRS = {True: "clockwise ↻", False: "counter-clockwise ↺"}
+
+    for i, (required, is_filled) in enumerate(slot_states):
+        ax, ay, _ = OUTER_GEAR_SLOTS[i]
+        cw = GEAR_SLOT_IS_CW.get((ax, ay), True)
+        gear_size = "small" if required == "small_gear" else "large"
+        gear_icon = "⚙️" if required == "small_gear" else "🔩"
+        dir_label = _DIRS[cw]
+        status = "✅ **Installed**" if is_filled else "⬡ *Empty*"
+        lines.append(f"**Slot {i+1} — {_SLOT_NAMES[i]}**")
+        lines.append(f"  Requires: {gear_icon} {gear_size} gear ({dir_label})")
+        lines.append(f"  Status: {status}")
+
+    lines.append("")
+    if solved:
+        lines.append("✨ **All gears installed — this temple is active!**")
+    else:
+        filled = sum(1 for _, f in slot_states if f)
+        lines.append(f"*{filled}/{len(slot_states)} gears installed.*")
+
+    return "\n".join(lines)
 
 
 class CombatView(discord.ui.View):
@@ -2305,7 +2386,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             _compute_context_labels(grid, player, hand_items)
 
     return GameView(guild_id, user_id,
-                    boots_equipped=(player.boots is not None),
+                    boots_equipped=(player.boots == "hiking_boots"),
                     sprinting=player.sprinting,
                     mine_dirs=mine_dirs,
                     center_label=center_label,
@@ -2435,19 +2516,65 @@ async def _find_canoe_destinations(
     return []
 
 
+_MERCHANT_RARE_ITEMS: list[dict] = [
+    # Rare armour & weapons not normally sold in shops
+    {"id": "iron_helmet",     "name": "Iron Helmet",      "emoji": "🪖", "price": 55,  "description": "Sturdy helm. +3 defense."},
+    {"id": "iron_chestplate", "name": "Iron Chestplate",  "emoji": "👕", "price": 90,  "description": "Heavy chest armour. +5 defense."},
+    {"id": "iron_leggings",   "name": "Iron Leggings",    "emoji": "👖", "price": 75,  "description": "Armoured legs. +4 defense."},
+    {"id": "iron_boots",      "name": "Iron Boots",       "emoji": "🥾", "price": 55,  "description": "Reinforced footwear. +2 defense."},
+    {"id": "iron_shield",     "name": "Iron Shield",      "emoji": "🛡️","price": 65,  "description": "Sturdy shield. +4 defense."},
+    {"id": "dagger",          "name": "Dagger",           "emoji": "🗡️","price": 55,  "description": "Fast blade. +8 attack."},
+    {"id": "sword",           "name": "Sword",            "emoji": "🗡️","price": 90,  "description": "Sharp longsword. +12 attack."},
+    # Crafting components hard to find
+    {"id": "iron_ingot",      "name": "Iron Ingot",       "emoji": "🧱", "price": 30,  "description": "Smelted iron bar. Used for forging."},
+    {"id": "resin",           "name": "Resin",            "emoji": "🟡", "price": 10,  "description": "Tree resin. Used for torches."},
+    {"id": "flint",           "name": "Flint",            "emoji": "🪨", "price": 9,   "description": "Sharp stone. Used for arrows & fire."},
+    # Food items at a bargain
+    {"id": "cooked_fish",     "name": "Cooked Fish",      "emoji": "🍖", "price": 7,   "description": "Restores +15 HP. Tastes like camp smoke."},
+    {"id": "bread",           "name": "Bread",            "emoji": "🍞", "price": 3,   "description": "Restores +10 HP."},
+    {"id": "meat_stew",       "name": "Meat Stew",        "emoji": "🍲", "price": 8,   "description": "Restores +20 HP. Traveller's favourite."},
+    # Consumable ingredients
+    {"id": "healing_herb",    "name": "Healing Herb",     "emoji": "🌿", "price": 7,   "description": "Hospital quest ingredient. Restores minor HP."},
+    # Rare unique items (low-weight pool)
+    {"id": "gold_ring",       "name": "Gold Ring",        "emoji": "💍", "price": 120, "description": "A fine ring. Craft with an enchanted gem for a power ring."},
+    {"id": "star_fragment",   "name": "Star Fragment",    "emoji": "⭐", "price": 70,  "description": "Fallen starlight. Opens sundial rifts."},
+    {"id": "arrow",           "name": "Arrows (×9)",      "emoji": "🏹", "price": 18,  "description": "Nine arrows for the slingshot. Bulk deal."},
+    {"id": "fishing_net",     "name": "Fishing Net",      "emoji": "🎣", "price": 22,  "description": "Catch fish in rivers faster."},
+]
+
+_MERCHANT_DISCOUNT_RATE = 0.80  # 20% discount vs normal shop price
+_MERCHANT_RARE_WEIGHT   = 0.40  # 40% of slots come from rare pool, rest from SHOP_CATALOG
+
+
 def _generate_merchant_catalog(rng: _random.Random) -> list[dict]:
-    """Pick 5 random shop items at 130% price for a travelling merchant."""
-    items = rng.sample(SHOP_CATALOG, min(5, len(SHOP_CATALOG)))
-    return [
-        {
-            "id": item["id"],
-            "name": item["name"],
-            "emoji": item.get("emoji", "📦"),
-            "price": int(item["price"] * 1.3 + 0.5),
-            "description": item.get("description", ""),
-        }
-        for item in items
-    ]
+    """Generate a 6-item merchant catalog: mix of discounted shop items and rare goods."""
+    catalog: list[dict] = []
+    n_rare   = round(6 * _MERCHANT_RARE_WEIGHT)   # ~2-3 rare items
+    n_shop   = 6 - n_rare
+
+    rare_picks = rng.sample(_MERCHANT_RARE_ITEMS, min(n_rare, len(_MERCHANT_RARE_ITEMS)))
+    shop_picks = rng.sample(SHOP_CATALOG, min(n_shop, len(SHOP_CATALOG)))
+
+    # Discount shop items; rare items keep their listed price (already fair)
+    for item in shop_picks:
+        catalog.append({
+            "id":          item["id"],
+            "name":        item["name"],
+            "emoji":       item.get("emoji", "📦"),
+            "price":       max(1, int(item["price"] * _MERCHANT_DISCOUNT_RATE + 0.5)),
+            "description": item.get("description", "") + " *(discounted)*",
+        })
+    for item in rare_picks:
+        catalog.append({
+            "id":          item["id"],
+            "name":        item["name"],
+            "emoji":       item["emoji"],
+            "price":       item["price"],
+            "description": item["description"],
+        })
+
+    rng.shuffle(catalog)
+    return catalog
 
 
 def _render_merchant(catalog: list[dict], selected: int, player) -> str:
@@ -3041,7 +3168,7 @@ async def handle_move(
     if getattr(player, "in_shipwreck", False):
         steps = 1
     else:
-        steps = 2 if (player.sprinting and player.boots is not None) else 1
+        steps = 2 if (player.sprinting and player.boots == "hiking_boots") else 1
     content, view = await _move_steps(player, direction, steps, seed, db, guild_id, user_id)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -3615,8 +3742,8 @@ async def handle_sprint(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    if player.boots is None:
-        await interaction.response.send_message("You need hiking boots to sprint.", ephemeral=True)
+    if player.boots != "hiking_boots":
+        await interaction.response.send_message("You need hiking boots to sprint (climbing boots don't sprint).", ephemeral=True)
         return
 
     player.sprinting = not player.sprinting
@@ -5672,50 +5799,9 @@ async def handle_interact(
             )
             return
 
-        elif terrain in GEAR_SLOT_TERRAIN:
-            # Resolve anchor position (handles both single-tile small and 2×2 large gears)
-            anchor = find_gear_slot_anchor(player.temple_x, player.temple_y)
-            if anchor is None:
-                msg = "⚙️ Nothing to interact with here."
-            else:
-                ax, ay = anchor
-                slot_is_empty = terrain in ("gear_slot_s_empty", "gear_slot_l_empty")
-                is_large = terrain == "gear_slot_l_empty" or "_l_cw" in terrain or "_l_ccw" in terrain
-                if slot_is_empty:
-                    required = "large_gear" if is_large else "small_gear"
-                    inv = await get_inventory(db, user_id)
-                    has_gear = any(r["item_id"] == required and r["quantity"] > 0 for r in inv)
-                    if has_gear:
-                        gear_placed = await fill_gear_slot(db, player.temple_id, ax, ay, user_id)
-                        if gear_placed:
-                            await remove_from_inventory(db, user_id, required, 1)
-                            solved    = await is_outer_temple_solved(db, player.temple_id)
-                            all_solved = await are_all_outer_temples_solved(db)
-                            msg = f"⚙️ You slot the {required.replace('_', ' ')} into place."
-                            if solved:
-                                msg += " ✨ **The mechanism clicks — this temple's puzzle is complete!**"
-                            if all_solved:
-                                msg += " 🌀 **All three temples are solved! The main temple portal has opened!**"
-                        else:
-                            msg = "This slot is already filled."
-                    else:
-                        gear_name = "small gear (⚙️)" if required == "small_gear" else "large gear (🔩)"
-                        msg = f"🔧 This slot requires a **{gear_name}**. Craft one from iron ingots or find it in chests."
-                else:
-                    # Slot is filled — retrieve the gear
-                    removed = await remove_gear_slot(db, player.temple_id, ax, ay)
-                    if removed:
-                        await add_to_inventory(db, user_id, removed, 1)
-                        gear_name = removed.replace("_", " ")
-                        msg = f"🔧 You retrieve the {gear_name} from the slot."
-                    else:
-                        msg = "Nothing to remove."
-            grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
-            content = render_grid(grid, player, msg)
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=_game_view(guild_id, user_id, player, grid=grid),
-            )
+        elif terrain == "gear_machine":
+            # Open the gear machine UI
+            await _open_gear_machine(interaction, guild_id, user_id)
             return
 
         elif terrain in ("temple_altar", "temple_rune", "temple_pillar"):
@@ -9919,6 +10005,130 @@ async def handle_chest_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     await handle_inv_close(interaction, guild_id, user_id)
+
+
+# ── Gear Machine handlers ─────────────────────────────────────────────────────
+
+async def _open_gear_machine(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Show the gear machine UI for the current outer temple."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not getattr(player, "in_temple", False):
+        await interaction.response.send_message("No gear machine here.", ephemeral=True)
+        return
+    temple_row = await db.fetch_one("SELECT temple_type FROM sky_temples WHERE id=?", (player.temple_id,))
+    if not temple_row or temple_row["temple_type"] == "main":
+        await interaction.response.send_message("No gear machine here.", ephemeral=True)
+        return
+
+    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS
+    slot_rows = await db.fetch_all(
+        "SELECT slot_x, slot_y, required_gear, is_filled FROM temple_gear_slots WHERE temple_id=?",
+        (player.temple_id,),
+    )
+    slot_map = {(r["slot_x"], r["slot_y"]): (r["required_gear"], bool(r["is_filled"])) for r in slot_rows}
+    slot_states = [slot_map.get((ax, ay), (req, False)) for ax, ay, req in OUTER_GEAR_SLOTS]
+
+    inv = await get_inventory(db, user_id)
+    inv_item_ids = {r["item_id"] for r in inv if r["quantity"] > 0}
+
+    solved = await is_outer_temple_solved(db, player.temple_id)
+    content = _render_gear_machine(slot_states, solved)
+    view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)
+    await interaction.response.edit_message(content=None, embed=_embed(content), view=view)
+
+
+async def handle_gear_slot(
+    interaction: discord.Interaction, guild_id: int, user_id: int, slot_index: int
+) -> None:
+    """Handle clicking a gear slot button in the GearMachineView."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not getattr(player, "in_temple", False):
+        await interaction.response.send_message("Not in a temple.", ephemeral=True)
+        return
+
+    from dwarf_explorer.world.temples import OUTER_GEAR_SLOTS
+
+    if slot_index < 0 or slot_index >= len(OUTER_GEAR_SLOTS):
+        await interaction.response.send_message("Invalid slot.", ephemeral=True)
+        return
+
+    ax, ay, required = OUTER_GEAR_SLOTS[slot_index]
+    sr = await db.fetch_one(
+        "SELECT required_gear, is_filled FROM temple_gear_slots WHERE temple_id=? AND slot_x=? AND slot_y=?",
+        (player.temple_id, ax, ay),
+    )
+    if not sr:
+        await interaction.response.send_message("Slot not found.", ephemeral=True)
+        return
+
+    is_filled = bool(sr["is_filled"])
+    msg = ""
+
+    if is_filled:
+        # Remove the gear
+        removed = await remove_gear_slot(db, player.temple_id, ax, ay)
+        if removed:
+            await add_to_inventory(db, user_id, removed, 1)
+            gear_name = removed.replace("_", " ")
+            msg = f"🔧 You retrieve the **{gear_name}** from slot {slot_index + 1}."
+        else:
+            msg = "Nothing to remove."
+    else:
+        # Place the gear
+        inv = await get_inventory(db, user_id)
+        has_gear = any(r["item_id"] == required and r["quantity"] > 0 for r in inv)
+        if not has_gear:
+            gear_name = "small gear (⚙️)" if required == "small_gear" else "large gear (🔩)"
+            msg = f"🔧 Slot {slot_index + 1} needs a **{gear_name}**. Craft one from iron ingots or find one in chests."
+        else:
+            gear_placed = await fill_gear_slot(db, player.temple_id, ax, ay, user_id)
+            if gear_placed:
+                await remove_from_inventory(db, user_id, required, 1)
+                gear_name = required.replace("_", " ")
+                msg = f"⚙️ You install the **{gear_name}** into slot {slot_index + 1}."
+                solved = await is_outer_temple_solved(db, player.temple_id)
+                all_solved = await are_all_outer_temples_solved(db)
+                if solved:
+                    msg += " ✨ **All gears installed — this temple's puzzle is complete!**"
+                if all_solved:
+                    msg += " 🌀 **All temples solved! The main temple portal has opened!**"
+            else:
+                msg = "Slot is already filled."
+
+    # Refresh the machine UI
+    slot_rows = await db.fetch_all(
+        "SELECT slot_x, slot_y, required_gear, is_filled FROM temple_gear_slots WHERE temple_id=?",
+        (player.temple_id,),
+    )
+    slot_map = {(r["slot_x"], r["slot_y"]): (r["required_gear"], bool(r["is_filled"])) for r in slot_rows}
+    slot_states = [slot_map.get((ax2, ay2), (req2, False)) for ax2, ay2, req2 in OUTER_GEAR_SLOTS]
+    solved2 = await is_outer_temple_solved(db, player.temple_id)
+    inv2 = await get_inventory(db, user_id)
+    inv_item_ids = {r["item_id"] for r in inv2 if r["quantity"] > 0}
+    content = _render_gear_machine(slot_states, solved2)
+    if msg:
+        content = msg + "\n\n" + content
+    view = GearMachineView(guild_id, user_id, slot_states, inv_item_ids)
+    await interaction.response.edit_message(content=None, embed=_embed(content), view=view)
+
+
+async def handle_gear_machine_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close the gear machine and return to the temple viewport."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=False)
+    content = render_grid(grid, player, "You step back from the machine.")
+    await interaction.response.edit_message(
+        content=None, embed=_embed(content),
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
 
 
 # ── Map / Help ────────────────────────────────────────────────────────────────

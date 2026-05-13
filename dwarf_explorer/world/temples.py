@@ -65,6 +65,8 @@ def find_gear_slot_anchor(local_x: int, local_y: int) -> tuple[int, int] | None:
     return None
 
 
+GEAR_MACHINE_POS = (5, 1)   # centre of north interior row — the interactable machine panel
+
 def _make_outer_temple_tiles() -> list[tuple[int, int, str]]:
     """Generate the static tile layout for an outer (puzzle) temple."""
     tiles: dict[tuple[int, int], str] = {}
@@ -79,6 +81,10 @@ def _make_outer_temple_tiles() -> list[tuple[int, int, str]]:
     ex, ey = OUTER_ENTRANCE_POS
     tiles[(ex, ey)] = "temple_entrance"
 
+    # Gear machine panel on the north interior wall (walkable — opens machine UI)
+    mx, my = GEAR_MACHINE_POS
+    tiles[(mx, my)] = "gear_machine"
+
     # Altar centre
     ax, ay = OUTER_ALTAR_POS
     tiles[(ax, ay)] = "temple_altar"
@@ -86,14 +92,6 @@ def _make_outer_temple_tiles() -> list[tuple[int, int, str]]:
     # Rune stones flanking the altar
     tiles[(ax - 2, ay)] = "temple_rune"
     tiles[(ax + 2, ay)] = "temple_rune"
-
-    # Gear slots (static empty state — dynamic fill state overlaid at load time)
-    for slot_ax, slot_ay, gear_type in OUTER_GEAR_SLOTS:
-        if gear_type == "small_gear":
-            tiles[(slot_ax, slot_ay)] = "gear_slot_s_empty"
-        else:
-            for gx, gy, _ in _large_gear_tiles(slot_ax, slot_ay):
-                tiles[(gx, gy)] = "gear_slot_l_empty"
 
     return [(x, y, t) for (x, y), t in tiles.items()]
 
@@ -121,14 +119,49 @@ def _make_main_temple_tiles() -> list[tuple[int, int, str]]:
     return [(x, y, t) for (x, y), t in tiles.items()]
 
 
+_OLD_GEAR_SLOT_TILES = frozenset({
+    "gear_slot_s_empty", "gear_slot_l_empty",
+    "gear_slot_s_cw", "gear_slot_s_ccw",
+    "gear_slot_l_cw_tl",  "gear_slot_l_cw_tr",  "gear_slot_l_cw_bl",  "gear_slot_l_cw_br",
+    "gear_slot_l_ccw_tl", "gear_slot_l_ccw_tr", "gear_slot_l_ccw_bl", "gear_slot_l_ccw_br",
+})
+
+
 async def get_or_create_outer_temple(db, world_x: int, world_y: int) -> int:
-    """Return temple_id for the outer temple at (world_x, world_y), creating it if needed."""
+    """Return temple_id for the outer temple at (world_x, world_y), creating it if needed.
+
+    Also migrates legacy temples that still have floor gear-slot tiles by replacing
+    them with the new gear_machine panel layout.
+    """
     row = await db.fetch_one(
         "SELECT id FROM sky_temples WHERE world_x=? AND world_y=? AND temple_type='outer'",
         (world_x, world_y),
     )
     if row:
-        return row["id"]
+        temple_id = row["id"]
+        # Migrate old layout: remove any legacy gear-slot floor tiles and add the machine panel
+        legacy = await db.fetch_all(
+            "SELECT local_x, local_y FROM temple_tiles WHERE temple_id=? AND tile_type IN ({})".format(
+                ",".join("?" * len(_OLD_GEAR_SLOT_TILES))
+            ),
+            (temple_id, *_OLD_GEAR_SLOT_TILES),
+        )
+        if legacy:
+            # Delete old gear-slot tiles
+            await db.execute(
+                "DELETE FROM temple_tiles WHERE temple_id=? AND tile_type IN ({})".format(
+                    ",".join("?" * len(_OLD_GEAR_SLOT_TILES))
+                ),
+                (temple_id, *_OLD_GEAR_SLOT_TILES),
+            )
+            # Place gear_machine tile (upsert)
+            mx, my = GEAR_MACHINE_POS
+            await db.execute(
+                "INSERT OR REPLACE INTO temple_tiles (temple_id, local_x, local_y, tile_type) VALUES (?,?,?,'gear_machine')",
+                (temple_id, mx, my),
+            )
+        return temple_id
+
     cur = await db.execute(
         "INSERT INTO sky_temples (world_x, world_y, temple_type) VALUES (?, ?, 'outer')",
         (world_x, world_y),
@@ -202,14 +235,7 @@ async def load_temple_viewport(
     )
     tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
 
-    if not is_main:
-        # Overlay dynamic gear-slot states (outer temples)
-        slot_rows = await db.fetch_all(
-            "SELECT slot_x, slot_y, required_gear, is_filled FROM temple_gear_slots WHERE temple_id=?",
-            (temple_id,),
-        )
-        _overlay_gear_slots(tile_map, slot_rows)
-    else:
+    if is_main:
         # Main temple: overlay portal open/locked based on puzzle completion
         all_solved = await are_all_outer_temples_solved(db)
         px, py = MAIN_PORTAL_POS
@@ -238,28 +264,7 @@ async def load_temple_single_tile(
     )
     tile_type = row["tile_type"] if row else "temple_wall"
 
-    if not is_main and tile_type in GEAR_SLOT_TERRAIN:
-        # Resolve the anchor for this position (handles both small single-tile and large 2×2)
-        anchor = find_gear_slot_anchor(local_x, local_y)
-        if anchor:
-            ax, ay = anchor
-            sr = await db.fetch_one(
-                "SELECT required_gear, is_filled FROM temple_gear_slots"
-                " WHERE temple_id=? AND slot_x=? AND slot_y=?",
-                (temple_id, ax, ay),
-            )
-            if sr:
-                req    = sr["required_gear"]
-                filled = bool(sr["is_filled"])
-                is_cw  = GEAR_SLOT_IS_CW.get((ax, ay), True)
-                dir_s  = "cw" if is_cw else "ccw"
-                if req == "small_gear":
-                    tile_type = f"gear_slot_s_{dir_s}" if filled else "gear_slot_s_empty"
-                else:
-                    quad = _LARGE_GEAR_QUADS.get((local_x - ax, local_y - ay), "tl")
-                    tile_type = f"gear_slot_l_{dir_s}_{quad}" if filled else "gear_slot_l_empty"
-
-    elif is_main and tile_type in ("temple_portal_locked", "temple_portal_open"):
+    if is_main and tile_type in ("temple_portal_locked", "temple_portal_open"):
         all_solved = await are_all_outer_temples_solved(db)
         tile_type = "temple_portal_open" if all_solved else "temple_portal_locked"
 
