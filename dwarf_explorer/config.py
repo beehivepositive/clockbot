@@ -1358,4 +1358,16 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         TEMPLE_EMOJI["gear_slot_s_empty"] = cache["gear_socket"]
         TEMPLE_EMOJI["gear_slot_l_empty"] = cache["gear_socket"]
 
+    # Iron armor custom emojis
+    _iron_armor_map = [
+        ("iron_boots",       "boots_iron"),
+        ("iron_chestplate",  "chestpiece_iron"),
+        ("iron_leggings",    "leggings_iron"),
+        ("iron_helmet",      "helmet_iron"),
+    ]
+    for item_key, emoji_name in _iron_armor_map:
+        if emoji_name in cache:
+            ITEM_EMOJI[item_key] = cache[emoji_name]
+            _renderer._ITEM_SLOT_EMOJI[item_key] = cache[emoji_name]
+
 

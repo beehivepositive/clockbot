@@ -1482,41 +1482,55 @@ def _anvil_filtered_recipes(material_idx: int) -> list[dict]:
 
 
 def _render_anvil(cursor_idx: int, inv_counts: dict[str, int], material_idx: int = 0) -> str:
-    """Render the anvil recipe list as an embed string.
+    """Render the anvil as a shop-style grid embed.
 
     cursor_idx  : index within the filtered recipe list for the active material.
     inv_counts  : mapping of item_id -> quantity owned by the player.
     material_idx: 0 = Iron, 1 = Wyvern.
     """
-    iron_qty   = inv_counts.get("iron_ingot", 0)
-    scale_qty  = inv_counts.get("wyvern_scale", 0)
+    from dwarf_explorer.game.renderer import _item_emoji, _PAD, _EMPTY_SLOT
+    COLS = 7
 
-    mat_label  = _ANVIL_MATERIAL_LABELS[material_idx % len(_ANVIL_MATERIAL_LABELS)]
-    other_idx  = (material_idx + 1) % len(_ANVIL_MATERIALS)
-    other_label = _ANVIL_MATERIAL_LABELS[other_idx]
+    iron_qty  = inv_counts.get("iron_ingot", 0)
+    scale_qty = inv_counts.get("wyvern_scale", 0)
+    mat_label = _ANVIL_MATERIAL_LABELS[material_idx % len(_ANVIL_MATERIAL_LABELS)]
 
-    lines: list[str] = [f"⚒️ **Anvil** — {mat_label}  *(⬅️ ➡️ to switch)*\n"]
+    lines: list[str] = [f"⚒️ **Anvil** — {mat_label}"]
     lines.append(f"🧱 Iron ingots: **{iron_qty}**  |  🐉 Wyvern scales: **{scale_qty}**\n")
 
     recipes = _anvil_filtered_recipes(material_idx)
-    for i, recipe in enumerate(recipes):
-        cursor = "▶ " if i == cursor_idx else "   "
-        emoji  = recipe["emoji"]
-        name   = recipe["name"]
-        cost_qty  = recipe["cost_qty"]
-        stat      = recipe["stat"]
-        have      = inv_counts.get(recipe["cost_item"], 0)
 
+    # Build emoji grid (same style as render_shop)
+    slots: list[str] = []
+    for i, recipe in enumerate(recipes):
+        emoji = _item_emoji(recipe["item_id"])
+        if i == cursor_idx:
+            slots.append(f"{emoji}◄︎{_PAD}")
+        else:
+            slots.append(f"{emoji}{_PAD * 2}")
+    while len(slots) % COLS != 0:
+        slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
+    for row in range(max(1, len(slots) // COLS)):
+        lines.append("".join(slots[row * COLS: row * COLS + COLS]))
+
+    lines.append("")
+
+    # Detail line for the cursor item
+    if 0 <= cursor_idx < len(recipes):
+        recipe = recipes[cursor_idx]
+        have   = inv_counts.get(recipe["cost_item"], 0)
         if recipe["base_item"]:
             base_have = inv_counts.get(recipe["base_item"], 0)
-            base_name = recipe["base_item"].replace("_", " ")
-            cost_str  = f"{cost_qty}× scale + {base_name}"
-            avail_str = f"scales:{have}/{cost_qty} base:{'✓' if base_have >= 1 else '✗'}"
+            base_name = recipe["base_item"].replace("_", " ").title()
+            cost_str  = f"{recipe['cost_qty']}× scale + {base_name}"
+            avail_str = f"scales: {have}/{recipe['cost_qty']}, base: {'✓' if base_have >= 1 else '✗'}"
         else:
-            cost_str  = f"{cost_qty}× ingot{'s' if cost_qty > 1 else ''}"
-            avail_str = f"have {have}/{cost_qty}"
-
-        lines.append(f"`{cursor}{emoji} {name:<18} {cost_str:<26} {stat:<10}` ({avail_str})")
+            cost_str  = f"{recipe['cost_qty']}× ingot{'s' if recipe['cost_qty'] > 1 else ''}"
+            avail_str = f"have {have}/{recipe['cost_qty']}"
+        lines.append(f"**{recipe['name']}** — {cost_str}  |  {recipe['stat']}")
+        lines.append(f"*{avail_str}*")
+    else:
+        lines.append("*(No recipes available)*")
 
     return "\n".join(lines)
 
