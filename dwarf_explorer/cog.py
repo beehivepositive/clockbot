@@ -131,6 +131,9 @@ class DwarfExplorer(commands.Cog):
         else:
             # Defer immediately — DB + world-gen calls can exceed Discord's 3-second window
             await interaction.response.defer()
+            # Ensure forest areas exist (idempotent — only runs once per world)
+            from dwarf_explorer.world.forest import ensure_forests_placed
+            await ensure_forests_placed(seed, db)
             player = await get_or_create_player(db, user_id, interaction.user.display_name)
             if player.xp == 0 and player.level == 1 and not player.in_village:
                 await _place_in_village(db, seed, user_id, player)

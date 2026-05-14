@@ -385,6 +385,64 @@ class Database:
                 "ALTER TABLE players ADD COLUMN temple_y INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN temple_wx INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN temple_wy INTEGER NOT NULL DEFAULT 0",
+                # Forest interior player state
+                "ALTER TABLE players ADD COLUMN in_forest INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN forest_id INTEGER DEFAULT NULL",
+                "ALTER TABLE players ADD COLUMN forest_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN forest_y INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN forest_wx INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN forest_wy INTEGER NOT NULL DEFAULT 0",
+                # Maze interior player state
+                "ALTER TABLE players ADD COLUMN in_maze INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN maze_id INTEGER DEFAULT NULL",
+                "ALTER TABLE players ADD COLUMN maze_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN maze_y INTEGER NOT NULL DEFAULT 0",
+                # Forest tables
+                """CREATE TABLE IF NOT EXISTS forest_areas (
+    forest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    width     INTEGER NOT NULL,
+    height    INTEGER NOT NULL
+)""",
+                """CREATE TABLE IF NOT EXISTS forest_tiles (
+    forest_id INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (forest_id, local_x, local_y)
+)""",
+                """CREATE TABLE IF NOT EXISTS forest_entrances (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    world_x   INTEGER NOT NULL,
+    world_y   INTEGER NOT NULL,
+    UNIQUE(world_x, world_y)
+)""",
+                """CREATE TABLE IF NOT EXISTS maze_areas (
+    maze_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    width     INTEGER NOT NULL,
+    height    INTEGER NOT NULL
+)""",
+                """CREATE TABLE IF NOT EXISTS maze_tiles (
+    maze_id   INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (maze_id, local_x, local_y)
+)""",
+                # Track per-player forest/maze chest loots
+                """CREATE TABLE IF NOT EXISTS player_maze_loots (
+    user_id  INTEGER NOT NULL,
+    maze_id  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, maze_id)
+)""",
+                """CREATE TABLE IF NOT EXISTS player_forest_loots (
+    user_id   INTEGER NOT NULL,
+    forest_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, forest_id)
+)""",
             ]
             for mig_sql in migrations:
                 try:
@@ -531,6 +589,31 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+
+            # ── Temple mountain walls (surround air temples with impassable mountain) ──
+            # One-time migration: if any temple overrides exist without mountain neighbours, add them.
+            try:
+                from dwarf_explorer.config import WORLD_SIZE as _WORLD_SIZE
+                temple_rows = conn.execute(
+                    "SELECT world_x, world_y FROM tile_overrides "
+                    "WHERE tile_type IN ('sky_temple_outer', 'sky_temple_main')"
+                ).fetchall()
+                if temple_rows:
+                    mountain_overrides = []
+                    for tx, ty in temple_rows:
+                        for ddx, ddy in [(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)]:
+                            nx, ny = tx + ddx, ty + ddy
+                            if 0 < nx < _WORLD_SIZE and 0 < ny < _WORLD_SIZE:
+                                mountain_overrides.append((nx, ny))
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) "
+                        "VALUES (?, ?, 'mountain')",
+                        mountain_overrides,
+                    )
+                    conn.commit()
+            except Exception as e:
+                _log.warning("Temple mountain migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

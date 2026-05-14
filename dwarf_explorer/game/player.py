@@ -7,6 +7,7 @@ from dwarf_explorer.config import (
     CAVE_WALKABLE, VILLAGE_WALKABLE, BUILDING_WALKABLE, PLAYER_HOUSE_DECO_TILES,
     COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE, SHIP_WALKABLE,
     SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE, TEMPLE_WALKABLE,
+    FOREST_WALKABLE, MAZE_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -94,6 +95,18 @@ class Player:
     temple_y: int = 0
     temple_wx: int = 0   # overworld x of temple tile entered
     temple_wy: int = 0   # overworld y of temple tile entered
+    # Forest interior state
+    in_forest: bool = False
+    forest_id: int | None = None
+    forest_x: int = 0
+    forest_y: int = 0
+    forest_wx: int = 0   # overworld x of forest_entrance tile entered
+    forest_wy: int = 0   # overworld y of forest_entrance tile entered
+    # Maze interior state
+    in_maze: bool = False
+    maze_id: int | None = None
+    maze_x: int = 0
+    maze_y: int = 0
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
@@ -166,6 +179,10 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_temple(target_tile)
     if getattr(player, "in_sky", False):
         return can_move_sky(target_tile)
+    if getattr(player, "in_maze", False):
+        return can_move_maze(target_tile)
+    if getattr(player, "in_forest", False):
+        return can_move_forest(target_tile)
 
     terrain = target_tile.structure or target_tile.terrain
 
@@ -236,4 +253,24 @@ def can_move_temple(target_tile: TileData) -> tuple[bool, str]:
     """Walkability inside a sky temple interior."""
     if target_tile.terrain not in TEMPLE_WALKABLE and target_tile.terrain != "temple_entrance":
         return False, "⛔ Solid stone."
+    return True, ""
+
+
+def can_move_forest(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a forest interior."""
+    t = target_tile.terrain
+    if t == "fst_tree":
+        return False, "A massive ancient tree blocks your path."
+    if t not in FOREST_WALKABLE:
+        return False, "You can't go that way."
+    return True, ""
+
+
+def can_move_maze(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside the forest maze."""
+    t = target_tile.terrain
+    if t == "maze_wall":
+        return False, "A hedge wall blocks your path."
+    if t not in MAZE_WALKABLE:
+        return False, "You can't go that way."
     return True, ""

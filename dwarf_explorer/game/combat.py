@@ -366,6 +366,28 @@ def resolve_enemy_turn(arena: dict, player, rng: random.Random, naval: bool = Fa
             msgs.append(f"🐻 The {name} lets out a terrifying ROAR!")
             continue
 
+        # ── Ranged attack: fire from up to 3 tiles (Chebyshev) without closing ──
+        if abilities.get("ranged"):
+            dist = max(abs(ex - px), abs(ey - py))
+            if dist <= 3:
+                # Fire a projectile — deal slightly reduced damage
+                dmg = max(1, atk - player.defense // 3)
+                status = _deal_damage(dmg)
+                msgs.append(f"🎯 The {name} fires at you for **{dmg}** damage! {status}")
+                # Hit-and-run: back off after shooting
+                if abilities.get("hit_run") and rng.random() < 0.50:
+                    away = _step_toward(ex, ey,
+                                        ARENA_SIZE - 1 - px, ARENA_SIZE - 1 - py,
+                                        arena["grid"], (px, py))
+                    player.combat_enemy_x, player.combat_enemy_y = away
+                    msgs.append(f"💨 The {name} darts away!")
+            else:
+                # Out of range — step closer
+                new_ex, new_ey = _step_toward(ex, ey, px, py, arena["grid"], (px, py))
+                player.combat_enemy_x = new_ex
+                player.combat_enemy_y = new_ey
+            continue
+
         # ── Move toward player ──
         new_ex, new_ey = _step_toward(ex, ey, px, py, arena["grid"], (px, py))
         player.combat_enemy_x = new_ex

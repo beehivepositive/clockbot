@@ -295,5 +295,7 @@ async def init_world(seed: int, db) -> None:
     """Generate and store all world features (rivers + structures) for a new world."""
     from dwarf_explorer.world.rivers import generate_rivers
     from dwarf_explorer.world.structures import place_structures
+    from dwarf_explorer.world.forest import place_forest_areas
     await generate_rivers(seed, db)
     await place_structures(seed, db)
+    await place_forest_areas(seed, db)

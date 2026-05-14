@@ -68,6 +68,7 @@ STRUCTURE_EMOJI = {
     "sky_portal": "\U0001F300",    # 🌀 sky portal on mountain tile (legacy, no longer placed)
     "sky_temple_outer": "\U0001F3DB️",  # 🏛️ outer/puzzle temple (overworld)
     "sky_temple_main":  "\U0001F3F0",        # 🏰 main/portal temple (overworld)
+    "forest_entrance":  "\U0001F332",        # 🌲 forest entrance (overridable with :forest_entrance:)
 }
 
 ENTITY_EMOJI = {
@@ -85,6 +86,11 @@ ENTITY_EMOJI = {
     "temporal_echo": "\U0001F47B",   # 👻 ghostly temporal apparition
     # Surface
     "bandit": "\U0001F9B9",          # 🦹 villain/bandit
+    # Forest enemies
+    "forest_sprite":   "\U0001F9DA",  # 🧚 fairy-like mischievous spirit
+    "vine_creeper":    "\U0001F40D",  # 🐍 snake-like vine monster
+    "corrupted_dryad": "\U0001F9DF",  # 🧟 corrupted forest spirit
+    "forest_troll":    "\U0001F479",  # 👹 mossy forest troll
 }
 
 # ── Custom gear emoji IDs ──────────────────────────────────────────────────────
@@ -207,6 +213,12 @@ ITEM_EMOJI = {
     "gold_coin":        "🪙",       # 🪙  loose gold coin (shipwreck loot)
     "small_gear": _ge("gear_small_still", "⚙️"),
     "large_gear": _ge("gear_small_still", "⚙️"),
+    # Forest items
+    "forest_nut":     "\U0001F330",           # 🌰 restores 8 HP
+    "living_root":    "\U0001FAB5",           # 🪵 crafting ingredient
+    "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
+    "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
+    "ancient_sapling":"\U0001F333",           # 🌳 planted ancient sapling
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -237,6 +249,7 @@ WALKABLE_TILES = {
     "sky_portal",    # sky portal on mountain — walkable (legacy; kept for any existing portals)
     "sky_temple_outer",  # outer puzzle temple — walkable overworld tile
     "sky_temple_main",   # main portal temple — walkable overworld tile
+    "forest_entrance",   # forest entrance — walkable (triggers forest interior load)
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
     # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
     "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
@@ -258,7 +271,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main", "forest_entrance"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -293,6 +306,11 @@ ENEMY_STATS = {
     "storm_hawk": (40,  9, 3, 15, 8),
     # Surface bandits
     "bandit":     (35, 12, 2, 20, 18),  # moderate HP/atk, carries more gold than wolves
+    # Forest enemies
+    "forest_sprite":   (18,  9,  0, 12,  6),   # fast, low HP, ranged
+    "vine_creeper":    (30, 13,  1, 18, 10),   # melee, poisons
+    "corrupted_dryad": (45, 16,  3, 30, 18),   # ranged, corrupted nature spirit
+    "forest_troll":    (65, 20,  6, 45, 22),   # heavy melee, slam/roar
 }
 
 # Player defaults
@@ -325,8 +343,13 @@ ENEMY_ABILITIES = {
     # Rift boss — custom AI, these flags are unused
     "temporal_echo": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False},
     # Sky biome enemies
-    "wind_wisp":  {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
-    "storm_hawk": {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False},
+    "wind_wisp":  {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False, "ranged": False},
+    "storm_hawk": {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False, "ranged": False},
+    # Forest enemies
+    "forest_sprite":   {"cobweb": False, "poison": False, "hit_run": True,  "roar": False, "slam": False, "ranged": True},
+    "vine_creeper":    {"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False, "ranged": False},
+    "corrupted_dryad": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False, "ranged": True},
+    "forest_troll":    {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
 }
 
 ARENA_EMOJI = {
@@ -343,6 +366,7 @@ CONSUMABLE_ITEMS = {
     "bread":        {"hp": 10,  "desc": "+10 HP"},
     "meat_stew":    {"hp": 20,  "desc": "+20 HP"},
     "cowards_ale":  {"hp": 0,   "desc": "Guaranteed escape — no parting blow", "escape": True},
+    "forest_nut":   {"hp": 8,   "desc": "+8 HP"},
 }
 
 # Tavern food/drink menu (price in gold)
@@ -582,6 +606,61 @@ SKY_ENCOUNTER_RATES = {
     "wind_wisp":  0.08,  # on sky_cloud tiles
     "storm_hawk": 0.06,  # on sky_bridge tiles
 }
+
+# --- Forest Interior System ---
+
+FOREST_EMOJI: dict[str, str] = {
+    # Interior floor / wall
+    "fst_floor":        "\U0001F7EB",   # 🟫 mossy floor (overridable with :fst_floor:)
+    "fst_tree":         "\U0001F333",   # 🌳 impassable ancient tree wall
+    # Special tiles
+    "fst_exit":         "\U0001F6AA",   # 🚪 forest exit (returns to overworld)
+    "fst_tree_city":    "\U0001F3E1",   # 🏡 tree city hub tile (shop)
+    "fst_ancient_tree": "\U0001F332",   # 🌲 ancient watering tree (interact with can)
+    "fst_maze_door":    "\U0001F300",   # 🌀 entrance to maze branch
+    "fst_nut_tree":     "\U0001F330",   # 🌰 nut tree (interact to gather forest nuts)
+    "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
+    # Maze tiles
+    "maze_wall":        "⬛",       # ⬛ maze wall
+    "maze_floor":       "\U0001F7E9",   # 🟩 maze passage
+    "maze_exit":        "\U0001F6AA",   # 🚪 maze exit (returns to forest)
+    "maze_chest":       "\U0001F4B0",   # 💰 maze treasure chest
+    # Forest enemy icons (displayed in viewport encounters are handled by ENTITY_EMOJI,
+    # but keep here so load_forest_viewport can render them as floor sub-tiles)
+    "forest_sprite":   "\U0001F9DA",
+    "vine_creeper":    "\U0001F40D",
+    "corrupted_dryad": "\U0001F9DF",
+    "forest_troll":    "\U0001F479",
+}
+
+FOREST_WALKABLE: frozenset[str] = frozenset({
+    "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
+    "fst_maze_door", "fst_nut_tree", "fst_chest",
+})
+
+MAZE_WALKABLE: frozenset[str] = frozenset({
+    "maze_floor", "maze_exit", "maze_chest",
+})
+
+# Random encounter rates inside forest (chance per step)
+FOREST_ENCOUNTER_MOBS = {
+    "forest_sprite":   0.08,
+    "vine_creeper":    0.07,
+    "corrupted_dryad": 0.05,
+    "forest_troll":    0.03,
+}
+
+# Tree city merchant shop (unique items, gold prices)
+TREE_CITY_SHOP = [
+    {"id": "forest_nut",   "name": "Forest Nut",   "price": 5,
+     "description": "A sweet nut from the ancient canopy. Restores 8 HP."},
+    {"id": "living_root",  "name": "Living Root",  "price": 20,
+     "description": "A glowing root still warm with forest magic. Crafting ingredient."},
+    {"id": "bark_shield",  "name": "Bark Shield",  "price": 80,
+     "description": "Woven from enchanted bark. Sturdy and surprisingly light. +3 defense."},
+    {"id": "ancient_seed", "name": "Ancient Seed", "price": 50,
+     "description": "A seed from the ancient tree. Plant it and something extraordinary may grow."},
+]
 
 # --- Ship System ---
 
@@ -987,6 +1066,7 @@ ITEM_EQUIP_SLOTS = {
     "flint_and_steel":     "hand",
     "hoe":                 "hand",
     "hammer":              "hand",
+    "bark_shield":         "hand",
 }
 
 # Items that occupy both hand slots
@@ -1032,6 +1112,7 @@ EQUIP_BONUSES = {
     "flint_and_steel":     {},
     "arrow":               {},
     "hoe":                 {},
+    "bark_shield":         {"defense": 3},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 1×7 when no pouch equipped
@@ -1175,6 +1256,11 @@ ITEM_SELL_PRICES = {
     "gust_of_aevos":     20,
     "gold_coin":         1,
     "seaweed":           3,
+    # Forest items
+    "forest_nut":        3,
+    "living_root":       10,
+    "bark_shield":       48,
+    "ancient_seed":      25,
 }
 
 # --- World Map Image ---
@@ -1269,6 +1355,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (VILLAGE_EMOJI,  "vil_seeds_wheat",   "farmland_seeds"),
         (VILLAGE_EMOJI,  "vil_seeds_carrot",  "farmland_seeds"),
         (VILLAGE_EMOJI,  "vil_seeds_potato",  "farmland_seeds"),
+        # Forest entrance custom emoji
+        (STRUCTURE_EMOJI, "forest_entrance",  "forest_entrance"),
     ]
 
     for d, tile_key, emoji_name in _replace:
@@ -1357,6 +1445,13 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ITEM_EMOJI["large_gear"] = cache["gear_small"]
         _renderer._ITEM_SLOT_EMOJI["small_gear"] = cache["gear_small"]
         _renderer._ITEM_SLOT_EMOJI["large_gear"] = cache["gear_small"]
+
+    # Forest floor and chest overrides
+    if "chest" in cache:
+        FOREST_EMOJI["fst_chest"] = cache["chest"]
+        FOREST_EMOJI["maze_chest"] = cache["chest"]
+    if "fst_floor" in cache:
+        FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
 
     # Empty gear socket custom emoji
     if "gear_socket" in cache:

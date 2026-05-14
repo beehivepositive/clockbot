@@ -4,6 +4,7 @@ from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
     EQUIP_BONUSES, SHIPWRECK_EMOJI, BREATH_MAX, SKY_EMOJI, TEMPLE_EMOJI,
+    FOREST_EMOJI,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -25,6 +26,10 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return SKY_EMOJI.get(tile.terrain, SKY_EMOJI.get("sky_void", "🌌"))
     if location == "temple":
         return TEMPLE_EMOJI.get(tile.terrain, "🧱")
+    if location == "forest":
+        return FOREST_EMOJI.get(tile.terrain, FOREST_EMOJI["fst_tree"])
+    if location == "maze":
+        return FOREST_EMOJI.get(tile.terrain, FOREST_EMOJI["maze_wall"])
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
@@ -80,6 +85,10 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "temple"
     elif getattr(player, "in_sky", False):
         location = "sky"
+    elif getattr(player, "in_maze", False):
+        location = "maze"
+    elif getattr(player, "in_forest", False):
+        location = "forest"
     else:
         location = "wilderness"
 

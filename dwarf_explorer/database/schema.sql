@@ -304,3 +304,64 @@ CREATE TABLE IF NOT EXISTS sky_chest_state (
 
 CREATE INDEX IF NOT EXISTS idx_sky_tiles_biome ON sky_tiles(sky_id, local_x, local_y);
 CREATE INDEX IF NOT EXISTS idx_sky_portals_pos ON sky_portals(world_x, world_y);
+
+-- Forest interior areas
+CREATE TABLE IF NOT EXISTS forest_areas (
+    forest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    width     INTEGER NOT NULL,
+    height    INTEGER NOT NULL
+);
+
+-- Forest interior tiles
+CREATE TABLE IF NOT EXISTS forest_tiles (
+    forest_id INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (forest_id, local_x, local_y)
+);
+
+-- Forest entrances: overworld tile → forest interior entry point
+CREATE TABLE IF NOT EXISTS forest_entrances (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    world_x   INTEGER NOT NULL,
+    world_y   INTEGER NOT NULL,
+    UNIQUE(world_x, world_y)
+);
+
+-- Maze areas (connected to a forest)
+CREATE TABLE IF NOT EXISTS maze_areas (
+    maze_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    width     INTEGER NOT NULL,
+    height    INTEGER NOT NULL
+);
+
+-- Maze interior tiles
+CREATE TABLE IF NOT EXISTS maze_tiles (
+    maze_id   INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (maze_id, local_x, local_y)
+);
+
+-- Per-player loot state for forest/maze chests
+CREATE TABLE IF NOT EXISTS player_maze_loots (
+    user_id  INTEGER NOT NULL,
+    maze_id  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, maze_id)
+);
+
+CREATE TABLE IF NOT EXISTS player_forest_loots (
+    user_id   INTEGER NOT NULL,
+    forest_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, forest_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forest_entrances_pos ON forest_entrances(world_x, world_y);
+CREATE INDEX IF NOT EXISTS idx_forest_tiles_area ON forest_tiles(forest_id, local_x, local_y);
+CREATE INDEX IF NOT EXISTS idx_maze_tiles_area ON maze_tiles(maze_id, local_x, local_y);
