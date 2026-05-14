@@ -1197,6 +1197,28 @@ async def get_or_create_chest(
     return cursor.lastrowid, True
 
 
+async def get_or_create_maze_chest(db: "Database", maze_id: int) -> tuple[int, bool]:
+    """Return (chest_id, is_new) for the treasure chest of a given maze.
+
+    Uses a virtual cave_id = -(maze_id * 10 + 9) so negative coords never
+    collide with player-house chests (which use -house_id directly).
+    The chest never auto-replenishes — once emptied, it stays empty.
+    """
+    virtual_cave_id = -(maze_id * 10 + 9)
+    row = await db.fetch_one(
+        "SELECT chest_id FROM chests WHERE cave_id=? AND local_x=0 AND local_y=0",
+        (virtual_cave_id,),
+    )
+    if row:
+        return row["chest_id"], False
+    cursor = await db.execute(
+        "INSERT INTO chests (cave_id, local_x, local_y, chest_type, last_reset)"
+        " VALUES (?, 0, 0, 'maze_chest', datetime('now'))",
+        (virtual_cave_id,),
+    )
+    return cursor.lastrowid, True
+
+
 async def get_or_create_ph_chest(
     db: Database, house_id: int, local_x: int, local_y: int, chest_type: str
 ) -> int:

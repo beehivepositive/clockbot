@@ -72,6 +72,7 @@ from dwarf_explorer.database.repositories import (
     set_tile_override,
     set_village_tile,
     get_or_create_chest,
+    get_or_create_maze_chest,
     get_or_create_ph_chest,
     get_chest_items,
     add_to_chest,
@@ -2223,8 +2224,9 @@ def _compute_context_labels(
         if getattr(player, "in_maze", False):
             if t == "maze_exit":
                 center_label, center_enabled = "🚪 Exit", True
-            elif t == "maze_chest":
-                center_label, center_enabled = "💰 Loot", True
+            elif t in ("maze_chest", "maze_mimic"):
+                # maze_mimic looks identical to maze_chest intentionally
+                center_label, center_enabled = "💰 Open", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Island tile context
@@ -3106,40 +3108,15 @@ async def _move_steps(
                     "🌿 You wind back through the hedge and emerge in the ancient forest."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
-            # Maze chest
-            if target.terrain == "maze_chest":
+            # Maze chest / mimic — just move to tile; open on interact
+            if target.terrain in ("maze_chest", "maze_mimic"):
                 player.maze_x, player.maze_y = nx, ny
                 await db.execute(
                     "UPDATE players SET maze_x=?, maze_y=? WHERE user_id=?", (nx, ny, user_id)
                 )
                 grid = await load_maze_viewport(player.maze_id, nx, ny, db)
-                # Check if already looted (use a simple flag on the player's data)
-                loot_key = f"maze_chest_{player.maze_id}"
-                already_looted = await db.fetch_one(
-                    "SELECT 1 FROM player_maze_loots WHERE user_id=? AND maze_id=?",
-                    (user_id, player.maze_id)
-                )
-                if already_looted:
-                    return render_grid(grid, player, "📦 The chest is empty — already looted."), \
-                           _game_view(guild_id, user_id, player, grid=grid)
-                # Grant loot
-                import random as _maze_rng
-                rng = _maze_rng.Random(hash((user_id, player.maze_id, "chest")))
-                gold_reward = rng.randint(80, 200)
-                item_pool = ["gem", "ancient_seed", "living_root", "bark_shield", "iron_ingot"]
-                item = rng.choice(item_pool)
-                await db.execute(
-                    "INSERT OR IGNORE INTO player_maze_loots(user_id, maze_id) VALUES(?,?)",
-                    (user_id, player.maze_id)
-                )
-                player.gold = min(player.gold + gold_reward, 9999)
-                await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
-                await add_to_inventory(db, user_id, item, 1)
-                from dwarf_explorer.config import ITEM_EMOJI as _ie
-                item_emoji = _ie.get(item, "📦")
                 return render_grid(grid, player,
-                    f"💰 Maze treasure chest! You find **{gold_reward}** gold and "
-                    f"{item_emoji} **{item.replace('_', ' ').title()}**!"), \
+                    "💰 A chest glints in the depths. Press **Open** (⚙️) to search it."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             player.maze_x, player.maze_y = nx, ny
@@ -3218,14 +3195,20 @@ async def _move_steps(
                            _game_view(guild_id, user_id, player, grid=grid)
                 player.in_maze = True
                 player.maze_id = maze_id
-                player.maze_x, player.maze_y = 1, 1  # maze entry point near (1,0) entrance
+                # Entry position stored in maze_areas; fall back to (1,1) for legacy mazes
+                _maze_meta = await db.fetch_one(
+                    "SELECT entry_x, entry_y FROM maze_areas WHERE maze_id=?", (maze_id,)
+                )
+                _mex = _maze_meta["entry_x"] if _maze_meta and _maze_meta["entry_x"] else 1
+                _mey = _maze_meta["entry_y"] if _maze_meta and _maze_meta["entry_y"] else 1
+                player.maze_x, player.maze_y = _mex, _mey
                 await db.execute(
-                    "UPDATE players SET in_maze=1, maze_id=?, maze_x=1, maze_y=1, "
+                    "UPDATE players SET in_maze=1, maze_id=?, maze_x=?, maze_y=?, "
                     "forest_x=?, forest_y=? WHERE user_id=?",
-                    (maze_id, nx, ny, user_id)
+                    (maze_id, _mex, _mey, nx, ny, user_id)
                 )
                 from dwarf_explorer.world.forest import load_maze_viewport as _lmv
-                grid = await _lmv(maze_id, 1, 1, db)
+                grid = await _lmv(maze_id, _mex, _mey, db)
                 return render_grid(grid, player,
                     "🌀 The hedge twists around you — you've entered the **Forest Maze**. "
                     "Find the treasure chest hidden within its depths."), \
@@ -3653,6 +3636,20 @@ async def _finish_combat(
         if drop_rng.random() < 0.40:
             await add_to_inventory(db, user_id, "hawk_feather", 1)
             extra_msg += " \U0001FAB6 You pluck a **Hawk Feather** from the fallen storm hawk!"
+
+    # Mimic defeated — replace the maze_mimic tile with maze_floor
+    if won and player.combat_enemy_type == "chest_mimic":
+        _mimic_mid = _ui_state.get(user_id, {}).get("mimic_maze_id")
+        _mimic_mx  = _ui_state.get(user_id, {}).get("mimic_x")
+        _mimic_my  = _ui_state.get(user_id, {}).get("mimic_y")
+        if _mimic_mid is not None and _mimic_mx is not None:
+            await db.execute(
+                "UPDATE maze_tiles SET tile_type='maze_floor' "
+                "WHERE maze_id=? AND local_x=? AND local_y=?",
+                (_mimic_mid, _mimic_mx, _mimic_my),
+            )
+            _invalidate_vp(user_id)
+        extra_msg += " 💀 The mimic collapses — a **fake chest** lies defeated!"
 
     # Wyvern scale drop on victory
     if won and player.combat_enemy_type == "cave_wyvern":
@@ -6350,9 +6347,96 @@ async def handle_interact(
             return
 
     elif getattr(player, "in_maze", False):
-        from dwarf_explorer.world.forest import load_maze_viewport as _lmv_i
+        from dwarf_explorer.world.forest import (
+            load_maze_viewport as _lmv_i, load_maze_single_tile as _lmst_i,
+            get_maze_exit_forest_pos as _gmefp_i, load_forest_viewport as _lfv_i2,
+        )
+        maze_tile = await _lmst_i(player.maze_id, player.maze_x, player.maze_y, db)
         grid = await _lmv_i(player.maze_id, player.maze_x, player.maze_y, db)
-        content = render_grid(grid, player, "🟩 Twisted hedge corridors surround you. Keep exploring.")
+
+        # ── Maze exit tile (both entrance and far-end shortcut) ───────────────
+        if maze_tile.terrain == "maze_exit":
+            fx, fy = await _gmefp_i(db, player.forest_id)
+            player.in_maze = False
+            player.maze_id = None
+            player.maze_x = player.maze_y = 0
+            player.forest_x, player.forest_y = fx, fy
+            await db.execute(
+                "UPDATE players SET in_maze=0, maze_id=NULL, maze_x=0, maze_y=0, "
+                "forest_x=?, forest_y=? WHERE user_id=?",
+                (fx, fy, user_id)
+            )
+            grid = await _lfv_i2(player.forest_id, fx, fy, db)
+            content = render_grid(grid, player,
+                "🌿 You push back through the hedge and emerge in the ancient forest.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        # ── Maze treasure chest — inventory-style ────────────────────────────
+        if maze_tile.terrain == "maze_chest":
+            chest_id, is_new = await get_or_create_maze_chest(db, player.maze_id)
+            if is_new:
+                # Populate with loot (deterministic per maze_id so every player sees same items)
+                import random as _mrng
+                loot_rng = _mrng.Random(hash((player.maze_id, "chest_loot")))
+                gold_reward = loot_rng.randint(80, 200)
+                item_pool = ["gem", "ancient_seed", "living_root", "bark_shield", "iron_ingot"]
+                items = loot_rng.sample(item_pool, k=loot_rng.randint(2, 3))
+                await add_to_chest(db, chest_id, "gold_coin", gold_reward)
+                for it in items:
+                    qty = loot_rng.randint(1, 3) if it in ("forest_nut", "living_root") else 1
+                    await add_to_chest(db, chest_id, it, qty)
+            chest_inv = await get_chest_items(db, chest_id)
+            player_inv = await get_inventory(db, user_id)
+            inv_rows, inv_cols = _inv_capacity(player)
+            _ui_state[user_id] = {
+                "type": "chest",
+                "chest_id": chest_id,
+                "chest_type": "maze_chest",
+                "selected": 0,
+                "chest_view": "chest",
+            }
+            content = render_chest(chest_inv, player_inv, 0, "chest",
+                                   "maze_chest", inv_rows, inv_cols)
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=ChestView(guild_id, user_id, "chest"))
+            return
+
+        # ── Maze mimic — looks like a chest; springs to life on open ─────────
+        if maze_tile.terrain == "maze_mimic":
+            enemy_type = "chest_mimic"
+            from dwarf_explorer.config import ENEMY_STATS as _ES, COMBAT_MOVES_DEFAULT as _CMD
+            arena_rng = _random.Random(hash((user_id, player.maze_x, player.maze_y, enemy_type)))
+            arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+            player.in_combat = True
+            player.combat_enemy_type = enemy_type
+            player.combat_enemy_hp = _ES[enemy_type][0]
+            player.combat_enemy_x = ex
+            player.combat_enemy_y = ey
+            player.combat_player_x = ARENA_SIZE // 2
+            player.combat_player_y = ARENA_SIZE // 2
+            player.combat_moves_left = _CMD + (1 if player.accessory == "ring_of_time" else 0)
+            # Store mimic location so we can clear the tile after combat
+            _ui_state[user_id] = {
+                "type": "combat", "arena": arena,
+                "mimic_maze_id": player.maze_id,
+                "mimic_x": player.maze_x,
+                "mimic_y": player.maze_y,
+            }
+            await save_combat_state(db, user_id, player)
+            content = (
+                "💀 **It's a MIMIC!** The chest snaps open to reveal rows of teeth — "
+                "and lunges at you!\n\n" + render_arena(arena, player)
+            )
+            view = CombatView(guild_id, user_id,
+                              trapped=arena["player_trapped"],
+                              moves_left=player.combat_moves_left)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        # Generic maze tile
+        content = render_grid(grid, player, "🌳 Dense forest walls surround the path. Keep exploring.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return

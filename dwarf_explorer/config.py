@@ -311,6 +311,8 @@ ENEMY_STATS = {
     "vine_creeper":    (30, 13,  1, 18, 10),   # melee, poisons
     "corrupted_dryad": (45, 16,  3, 30, 18),   # ranged, corrupted nature spirit
     "forest_troll":    (65, 20,  6, 45, 22),   # heavy melee, slam/roar
+    # Maze mimic — disguises as a chest; high first-strike damage
+    "chest_mimic":     (50, 22,  4, 40, 25),   # tanky, hits hard, good xp
 }
 
 # Player defaults
@@ -350,6 +352,8 @@ ENEMY_ABILITIES = {
     "vine_creeper":    {"cobweb": True,  "poison": True,  "hit_run": False, "roar": False, "slam": False, "ranged": False},
     "corrupted_dryad": {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": False, "ranged": True},
     "forest_troll":    {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
+    # Maze mimic
+    "chest_mimic":     {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True,  "ranged": False},
 }
 
 ARENA_EMOJI = {
@@ -621,10 +625,11 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_nut_tree":     "\U0001F330",   # 🌰 nut tree (interact to gather forest nuts)
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
     # Maze tiles
-    "maze_wall":        "⬛",       # ⬛ maze wall
+    "maze_wall":        "\U0001F333",   # 🌳 dense forest wall (impassable)
     "maze_floor":       "\U0001F7E9",   # 🟩 maze passage
     "maze_exit":        "\U0001F6AA",   # 🚪 maze exit (returns to forest)
     "maze_chest":       "\U0001F4B0",   # 💰 maze treasure chest
+    "maze_mimic":       "\U0001F4B0",   # 💰 mimic — identical look to maze_chest, by design
     # Forest enemy icons (displayed in viewport encounters are handled by ENTITY_EMOJI,
     # but keep here so load_forest_viewport can render them as floor sub-tiles)
     "forest_sprite":   "\U0001F9DA",
@@ -639,7 +644,7 @@ FOREST_WALKABLE: frozenset[str] = frozenset({
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({
-    "maze_floor", "maze_exit", "maze_chest",
+    "maze_floor", "maze_exit", "maze_chest", "maze_mimic",
 })
 
 # Random encounter rates inside forest (chance per step)

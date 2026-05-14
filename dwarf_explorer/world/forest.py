@@ -19,8 +19,14 @@ FOREST_SIZE_MIN = 48
 FOREST_SIZE_MAX = 68
 FOREST_WALK_STEPS = 1200
 
-MAZE_W = 31   # must be odd for recursive-backtracking carving
-MAZE_H = 31
+_MAZE_CELLS  = 8    # cells per axis (8×8 = 64 decision points)
+_MAZE_STRIDE = 4    # 3-tile-wide path + 1-tile wall = stride 4
+MAZE_W = _MAZE_CELLS * _MAZE_STRIDE + 1   # = 33
+MAZE_H = _MAZE_CELLS * _MAZE_STRIDE + 1   # = 33
+# Maze entry: center of the top cell (cx = CELLS//2), one step inside
+_MAZE_ENTRY_CX = _MAZE_CELLS // 2         # = 4
+MAZE_ENTRY_X   = _MAZE_ENTRY_CX * _MAZE_STRIDE + 2   # = 18 (centre of 3-wide path)
+MAZE_ENTRY_Y   = 1                                     # just below the exit tile at y=0
 
 # How many dense-forest entrance clusters to place per world
 FOREST_AREA_COUNT = 6
@@ -220,46 +226,75 @@ def _generate_forest_interior(
 
 def _generate_maze(
     maze_id: int, seed: int, forest_id: int,
-) -> tuple[int, int, list[tuple[int, int, str]]]:
-    """Generate a maze using recursive-backtracking DFS.
+) -> tuple[int, int, list[tuple[int, int, str]], int, int]:
+    """Generate a 3-wide-path maze using iterative DFS (recursive-backtracking).
 
-    The maze is MAZE_W × MAZE_H (both odd).
-    Entrance is at (1, 0) — top-left hole.
-    Treasure chest placed at the dead-end farthest from entrance.
-    Returns (width, height, tiles).
+    Grid: MAZE_W × MAZE_H (33×33).  Each cell is 3 tiles wide; walls between
+    cells are 1 tile wide (stride = 4).  8×8 = 64 cells → ~16+ dead-ends.
+
+    Placement priority (by descending distance from entrance):
+      [0]  maze_chest  — the real treasure chest
+      [1]  maze_exit   — shortcut exit at the far end of the maze
+      [2…6] maze_mimic  — up to 5 decoy chests that start combat when opened
+    Returns (width, height, tiles, entry_x, entry_y).
     """
     rng = random.Random(seed + _MAZE_SEED_OFFSET + maze_id * 3571 + forest_id * 1319)
 
-    W, H = MAZE_W, MAZE_H
-    # grid[y][x]: "maze_wall" | "maze_floor" | "maze_exit" | "maze_chest"
-    grid = [["maze_wall"] * W for _ in range(H)]
+    CELLS  = _MAZE_CELLS   # 8
+    STRIDE = _MAZE_STRIDE  # 4
+    W = MAZE_W             # 33
+    H = MAZE_H             # 33
 
-    cell_w = W // 2   # number of cells horizontally
-    cell_h = H // 2   # number of cells vertically
+    # Start everything as walls
+    grid: list[list[str]] = [["maze_wall"] * W for _ in range(H)]
 
+    def _carve_cell(cx: int, cy: int) -> None:
+        """Clear the 3×3 interior of cell (cx, cy)."""
+        x0 = cx * STRIDE + 1
+        y0 = cy * STRIDE + 1
+        for ry in range(y0, y0 + 3):
+            for rx in range(x0, x0 + 3):
+                grid[ry][rx] = "maze_floor"
+
+    def _carve_passage(cx: int, cy: int, dx: int, dy: int) -> None:
+        """Carve the 1×3 (or 3×1) wall between cell (cx,cy) and its (dx,dy) neighbour."""
+        if dx == 1:          # right: wall column at cx*STRIDE+4
+            wx = cx * STRIDE + 4
+            y0 = cy * STRIDE + 1
+            for ry in range(y0, y0 + 3):
+                grid[ry][wx] = "maze_floor"
+        elif dx == -1:       # left: wall column at (cx-1)*STRIDE+4
+            wx = (cx - 1) * STRIDE + 4
+            y0 = cy * STRIDE + 1
+            for ry in range(y0, y0 + 3):
+                grid[ry][wx] = "maze_floor"
+        elif dy == 1:        # down: wall row at cy*STRIDE+4
+            wy = cy * STRIDE + 4
+            x0 = cx * STRIDE + 1
+            for rx in range(x0, x0 + 3):
+                grid[wy][rx] = "maze_floor"
+        elif dy == -1:       # up: wall row at (cy-1)*STRIDE+4
+            wy = (cy - 1) * STRIDE + 4
+            x0 = cx * STRIDE + 1
+            for rx in range(x0, x0 + 3):
+                grid[wy][rx] = "maze_floor"
+
+    # Iterative DFS
     visited: set[tuple[int, int]] = set()
-
-    # Iterative DFS to avoid Python recursion limit
     stack = [(0, 0)]
     visited.add((0, 0))
-    gx0, gy0 = 1, 1
-    grid[gy0][gx0] = "maze_floor"
+    _carve_cell(0, 0)
 
     while stack:
         cx, cy = stack[-1]
-        gx, gy = cx * 2 + 1, cy * 2 + 1
-
         dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
         rng.shuffle(dirs)
         moved = False
         for dx, dy in dirs:
             nx, ny = cx + dx, cy + dy
-            if 0 <= nx < cell_w and 0 <= ny < cell_h and (nx, ny) not in visited:
-                # Carve passage between (cx,cy) and (nx,ny)
-                wx, wy = gx + dx, gy + dy   # wall tile between them
-                ngx, ngy = nx * 2 + 1, ny * 2 + 1
-                grid[wy][wx] = "maze_floor"
-                grid[ngy][ngx] = "maze_floor"
+            if 0 <= nx < CELLS and 0 <= ny < CELLS and (nx, ny) not in visited:
+                _carve_cell(nx, ny)
+                _carve_passage(cx, cy, dx, dy)
                 visited.add((nx, ny))
                 stack.append((nx, ny))
                 moved = True
@@ -267,35 +302,44 @@ def _generate_maze(
         if not moved:
             stack.pop()
 
-    # Entrance: break wall at top-centre of first cell
-    entrance_gx = 1
-    grid[0][entrance_gx] = "maze_exit"   # walkable AND acts as exit back to forest
+    # Entrance exit tile: centre of the top cell column (cx = CELLS//2)
+    entry_x = MAZE_ENTRY_X   # = 18
+    entry_y = MAZE_ENTRY_Y   # = 1
+    grid[0][entry_x] = "maze_exit"  # walkable + exits to forest when stepped on
 
-    # Find dead-end farthest from entrance for treasure
-    def _floor_adj(x: int, y: int) -> int:
-        count = 0
-        for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            nx2, ny2 = x + ddx, y + ddy
-            if 0 <= nx2 < W and 0 <= ny2 < H and grid[ny2][nx2] != "maze_wall":
-                count += 1
-        return count
+    # Identify dead-ends (floor tiles with exactly one non-wall neighbour)
+    def _non_wall_adj(x: int, y: int) -> int:
+        return sum(
+            1 for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
+            if 0 <= x + ddx < W and 0 <= y + ddy < H
+            and grid[y + ddy][x + ddx] != "maze_wall"
+        )
 
-    dead_ends: list[tuple[int, int, int]] = []   # (dist, x, y)
+    dead_ends: list[tuple[int, int, int]] = []  # (distance, x, y)
     for y in range(1, H):
         for x in range(W):
-            if grid[y][x] == "maze_floor" and _floor_adj(x, y) == 1:
-                dist = abs(x - entrance_gx) + y
+            if grid[y][x] == "maze_floor" and _non_wall_adj(x, y) == 1:
+                dist = abs(x - entry_x) + y
                 dead_ends.append((dist, x, y))
 
     dead_ends.sort(reverse=True)
-    if dead_ends:
-        _, tx, ty = dead_ends[0]
-        grid[ty][tx] = "maze_chest"
+
+    # Assign special tiles from the farthest dead-ends inward
+    _MIMIC_MAX = 5
+    for i, (_, tx, ty) in enumerate(dead_ends):
+        if i == 0:
+            grid[ty][tx] = "maze_chest"
+        elif i == 1:
+            grid[ty][tx] = "maze_exit"    # shortcut exit near the goal
+        elif i <= 1 + _MIMIC_MAX:
+            grid[ty][tx] = "maze_mimic"
+        else:
+            break  # leave remaining dead-ends as plain floor
 
     tiles: list[tuple[int, int, str]] = [
         (x, y, grid[y][x]) for y in range(H) for x in range(W)
     ]
-    return W, H, tiles
+    return W, H, tiles, entry_x, entry_y
 
 
 # ── DB creation ─────────────────────────────────────────────────────────────────
@@ -334,7 +378,7 @@ async def create_forest_area(
         _generate_forest_interior,
         forest_id, seed, overworld_positions[0][0], overworld_positions[0][1], n,
     )
-    mw, mh, maze_tiles = await asyncio.to_thread(
+    mw, mh, maze_tiles, maze_entry_x, maze_entry_y = await asyncio.to_thread(
         _generate_maze, maze_id, seed, forest_id,
     )
 
@@ -343,8 +387,8 @@ async def create_forest_area(
         (width, height, forest_id),
     )
     await db.execute(
-        "UPDATE maze_areas SET width=?, height=? WHERE maze_id=?",
-        (mw, mh, maze_id),
+        "UPDATE maze_areas SET width=?, height=?, entry_x=?, entry_y=? WHERE maze_id=?",
+        (mw, mh, maze_entry_x, maze_entry_y, maze_id),
     )
     await db.executemany(
         "INSERT OR IGNORE INTO forest_tiles (forest_id, local_x, local_y, tile_type)"
