@@ -129,7 +129,7 @@ ITEM_EMOJI = {
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F52A",    # 🗡️
     "hiking_boots":    "\U0001F97E",    # 🥾
-    "climbing_boots":  "\U0001F9D7",    # 🧗 person climbing
+    "climbing_boots":  "\U0001F97E",    # 🥾 hiking boot
     "torch": "\U0001F526",           # 🔦
     "axe": "\U0001FA93",             # 🪓
     "shovel": "\u26CF\uFE0F",       # ⛏️
@@ -836,7 +836,7 @@ SHOP_CATALOG = [
     {
         "id": "climbing_boots",
         "name": "Climbing Boots",
-        "emoji": "\U0001F9D7",   # 🧗 person climbing
+        "emoji": "\U0001F97E",   # 🥾 hiking boot
         "price": 150,
         "equip_slot": "boots",
         "description": "Reinforced boots. Traverse mountain tiles. Required for sky biome portals.",

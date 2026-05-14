@@ -320,7 +320,10 @@ _EQUIP_SLOT_LABELS = {
 
 
 def _item_emoji(item_id: str) -> str:
-    return _ITEM_SLOT_EMOJI.get(item_id, "\U0001F4E6")
+    if item_id in _ITEM_SLOT_EMOJI:
+        return _ITEM_SLOT_EMOJI[item_id]
+    from dwarf_explorer.config import ITEM_EMOJI as _IE
+    return _IE.get(item_id, "\U0001F4E6")
 
 
 _PAD = "\u2000"  # EN QUAD — wider than a regular space, won't collapse in Discord

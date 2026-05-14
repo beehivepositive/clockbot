@@ -931,7 +931,7 @@ class IslandView(discord.ui.View):
 class ShopView(discord.ui.View):
     """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop",
-                 farmer_mode: bool = False):
+                 farmer_mode: bool = False, tavern_mode: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -941,8 +941,8 @@ class ShopView(discord.ui.View):
         ))
 
         # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv)
-        #           Disabled spacer in farmer_mode (buy-only, no sell tab)
-        if farmer_mode:
+        #           Disabled spacer in farmer_mode / tavern_mode (buy-only, no sell tab)
+        if farmer_mode or tavern_mode:
             _sp("shop_switch", 0)
         else:
             switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
@@ -1522,9 +1522,9 @@ def _render_anvil(cursor_idx: int, inv_counts: dict[str, int], material_idx: int
 
 
 class AnvilView(discord.ui.View):
-    """Anvil recipe menu — 5-row ShopView-style layout."""
+    """Anvil recipe menu — ShopView-style 5-row layout with material selector at bottom."""
 
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int, material_idx: int = 0):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -1533,16 +1533,8 @@ class AnvilView(discord.ui.View):
             custom_id=_custom_id(gid, uid, act), row=r,
         ))
 
-        # Row 0: [🧱 Iron] [spacer] [🐉 Wyvern] — material tab switchers
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="🧱 Iron",
-            custom_id=_custom_id(gid, uid, "anvil_mat_iron"), row=0,
-        ))
-        _sp("anvil_sp0b", 0)
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="🐉 Wyvern",
-            custom_id=_custom_id(gid, uid, "anvil_mat_wyvern"), row=0,
-        ))
+        # Row 0: spacer (no tab switch — crafting only)
+        _sp("anvil_sp0a", 0)
 
         # Row 1: [spacer] [⬆️] [spacer]
         _sp("anvil_sp1a", 1)
@@ -1552,13 +1544,13 @@ class AnvilView(discord.ui.View):
         ))
         _sp("anvil_sp1b", 1)
 
-        # Row 2: [⬅️ prev recipe] [⚒️ Craft] [➡️ next recipe]
+        # Row 2: [⬅️ prev recipe] [🔨 Craft] [➡️ next recipe]
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="⬅️",
             custom_id=_custom_id(gid, uid, "anvil_prev"), row=2,
         ))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.success, label="⚒️ Craft",
+            style=discord.ButtonStyle.success, emoji="🔨",
             custom_id=_custom_id(gid, uid, "anvil_craft"), row=2,
         ))
         self.add_item(discord.ui.Button(
@@ -1573,7 +1565,21 @@ class AnvilView(discord.ui.View):
             custom_id=_custom_id(gid, uid, "anvil_down"), row=3,
         ))
 
-        # Row 4: [❌ Close]
+        # Row 4: [⬅ mat] [disabled: current material label] [➡ mat] [spacer] [❌ Close]
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji="⬅️",
+            custom_id=_custom_id(gid, uid, "anvil_mat_prev"), row=4,
+        ))
+        mat_label = _ANVIL_MATERIAL_LABELS[material_idx % len(_ANVIL_MATERIAL_LABELS)]
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label=mat_label, disabled=True,
+            custom_id=_custom_id(gid, uid, "anvil_mat_lbl"), row=4,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, emoji="➡️",
+            custom_id=_custom_id(gid, uid, "anvil_mat_next"), row=4,
+        ))
+        _sp("anvil_sp4d", 4)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.danger, label="❌ Close",
             custom_id=_custom_id(gid, uid, "anvil_close"), row=4,
@@ -6754,7 +6760,7 @@ async def handle_action(
             await interaction.response.edit_message(
                 embed=_embed(content_anvil),
                 content=None,
-                view=AnvilView(guild_id, user_id),
+                view=AnvilView(guild_id, user_id, _ui_state.get(user_id, {}).get("anvil_material", 0)),
             )
             return
 
@@ -7523,7 +7529,7 @@ async def _anvil_refresh(
     if msg:
         content = msg + "\n\n" + content
     await interaction.response.edit_message(
-        embed=_embed(content), content=None, view=AnvilView(guild_id, user_id)
+        embed=_embed(content), content=None, view=AnvilView(guild_id, user_id, mat_idx)
     )
 
 
@@ -7577,10 +7583,30 @@ async def handle_anvil_next(
     await _anvil_refresh(interaction, guild_id, user_id)
 
 
+async def handle_anvil_mat_prev(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the previous material page (wraps)."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = (state.get("anvil_material", 0) - 1) % len(_ANVIL_MATERIALS)
+    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_mat_next(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the next material page (wraps)."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    mat_idx = (state.get("anvil_material", 0) + 1) % len(_ANVIL_MATERIALS)
+    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+# Aliases for backward-compat with old button IDs
 async def handle_anvil_mat_iron(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Switch to the Iron material page."""
     state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
     _ui_state[user_id] = {**state, "anvil_material": 0, "anvil_cursor": 0}
     await _anvil_refresh(interaction, guild_id, user_id)
@@ -7589,7 +7615,6 @@ async def handle_anvil_mat_iron(
 async def handle_anvil_mat_wyvern(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Switch to the Wyvern material page."""
     state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
     _ui_state[user_id] = {**state, "anvil_material": 1, "anvil_cursor": 0}
     await _anvil_refresh(interaction, guild_id, user_id)
@@ -7676,7 +7701,7 @@ async def handle_anvil_dagger(
         msg = "⚒️ You need 1 iron ingot to craft a dagger."
 
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id, _ui_state.get(user_id, {}).get("anvil_material", 0))
     )
 
 
@@ -7700,7 +7725,7 @@ async def handle_anvil_sword(
         msg = "⚒️ You need 2 iron ingots to forge a sword."
 
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id, _ui_state.get(user_id, {}).get("anvil_material", 0))
     )
 
 
@@ -7719,7 +7744,7 @@ async def _anvil_craft(interaction: discord.Interaction, guild_id: int, user_id:
     else:
         msg = f"⚒️ You need {ingot_cost} iron ingot{'s' if ingot_cost > 1 else ''} to craft a {name}."
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id, _ui_state.get(user_id, {}).get("anvil_material", 0))
     )
 
 
@@ -7775,7 +7800,7 @@ async def _anvil_wyvern_upgrade(
     else:
         msg = f"🐉 You need {scale_cost} wyvern scales to upgrade (have {scale_qty})."
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id)
+        embed=_embed(msg), content=None, view=AnvilView(guild_id, user_id, _ui_state.get(user_id, {}).get("anvil_material", 0))
     )
 
 
