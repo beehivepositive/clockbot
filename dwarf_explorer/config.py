@@ -36,7 +36,7 @@ TERRAIN_EMOJI = {
     "grass": "\U0001F33F",           # 🌿  (overridable with :grass:)
     "forest": "\U0001F332",          # 🌲
     "dense_forest": "\U0001F333",    # 🌳
-    "hills": "⛰️",        # ⛰️  (placeholder — swap for custom :hills: emoji)
+    "hills": "\U0001F304",  # 🌄  sunrise over mountains
     "mountain": "⛰️",      # ⛰️  :mountain: (no snow cap)
     "snow": "\U0001F3D4️",    # 🏔️  :mountain_snow: — impassable snowy peaks
     "path": "\U0001F7EB",           # 🟫
@@ -83,6 +83,8 @@ ENTITY_EMOJI = {
     "sea_serpent": "\U0001F40D",     # 🐍
     # Rift boss
     "temporal_echo": "\U0001F47B",   # 👻 ghostly temporal apparition
+    # Surface
+    "bandit": "\U0001F9B9",          # 🦹 villain/bandit
 }
 
 # ── Custom gear emoji IDs ──────────────────────────────────────────────────────
@@ -289,6 +291,8 @@ ENEMY_STATS = {
     # Sky biome enemies
     "wind_wisp":  (25,  6, 1,  8, 5),
     "storm_hawk": (40,  9, 3, 15, 8),
+    # Surface bandits
+    "bandit":     (35, 12, 2, 20, 18),  # moderate HP/atk, carries more gold than wolves
 }
 
 # Player defaults
@@ -1077,14 +1081,15 @@ LAVA_CAVE_ENCOUNTER_RATES = {
     "obsidian_golem": 0.04,
 }
 
-# Surface encounters: terrain → enemy_type (1% chance per step, short_grass excluded)
+# Surface encounters: terrain → [(enemy_type, weight), ...]  (1% chance per step)
+# weights are relative (not %; they are normalised at runtime by random.choices)
 SURFACE_ENCOUNTER_MOBS = {
-    "plains":       "wolf",
-    "grass":        "wolf",
-    "sand":         "wolf",
-    "hills":        "bear",
-    "forest":       "wolf",
-    "dense_forest": "bear",
+    "plains":       [("wolf", 55), ("bandit", 45)],
+    "grass":        [("wolf", 55), ("bandit", 45)],
+    "sand":         [("wolf", 70), ("bandit", 30)],
+    "hills":        [("bear", 65), ("wolf", 20), ("bandit", 15)],
+    "forest":       [("wolf", 50), ("bandit", 30), ("bear", 20)],
+    "dense_forest": [("bear", 60), ("wolf", 30), ("bandit", 10)],
 }
 
 # Sell prices at the shop (60% of buy price for shop items)

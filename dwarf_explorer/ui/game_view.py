@@ -1103,7 +1103,7 @@ class CombatView(discord.ui.View):
     """Arena combat view. Arrows attempt cobweb escape when trapped. Attack disabled while trapped."""
 
     def __init__(self, guild_id: int, user_id: int, trapped: bool = False,
-                 moves_left: int = COMBAT_MOVES_DEFAULT):
+                 moves_left: int = COMBAT_MOVES_DEFAULT, enemy_type: str = ""):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
         disabled = (moves_left <= 0)
@@ -1135,23 +1135,48 @@ class CombatView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=1,
             ))
 
-        # Row 2: ↙ ↓ ↘ spacer spacer
+        # Row 2: ↙ ↓ ↘ [💰 Bribe if bandit] spacer
         for emoji, action in [("↙", "c_downleft"), ("⬇️", "c_down"), ("↘", "c_downright")]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary,
                 label=emoji, disabled=disabled,
                 custom_id=_custom_id(gid, uid, action), row=2,
             ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp0"), row=2,
-        ))
+        if enemy_type == "bandit":
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label="💰 Bribe", disabled=disabled,
+                custom_id=_custom_id(gid, uid, "c_bribe"), row=2,
+            ))
+        else:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, "csp0"), row=2,
+            ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="\u200b", disabled=True,
             custom_id=_custom_id(gid, uid, "csp_a"), row=2,
         ))
+
+
+class BribeModal(discord.ui.Modal, title="Bribe the Bandit"):
+    """Modal for entering a bribe amount when fighting a bandit."""
+    amount = discord.ui.TextInput(
+        label="Coins to offer",
+        placeholder="1 coin = 5%  |  50 coins = 100%  |  more = always 100%",
+        min_length=1,
+        max_length=6,
+    )
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__()
+        self._gid = guild_id
+        self._uid = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):  # type: ignore[override]
+        await handle_bribe_submit(interaction, self._gid, self._uid, self.amount.value)
 
 
 class ConsumablesView(discord.ui.View):
@@ -3165,10 +3190,13 @@ async def _move_steps(
                 view = MerchantView(guild_id, user_id)
                 return content, view
             # Random surface encounter (1%, biome-specific, skip short_grass)
-            enemy_type = SURFACE_ENCOUNTER_MOBS.get(target.terrain)
-            if enemy_type:
+            mob_table = SURFACE_ENCOUNTER_MOBS.get(target.terrain)
+            if mob_table:
                 enc_rng = _random.Random(hash((user_id, nx, ny, seed, player.gold)))
                 if enc_rng.random() < 0.01:
+                    # Pick enemy from weighted table
+                    _enemies, _weights = zip(*mob_table)
+                    enemy_type = enc_rng.choices(_enemies, weights=_weights, k=1)[0]
                     grid = await load_viewport(nx, ny, seed, db)
                     arena_rng = _random.Random(hash((user_id, nx, ny, enemy_type)))
                     arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
@@ -3185,7 +3213,8 @@ async def _move_steps(
                     content = render_arena(arena, player)
                     view = CombatView(guild_id, user_id,
                                       trapped=arena["player_trapped"],
-                                      moves_left=player.combat_moves_left)
+                                      moves_left=player.combat_moves_left,
+                                      enemy_type=enemy_type)
                     return content, view
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
@@ -3215,7 +3244,8 @@ async def handle_move(
 def _combat_view(guild_id: int, user_id: int, arena: dict, player) -> CombatView:
     return CombatView(guild_id, user_id,
                       trapped=arena["player_trapped"],
-                      moves_left=player.combat_moves_left)
+                      moves_left=player.combat_moves_left,
+                      enemy_type=player.combat_enemy_type or "")
 
 
 async def _finish_combat(
@@ -3242,6 +3272,13 @@ async def _finish_combat(
         if drop_rng.random() < 0.50:
             await add_to_inventory(db, user_id, "poison_sac", 1)
             extra_msg += " 🧪 The spider dropped a **Poison Sac**!"
+
+    # Bandit dagger drop on victory (~25%)
+    if won and player.combat_enemy_type == "bandit":
+        drop_rng = _random.Random(hash((user_id, player.world_x, player.world_y, "bandit_drop")))
+        if drop_rng.random() < 0.25:
+            await add_to_inventory(db, user_id, "dagger", 1)
+            extra_msg += " 🗡️ The bandit dropped a **Dagger**!"
 
     # Sky enemy drops on victory
     if won and player.combat_enemy_type == "wind_wisp":
@@ -3558,6 +3595,76 @@ async def handle_combat_flee(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
     else:
         await _after_player_action(interaction, db, guild_id, user_id, player, arena, msg)
+
+
+
+async def handle_bribe(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Show the bribe modal when fighting a bandit."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    _db, player, _arena = result
+    if player.combat_enemy_type != "bandit":
+        await interaction.response.send_message("You can only bribe bandits!", ephemeral=True)
+        return
+    await interaction.response.send_modal(BribeModal(guild_id, user_id))
+
+
+async def handle_bribe_submit(
+    interaction: discord.Interaction, guild_id: int, user_id: int, amount_str: str
+) -> None:
+    """Process a bribe attempt after the player submits the modal."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+
+    try:
+        amount = int(amount_str.strip())
+    except ValueError:
+        await interaction.response.send_message("Please enter a whole number.", ephemeral=True)
+        return
+
+    if amount <= 0:
+        await interaction.response.send_message("Must offer at least 1 coin.", ephemeral=True)
+        return
+    if amount > player.gold:
+        await interaction.response.send_message(
+            f"You only have **{player.gold}** coins!", ephemeral=True
+        )
+        return
+
+    # Deduct coins and calculate success chance (5% @ 1 coin, 100% @ 50+, linear)
+    player.gold -= amount
+    chance = min(1.0, 0.05 + (amount - 1) * (0.95 / 49))
+    pct = int(chance * 100)
+
+    bribe_rng = _random.Random()  # non-deterministic — bribe outcome should not be predictable
+    if bribe_rng.random() < chance:
+        msg = (
+            f"💰 You offered **{amount} coin{'s' if amount != 1 else ''}** "
+            f"({pct}% chance) — the bandit pockets the gold and melts back into "
+            f"the shadows. You escape unharmed!"
+        )
+        arena["combat_log"].append(msg)
+        content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                             " ".join(arena["combat_log"][-3:]))
+    else:
+        msg = (
+            f"💸 The bandit snatches your **{amount} coin{'s' if amount != 1 else ''}** "
+            f"but attacks anyway! ({pct}% chance — failed)"
+        )
+        arena["combat_log"].append(msg)
+        await save_combat_state(db, user_id, player)
+        from dwarf_explorer.game.combat import render_arena
+        render_content = render_arena(arena, player)
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(render_content), content=None, view=view)
+        return
+
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_combat_eat(

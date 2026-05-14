@@ -47,6 +47,7 @@ from dwarf_explorer.ui.game_view import (
     handle_anvil_wyvern_leggings, handle_anvil_wyvern_shield,
     handle_shrine_enchant, handle_shrine_cancel,
     handle_combat_consume, handle_combat_consume_cancel,
+    handle_bribe,
     handle_inv_eat,
     handle_inv_select, handle_inv_unselect_all,
     handle_inv_item_btn, handle_inv_item_inc, handle_inv_item_dec,
@@ -107,7 +108,7 @@ _OCEAN_MOVE_ACTIONS = {
     "ocean_upleft", "ocean_upright", "ocean_downleft", "ocean_downright",
 }
 # Actions that open a modal — must NOT defer first (send_modal IS the response)
-_MODAL_ACTIONS = {"inv_qty_modal", "bank_qty_modal", "shop_qty_modal"}
+_MODAL_ACTIONS = {"inv_qty_modal", "bank_qty_modal", "shop_qty_modal", "c_bribe"}
 
 _IGNORED_ACTIONS = {
     "ship_hp_sp",
@@ -242,6 +243,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_attack(interaction, gid, uid)
             elif act == "c_flee":
                 await handle_combat_flee(interaction, gid, uid)
+            elif act == "c_bribe":
+                await handle_bribe(interaction, gid, uid)
             elif act == "c_eat":
                 await handle_combat_eat(interaction, gid, uid)
             elif act == "c_endturn":
