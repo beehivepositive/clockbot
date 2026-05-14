@@ -198,8 +198,6 @@ class DwarfExplorer(commands.Cog):
             WHERE user_id=?""",
             (sx, sy, ADMIN_PLAYER_ID),
         )
-        await db.commit()
-
         player.world_x, player.world_y = sx, sy
         player.in_cave = player.in_village = player.in_house = False
         player.in_forest = getattr(player, "in_forest", False) and False
