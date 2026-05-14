@@ -2726,11 +2726,12 @@ def _render_merchant(catalog: list[dict], selected: int, player) -> str:
     return "\n".join(lines)
 
 
-def _roll_encounter(rng: _random.Random, rates: dict | None = None, gate: float = 0.07) -> str | None:
+def _roll_encounter(rng: _random.Random, rates: dict | None = None, gate: float = 0.01) -> str | None:
     """Roll for a random encounter. Returns enemy_type or None.
 
-    Rolls once for a `gate` encounter chance, then picks a mob by relative weight
-    (values in `rates` are used as weights, not independent probabilities).
+    Rolls once for a `gate` encounter chance (default 1%), then picks a mob by
+    relative weight (values in `rates` are used as weights, not independent
+    probabilities).
     """
     if rates is None:
         rates = CAVE_ENCOUNTER_RATES
@@ -3017,10 +3018,8 @@ async def _move_steps(
 
             # Random encounter on sky tiles
             if target.terrain in ("sky_cloud", "sky_bridge"):
-                enc_rates = SKY_ENCOUNTER_RATES
                 enc_rng = _random.Random(hash((user_id, nx, ny, player.sky_id, player.gold)))
-                total = sum(enc_rates.values())
-                if enc_rng.random() < total:
+                if enc_rng.random() < 0.01:
                     # Pick enemy weighted by their rates (only cloud/bridge-appropriate)
                     if target.terrain == "sky_bridge":
                         enc_rates_filtered = {"storm_hawk": SKY_ENCOUNTER_RATES.get("storm_hawk", 0.06)}
@@ -3750,15 +3749,8 @@ async def _finish_combat(
         return render_grid(grid, player, sink_msg), _game_view(guild_id, user_id, player, grid=grid)
 
     await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
-    # Return to the appropriate location view
-    if player.in_cave:
-        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player, extra_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-    if getattr(player, "in_sky", False):
-        sid = getattr(player, "sky_id", 0)
-        sx, sy = getattr(player, "sky_x", 0), getattr(player, "sky_y", 0)
-        grid = await load_sky_viewport(sid, sx, sy, db)
-        return render_grid(grid, player, extra_msg), _game_view(guild_id, user_id, player, grid=grid)
+    # Return to the appropriate location view.
+    # High-seas and boat use specialised view classes with extra kwargs — keep explicit.
     if player.in_high_seas:
         from dwarf_explorer.world.terrain import get_coast_boundary as _gcb2
         _hs_ce, _ = _gcb2(seed)
@@ -3773,10 +3765,14 @@ async def _finish_combat(
         harbor_adj = await _adjacent_harbor(player, seed, db)
         return render_grid(grid, player, extra_msg), BoatView(guild_id, user_id,
                                                               dock_available=(harbor_adj is not None))
-    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    # All other locations (cave, sky, forest, maze, temple, ship, village, house, overworld):
+    # use canonical helpers so nothing falls through to the wrong viewport.
+    _invalidate_vp(user_id)
+    grid = await _cached_grid(user_id, player, seed, db)
+    view = await _build_player_view(guild_id, user_id, player, db, grid)
     qmarks = await get_player_quest_markers(db, user_id)
     nav = _ui_state.get(user_id, {}).get("nav_target")
-    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
+    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav), view
 
 
 async def _after_player_action(
