@@ -13,8 +13,6 @@ from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
 
 _FOREST_SEED_OFFSET = 0xF07E57   # = 15_762_007
-_MAZE_SEED_OFFSET   = 0xA_MAZE   # = 698_974... wait, that's not valid hex
-# Use: 0xA_MAZE can't work; just use int literals
 _MAZE_SEED_OFFSET   = 699743      # arbitrary prime
 
 FOREST_SIZE_MIN = 48
