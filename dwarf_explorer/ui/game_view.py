@@ -231,6 +231,23 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     return grid
 
 
+async def _build_player_view(
+    guild_id: int, user_id: int, player, db, grid: list
+) -> discord.ui.View:
+    """Return the correct View subclass for the player's current location.
+
+    This is the canonical helper to use whenever you need to reconstruct the
+    game view after a non-movement action (sprint toggle, status messages,
+    etc.). It covers every interior type so no location falls through to
+    the wrong view.
+    """
+    if player.in_cave:
+        return await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    if player.in_ship:
+        return _ship_game_view(guild_id, user_id, player)
+    return _game_view(guild_id, user_id, player, grid=grid)
+
+
 def _embed(content: str) -> discord.Embed:
     """Wrap game content in an embed to bypass Discord's 2000-char content limit."""
     return discord.Embed(description=content)
@@ -941,7 +958,8 @@ class IslandView(discord.ui.View):
 class ShopView(discord.ui.View):
     """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop",
-                 farmer_mode: bool = False, tavern_mode: bool = False):
+                 farmer_mode: bool = False, tavern_mode: bool = False,
+                 tree_city_mode: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -951,8 +969,8 @@ class ShopView(discord.ui.View):
         ))
 
         # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv)
-        #           Disabled spacer in farmer_mode / tavern_mode (buy-only, no sell tab)
-        if farmer_mode or tavern_mode:
+        #           Disabled spacer in farmer_mode / tavern_mode / tree_city_mode (buy-only, no sell tab)
+        if farmer_mode or tavern_mode or tree_city_mode:
             _sp("shop_switch", 0)
         else:
             switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
@@ -4249,21 +4267,10 @@ async def handle_sprint(
     await update_player_sprint(db, user_id, player.sprinting)
 
     status = "Sprint ON \U0001F3C3" if player.sprinting else "Sprint OFF"
-    if player.in_house:
-        grid = await _load_house_grid(player, db)
-        view = _game_view(guild_id, user_id, player, grid=grid)
-    elif player.in_village:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-        view = _game_view(guild_id, user_id, player, grid=grid)
-    elif player.in_cave:
-        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
-    elif player.in_ship:
-        grid = load_ship_viewport(player.ship_room, player.ship_x, player.ship_y, player=player)
-        view = _ship_game_view(guild_id, user_id, player)
-    else:
-        grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        view = _game_view(guild_id, user_id, player, grid=grid)
+    # Use the canonical helpers so every interior type gets the right grid and view.
+    _invalidate_vp(user_id)
+    grid = await _cached_grid(user_id, player, seed, db)
+    view = await _build_player_view(guild_id, user_id, player, db, grid)
     content = render_grid(grid, player, status)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
@@ -6448,17 +6455,8 @@ async def handle_interact(
             return
 
         elif ftile.terrain == "fst_tree_city":
-            # Open tree city shop
-            from dwarf_explorer.config import TREE_CITY_SHOP
-            view = TreeCityShopView(guild_id, user_id, TREE_CITY_SHOP)
-            lines = ["🏡 **Tree City Market** — Wares from the canopy folk:\n"]
-            for item in TREE_CITY_SHOP:
-                from dwarf_explorer.config import ITEM_EMOJI as _ie3
-                e = _ie3.get(item["id"], "📦")
-                lines.append(f"{e} **{item['name']}** — {item['price']} 🪙  _{item['description']}_")
-            lines.append(f"\n💰 Your gold: **{player.gold}**")
-            content = render_grid(grid, player, "\n".join(lines))
-            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            # Open tree city shop using standard ShopView pattern
+            await _open_tree_city_shop(interaction, guild_id, user_id, player)
             return
 
         else:
@@ -9734,7 +9732,10 @@ def _shop_render(state: dict, player_items: list, equipped: dict,
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tavern_mode"):
+    if state.get("tree_city_mode"):
+        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS
+        catalog = _TCS
+    elif state.get("tavern_mode"):
         catalog = TAVERN_MENU
     elif state.get("farmer_mode"):
         catalog = FARMER_SHOP
@@ -9793,6 +9794,23 @@ async def _open_tavern_shop(
                                                           tavern_mode=True))
 
 
+async def _open_tree_city_shop(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player,
+) -> None:
+    """Open the Tree City market (buy-only, uses TREE_CITY_SHOP catalog)."""
+    from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_open
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {"type": "tree_city_shop", "selected": 0, "shop_view": "shop",
+                          "qty": 1, "tree_city_mode": True}
+    content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "shop",
+                                                          tree_city_mode=True))
+
+
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:
     """Return total navigable slots in current shop view."""
     view_mode = state.get("shop_view", "shop")
@@ -9801,7 +9819,10 @@ def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_col
         return max(1, inv_rows * inv_cols)
     else:
         cols = 7
-        if state.get("tavern_mode"): catalog = TAVERN_MENU
+        if state.get("tree_city_mode"):
+            from dwarf_explorer.config import TREE_CITY_SHOP as _TCS2
+            catalog = _TCS2
+        elif state.get("tavern_mode"): catalog = TAVERN_MENU
         elif state.get("farmer_mode"): catalog = FARMER_SHOP
         else: catalog = SHOP_CATALOG
         cat_len = max(1, len(catalog))
@@ -9829,7 +9850,8 @@ async def _shop_nav(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
                                                           farmer_mode=bool(new_state.get("farmer_mode")),
-                                                          tavern_mode=bool(new_state.get("tavern_mode"))))  
+                                                          tavern_mode=bool(new_state.get("tavern_mode")),
+                                                          tree_city_mode=bool(new_state.get("tree_city_mode"))))  
 
 
 async def handle_shop_nav(
@@ -9862,7 +9884,10 @@ async def handle_shop_qty_inc(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tavern_mode"): _catalog = TAVERN_MENU
+    if state.get("tree_city_mode"):
+        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_inc
+        _catalog = _TCS_inc
+    elif state.get("tavern_mode"): _catalog = TAVERN_MENU
     elif state.get("farmer_mode"): _catalog = FARMER_SHOP
     else: _catalog = SHOP_CATALOG
     if view_mode == "shop" and sel < len(_catalog):
@@ -9882,7 +9907,8 @@ async def handle_shop_qty_inc(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode")),
-                                                          tavern_mode=bool(state.get("tavern_mode"))))
+                                                          tavern_mode=bool(state.get("tavern_mode")),
+                                                          tree_city_mode=bool(state.get("tree_city_mode"))))
 
 
 async def handle_shop_qty_dec(
@@ -9897,7 +9923,10 @@ async def handle_shop_qty_dec(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tavern_mode"): _catalog = TAVERN_MENU
+    if state.get("tree_city_mode"):
+        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_dec
+        _catalog = _TCS_dec
+    elif state.get("tavern_mode"): _catalog = TAVERN_MENU
     elif state.get("farmer_mode"): _catalog = FARMER_SHOP
     else: _catalog = SHOP_CATALOG
     if view_mode == "shop" and sel < len(_catalog):
@@ -9918,7 +9947,8 @@ async def handle_shop_qty_dec(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode")),
-                                                          tavern_mode=bool(state.get("tavern_mode"))))
+                                                          tavern_mode=bool(state.get("tavern_mode")),
+                                                          tree_city_mode=bool(state.get("tree_city_mode"))))
 
 
 async def handle_shop_buy(
@@ -9934,10 +9964,14 @@ async def handle_shop_buy(
     qty = max(1, state.get("qty", 1))
     _farmer = bool(state.get("farmer_mode"))
     _tavern = bool(state.get("tavern_mode"))
-    if _tavern: _catalog = TAVERN_MENU
+    _tree_city = bool(state.get("tree_city_mode"))
+    if _tree_city:
+        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_buy
+        _catalog = _TCS_buy
+    elif _tavern: _catalog = TAVERN_MENU
     elif _farmer: _catalog = FARMER_SHOP
     else: _catalog = SHOP_CATALOG
-    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern)
+    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern, tree_city_mode=_tree_city)
     if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -10016,9 +10050,11 @@ async def handle_shop_switch(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
-    # Farmer/tavern shop has no sell tab — treat switch as a no-op
-    if state.get("farmer_mode") or state.get("tavern_mode"):
-        _sv_kwargs = dict(farmer_mode=bool(state.get("farmer_mode")), tavern_mode=bool(state.get("tavern_mode")))
+    # Farmer/tavern/tree_city shop has no sell tab — treat switch as a no-op
+    if state.get("farmer_mode") or state.get("tavern_mode") or state.get("tree_city_mode"):
+        _sv_kwargs = dict(farmer_mode=bool(state.get("farmer_mode")),
+                          tavern_mode=bool(state.get("tavern_mode")),
+                          tree_city_mode=bool(state.get("tree_city_mode")))
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
