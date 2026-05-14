@@ -30,6 +30,7 @@ _LEGEND_ICON_ENTRIES = [
     ("sundial",    "Sundial",        (240, 200,  50),  "cross"),
     ("sky_temple_outer", "Outer Temple",  (  0, 220, 200), "filled_diamond"),
     ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
+    ("forest_entrance",  "Forest",        ( 34, 139,  34), "filled_circle"),
 ]
 
 # Ocean-specific legend
@@ -62,6 +63,7 @@ _ICON_R: dict[str, int] = {
     "cave":              5,  # brown circle
     "shrine":            5,  # red cross
     "sundial":           5,  # yellow cross
+    "forest_entrance":   5,  # green circle
 }
 _DEFAULT_ICON_R = 5   # fallback for any unlisted icon type
 
