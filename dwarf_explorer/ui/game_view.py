@@ -3493,6 +3493,34 @@ async def _move_steps(
                 return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
+
+            # ── Auto-enter forest when stepping onto forest_entrance ──────────
+            if target.structure == "forest_entrance":
+                from dwarf_explorer.world.forest import (
+                    get_forest_entrance, load_forest_viewport, ensure_forests_placed,
+                )
+                await ensure_forests_placed(seed, db)
+                entrance = await get_forest_entrance(db, nx, ny)
+                if entrance is not None:
+                    forest_id, local_x, local_y = entrance
+                    player.in_forest = True
+                    player.forest_id = forest_id
+                    player.forest_x = local_x
+                    player.forest_y = local_y
+                    player.forest_wx = nx
+                    player.forest_wy = ny
+                    await db.execute(
+                        "UPDATE players SET in_forest=1, forest_id=?, forest_x=?, forest_y=?, "
+                        "forest_wx=?, forest_wy=? WHERE user_id=?",
+                        (forest_id, local_x, local_y, nx, ny, user_id)
+                    )
+                    grid = await load_forest_viewport(forest_id, local_x, local_y, db)
+                    return render_grid(grid, player,
+                        "🌳 You push through the ancient boughs and enter the **Dense Forest**. "
+                        "The canopy closes behind you. Find the 🏡 Tree City, the 🌲 Ancient Tree, "
+                        "or seek the 🌀 maze deep within."), \
+                           _game_view(guild_id, user_id, player, grid=grid)
+
             # 0.2% travelling merchant encounter
             merch_rng = _random.Random(hash((user_id, nx, ny, player.xp // 20, "merchant")))
             if merch_rng.random() < 0.002 and not player.in_combat:
