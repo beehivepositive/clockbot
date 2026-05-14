@@ -16,7 +16,7 @@ from dwarf_explorer.config import (
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
     COIN_PURSE_CAPACITY, CONSUMABLE_ITEMS, SHRINE_SACRIFICES,
-    FARM_ANIMALS, FARMER_SHOP, FARM_CROPS,
+    FARM_ANIMALS, FARMER_SHOP, FARM_CROPS, TAVERN_MENU,
     MAX_CREW_SIZE, CREW_HIRE_COST, CREW_NAMES, CREW_TASKS,
     SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, SHIPWRECK_SIZE, BREATH_MAX, BREATH_PER_STEP,
     SPAWN_X, SPAWN_Y,
@@ -1522,7 +1522,7 @@ def _render_anvil(cursor_idx: int, inv_counts: dict[str, int], material_idx: int
 
 
 class AnvilView(discord.ui.View):
-    """Anvil recipe menu — shop-style layout with ⬅️/➡️ to switch material pages."""
+    """Anvil recipe menu — 5-row ShopView-style layout."""
 
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=None)
@@ -1533,40 +1533,50 @@ class AnvilView(discord.ui.View):
             custom_id=_custom_id(gid, uid, act), row=r,
         ))
 
-        # Row 0: [spacer] [⬆️] [spacer]
-        _sp("anvil_sp0a", 0)
+        # Row 0: [🧱 Iron] [spacer] [🐉 Wyvern] — material tab switchers
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.primary, emoji="⬆️",
-            custom_id=_custom_id(gid, uid, "anvil_up"), row=0,
+            style=discord.ButtonStyle.secondary, label="🧱 Iron",
+            custom_id=_custom_id(gid, uid, "anvil_mat_iron"), row=0,
         ))
         _sp("anvil_sp0b", 0)
-
-        # Row 1: [⬅️ prev material] [⚒️ Craft] [➡️ next material]
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, emoji="⬅️",
-            custom_id=_custom_id(gid, uid, "anvil_prev"), row=1,
+            style=discord.ButtonStyle.secondary, label="🐉 Wyvern",
+            custom_id=_custom_id(gid, uid, "anvil_mat_wyvern"), row=0,
+        ))
+
+        # Row 1: [spacer] [⬆️] [spacer]
+        _sp("anvil_sp1a", 1)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="⬆️",
+            custom_id=_custom_id(gid, uid, "anvil_up"), row=1,
+        ))
+        _sp("anvil_sp1b", 1)
+
+        # Row 2: [⬅️ prev recipe] [⚒️ Craft] [➡️ next recipe]
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="⬅️",
+            custom_id=_custom_id(gid, uid, "anvil_prev"), row=2,
         ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.success, label="⚒️ Craft",
-            custom_id=_custom_id(gid, uid, "anvil_craft"), row=1,
+            custom_id=_custom_id(gid, uid, "anvil_craft"), row=2,
         ))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, emoji="➡️",
-            custom_id=_custom_id(gid, uid, "anvil_next"), row=1,
+            style=discord.ButtonStyle.primary, emoji="➡️",
+            custom_id=_custom_id(gid, uid, "anvil_next"), row=2,
         ))
 
-        # Row 2: [spacer] [⬇️] [spacer]
-        _sp("anvil_sp2a", 2)
+        # Row 3: [spacer] [⬇️]
+        _sp("anvil_sp3a", 3)
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, emoji="⬇️",
-            custom_id=_custom_id(gid, uid, "anvil_down"), row=2,
+            custom_id=_custom_id(gid, uid, "anvil_down"), row=3,
         ))
-        _sp("anvil_sp2b", 2)
 
-        # Row 3: [❌ Close]
+        # Row 4: [❌ Close]
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.danger, label="❌ Close",
-            custom_id=_custom_id(gid, uid, "anvil_close"), row=3,
+            custom_id=_custom_id(gid, uid, "anvil_close"), row=4,
         ))
 
 
@@ -5368,24 +5378,8 @@ async def handle_interact(
                 content = render_grid(grid, player, "An anvil. Stand adjacent to it and use the ⚒️ Smith button.")
 
             elif htile.terrain == "b_barkeep" and player.house_type == "tavern":
-                # ── Tavern barkeep — open tavern buy menu ──────────────────────
-                from dwarf_explorer.config import TAVERN_MENU
-                grid = await _load_house_grid()
-                menu_lines = "\n".join(
-                    f"🍺 **{item['name']}** — {item['price']}🪙"
-                    + (f" (+{item['hp']} HP)" if item.get("hp") else "")
-                    for item in TAVERN_MENU
-                )
-                _ui_state[user_id] = {
-                    **_ui_state.get(user_id, {}),
-                    "type": "tavern_menu",
-                    "tavern_sel": 0,
-                }
-                content = render_grid(grid, player,
-                    f"\"What'll it be, stranger?\"\n{menu_lines}\n\nUse the buttons below to order.")
-                view = TavernBuyView(guild_id, user_id)
-                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                return
+                # ── Tavern barkeep — open tavern shop (ShopView) ──────────
+                return await _open_tavern_shop(interaction, guild_id, user_id, player)
 
             elif htile.terrain == "b_tavern_npc" and player.house_type == "tavern":
                 # ── Tavern quest NPC — each NPC at a unique position offers a different quest
@@ -6771,19 +6765,7 @@ async def handle_action(
             return await _open_bank(interaction, guild_id, user_id, player, db)
 
         if "b_barkeep" in adj_terrains:
-            from dwarf_explorer.config import TAVERN_MENU
-            menu_lines = "\n".join(
-                f"🍺 **{item['name']}** — {item['price']}🪙"
-                + (f" (+{item['hp']} HP)" if item.get("hp") else "")
-                for item in TAVERN_MENU
-            )
-            content = render_grid(grid, player,
-                f"\"What'll it be, stranger?\"\n{menu_lines}")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=TavernBuyView(guild_id, user_id),
-            )
-            return
+            return await _open_tavern_shop(interaction, guild_id, user_id, player)
 
         if "b_healer" in adj_terrains:
             max_hp = getattr(player, "max_hp", 100)
@@ -7574,20 +7556,42 @@ async def handle_anvil_down(
 async def handle_anvil_prev(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Switch to the previous material page (wraps)."""
+    """Move the anvil cursor to the previous recipe (wraps)."""
     state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
-    mat_idx = (state.get("anvil_material", 0) - 1) % len(_ANVIL_MATERIALS)
-    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
+    mat_idx = state.get("anvil_material", 0)
+    count   = len(_anvil_filtered_recipes(mat_idx))
+    cursor  = (state.get("anvil_cursor", 0) - 1) % max(count, 1)
+    _ui_state[user_id] = {**state, "anvil_cursor": cursor}
     await _anvil_refresh(interaction, guild_id, user_id)
 
 
 async def handle_anvil_next(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Switch to the next material page (wraps)."""
+    """Move the anvil cursor to the next recipe (wraps)."""
     state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
-    mat_idx = (state.get("anvil_material", 0) + 1) % len(_ANVIL_MATERIALS)
-    _ui_state[user_id] = {**state, "anvil_material": mat_idx, "anvil_cursor": 0}
+    mat_idx = state.get("anvil_material", 0)
+    count   = len(_anvil_filtered_recipes(mat_idx))
+    cursor  = (state.get("anvil_cursor", 0) + 1) % max(count, 1)
+    _ui_state[user_id] = {**state, "anvil_cursor": cursor}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_mat_iron(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the Iron material page."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    _ui_state[user_id] = {**state, "anvil_material": 0, "anvil_cursor": 0}
+    await _anvil_refresh(interaction, guild_id, user_id)
+
+
+async def handle_anvil_mat_wyvern(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch to the Wyvern material page."""
+    state = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
+    _ui_state[user_id] = {**state, "anvil_material": 1, "anvil_cursor": 0}
     await _anvil_refresh(interaction, guild_id, user_id)
 
 
@@ -9085,7 +9089,12 @@ def _shop_render(state: dict, player_items: list, equipped: dict,
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+    if state.get("tavern_mode"):
+        catalog = TAVERN_MENU
+    elif state.get("farmer_mode"):
+        catalog = FARMER_SHOP
+    else:
+        catalog = SHOP_CATALOG
     return render_shop(
         catalog, player_items, sel, view_mode, equipped,
         player_gold, inv_rows, inv_cols, ITEM_SELL_PRICES, qty,
@@ -9123,6 +9132,22 @@ async def _open_farmer_shop(
                                                           farmer_mode=True))
 
 
+async def _open_tavern_shop(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
+) -> None:
+    """Open the tavern shop (buy-only, uses TAVERN_MENU catalog)."""
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {"type": "tavern_shop", "selected": 0, "shop_view": "shop",
+                          "qty": 1, "tavern_mode": True}
+    content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "shop",
+                                                          tavern_mode=True))
+
+
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:
     """Return total navigable slots in current shop view."""
     view_mode = state.get("shop_view", "shop")
@@ -9131,7 +9156,9 @@ def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_col
         return max(1, inv_rows * inv_cols)
     else:
         cols = 7
-        catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+        if state.get("tavern_mode"): catalog = TAVERN_MENU
+        elif state.get("farmer_mode"): catalog = FARMER_SHOP
+        else: catalog = SHOP_CATALOG
         cat_len = max(1, len(catalog))
         # Round up to full rows so wrapping aligns with the rendered grid
         return ((cat_len + cols - 1) // cols) * cols
@@ -9156,7 +9183,8 @@ async def _shop_nav(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
-                                                          farmer_mode=bool(new_state.get("farmer_mode"))))
+                                                          farmer_mode=bool(new_state.get("farmer_mode")),
+                                                          tavern_mode=bool(new_state.get("tavern_mode"))))  
 
 
 async def handle_shop_nav(
@@ -9189,7 +9217,9 @@ async def handle_shop_qty_inc(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    _catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+    if state.get("tavern_mode"): _catalog = TAVERN_MENU
+    elif state.get("farmer_mode"): _catalog = FARMER_SHOP
+    else: _catalog = SHOP_CATALOG
     if view_mode == "shop" and sel < len(_catalog):
         max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = (qty % max_qty) + 1
@@ -9206,7 +9236,8 @@ async def handle_shop_qty_inc(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
-                                                          farmer_mode=bool(state.get("farmer_mode"))))
+                                                          farmer_mode=bool(state.get("farmer_mode")),
+                                                          tavern_mode=bool(state.get("tavern_mode"))))
 
 
 async def handle_shop_qty_dec(
@@ -9221,7 +9252,9 @@ async def handle_shop_qty_dec(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    _catalog = FARMER_SHOP if state.get("farmer_mode") else SHOP_CATALOG
+    if state.get("tavern_mode"): _catalog = TAVERN_MENU
+    elif state.get("farmer_mode"): _catalog = FARMER_SHOP
+    else: _catalog = SHOP_CATALOG
     if view_mode == "shop" and sel < len(_catalog):
         max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = max_qty if qty <= 1 else qty - 1
@@ -9239,7 +9272,8 @@ async def handle_shop_qty_dec(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
-                                                          farmer_mode=bool(state.get("farmer_mode"))))
+                                                          farmer_mode=bool(state.get("farmer_mode")),
+                                                          tavern_mode=bool(state.get("tavern_mode"))))
 
 
 async def handle_shop_buy(
@@ -9254,12 +9288,15 @@ async def handle_shop_buy(
     sel = state.get("selected", 0)
     qty = max(1, state.get("qty", 1))
     _farmer = bool(state.get("farmer_mode"))
-    _catalog = FARMER_SHOP if _farmer else SHOP_CATALOG
+    _tavern = bool(state.get("tavern_mode"))
+    if _tavern: _catalog = TAVERN_MENU
+    elif _farmer: _catalog = FARMER_SHOP
+    else: _catalog = SHOP_CATALOG
+    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern)
     if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "shop",
-                                                              farmer_mode=_farmer))
+                                                view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
         return
     item = _catalog[sel]
     total_cost = item["price"] * qty
@@ -9267,8 +9304,7 @@ async def handle_shop_buy(
         suffix = f"\n*Not enough gold! Need {total_cost}g for ×{qty}.*"
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "shop",
-                                                              farmer_mode=_farmer))
+                                                view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
         return
     if user_id != ADMIN_PLAYER_ID:
         player.gold -= total_cost
@@ -9280,8 +9316,7 @@ async def handle_shop_buy(
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols) + suffix
     await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=ShopView(guild_id, user_id, "shop",
-                                                          farmer_mode=_farmer))
+                                            view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
 
 
 async def handle_shop_sell(
@@ -9336,12 +9371,12 @@ async def handle_shop_switch(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
-    # Farmer shop has no sell tab — treat switch as a no-op
-    if state.get("farmer_mode"):
+    # Farmer/tavern shop has no sell tab — treat switch as a no-op
+    if state.get("farmer_mode") or state.get("tavern_mode"):
+        _sv_kwargs = dict(farmer_mode=bool(state.get("farmer_mode")), tavern_mode=bool(state.get("tavern_mode")))
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=ShopView(guild_id, user_id, "shop",
-                                                              farmer_mode=True))
+                                                view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
         return
     new_view = "player" if state.get("shop_view", "shop") == "shop" else "shop"
     new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}

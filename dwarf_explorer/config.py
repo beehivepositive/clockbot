@@ -129,7 +129,7 @@ ITEM_EMOJI = {
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F52A",    # 🗡️
     "hiking_boots":    "\U0001F97E",    # 🥾
-    "climbing_boots":  "\U0001F97E",    # 🥾 (same as hiking boots)
+    "climbing_boots":  "\U0001F9D7",    # 🧗 person climbing
     "torch": "\U0001F526",           # 🔦
     "axe": "\U0001FA93",             # 🪓
     "shovel": "\u26CF\uFE0F",       # ⛏️
@@ -204,7 +204,7 @@ ITEM_EMOJI = {
     "hawk_feather":     "🪶",       # 🪶  dropped by storm_hawk in sky biome
     "gold_coin":        "🪙",       # 🪙  loose gold coin (shipwreck loot)
     "small_gear": _ge("gear_small_still", "⚙️"),
-    "large_gear": "🔩",
+    "large_gear": _ge("gear_small_still", "⚙️"),
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -343,10 +343,10 @@ CONSUMABLE_ITEMS = {
 
 # Tavern food/drink menu (price in gold)
 TAVERN_MENU = [
-    {"id": "bread",       "name": "Bread",        "price": 4,  "hp": 10},
-    {"id": "ale",         "name": "Ale",           "price": 6,  "hp": 0},
-    {"id": "meat_stew",   "name": "Meat Stew",     "price": 10, "hp": 20},
-    {"id": "cowards_ale", "name": "Coward's Ale",  "price": 10, "hp": 0},
+    {"id": "bread",       "name": "Bread",        "price": 4,  "hp": 10, "emoji": "\U0001F35E", "description": "A fresh loaf. Restores 10 HP."},
+    {"id": "ale",         "name": "Ale",           "price": 6,  "hp": 0,  "emoji": "\U0001F37A", "description": "A cold pint. No HP, but it hits the spot."},
+    {"id": "meat_stew",   "name": "Meat Stew",     "price": 10, "hp": 20, "emoji": "\U0001F372", "description": "Hearty bowl of stew. Restores 20 HP."},
+    {"id": "cowards_ale", "name": "Coward's Ale",  "price": 10, "hp": 0,  "emoji": "\U0001F37A", "description": "Guaranteed escape from combat — no parting blow."},
 ]
 
 # Farm animal types for farmhouse enclosures
@@ -498,9 +498,9 @@ TEMPLE_EMOJI: dict[str, str] = {
     # Gear machine panel (interactable — opens the gear puzzle viewport)
     "gear_machine":           "⚙️",
     # ── Gear slot tiles — used inside the machine viewport ─────────────────────
-    # Empty sockets — ⭕ is emoji-width, unlike the old ⬡ text character
-    "gear_slot_s_empty":      "⭕",
-    "gear_slot_l_empty":      "⭕",
+    # Empty sockets — use gear_socket custom emoji if uploaded, else ⭕
+    "gear_slot_s_empty":      _ge("gear_socket", "⭕"),
+    "gear_slot_l_empty":      _ge("gear_socket", "⭕"),
     # Small gear — spinning (animated CW / CCW)
     "gear_slot_s_cw":         _ge("gear_small",         "⚙️"),
     "gear_slot_s_ccw":        _ge("gear_small_reverse", "⚙️"),
@@ -836,7 +836,7 @@ SHOP_CATALOG = [
     {
         "id": "climbing_boots",
         "name": "Climbing Boots",
-        "emoji": "\U0001F97E",   # 🥾 hiking boot (same as hiking boots)
+        "emoji": "\U0001F9D7",   # 🧗 person climbing
         "price": 150,
         "equip_slot": "boots",
         "description": "Reinforced boots. Traverse mountain tiles. Required for sky biome portals.",
@@ -1341,10 +1341,21 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         if emoji_name in cache:
             TEMPLE_EMOJI[tile_key] = cache[emoji_name]
 
-    # Item icon for small_gear uses the still (non-animated) variant if available
+    # Item icon for small_gear and large_gear both use the still (non-animated) variant
     if "gear_small_still" in cache:
         ITEM_EMOJI["small_gear"] = cache["gear_small_still"]
+        ITEM_EMOJI["large_gear"] = cache["gear_small_still"]
+        _renderer._ITEM_SLOT_EMOJI["small_gear"] = cache["gear_small_still"]
+        _renderer._ITEM_SLOT_EMOJI["large_gear"] = cache["gear_small_still"]
     elif "gear_small" in cache:
         ITEM_EMOJI["small_gear"] = cache["gear_small"]
+        ITEM_EMOJI["large_gear"] = cache["gear_small"]
+        _renderer._ITEM_SLOT_EMOJI["small_gear"] = cache["gear_small"]
+        _renderer._ITEM_SLOT_EMOJI["large_gear"] = cache["gear_small"]
+
+    # Empty gear socket custom emoji
+    if "gear_socket" in cache:
+        TEMPLE_EMOJI["gear_slot_s_empty"] = cache["gear_socket"]
+        TEMPLE_EMOJI["gear_slot_l_empty"] = cache["gear_socket"]
 
 

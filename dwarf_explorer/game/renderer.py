@@ -934,7 +934,8 @@ def render_shop(
                 f"Cursor: **{item['name']}** — {item['price']}g"
                 f"  |  Buy qty **{qty}** for {item['price'] * qty}g"
             )
-            lines.append(f"*{item['description']}*")
+            if item.get("description"):
+                lines.append(f"*{item['description']}*")
         else:
             lines.append("Cursor: *(empty slot)*")
 
