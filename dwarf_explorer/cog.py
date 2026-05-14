@@ -177,22 +177,36 @@ class DwarfExplorer(commands.Cog):
         player.gold = 999999
 
         sx, sy = await find_walkable_spawn(seed, db)
-        await update_player_stats(
-            db, ADMIN_PLAYER_ID,
-            world_x=sx, world_y=sy,
-            in_cave=0, cave_id=None, cave_x=0, cave_y=0,
-            in_village=0, village_id=None, village_x=0, village_y=0,
-            in_house=0, house_id=None, house_x=0, house_y=0,
-            in_combat=0, in_canoe=0,
-        )
 
-        player.world_x = sx
-        player.world_y = sy
-        player.in_cave = False
-        player.in_village = False
-        player.in_house = False
-        player.in_combat = False
-        player.in_canoe = False
+        # Clear every interior/state flag so the player always lands on the overworld
+        await db.execute(
+            """UPDATE players SET
+                world_x=?, world_y=?,
+                in_cave=0,  cave_id=NULL,  cave_x=0,  cave_y=0,
+                in_village=0, village_id=NULL, village_x=0, village_y=0,
+                in_house=0, house_id=NULL, house_x=0, house_y=0,
+                in_forest=0, forest_id=NULL, forest_x=0, forest_y=0,
+                forest_wx=0, forest_wy=0,
+                in_maze=0, maze_id=NULL, maze_x=0, maze_y=0,
+                in_sky=0, sky_id=NULL, sky_x=0, sky_y=0,
+                in_temple=0, temple_id=NULL, temple_x=0, temple_y=0,
+                temple_wx=0, temple_wy=0,
+                in_ocean=0, in_high_seas=0, ocean_x=0, ocean_y=0,
+                in_ship=0,
+                in_canoe=0,
+                in_combat=0, combat_enemy_type=NULL, combat_enemy_hp=0
+            WHERE user_id=?""",
+            (sx, sy, ADMIN_PLAYER_ID),
+        )
+        await db.commit()
+
+        player.world_x, player.world_y = sx, sy
+        player.in_cave = player.in_village = player.in_house = False
+        player.in_forest = getattr(player, "in_forest", False) and False
+        player.in_maze = getattr(player, "in_maze", False) and False
+        player.in_sky = getattr(player, "in_sky", False) and False
+        player.in_temple = getattr(player, "in_temple", False) and False
+        player.in_ocean = player.in_canoe = player.in_combat = False
 
         grid = await load_viewport(sx, sy, seed, db)
         content = render_grid(grid, player)
