@@ -194,6 +194,12 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             maze_id=row["maze_id"] if "maze_id" in cols else None,
             maze_x=row["maze_x"] if "maze_x" in cols else 0,
             maze_y=row["maze_y"] if "maze_y" in cols else 0,
+            # Tree City interior state
+            in_tree_city=bool(row["in_tree_city"]) if "in_tree_city" in cols else False,
+            tc_forest_id=row["tc_forest_id"] if "tc_forest_id" in cols else None,
+            tc_floor=row["tc_floor"] if "tc_floor" in cols else 1,
+            tc_x=row["tc_x"] if "tc_x" in cols else 0,
+            tc_y=row["tc_y"] if "tc_y" in cols else 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "

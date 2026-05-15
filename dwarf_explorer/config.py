@@ -649,6 +649,24 @@ MAZE_WALKABLE: frozenset[str] = frozenset({
     "maze_floor", "maze_exit", "maze_chest", "maze_mimic",
 })
 
+# Tree City interior tiles
+TC_EMOJI: dict[str, str] = {
+    "tc_floor":      "\U0001F7EB",   # 🟫 wooden planks
+    "tc_wall":       "\U0001F332",   # 🌲 tree bark wall
+    "tc_stair_up":   "\U0001F53C",   # 🔼 stairs up
+    "tc_stair_down": "\U0001F53D",   # 🔽 stairs down
+    "tc_door":       "\U0001F6AA",   # 🚪 exit door (ground floor only)
+    "tc_shop":       "\U0001F9D1",   # 🧑 merchant NPC
+    "tc_elder":      "\U0001F9D9",   # 🧙 elder NPC (acts as premium shop)
+    "tc_bed":        "\U0001F6CF️",  # 🛏️ bed (rest/heal)
+    "tc_counter":    "\U0001FAB5",   # 🪵 wooden counter
+}
+
+TC_WALKABLE: frozenset[str] = frozenset({
+    "tc_floor", "tc_door", "tc_stair_up", "tc_stair_down",
+    "tc_shop", "tc_elder", "tc_bed",
+})
+
 # Random encounter rates inside forest (chance per step)
 FOREST_ENCOUNTER_MOBS = {
     "forest_sprite":   0.08,
@@ -1334,7 +1352,6 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         cache[e.name] = fmt
 
     _replace = [
-        (TERRAIN_EMOJI,  "sand",              "sand"),
         (TERRAIN_EMOJI,  "grass",             "grass"),
         (TERRAIN_EMOJI,  "plains",            "dry_grass"),
         (CAVE_EMOJI,     "cave_chest",        "chest"),

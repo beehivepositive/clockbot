@@ -453,6 +453,21 @@ class Database:
                 # Maze entry position columns (added for 3-wide path redesign)
                 "ALTER TABLE maze_areas ADD COLUMN entry_x INTEGER NOT NULL DEFAULT 1",
                 "ALTER TABLE maze_areas ADD COLUMN entry_y INTEGER NOT NULL DEFAULT 1",
+                # Tree City interior player state
+                "ALTER TABLE players ADD COLUMN in_tree_city INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN tc_forest_id INTEGER",
+                "ALTER TABLE players ADD COLUMN tc_floor INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE players ADD COLUMN tc_x INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE players ADD COLUMN tc_y INTEGER NOT NULL DEFAULT 0",
+                # Tree City interior tiles table
+                """CREATE TABLE IF NOT EXISTS tree_city_tiles (
+    forest_id INTEGER NOT NULL,
+    floor_num INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (forest_id, floor_num, local_x, local_y)
+)""",
             ]
             for mig_sql in migrations:
                 try:

@@ -13,6 +13,14 @@ import discord
 from dwarf_explorer.game.quests import (
     get_active_quests, render_quest_summary, MAX_PLAYER_QUESTS,
 )
+from dwarf_explorer.config import WORLD_SIZE, OCEAN_SIZE
+
+
+def _flip_y(y: int, location_type: str = "overworld") -> int:
+    """Convert internal y (0=north) to display y (0=south) for player-facing text."""
+    if location_type == "ocean":
+        return OCEAN_SIZE - 1 - y
+    return WORLD_SIZE - 1 - y
 
 
 def _custom_id(guild_id: int, user_id: int, action: str) -> str:
@@ -97,13 +105,14 @@ async def render_quest_list(db, user_id: int, index: int, in_village: bool = Fal
     subtype = q.get("quest_subtype", "")
     if in_village and subtype in ("fetch", "delivery"):
         body += "\n\n*💬 If you have the required items, interact with the village NPC to turn in.*"
+    _loc_type = q.get("location_type", "overworld")
     if subtype == "investigation" and q.get("location_x"):
-        body += f"\n\n*📍 Investigate ruins/shrine near ({q['location_x']}, {q['location_y']})*"
+        body += f"\n\n*📍 Investigate ruins/shrine near ({q['location_x']}, {_flip_y(q['location_y'], _loc_type)})*"
     if q.get("bounty_wx") or q.get("location_x"):
         marker_x = q.get("bounty_wx") or q.get("location_x")
         marker_y = q.get("bounty_wy") or q.get("location_y")
         if subtype == "kill":
-            body += f"\n\n*⚔️ Target area marked on map near ({marker_x}, {marker_y})*"
+            body += f"\n\n*⚔️ Target area marked on map near ({marker_x}, {_flip_y(marker_y, _loc_type)})*"
 
     return header + body
 
@@ -146,9 +155,11 @@ def render_quest_offer(q: dict, source_label: str = "") -> str:
     elif q.get("quest_subtype") == "investigation":
         lines.append(f"Objective: Investigate the **{q['target_id']}**")
         if q.get("location_x"):
-            lines.append(f"Location: ({q['location_x']}, {q['location_y']})")
+            _lt = q.get("location_type", "overworld")
+            lines.append(f"Location: ({q['location_x']}, {_flip_y(q['location_y'], _lt)})")
     elif q.get("quest_subtype") == "delivery":
-        lines.append(f"Objective: Deliver parcel to **({q['location_x']}, {q['location_y']})**")
+        _lt = q.get("location_type", "overworld")
+        lines.append(f"Objective: Deliver parcel to **({q['location_x']}, {_flip_y(q['location_y'], _lt)})**")
     lines.append("")
     reward_parts = [f"{q['reward_gold']}🪙", f"{q['reward_xp']}xp"]
     if q.get("reward_item"):

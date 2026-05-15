@@ -433,6 +433,15 @@ async def create_forest_area(
         [(forest_id, lx, ly, tt) for lx, ly, tt in forest_tiles],
     )
 
+    # Generate tree city floors for this forest (stored once at creation)
+    tc_floors = _generate_tc_interior(forest_id)
+    for floor_num, tiles in tc_floors.items():
+        await db.executemany(
+            "INSERT OR IGNORE INTO tree_city_tiles"
+            "(forest_id, floor_num, local_x, local_y, tile_type) VALUES(?,?,?,?,?)",
+            [(forest_id, floor_num, lx, ly, tt) for lx, ly, tt in tiles],
+        )
+
     # Link each overworld tile to its local exit marker, and create tile_override
     for i, (wx, wy) in enumerate(overworld_positions):
         ex, ey = exit_positions[i] if i < len(exit_positions) else exit_positions[-1]
@@ -655,5 +664,118 @@ async def load_maze_single_tile(
     )
     return TileData(
         terrain=row["tile_type"] if row else "maze_wall",
+        world_x=local_x, world_y=local_y,
+    )
+
+
+# ── Tree City interior ────────────────────────────────────────────────────────────
+
+TC_W = 15   # floor width
+TC_H = 7    # floor height
+TC_NUM_FLOORS = 3
+
+
+def _generate_tc_interior(forest_id: int) -> dict[int, list[tuple[int, int, str]]]:
+    """Generate 3-floor tree city interior. Layout is the same for all forests."""
+    # Floor layout: (floor_num -> list of (x, y, tile_override) for non-floor special tiles)
+    specials: dict[int, list[tuple[int, int, str]]] = {
+        1: [
+            (7, 6, "tc_door"),         # exit (south wall)
+            (7, 1, "tc_stair_up"),     # stairs up (north)
+            (2, 2, "tc_shop"),         # merchant left
+            (2, 4, "tc_shop"),
+            (12, 2, "tc_counter"),     # counter right
+            (12, 4, "tc_counter"),
+        ],
+        2: [
+            (7, 5, "tc_stair_down"),
+            (7, 1, "tc_stair_up"),
+            (1, 2, "tc_bed"),
+            (1, 3, "tc_bed"),
+            (1, 4, "tc_bed"),
+            (13, 3, "tc_shop"),
+        ],
+        3: [
+            (7, 5, "tc_stair_down"),
+            (7, 3, "tc_elder"),        # elder NPC center
+            (1, 2, "tc_bed"),
+            (1, 4, "tc_bed"),
+            (13, 2, "tc_bed"),
+            (13, 4, "tc_bed"),
+        ],
+    }
+
+    floors: dict[int, list[tuple[int, int, str]]] = {}
+    for floor_num in range(1, TC_NUM_FLOORS + 1):
+        tiles: list[tuple[int, int, str]] = []
+        override = {(sx, sy): st for sx, sy, st in specials.get(floor_num, [])}
+        for y in range(TC_H):
+            for x in range(TC_W):
+                if (x, y) in override:
+                    tiles.append((x, y, override[(x, y)]))
+                elif y == 0 or y == TC_H - 1 or x == 0 or x == TC_W - 1:
+                    tiles.append((x, y, "tc_wall"))
+                else:
+                    tiles.append((x, y, "tc_floor"))
+        floors[floor_num] = tiles
+    return floors
+
+
+async def ensure_tree_city_built(forest_id: int, db) -> None:
+    """Lazily generate tree city floors for this forest if not yet stored."""
+    existing = await db.fetch_one(
+        "SELECT 1 FROM tree_city_tiles WHERE forest_id=? LIMIT 1", (forest_id,)
+    )
+    if existing:
+        return
+    floors = _generate_tc_interior(forest_id)
+    for floor_num, tiles in floors.items():
+        await db.executemany(
+            "INSERT OR IGNORE INTO tree_city_tiles"
+            "(forest_id, floor_num, local_x, local_y, tile_type) VALUES(?,?,?,?,?)",
+            [(forest_id, floor_num, lx, ly, tt) for lx, ly, tt in tiles],
+        )
+
+
+async def load_tree_city_viewport(
+    forest_id: int, floor_num: int, center_x: int, center_y: int, db,
+) -> list[list[TileData]]:
+    """Load a 7×7 viewport of a tree city floor."""
+    half  = VIEWPORT_CENTER
+    x_min = center_x - half
+    y_min = center_y - half
+
+    rows = await db.fetch_all(
+        "SELECT local_x, local_y, tile_type FROM tree_city_tiles"
+        " WHERE forest_id=? AND floor_num=?"
+        " AND local_x>=? AND local_x<=? AND local_y>=? AND local_y<=?",
+        (forest_id, floor_num, x_min, center_x + half, y_min, center_y + half),
+    )
+    tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
+
+    grid: list[list[TileData]] = []
+    for local_y in range(VIEWPORT_SIZE):
+        row: list[TileData] = []
+        for local_x in range(VIEWPORT_SIZE):
+            cx = x_min + local_x
+            cy = y_min + local_y
+            row.append(TileData(
+                terrain=tile_map.get((cx, cy), "tc_wall"),
+                world_x=cx, world_y=cy,
+            ))
+        grid.append(row)
+    return grid
+
+
+async def load_tree_city_single_tile(
+    forest_id: int, floor_num: int, local_x: int, local_y: int, db,
+) -> TileData:
+    row = await db.fetch_one(
+        "SELECT tile_type FROM tree_city_tiles"
+        " WHERE forest_id=? AND floor_num=? AND local_x=? AND local_y=?",
+        (forest_id, floor_num, local_x, local_y),
+    )
+    return TileData(
+        terrain=row["tile_type"] if row else "tc_wall",
         world_x=local_x, world_y=local_y,
     )

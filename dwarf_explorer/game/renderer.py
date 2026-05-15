@@ -4,7 +4,7 @@ from dwarf_explorer.config import (
     TERRAIN_EMOJI, STRUCTURE_EMOJI, ENTITY_EMOJI, ITEM_EMOJI,
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
     EQUIP_BONUSES, SHIPWRECK_EMOJI, BREATH_MAX, SKY_EMOJI, TEMPLE_EMOJI,
-    FOREST_EMOJI,
+    FOREST_EMOJI, TC_EMOJI, WORLD_SIZE, OCEAN_SIZE,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -30,6 +30,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return FOREST_EMOJI.get(tile.terrain, FOREST_EMOJI["fst_tree"])
     if location == "maze":
         return FOREST_EMOJI.get(tile.terrain, FOREST_EMOJI["maze_wall"])
+    if location == "tree_city":
+        return TC_EMOJI.get(tile.terrain, TC_EMOJI.get("tc_wall", "\U0001F332"))
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
@@ -85,6 +87,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "temple"
     elif getattr(player, "in_sky", False):
         location = "sky"
+    elif getattr(player, "in_tree_city", False):
+        location = "tree_city"
     elif getattr(player, "in_maze", False):
         location = "maze"
     elif getattr(player, "in_forest", False):
@@ -236,18 +240,26 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     elif getattr(player, "in_shipwreck", False):
         _sw_breath = getattr(player, "breath", BREATH_MAX)
         pos = f"\U0001F4CD Shipwreck ({getattr(player, 'shipwreck_x', 0)},{getattr(player, 'shipwreck_y', 0)})  \U0001FAB7 {_sw_breath}"
+    elif getattr(player, "in_tree_city", False):
+        floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
+        fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
+        pos = f"🌲 Tree City — {fname} ({player.tc_x},{player.tc_y})"
     elif getattr(player, "in_sky", False):
         pos = f"☁️ Sky ({getattr(player, 'sky_x', 0)},{getattr(player, 'sky_y', 0)})"
     elif getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
-        pos = f"\U0001F30A High Seas ({player.ocean_x},{player.ocean_y}){sprint_tag}"
+        display_oy = OCEAN_SIZE - 1 - player.ocean_y
+        pos = f"\U0001F30A High Seas ({player.ocean_x},{display_oy}){sprint_tag}"
     else:
         sprint_tag = " \U0001F3C3" if player.sprinting else ""
-        pos = f"\U0001F4CD Wilderness ({player.world_x},{player.world_y}){sprint_tag}"
+        display_y = WORLD_SIZE - 1 - player.world_y
+        pos = f"\U0001F4CD Wilderness ({player.world_x},{display_y}){sprint_tag}"
     lines.append(f"{hp_bar}  {gold}  {pos}")
 
-    if status_msg:
-        lines.append(status_msg)
+    # Always append a status line so embed height stays constant.
+    # When there's no message, a zero-width space holds the space without
+    # visible text, preventing the movement buttons from shifting on message pop-up.
+    lines.append(status_msg if status_msg else "​")
 
     return "\n".join(lines)
 

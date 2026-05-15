@@ -107,6 +107,12 @@ class Player:
     maze_id: int | None = None
     maze_x: int = 0
     maze_y: int = 0
+    # Tree City interior state
+    in_tree_city: bool = False
+    tc_forest_id: int | None = None
+    tc_floor: int = 1
+    tc_x: int = 0
+    tc_y: int = 0
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
