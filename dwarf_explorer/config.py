@@ -624,6 +624,7 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_maze_door":    "\U0001F300",   # 🌀 entrance to maze branch
     "fst_nut_tree":     "\U0001F330",   # 🌰 nut tree (interact to gather forest nuts)
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
+    "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
     # Maze tiles
     "maze_wall":        "\U0001F333",   # 🌳 dense forest wall (impassable)
     "maze_floor":       "\U0001F7E9",   # 🟩 maze passage
@@ -640,7 +641,7 @@ FOREST_EMOJI: dict[str, str] = {
 
 FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
-    "fst_maze_door", "fst_nut_tree", "fst_chest",
+    "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic",
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({

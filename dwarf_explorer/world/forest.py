@@ -15,18 +15,29 @@ from dwarf_explorer.world.terrain import get_biome
 _FOREST_SEED_OFFSET = 0xF07E57   # = 15_762_007
 _MAZE_SEED_OFFSET   = 699743      # arbitrary prime
 
-FOREST_SIZE_MIN = 48
-FOREST_SIZE_MAX = 68
-FOREST_WALK_STEPS = 1200
+# ── Forest map dimensions ────────────────────────────────────────────────────────
+FOREST_W = 120    # fixed width for bead-chain forest
+FOREST_H = 120    # fixed height
 
-_MAZE_CELLS  = 8    # cells per axis (8×8 = 64 decision points)
-_MAZE_STRIDE = 4    # 3-tile-wide path + 1-tile wall = stride 4
+# Clearing radii
+_CLEARING_R = 4   # normal clearing: circle of radius 4 (~9×9 bounding box)
+_CENTRAL_R  = 8   # Tree City central clearing (~17×17)
+
+# Chain parameters
+_NUM_CHAIN_BEADS = 5    # intermediate beads per chain (between entry clearing and center)
+_NUM_TRIBUTARIES = 3    # tributary branches off each main chain
+_TRIB_STEP_MIN   = 16  # min distance for tributary bead from parent
+_TRIB_STEP_MAX   = 24  # max distance for tributary bead from parent
+_MEANDER_SPREAD  = 12  # max random offset per axis per intermediate bead
+
+# Legacy constants kept for maze viewport loader compatibility
+_MAZE_CELLS  = 8
+_MAZE_STRIDE = 4
 MAZE_W = _MAZE_CELLS * _MAZE_STRIDE + 1   # = 33
 MAZE_H = _MAZE_CELLS * _MAZE_STRIDE + 1   # = 33
-# Maze entry: center of the top cell (cx = CELLS//2), one step inside
-_MAZE_ENTRY_CX = _MAZE_CELLS // 2         # = 4
-MAZE_ENTRY_X   = _MAZE_ENTRY_CX * _MAZE_STRIDE + 2   # = 18 (centre of 3-wide path)
-MAZE_ENTRY_Y   = 1                                     # just below the exit tile at y=0
+_MAZE_ENTRY_CX = _MAZE_CELLS // 2
+MAZE_ENTRY_X   = _MAZE_ENTRY_CX * _MAZE_STRIDE + 2
+MAZE_ENTRY_Y   = 1
 
 # How many dense-forest entrance clusters to place per world
 FOREST_AREA_COUNT = 6
@@ -34,222 +45,265 @@ FOREST_AREA_COUNT = 6
 FOREST_MIN_SEPARATION = 40
 
 
-# ── Internal helpers ────────────────────────────────────────────────────────────
+# ── Internal helpers ─────────────────────────────────────────────────────────────
 
-def _drunkard(rng: random.Random, carved: set, sx: int, sy: int,
-              steps: int, width: int, height: int, room_freq: int = 10) -> None:
-    cx, cy = sx, sy
-    for i in range(steps):
-        dx, dy = rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
-        nx2, ny2 = cx + dx, cy + dy
-        if 1 <= nx2 < width - 1 and 1 <= ny2 < height - 1:
-            cx, cy = nx2, ny2
-            carved.add((cx, cy))
-            if i % room_freq == 0:
-                r = rng.randint(2, 5)
-                for ry in range(-r, r + 1):
-                    for rx in range(-r, r + 1):
-                        if rx * rx + ry * ry <= r * r:
-                            rrx, rry = cx + rx, cy + ry
-                            if 1 <= rrx < width - 1 and 1 <= rry < height - 1:
-                                carved.add((rrx, rry))
+def _carve_circ(
+    grid: list[list[str]], cx: int, cy: int, r: int, W: int, H: int
+) -> None:
+    """Carve a filled circle of fst_floor, clamped to inner boundary."""
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            if dx * dx + dy * dy <= r * r:
+                px, py = cx + dx, cy + dy
+                if 1 <= px < W - 1 and 1 <= py < H - 1:
+                    if grid[py][px] == "fst_tree":
+                        grid[py][px] = "fst_floor"
 
 
-def _corridor(carved: set, sx: int, sy: int, tx: int, ty: int,
-              width: int, height: int, hw: int = 2) -> None:
-    """L-shaped corridor, half-width hw tiles on each side."""
-    x, y = sx, sy
-    while x != tx:
-        x += 1 if x < tx else -1
-        for off in range(-hw + 1, hw):
-            px, py = x, y + off
-            if 1 <= px < width - 1 and 1 <= py < height - 1:
-                carved.add((px, py))
-    while y != ty:
-        y += 1 if y < ty else -1
-        for off in range(-hw + 1, hw):
-            px, py = x + off, y
-            if 1 <= px < width - 1 and 1 <= py < height - 1:
-                carved.add((px, py))
+def _carve_path(
+    grid: list[list[str]], x1: int, y1: int, x2: int, y2: int, W: int, H: int
+) -> None:
+    """Carve a 1-tile-wide L-shaped corridor including both endpoints."""
+    x, y = x1, y1
+    # Set starting tile
+    if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
+        grid[y][x] = "fst_floor"
+    # Horizontal leg
+    while x != x2:
+        x += 1 if x < x2 else -1
+        if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
+            grid[y][x] = "fst_floor"
+    # Vertical leg
+    while y != y2:
+        y += 1 if y < y2 else -1
+        if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
+            grid[y][x] = "fst_floor"
 
 
-def _inward(ex: int, ey: int, edge: str, width: int, height: int) -> tuple[int, int]:
-    if edge == "top":    return ex, 1
-    if edge == "bottom": return ex, height - 2
-    if edge == "left":   return 1, ey
-    return width - 2, ey
+def _meander(
+    rng: random.Random, sx: int, sy: int, tx: int, ty: int,
+    n: int, W: int, H: int, spread: int = _MEANDER_SPREAD,
+) -> list[tuple[int, int]]:
+    """Return n intermediate bead positions that meander from (sx,sy) toward (tx,ty).
+
+    Neither endpoint is included in the returned list.
+    """
+    PAD = _CLEARING_R + 3
+    pts: list[tuple[int, int]] = []
+    for i in range(1, n + 1):
+        t = i / (n + 1)
+        bx = int(sx + (tx - sx) * t + rng.randint(-spread, spread))
+        by = int(sy + (ty - sy) * t + rng.randint(-spread, spread))
+        bx = max(PAD, min(W - PAD - 1, bx))
+        by = max(PAD, min(H - PAD - 1, by))
+        pts.append((bx, by))
+    return pts
 
 
-# ── Forest interior generation ──────────────────────────────────────────────────
+def _branch_off(
+    rng: random.Random,
+    grid: list[list[str]],
+    parent_x: int, parent_y: int,
+    W: int, H: int,
+    depth: int = 0, max_depth: int = 1,
+) -> list[tuple[int, int]]:
+    """Carve one tributary clearing off (parent_x, parent_y) and optionally recurse.
+
+    Returns a list of dead-end clearing centres created.
+    """
+    PAD = _CLEARING_R + 3
+    angle = rng.uniform(0, 2 * math.pi)
+    step  = rng.randint(_TRIB_STEP_MIN, _TRIB_STEP_MAX)
+    tx = max(PAD, min(W - PAD - 1, parent_x + int(math.cos(angle) * step)))
+    ty = max(PAD, min(H - PAD - 1, parent_y + int(math.sin(angle) * step)))
+
+    _carve_circ(grid, tx, ty, _CLEARING_R, W, H)
+    _carve_path(grid, parent_x, parent_y, tx, ty, W, H)
+
+    dead_ends: list[tuple[int, int]] = [(tx, ty)]
+    if depth < max_depth and rng.random() < 0.55:
+        sub = _branch_off(rng, grid, tx, ty, W, H, depth + 1, max_depth)
+        dead_ends.extend(sub)
+    return dead_ends
+
+
+# ── Forest interior generation ───────────────────────────────────────────────────
 
 def _generate_forest_interior(
     forest_id: int, seed: int, world_x: int, world_y: int, num_exits: int = 2,
 ) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]]]:
-    """Generate a forest interior.
+    """Generate a forest interior as a bead-chain of clearings.
+
+    Design:
+    - Central large clearing holds the Tree City.
+    - Each overworld exit spawns a chain of clearings meandering to the center,
+      connected by 1-tile-wide corridors.
+    - Tributary branches (and sub-tributaries) hang off each main chain.
+    - Chests, mimics, nut trees, and the ancient tree are distributed through
+      the tributary dead-ends and chain clearings.
 
     Returns (width, height, tiles, exit_local_positions).
-    exit_local_positions are the (local_x, local_y) of fst_exit tiles, in the
-    same order as the overworld entrance positions passed to create_forest_area.
+    exit_local_positions[i] is the (local_x, local_y) of the i-th fst_exit tile
+    (on the map boundary), corresponding to overworld_positions[i].
     """
-    rng = random.Random(seed + _FOREST_SEED_OFFSET + forest_id * 7919
-                        + world_x * 1009 + world_y)
+    rng = random.Random(
+        seed + _FOREST_SEED_OFFSET + forest_id * 7919 + world_x * 1009 + world_y
+    )
 
-    width  = rng.randint(FOREST_SIZE_MIN, FOREST_SIZE_MAX)
-    height = rng.randint(FOREST_SIZE_MIN, FOREST_SIZE_MAX)
+    W, H = FOREST_W, FOREST_H
+    grid: list[list[str]] = [["fst_tree"] * W for _ in range(H)]
+    PAD = _CLEARING_R + 3  # minimum distance from any clearing centre to the map edge
 
-    carved: set[tuple[int, int]] = set()
-    cx, cy = width // 2, height // 2
+    center_x, center_y = W // 2, H // 2
 
-    # Primary organic carve from the centre
-    _drunkard(rng, carved, cx, cy, FOREST_WALK_STEPS, width, height)
+    # ── 1. Central clearing ──────────────────────────────────────────────────────
+    _carve_circ(grid, center_x, center_y, _CENTRAL_R, W, H)
 
-    # --- Exits on different edges ---
+    # ── 2. Determine exit positions (on the map boundary) ────────────────────────
     edges = ["top", "bottom", "left", "right"]
     rng.shuffle(edges)
-    min_spread = max(width, height) // max(num_exits, 1)
 
-    exits: list[tuple[int, int]] = []
-    inward_pts: list[tuple[int, int]] = []
+    exits:        list[tuple[int, int]] = []
+    inners:       list[tuple[int, int]] = []   # 1 tile inside the boundary
+    first_clears: list[tuple[int, int]] = []   # centre of first clearing per chain
 
-    for i in range(num_exits):
-        edge = edges[i % len(edges)]
-        best: tuple[int, int] | None = None
-        for _ in range(40):
-            if edge == "top":
-                pos = (rng.randint(2, width - 3), 0)
-            elif edge == "bottom":
-                pos = (rng.randint(2, width - 3), height - 1)
-            elif edge == "left":
-                pos = (0, rng.randint(2, height - 3))
-            else:
-                pos = (width - 1, rng.randint(2, height - 3))
-            if not exits or min(
-                abs(pos[0] - px) + abs(pos[1] - py) for px, py in exits
-            ) >= min_spread:
-                best = pos
-                break
-        ex, ey = best or pos
+    for i in range(min(num_exits, 4)):
+        edge = edges[i]
+        if edge == "top":
+            ex, ey   = rng.randint(PAD, W - PAD - 1), 0
+            inner    = (ex, 1)
+            first_c  = (ex, PAD + 1)
+        elif edge == "bottom":
+            ex, ey   = rng.randint(PAD, W - PAD - 1), H - 1
+            inner    = (ex, H - 2)
+            first_c  = (ex, H - PAD - 2)
+        elif edge == "left":
+            ex, ey   = 0, rng.randint(PAD, H - PAD - 1)
+            inner    = (1, ey)
+            first_c  = (PAD + 1, ey)
+        else:   # right
+            ex, ey   = W - 1, rng.randint(PAD, H - PAD - 1)
+            inner    = (W - 2, ey)
+            first_c  = (W - PAD - 2, ey)
+
         exits.append((ex, ey))
-        carved.add((ex, ey))
-        ix, iy = _inward(ex, ey, edge, width, height)
-        carved.add((ix, iy))
-        inward_pts.append((ix, iy))
+        inners.append(inner)
+        first_clears.append(first_c)
 
-    # Carve corridors from each exit inward to centre for connectivity
-    for ix, iy in inward_pts:
-        _corridor(carved, ix, iy, cx, cy, width, height)
+    # ── 3. Generate chains ───────────────────────────────────────────────────────
+    all_chain_beads: list[list[tuple[int, int]]] = []
+    dead_ends:       list[tuple[int, int]] = []
 
-    # --- Special feature placement ---
-    exit_set = set(exits)
-    floor_tiles = [p for p in carved if p not in exit_set]
-    rng.shuffle(floor_tiles)
+    for i in range(len(exits)):
+        inner   = inners[i]
+        first_c = first_clears[i]
 
-    # Tree City: near centre, away from exits
-    tree_city: tuple[int, int] | None = None
-    for t in sorted(floor_tiles, key=lambda p: abs(p[0] - cx) + abs(p[1] - cy)):
-        if all(abs(t[0] - ex) + abs(t[1] - ey) > 12 for ex, ey in exits):
-            tree_city = t
+        # Narrow corridor from boundary inner-point to first clearing
+        _carve_path(grid, inner[0], inner[1], first_c[0], first_c[1], W, H)
+        _carve_circ(grid, first_c[0], first_c[1], _CLEARING_R, W, H)
+
+        # Intermediate beads meandering toward center
+        # Aim slightly off-center so two chains don't perfectly overlap
+        aim_x = center_x + rng.randint(-6, 6)
+        aim_y = center_y + rng.randint(-6, 6)
+        mid_beads = _meander(rng, first_c[0], first_c[1], aim_x, aim_y,
+                             _NUM_CHAIN_BEADS, W, H)
+
+        # chain = [first_c] + mid_beads (doesn't include center)
+        chain = [first_c] + mid_beads
+
+        # Carve each intermediate bead and the corridor from its predecessor
+        for j, (bx, by) in enumerate(mid_beads):
+            prev = chain[j]   # chain[0]=first_c, chain[1]=mid_beads[0], …
+            _carve_circ(grid, bx, by, _CLEARING_R, W, H)
+            _carve_path(grid, prev[0], prev[1], bx, by, W, H)
+
+        # Connect last bead to central clearing
+        last = mid_beads[-1] if mid_beads else first_c
+        _carve_path(grid, last[0], last[1], center_x, center_y, W, H)
+
+        all_chain_beads.append(chain)
+
+        # Tributaries branch off interior beads (skip first — it's near the exit)
+        interior = list(chain[1:])
+        rng.shuffle(interior)
+        for bx, by in interior[:_NUM_TRIBUTARIES]:
+            ends = _branch_off(rng, grid, bx, by, W, H, max_depth=1)
+            dead_ends.extend(ends)
+
+    # ── 4. Place special tiles ───────────────────────────────────────────────────
+    specials: set[tuple[int, int]] = set()
+
+    # Tree City at center of central clearing
+    grid[center_y][center_x] = "fst_tree_city"
+    specials.add((center_x, center_y))
+
+    # Exit tiles on boundary
+    for ex, ey in exits:
+        grid[ey][ex] = "fst_exit"
+
+    # Ancient tree: farthest dead-end from center
+    if dead_ends:
+        far = max(dead_ends, key=lambda p: abs(p[0] - center_x) + abs(p[1] - center_y))
+        if far not in specials:
+            grid[far[1]][far[0]] = "fst_ancient_tree"
+            specials.add(far)
+
+    # Chests and mimics in remaining dead-ends
+    remaining = [d for d in dead_ends if d not in specials]
+    rng.shuffle(remaining)
+    num_chests = min(4, len(remaining))
+    num_mimics = min(5, max(0, len(remaining) - num_chests))
+    for di, (dx, dy) in enumerate(remaining):
+        if di < num_chests:
+            grid[dy][dx] = "fst_chest"
+        elif di < num_chests + num_mimics:
+            grid[dy][dx] = "fst_mimic"
+        else:
             break
-    if tree_city is None and floor_tiles:
-        tree_city = floor_tiles[0]
+        specials.add((dx, dy))
 
-    # Ancient Tree: far from tree city and exits
-    ancient: tuple[int, int] | None = None
-    for t in floor_tiles:
-        if tree_city and abs(t[0] - tree_city[0]) + abs(t[1] - tree_city[1]) < 16:
+    # Nut trees scattered in chain clearings (not on specials, not near center)
+    chain_flat = [b for chain in all_chain_beads for b in chain]
+    rng.shuffle(chain_flat)
+    nut_count = 0
+    for bx, by in chain_flat:
+        if nut_count >= rng.randint(4, 7):
+            break
+        if (bx, by) in specials:
             continue
-        if all(abs(t[0] - ex) + abs(t[1] - ey) > 8 for ex, ey in exits):
-            ancient = t
-            break
-    if ancient is None:
-        ancient = floor_tiles[len(floor_tiles) // 3] if floor_tiles else (cx + 5, cy)
+        if abs(bx - center_x) + abs(by - center_y) < 10:
+            continue   # don't place nut trees inside the central clearing area
+        grid[by][bx] = "fst_nut_tree"
+        specials.add((bx, by))
+        nut_count += 1
 
-    # Maze door: away from centre, near any edge
-    maze_door: tuple[int, int] | None = None
-    far_tiles = [t for t in floor_tiles
-                 if abs(t[0] - cx) + abs(t[1] - cy) > max(width, height) // 3
-                 and t not in (tree_city, ancient)
-                 and all(abs(t[0] - ex) + abs(t[1] - ey) > 6 for ex, ey in exits)]
-    if far_tiles:
-        maze_door = far_tiles[0]
-    elif floor_tiles:
-        maze_door = floor_tiles[len(floor_tiles) // 2]
-
-    specials: set[tuple[int, int]] = set(exits)
-    if tree_city: specials.add(tree_city)
-    if ancient:   specials.add(ancient)
-    if maze_door: specials.add(maze_door)
-
-    # Nut trees (3-5): scattered, 8+ apart
-    nut_trees: set[tuple[int, int]] = set()
-    for t in floor_tiles:
-        if t in specials: continue
-        if len(nut_trees) >= rng.randint(3, 5): break
-        if all(abs(t[0] - nx) + abs(t[1] - ny) > 8 for nx, ny in nut_trees):
-            nut_trees.add(t)
-    specials |= nut_trees
-
-    # Chests (2-4): well spread from each other and specials
-    chests: set[tuple[int, int]] = set()
-    for t in floor_tiles:
-        if t in specials: continue
-        if len(chests) >= rng.randint(2, 4): break
-        if all(abs(t[0] - nx) + abs(t[1] - ny) > 12 for nx, ny in chests):
-            chests.add(t)
-
-    # --- Build tile list ---
-    tiles: list[tuple[int, int, str]] = []
-    for y in range(height):
-        for x in range(width):
-            p = (x, y)
-            if p in exit_set:
-                tiles.append((x, y, "fst_exit"))
-            elif p == tree_city:
-                tiles.append((x, y, "fst_tree_city"))
-            elif p == ancient:
-                tiles.append((x, y, "fst_ancient_tree"))
-            elif p == maze_door:
-                tiles.append((x, y, "fst_maze_door"))
-            elif p in nut_trees:
-                tiles.append((x, y, "fst_nut_tree"))
-            elif p in chests:
-                tiles.append((x, y, "fst_chest"))
-            elif p in carved:
-                tiles.append((x, y, "fst_floor"))
-            else:
-                tiles.append((x, y, "fst_tree"))
-
-    return width, height, tiles, exits
+    # ── 5. Build tile list ───────────────────────────────────────────────────────
+    tiles: list[tuple[int, int, str]] = [
+        (x, y, grid[y][x]) for y in range(H) for x in range(W)
+    ]
+    return W, H, tiles, exits
 
 
-# ── Maze generation ─────────────────────────────────────────────────────────────
+# ── Maze generation (kept for legacy forests) ────────────────────────────────────
 
 def _generate_maze(
     maze_id: int, seed: int, forest_id: int,
 ) -> tuple[int, int, list[tuple[int, int, str]], int, int]:
-    """Generate a 3-wide-path maze using iterative DFS (recursive-backtracking).
+    """Generate a 3-wide-path maze (legacy; new forests no longer include a maze door).
 
-    Grid: MAZE_W × MAZE_H (33×33).  Each cell is 3 tiles wide; walls between
-    cells are 1 tile wide (stride = 4).  8×8 = 64 cells → ~16+ dead-ends.
-
-    Placement priority (by descending distance from entrance):
-      [0]  maze_chest  — the real treasure chest
-      [1]  maze_exit   — shortcut exit at the far end of the maze
-      [2…6] maze_mimic  — up to 5 decoy chests that start combat when opened
     Returns (width, height, tiles, entry_x, entry_y).
     """
     rng = random.Random(seed + _MAZE_SEED_OFFSET + maze_id * 3571 + forest_id * 1319)
 
-    CELLS  = _MAZE_CELLS   # 8
-    STRIDE = _MAZE_STRIDE  # 4
-    W = MAZE_W             # 33
-    H = MAZE_H             # 33
+    CELLS  = _MAZE_CELLS
+    STRIDE = _MAZE_STRIDE
+    W = MAZE_W
+    H = MAZE_H
 
-    # Start everything as walls
     grid: list[list[str]] = [["maze_wall"] * W for _ in range(H)]
 
     def _carve_cell(cx: int, cy: int) -> None:
-        """Clear the 3×3 interior of cell (cx, cy)."""
         x0 = cx * STRIDE + 1
         y0 = cy * STRIDE + 1
         for ry in range(y0, y0 + 3):
@@ -257,29 +311,27 @@ def _generate_maze(
                 grid[ry][rx] = "maze_floor"
 
     def _carve_passage(cx: int, cy: int, dx: int, dy: int) -> None:
-        """Carve the 1×3 (or 3×1) wall between cell (cx,cy) and its (dx,dy) neighbour."""
-        if dx == 1:          # right: wall column at cx*STRIDE+4
+        if dx == 1:
             wx = cx * STRIDE + 4
             y0 = cy * STRIDE + 1
             for ry in range(y0, y0 + 3):
                 grid[ry][wx] = "maze_floor"
-        elif dx == -1:       # left: wall column at (cx-1)*STRIDE+4
+        elif dx == -1:
             wx = (cx - 1) * STRIDE + 4
             y0 = cy * STRIDE + 1
             for ry in range(y0, y0 + 3):
                 grid[ry][wx] = "maze_floor"
-        elif dy == 1:        # down: wall row at cy*STRIDE+4
+        elif dy == 1:
             wy = cy * STRIDE + 4
             x0 = cx * STRIDE + 1
             for rx in range(x0, x0 + 3):
                 grid[wy][rx] = "maze_floor"
-        elif dy == -1:       # up: wall row at (cy-1)*STRIDE+4
+        elif dy == -1:
             wy = (cy - 1) * STRIDE + 4
             x0 = cx * STRIDE + 1
             for rx in range(x0, x0 + 3):
                 grid[wy][rx] = "maze_floor"
 
-    # Iterative DFS
     visited: set[tuple[int, int]] = set()
     stack = [(0, 0)]
     visited.add((0, 0))
@@ -302,12 +354,10 @@ def _generate_maze(
         if not moved:
             stack.pop()
 
-    # Entrance exit tile: centre of the top cell column (cx = CELLS//2)
-    entry_x = MAZE_ENTRY_X   # = 18
-    entry_y = MAZE_ENTRY_Y   # = 1
-    grid[0][entry_x] = "maze_exit"  # walkable + exits to forest when stepped on
+    entry_x = MAZE_ENTRY_X
+    entry_y = MAZE_ENTRY_Y
+    grid[0][entry_x] = "maze_exit"
 
-    # Identify dead-ends (floor tiles with exactly one non-wall neighbour)
     def _non_wall_adj(x: int, y: int) -> int:
         return sum(
             1 for ddx, ddy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -315,7 +365,7 @@ def _generate_maze(
             and grid[y + ddy][x + ddx] != "maze_wall"
         )
 
-    dead_ends: list[tuple[int, int, int]] = []  # (distance, x, y)
+    dead_ends: list[tuple[int, int, int]] = []
     for y in range(1, H):
         for x in range(W):
             if grid[y][x] == "maze_floor" and _non_wall_adj(x, y) == 1:
@@ -324,17 +374,16 @@ def _generate_maze(
 
     dead_ends.sort(reverse=True)
 
-    # Assign special tiles from the farthest dead-ends inward
     _MIMIC_MAX = 5
     for i, (_, tx, ty) in enumerate(dead_ends):
         if i == 0:
             grid[ty][tx] = "maze_chest"
         elif i == 1:
-            grid[ty][tx] = "maze_exit"    # shortcut exit near the goal
+            grid[ty][tx] = "maze_exit"
         elif i <= 1 + _MIMIC_MAX:
             grid[ty][tx] = "maze_mimic"
         else:
-            break  # leave remaining dead-ends as plain floor
+            break
 
     tiles: list[tuple[int, int, str]] = [
         (x, y, grid[y][x]) for y in range(H) for x in range(W)
@@ -342,15 +391,17 @@ def _generate_maze(
     return W, H, tiles, entry_x, entry_y
 
 
-# ── DB creation ─────────────────────────────────────────────────────────────────
+# ── DB creation ──────────────────────────────────────────────────────────────────
 
 async def create_forest_area(
     seed: int,
-    overworld_positions: list[tuple[int, int]],   # overworld (x, y) of each entrance tile
+    overworld_positions: list[tuple[int, int]],
     db,
 ) -> None:
     """Create one forest interior linked to overworld_positions entrances.
+
     Idempotent: silently skips if any position is already linked.
+    New forests use the bead-chain design; no standalone maze is created.
     """
     for wx, wy in overworld_positions:
         existing = await db.fetch_one(
@@ -366,39 +417,20 @@ async def create_forest_area(
     )
     forest_id = cur.lastrowid
 
-    # Generate maze for this forest
-    maze_cur = await db.execute(
-        "INSERT INTO maze_areas (forest_id, width, height) VALUES (?, 1, 1)",
-        (forest_id,),
-    )
-    maze_id = maze_cur.lastrowid
-
-    # Generate both grids in thread (CPU-heavy)
+    # Generate forest grid in a thread (CPU-heavy)
     width, height, forest_tiles, exit_positions = await asyncio.to_thread(
         _generate_forest_interior,
         forest_id, seed, overworld_positions[0][0], overworld_positions[0][1], n,
-    )
-    mw, mh, maze_tiles, maze_entry_x, maze_entry_y = await asyncio.to_thread(
-        _generate_maze, maze_id, seed, forest_id,
     )
 
     await db.execute(
         "UPDATE forest_areas SET width=?, height=? WHERE forest_id=?",
         (width, height, forest_id),
     )
-    await db.execute(
-        "UPDATE maze_areas SET width=?, height=?, entry_x=?, entry_y=? WHERE maze_id=?",
-        (mw, mh, maze_entry_x, maze_entry_y, maze_id),
-    )
     await db.executemany(
         "INSERT OR IGNORE INTO forest_tiles (forest_id, local_x, local_y, tile_type)"
         " VALUES (?, ?, ?, ?)",
         [(forest_id, lx, ly, tt) for lx, ly, tt in forest_tiles],
-    )
-    await db.executemany(
-        "INSERT OR IGNORE INTO maze_tiles (maze_id, local_x, local_y, tile_type)"
-        " VALUES (?, ?, ?, ?)",
-        [(maze_id, lx, ly, tt) for lx, ly, tt in maze_tiles],
     )
 
     # Link each overworld tile to its local exit marker, and create tile_override
@@ -418,16 +450,12 @@ async def create_forest_area(
 
 
 async def place_forest_areas(seed: int, db) -> None:
-    """Find dense-forest edge positions and create FOREST_AREA_COUNT forest interiors.
-
-    Called during world initialisation. Skips positions already linked.
-    """
+    """Find dense-forest edge positions and create FOREST_AREA_COUNT forest interiors."""
     rng = random.Random(seed ^ 0xF07E57)
 
     candidates: list[tuple[int, int]] = []
     WALKABLE_BIOMES = {"plains", "grass", "forest", "hills", "sand", "path"}
 
-    # Scan random positions for dense_forest tiles with walkable neighbours
     for _ in range(15_000):
         x = rng.randint(5, WORLD_SIZE - 6)
         y = rng.randint(5, WORLD_SIZE - 6)
@@ -439,7 +467,6 @@ async def place_forest_areas(seed: int, db) -> None:
                 candidates.append((x, y))
                 break
 
-    # Pick FOREST_AREA_COUNT spread-out primary entrances
     chosen: list[tuple[int, int]] = []
     for pos in candidates:
         if len(chosen) >= FOREST_AREA_COUNT:
@@ -450,10 +477,8 @@ async def place_forest_areas(seed: int, db) -> None:
         ):
             chosen.append(pos)
 
-    # For each chosen primary entrance, find a second entrance on the same forest patch
     for wx, wy in chosen:
         ow_entrances = [(wx, wy)]
-        # Search for another dense_forest edge tile ≥20 tiles away (same patch)
         for _ in range(500):
             ox = wx + rng.randint(-30, 30)
             oy = wy + rng.randint(-30, 30)
@@ -470,7 +495,6 @@ async def place_forest_areas(seed: int, db) -> None:
             if len(ow_entrances) >= 2:
                 break
 
-        # Attempt to skip if entrances already exist (idempotency check)
         already = await db.fetch_one(
             "SELECT 1 FROM forest_entrances WHERE world_x=? AND world_y=?",
             (wx, wy),
@@ -490,7 +514,7 @@ async def ensure_forests_placed(seed: int, db) -> None:
         await place_forest_areas(seed, db)
 
 
-# ── Lookup helpers ───────────────────────────────────────────────────────────────
+# ── Lookup helpers ────────────────────────────────────────────────────────────────
 
 async def get_forest_entrance(
     db, world_x: int, world_y: int,
@@ -517,7 +541,6 @@ async def get_forest_exit_world(
     )
     if row:
         return row["world_x"], row["world_y"]
-    # Fallback: find the nearest entrance for this forest
     row = await db.fetch_one(
         "SELECT world_x, world_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
         (forest_id,),
@@ -526,7 +549,7 @@ async def get_forest_exit_world(
 
 
 async def get_maze_for_forest(db, forest_id: int) -> int | None:
-    """Return the maze_id linked to this forest, or None."""
+    """Return the maze_id linked to this forest, or None (new forests have no maze)."""
     row = await db.fetch_one(
         "SELECT maze_id FROM maze_areas WHERE forest_id=?", (forest_id,)
     )
@@ -534,10 +557,7 @@ async def get_maze_for_forest(db, forest_id: int) -> int | None:
 
 
 async def get_maze_exit_forest_pos(db, forest_id: int) -> tuple[int, int]:
-    """Return the (local_x, local_y) of the fst_maze_door tile for this forest.
-
-    Falls back to the centre of the forest if not found.
-    """
+    """Return the (local_x, local_y) of the fst_maze_door for this forest (legacy)."""
     row = await db.fetch_one(
         "SELECT local_x, local_y FROM forest_tiles"
         " WHERE forest_id=? AND tile_type='fst_maze_door' LIMIT 1",
@@ -545,7 +565,6 @@ async def get_maze_exit_forest_pos(db, forest_id: int) -> tuple[int, int]:
     )
     if row:
         return row["local_x"], row["local_y"]
-    # Fallback: forest centre
     sz = await db.fetch_one(
         "SELECT width, height FROM forest_areas WHERE forest_id=?", (forest_id,)
     )
@@ -554,7 +573,7 @@ async def get_maze_exit_forest_pos(db, forest_id: int) -> tuple[int, int]:
     return 5, 5
 
 
-# ── Viewport loading ─────────────────────────────────────────────────────────────
+# ── Viewport loading ──────────────────────────────────────────────────────────────
 
 async def load_forest_viewport(
     forest_id: int, center_x: int, center_y: int, db,

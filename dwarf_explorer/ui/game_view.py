@@ -2216,7 +2216,8 @@ def _compute_context_labels(
                 center_label, center_enabled = "🏡 Shop", True
             elif t == "fst_maze_door":
                 center_label, center_enabled = "🌀 Enter", True
-            elif t == "fst_chest":
+            elif t in ("fst_chest", "fst_mimic"):
+                # fst_mimic looks identical to fst_chest intentionally
                 center_label, center_enabled = "📦 Open", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
@@ -3214,35 +3215,26 @@ async def _move_steps(
                     "Find the treasure chest hidden within its depths."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
-            # Forest chest
+            # Forest chest — stop on tile and prompt interact
             if target.terrain == "fst_chest":
                 player.forest_x, player.forest_y = nx, ny
                 await db.execute(
                     "UPDATE players SET forest_x=?, forest_y=? WHERE user_id=?", (nx, ny, user_id)
                 )
                 grid = await load_forest_viewport(player.forest_id, nx, ny, db)
-                already = await db.fetch_one(
-                    "SELECT 1 FROM player_forest_loots WHERE user_id=? AND forest_id=?",
-                    (user_id, player.forest_id)
-                )
-                if already:
-                    return render_grid(grid, player, "📦 The chest is empty — already looted."), \
-                           _game_view(guild_id, user_id, player, grid=grid)
-                rng = _random.Random(hash((user_id, player.forest_id, "fst_chest")))
-                gold_reward = rng.randint(40, 120)
-                item = rng.choice(["forest_nut", "living_root", "ancient_seed", "bark_shield"])
-                qty = rng.randint(1, 3) if item in ("forest_nut", "living_root") else 1
-                await db.execute(
-                    "INSERT OR IGNORE INTO player_forest_loots(user_id, forest_id) VALUES(?,?)",
-                    (user_id, player.forest_id)
-                )
-                player.gold = min(player.gold + gold_reward, 9999)
-                await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
-                await add_to_inventory(db, user_id, item, qty)
-                from dwarf_explorer.config import ITEM_EMOJI as _ie2
-                qty_s = f"×{qty} " if qty > 1 else ""
                 return render_grid(grid, player,
-                    f"📦 Forest cache! **{gold_reward}** gold + {_ie2.get(item,'📦')} {qty_s}**{item.replace('_',' ').title()}**!"), \
+                    "📦 A cache hidden in the roots. Press ⚙️ to open it."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
+            # Forest mimic — looks like a chest; springs to life on interact
+            if target.terrain == "fst_mimic":
+                player.forest_x, player.forest_y = nx, ny
+                await db.execute(
+                    "UPDATE players SET forest_x=?, forest_y=? WHERE user_id=?", (nx, ny, user_id)
+                )
+                grid = await load_forest_viewport(player.forest_id, nx, ny, db)
+                return render_grid(grid, player,
+                    "📦 A chest sits in the clearing. Press ⚙️ to open it."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Nut tree — prompt interact
@@ -3637,7 +3629,7 @@ async def _finish_combat(
             await add_to_inventory(db, user_id, "hawk_feather", 1)
             extra_msg += " \U0001FAB6 You pluck a **Hawk Feather** from the fallen storm hawk!"
 
-    # Mimic defeated — replace the maze_mimic tile with maze_floor
+    # Mimic defeated — clear the mimic tile (maze or forest)
     if won and player.combat_enemy_type == "chest_mimic":
         _mimic_mid = _ui_state.get(user_id, {}).get("mimic_maze_id")
         _mimic_mx  = _ui_state.get(user_id, {}).get("mimic_x")
@@ -3647,6 +3639,16 @@ async def _finish_combat(
                 "UPDATE maze_tiles SET tile_type='maze_floor' "
                 "WHERE maze_id=? AND local_x=? AND local_y=?",
                 (_mimic_mid, _mimic_mx, _mimic_my),
+            )
+            _invalidate_vp(user_id)
+        _mimic_fid = _ui_state.get(user_id, {}).get("mimic_forest_id")
+        _mimic_ffx = _ui_state.get(user_id, {}).get("mimic_forest_x")
+        _mimic_ffy = _ui_state.get(user_id, {}).get("mimic_forest_y")
+        if _mimic_fid is not None and _mimic_ffx is not None:
+            await db.execute(
+                "UPDATE forest_tiles SET tile_type='fst_floor' "
+                "WHERE forest_id=? AND local_x=? AND local_y=?",
+                (_mimic_fid, _mimic_ffx, _mimic_ffy),
             )
             _invalidate_vp(user_id)
         extra_msg += " 💀 The mimic collapses — a **fake chest** lies defeated!"
@@ -6532,6 +6534,73 @@ async def handle_interact(
                 "🌱 *Plant these in the world to grow something extraordinary.*")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif ftile.terrain == "fst_chest":
+            # Per-position chest tracking: (user_id, forest_id, local_x, local_y)
+            fx, fy = player.forest_x, player.forest_y
+            already = await db.fetch_one(
+                "SELECT 1 FROM player_forest_chest_loots "
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=?",
+                (user_id, player.forest_id, fx, fy)
+            )
+            if already:
+                content = render_grid(grid, player, "📦 The chest is empty — already looted.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+            loot_rng = _random.Random(hash((player.forest_id, fx, fy, "fst_chest")))
+            gold_reward = loot_rng.randint(30, 100)
+            item_pool = ["forest_nut", "living_root", "ancient_seed", "bark_shield", "iron_ingot"]
+            item = loot_rng.choice(item_pool)
+            qty = loot_rng.randint(1, 3) if item in ("forest_nut", "living_root") else 1
+            await db.execute(
+                "INSERT OR IGNORE INTO player_forest_chest_loots"
+                "(user_id, forest_id, local_x, local_y) VALUES(?,?,?,?)",
+                (user_id, player.forest_id, fx, fy)
+            )
+            player.gold = min(player.gold + gold_reward, 9999)
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+            await add_to_inventory(db, user_id, item, qty)
+            from dwarf_explorer.config import ITEM_EMOJI as _ie2
+            qty_s = f"×{qty} " if qty > 1 else ""
+            content = render_grid(grid, player,
+                f"📦 Forest cache! **{gold_reward}** gold + {_ie2.get(item,'📦')} {qty_s}"
+                f"**{item.replace('_',' ').title()}**!")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif ftile.terrain == "fst_mimic":
+            # Forest mimic — identical look to fst_chest; triggers combat on interact
+            enemy_type = "chest_mimic"
+            from dwarf_explorer.config import ENEMY_STATS as _ES_fm, COMBAT_MOVES_DEFAULT as _CMD_fm
+            arena_rng = _random.Random(hash((user_id, player.forest_x, player.forest_y, "fst_mimic")))
+            arena, ex, ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+            player.in_combat = True
+            player.combat_enemy_type = enemy_type
+            player.combat_enemy_hp = _ES_fm[enemy_type][0]
+            player.combat_enemy_x = ex
+            player.combat_enemy_y = ey
+            player.combat_player_x = ARENA_SIZE // 2
+            player.combat_player_y = ARENA_SIZE // 2
+            player.combat_moves_left = _CMD_fm + (1 if player.accessory == "ring_of_time" else 0)
+            # Store forest mimic location so we can clear the tile after combat
+            _ui_state[user_id] = {
+                "type": "combat", "arena": arena,
+                "mimic_forest_id": player.forest_id,
+                "mimic_forest_x":  player.forest_x,
+                "mimic_forest_y":  player.forest_y,
+            }
+            await save_combat_state(db, user_id, player)
+            content = (
+                "💀 **It's a MIMIC!** The chest snaps open to reveal rows of teeth — "
+                "and lunges at you!\n\n" + render_arena(arena, player)
+            )
+            view = CombatView(guild_id, user_id,
+                              trapped=arena["player_trapped"],
+                              moves_left=player.combat_moves_left)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
         elif ftile.terrain == "fst_tree_city":

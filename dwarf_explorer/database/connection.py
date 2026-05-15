@@ -443,6 +443,13 @@ class Database:
     forest_id INTEGER NOT NULL,
     PRIMARY KEY (user_id, forest_id)
 )""",
+                """CREATE TABLE IF NOT EXISTS player_forest_chest_loots (
+    user_id   INTEGER NOT NULL,
+    forest_id INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, forest_id, local_x, local_y)
+)""",
                 # Maze entry position columns (added for 3-wide path redesign)
                 "ALTER TABLE maze_areas ADD COLUMN entry_x INTEGER NOT NULL DEFAULT 1",
                 "ALTER TABLE maze_areas ADD COLUMN entry_y INTEGER NOT NULL DEFAULT 1",

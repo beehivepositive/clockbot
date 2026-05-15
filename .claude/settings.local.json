@@ -139,7 +139,11 @@
       "Bash(py _patch_well.py)",
       "PowerShell(scp -i ~/.ssh/do_key C:\\\\ClaudeCode\\\\check_drops.py root@64.23.151.82:/tmp/check_drops.py)",
       "PowerShell(ssh -i ~/.ssh/do_key root@64.23.151.82 \"python3 /tmp/check_drops.py\")",
-      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && pm2 logs discord-bot --lines 15 --nostream\")"
-    ]
+      "Bash(ssh -i ~/.ssh/do_key root@64.23.151.82 \"cd /home/discord-bot && git pull && pm2 restart discord-bot && pm2 logs discord-bot --lines 15 --nostream\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "PowerShell($j = Get-Content \"C:\\\\Users\\\\User\\\\.claude.json\" | ConvertFrom-Json; $j | Get-Member -MemberType NoteProperty | Where-Object { $_.Name -match \"mode|Mode|permission|Permission|auto|Auto|skip|Skip|accept|Accept|friction\" } | Select-Object Name)"
+    ],
+    "defaultMode": "auto"
   }
 }
