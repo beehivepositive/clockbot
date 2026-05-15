@@ -677,8 +677,8 @@ _TC_CY = 12       # ellipse center Y
 _TC_RX = 9.0      # ellipse X radius
 _TC_RY = 8.0      # ellipse Y radius
 _TC_ENTRY_X, _TC_ENTRY_Y = 14, 21   # player spawn when entering from forest
-_TC_LAND_UP_X, _TC_LAND_UP_Y = 14, 16    # spawn position when arriving via stair UP
-_TC_LAND_DOWN_X, _TC_LAND_DOWN_Y = 14, 9  # spawn position when arriving via stair DOWN
+_TC_LAND_UP_X, _TC_LAND_UP_Y = 14, 7     # spawn when arriving via stair UP (south of north alcove)
+_TC_LAND_DOWN_X, _TC_LAND_DOWN_Y = 14, 17 # spawn when arriving via stair DOWN (north of south alcove)
 
 
 def _in_tc_ellipse(x: int, y: int) -> bool:
@@ -697,275 +697,266 @@ def _tc_set(grid: list[list[str]], x: int, y: int, tile: str) -> None:
         grid[y][x] = tile
 
 
+def _tc_room_walls(grid: list[list[str]], x1: int, y1: int, x2: int, y2: int,
+                   door_side: str = "left", door_pos: int | None = None) -> None:
+    """Fill a room rect with floor, draw log-wall perimeter, then open one door gap.
+
+    Args:
+        door_side: 'left' | 'right' | 'top' | 'bottom'
+        door_pos:  y-coord for left/right door; x-coord for top/bottom door (default = centre)
+    """
+    # Fill interior
+    for y in range(max(0, y1), min(TC_H, y2 + 1)):
+        for x in range(max(0, x1), min(TC_W, x2 + 1)):
+            grid[y][x] = "tc_floor"
+    # Perimeter walls
+    for x in range(max(0, x1), min(TC_W, x2 + 1)):
+        if 0 <= y1 < TC_H: grid[y1][x] = "tc_wall"
+        if 0 <= y2 < TC_H: grid[y2][x] = "tc_wall"
+    for y in range(max(0, y1), min(TC_H, y2 + 1)):
+        if 0 <= x1 < TC_W: grid[y][x1] = "tc_wall"
+        if 0 <= x2 < TC_W: grid[y][x2] = "tc_wall"
+    # Door gap
+    if door_side == "left":
+        dp = door_pos if door_pos is not None else (y1 + y2) // 2
+        _tc_set(grid, x1, dp, "tc_floor")
+    elif door_side == "right":
+        dp = door_pos if door_pos is not None else (y1 + y2) // 2
+        _tc_set(grid, x2, dp, "tc_floor")
+    elif door_side == "top":
+        dp = door_pos if door_pos is not None else (x1 + x2) // 2
+        _tc_set(grid, dp, y1, "tc_floor")
+    elif door_side == "bottom":
+        dp = door_pos if door_pos is not None else (x1 + x2) // 2
+        _tc_set(grid, dp, y2, "tc_floor")
+
+
 def _gen_tc_floor(floor_num: int) -> list[list[str]]:
-    """Generate a single tree-city floor as a 2-D grid of tile-type strings."""
+    """Generate a single tree-city floor as a 2-D grid of tile-type strings.
+
+    All floors share the same elliptical trunk interior.  Rooms are enclosed
+    rectangular alcoves with log-wall perimeters and a single doorway each.
+    """
+    # ── Base: solid log walls ──────────────────────────────────────────────
     grid = [["tc_wall"] * TC_W for _ in range(TC_H)]
 
-    # Carve the oval trunk interior
+    # ── Carve elliptical trunk interior ────────────────────────────────────
     for y in range(TC_H):
         for x in range(TC_W):
             if _in_tc_ellipse(x, y):
                 grid[y][x] = "tc_floor"
 
-    # ── Floor 1: Great Hall (entry, market) ──────────────────────────────────
+    # ── North stair alcove (floors 1-3): x=12..16, y=1..5 ─────────────────
+    # Door at bottom-centre (14, 5) opens into main hall.
+    if floor_num < 4:
+        _tc_room_walls(grid, 12, 1, 16, 5, door_side="bottom", door_pos=14)
+        _tc_set(grid, 14, 2, "tc_stair_up")
+        _tc_set(grid, 13, 3, "tc_lantern")
+        _tc_set(grid, 15, 3, "tc_lantern")
+
+    # ── South stair alcove (floors 2-4): x=12..16, y=19..22 ───────────────
+    # Door at top-centre (14, 19) opens into main hall.
+    if floor_num > 1:
+        _tc_room_walls(grid, 12, 19, 16, 22, door_side="top", door_pos=14)
+        _tc_set(grid, 14, 21, "tc_stair_down")
+        _tc_set(grid, 13, 22, "tc_lantern")
+        _tc_set(grid, 15, 22, "tc_lantern")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ── Floor 1: Entry Hall ───────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
     if floor_num == 1:
-        # South corridor → exit door
-        _tc_fill(grid, 13, 20, 15, 22)
-        _tc_fill(grid, 14, 20, 14, 23)
+        # South entry corridor (extends past ellipse to the door)
+        for y in range(20, 23):
+            _tc_set(grid, 14, y, "tc_floor")   # centre tile is floor
+            _tc_set(grid, 13, y, "tc_wall")    # left log wall
+            _tc_set(grid, 15, y, "tc_wall")    # right log wall
         _tc_set(grid, 14, 23, "tc_door")
 
-        # Stair up (north area)
-        _tc_set(grid, 14, 5, "tc_stair_up")
+        # ── East market room: x=20..27, y=8..16 ──────────────────────────
+        # Door in left wall at y=12.  One shop NPC (tc_shop) at (25,12).
+        _tc_room_walls(grid, 20, 8, 27, 16, door_side="left", door_pos=12)
+        # Counter along the east inner wall
+        for cy in range(9, 16):
+            _tc_set(grid, 26, cy, "tc_counter")
+        # Rug in the middle of the room
+        _tc_fill(grid, 21, 9, 24, 15, "tc_rug")
+        # Decorations
+        _tc_set(grid, 21, 9,  "tc_lantern")
+        _tc_set(grid, 21, 15, "tc_lantern")
+        _tc_set(grid, 25, 9,  "tc_plant")
+        _tc_set(grid, 25, 15, "tc_plant")
+        # Shop NPC (overwrites rug if necessary)
+        _tc_set(grid, 25, 12, "tc_shop")
 
-        # North shrine niche (x=11-17, y=2-4)
-        _tc_fill(grid, 11, 2, 17, 4)
-        _tc_set(grid, 14, 2, "tc_shrine")
-        _tc_set(grid, 11, 3, "tc_lantern")
-        _tc_set(grid, 17, 3, "tc_lantern")
-        _tc_set(grid, 12, 2, "tc_plant")
-        _tc_set(grid, 16, 2, "tc_plant")
-        _tc_set(grid, 11, 5, "tc_wall")    # narrow the entrance
-        _tc_set(grid, 17, 5, "tc_wall")
+        # ── West storage room: x=1..8, y=9..15 ───────────────────────────
+        # Door in right wall at y=12.
+        _tc_room_walls(grid, 1, 9, 8, 15, door_side="right", door_pos=12)
+        _tc_set(grid, 2, 10, "tc_barrel")
+        _tc_set(grid, 2, 11, "tc_barrel")
+        _tc_set(grid, 2, 13, "tc_barrel")
+        _tc_set(grid, 2, 14, "tc_barrel")
+        _tc_set(grid, 5, 12, "tc_table")
+        _tc_set(grid, 7, 10, "tc_lantern")
+        _tc_set(grid, 7, 14, "tc_lantern")
+        _tc_set(grid, 4, 10, "tc_plant")
+        _tc_set(grid, 4, 14, "tc_plant")
 
-        # East market alcove (x=23-27, y=9-15)
-        _tc_fill(grid, 23, 9, 27, 15)
-        _tc_set(grid, 22, 9,  "tc_wall")   # frame pillars at entrance
-        _tc_set(grid, 22, 15, "tc_wall")
-        # Stall 1 (north)
-        _tc_set(grid, 24, 9,  "tc_lantern")
-        _tc_set(grid, 24, 10, "tc_shop")
-        _tc_fill(grid, 25, 9, 27, 10, "tc_counter")
-        _tc_set(grid, 27, 9,  "tc_plant")
-        # Stall 2 (south)
-        _tc_set(grid, 24, 15, "tc_lantern")
-        _tc_set(grid, 24, 14, "tc_shop")
-        _tc_fill(grid, 25, 14, 27, 15, "tc_counter")
-        _tc_set(grid, 27, 15, "tc_plant")
-        # Shared back wall + central rug
-        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
-        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
-        _tc_set(grid, 24, 12, "tc_floor")   # keep centre walkable
-
-        # West storage alcove (x=1-5, y=9-15)
-        _tc_fill(grid, 1, 9, 5, 15)
-        _tc_set(grid, 6, 9,  "tc_wall")
-        _tc_set(grid, 6, 15, "tc_wall")
-        _tc_set(grid, 5, 9,  "tc_lantern")
-        _tc_set(grid, 5, 15, "tc_lantern")
-        _tc_set(grid, 1, 10, "tc_barrel")
-        _tc_set(grid, 1, 11, "tc_barrel")
-        _tc_set(grid, 1, 13, "tc_barrel")
-        _tc_set(grid, 1, 14, "tc_barrel")
-        _tc_set(grid, 3, 12, "tc_table")
-        _tc_set(grid, 2, 9,  "tc_plant")
-        _tc_set(grid, 2, 15, "tc_plant")
-
-        # Main hall: central rug runner + lanterns + plants
-        _tc_fill(grid, 13, 11, 15, 18, "tc_rug")
-        _tc_set(grid, 14, 19, "tc_floor")   # south path stays clear
-        _tc_set(grid, 14, 20, "tc_floor")
-        _tc_set(grid, 9,  7,  "tc_lantern")
-        _tc_set(grid, 19, 7,  "tc_lantern")
-        _tc_set(grid, 9,  17, "tc_lantern")
-        _tc_set(grid, 19, 17, "tc_lantern")
+        # ── Main hall decorations ─────────────────────────────────────────
+        _tc_fill(grid, 13, 7, 15, 18, "tc_rug")   # central rug runner
+        _tc_set(grid, 9,  8,  "tc_lantern")
+        _tc_set(grid, 19, 8,  "tc_lantern")
+        _tc_set(grid, 9,  16, "tc_lantern")
+        _tc_set(grid, 19, 16, "tc_lantern")
         _tc_set(grid, 9,  12, "tc_plant")
         _tc_set(grid, 19, 12, "tc_plant")
-        # Restore stair on rug
-        _tc_set(grid, 14, 5,  "tc_stair_up")
+        # Quest villager in south-west area of the main hall
+        _tc_set(grid, 10, 15, "tc_villager")
+        # Restore stair (rug runner may have overwritten)
+        _tc_set(grid, 14, 2, "tc_stair_up")
 
-    # ── Floor 2: Living Quarters ──────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # ── Floor 2: Living Quarters ──────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
     elif floor_num == 2:
-        _tc_set(grid, 14, 5,  "tc_stair_up")
-        _tc_set(grid, 14, 19, "tc_stair_down")
+        # ── East bedroom wing — two stacked rooms ─────────────────────────
+        # Room A (upper): x=20..27, y=7..13  door left at y=10
+        _tc_room_walls(grid, 20, 7, 27, 13, door_side="left", door_pos=10)
+        _tc_set(grid, 25, 8,  "tc_bed")
+        _tc_set(grid, 26, 8,  "tc_bed")
+        _tc_set(grid, 25, 9,  "tc_bed")
+        _tc_set(grid, 26, 9,  "tc_bed")
+        _tc_set(grid, 23, 11, "tc_table")
+        _tc_set(grid, 21, 8,  "tc_lantern")
+        _tc_set(grid, 27, 12, "tc_plant")
 
-        # North rest niche (x=10-18, y=2-5) — small bunk beds
-        _tc_fill(grid, 10, 2, 18, 5)
-        _tc_set(grid, 10, 5, "tc_wall")
-        _tc_set(grid, 18, 5, "tc_wall")
-        _tc_set(grid, 11, 2, "tc_bed")
-        _tc_set(grid, 12, 2, "tc_bed")
-        _tc_set(grid, 16, 2, "tc_bed")
-        _tc_set(grid, 17, 2, "tc_bed")
-        _tc_set(grid, 14, 2, "tc_plant")
-        _tc_set(grid, 10, 3, "tc_lantern")
-        _tc_set(grid, 18, 3, "tc_lantern")
+        # Room B (lower): x=20..27, y=14..20  door left at y=17
+        _tc_room_walls(grid, 20, 14, 27, 20, door_side="left", door_pos=17)
+        _tc_set(grid, 25, 18, "tc_bed")
+        _tc_set(grid, 26, 18, "tc_bed")
+        _tc_set(grid, 25, 19, "tc_bed")
+        _tc_set(grid, 26, 19, "tc_bed")
+        _tc_set(grid, 23, 16, "tc_table")
+        _tc_set(grid, 21, 19, "tc_lantern")
+        _tc_set(grid, 27, 15, "tc_plant")
 
-        # East bedrooms — 2 rooms separated by a wall row
-        # Bedroom A (y=8-11)
-        _tc_fill(grid, 23, 8, 27, 11)
-        _tc_set(grid, 22, 8,  "tc_wall")
-        _tc_fill(grid, 22, 12, 27, 12, "tc_wall")   # separator row
-        _tc_set(grid, 27, 8,  "tc_bed")
-        _tc_set(grid, 27, 9,  "tc_bed")
-        _tc_set(grid, 25, 10, "tc_table")
-        _tc_set(grid, 23, 8,  "tc_lantern")
-        _tc_set(grid, 27, 11, "tc_plant")
-        # Bedroom B (y=13-17)
-        _tc_fill(grid, 23, 13, 27, 17)
-        _tc_set(grid, 22, 13, "tc_wall")
-        _tc_set(grid, 22, 17, "tc_wall")
-        _tc_set(grid, 27, 16, "tc_bed")
-        _tc_set(grid, 27, 17, "tc_bed")
-        _tc_set(grid, 25, 14, "tc_table")
-        _tc_set(grid, 23, 17, "tc_lantern")
-        _tc_set(grid, 27, 13, "tc_plant")
+        # ── West library: x=1..8, y=8..17  door right at y=12 ────────────
+        _tc_room_walls(grid, 1, 8, 8, 17, door_side="right", door_pos=12)
+        for _by in [9, 10, 11, 13, 14, 15, 16]:
+            _tc_set(grid, 2, _by, "tc_bookshelf")
+        _tc_set(grid, 2, 12, "tc_lantern")
+        _tc_set(grid, 7, 9,  "tc_lantern")
+        _tc_set(grid, 7, 15, "tc_lantern")
+        _tc_set(grid, 5, 10, "tc_table")
+        _tc_set(grid, 5, 15, "tc_table")
+        _tc_set(grid, 4, 13, "tc_plant")
+        _tc_fill(grid, 3, 11, 6, 14, "tc_rug")
 
-        # West library / common room (x=1-6, y=8-16)
-        _tc_fill(grid, 1, 8, 6, 16)
-        _tc_set(grid, 7, 8,  "tc_wall")
-        _tc_set(grid, 7, 16, "tc_wall")
-        for _by in [8, 9, 10, 12, 13, 14, 16]:
-            _tc_set(grid, 1, _by, "tc_bookshelf")
-        _tc_set(grid, 1, 11, "tc_lantern")
-        _tc_set(grid, 1, 15, "tc_lantern")
-        _tc_set(grid, 6, 8,  "tc_lantern")
-        _tc_set(grid, 6, 16, "tc_lantern")
-        _tc_set(grid, 3, 9,  "tc_table")
-        _tc_set(grid, 3, 14, "tc_table")
-        _tc_set(grid, 5, 12, "tc_plant")
-        _tc_fill(grid, 2, 11, 5, 13, "tc_rug")
-
-        # Main hall
+        # ── Main hall decorations + quest villager ────────────────────────
+        _tc_fill(grid, 13, 7, 15, 18, "tc_rug")
         _tc_set(grid, 9,  8,  "tc_lantern")
         _tc_set(grid, 19, 8,  "tc_lantern")
         _tc_set(grid, 9,  16, "tc_lantern")
         _tc_set(grid, 19, 16, "tc_lantern")
-        _tc_set(grid, 10, 12, "tc_plant")
-        _tc_set(grid, 18, 12, "tc_plant")
-        _tc_fill(grid, 13, 9, 15, 17, "tc_rug")
-        # Restore stairs (overwrite rug)
-        _tc_set(grid, 14, 5,  "tc_stair_up")
-        _tc_set(grid, 14, 19, "tc_stair_down")
+        _tc_set(grid, 9,  12, "tc_plant")
+        _tc_set(grid, 19, 12, "tc_plant")
+        # Quest villager in north-east area of main hall
+        _tc_set(grid, 18, 9, "tc_villager")
+        # Restore stairs
+        _tc_set(grid, 14, 2,  "tc_stair_up")
+        _tc_set(grid, 14, 21, "tc_stair_down")
 
-    # ── Floor 3: Upper Hall (secondary market + more bedrooms) ───────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # ── Floor 3: Upper Hall ───────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
     elif floor_num == 3:
-        _tc_set(grid, 14, 5,  "tc_stair_up")
-        _tc_set(grid, 14, 19, "tc_stair_down")
+        # ── West bedroom wing — two stacked rooms ─────────────────────────
+        # Room A (upper): x=1..8, y=7..13  door right at y=10
+        _tc_room_walls(grid, 1, 7, 8, 13, door_side="right", door_pos=10)
+        _tc_set(grid, 2, 8,  "tc_bed")
+        _tc_set(grid, 3, 8,  "tc_bed")
+        _tc_set(grid, 2, 9,  "tc_bed")
+        _tc_set(grid, 3, 9,  "tc_bed")
+        _tc_set(grid, 5, 11, "tc_table")
+        _tc_set(grid, 7, 8,  "tc_lantern")
+        _tc_set(grid, 1, 12, "tc_plant")
 
-        # East secondary market (x=23-27, y=8-16)
-        _tc_fill(grid, 23, 8, 27, 16)
-        _tc_set(grid, 22, 8,  "tc_wall")
-        _tc_set(grid, 22, 16, "tc_wall")
-        _tc_set(grid, 24, 9,  "tc_lantern")
-        _tc_set(grid, 24, 10, "tc_shop")
-        _tc_fill(grid, 25, 9, 27, 11, "tc_counter")
-        _tc_set(grid, 24, 15, "tc_lantern")
-        _tc_set(grid, 24, 14, "tc_shop")
-        _tc_fill(grid, 25, 13, 27, 15, "tc_counter")
-        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
-        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
-        _tc_set(grid, 24, 12, "tc_floor")
-        _tc_set(grid, 27, 8,  "tc_plant")
-        _tc_set(grid, 27, 16, "tc_plant")
+        # Room B (lower): x=1..8, y=14..20  door right at y=17
+        _tc_room_walls(grid, 1, 14, 8, 20, door_side="right", door_pos=17)
+        _tc_set(grid, 2, 18, "tc_bed")
+        _tc_set(grid, 3, 18, "tc_bed")
+        _tc_set(grid, 2, 19, "tc_bed")
+        _tc_set(grid, 3, 19, "tc_bed")
+        _tc_set(grid, 5, 16, "tc_table")
+        _tc_set(grid, 7, 19, "tc_lantern")
+        _tc_set(grid, 1, 15, "tc_plant")
 
-        # West bedrooms (2 rooms)
-        # Room A (y=8-12)
-        _tc_fill(grid, 1, 8, 5, 12)
-        _tc_set(grid, 6, 8,  "tc_wall")
-        _tc_fill(grid, 6, 12, 6, 13, "tc_wall")
-        _tc_set(grid, 1, 8,  "tc_bed")
-        _tc_set(grid, 1, 9,  "tc_bed")
-        _tc_set(grid, 3, 11, "tc_table")
-        _tc_set(grid, 5, 8,  "tc_lantern")
-        _tc_set(grid, 1, 12, "tc_lantern")
-        _tc_set(grid, 5, 11, "tc_plant")
-        # Room B (y=13-17)
-        _tc_fill(grid, 1, 13, 5, 17)
-        _tc_set(grid, 6, 13, "tc_wall")
-        _tc_set(grid, 6, 17, "tc_wall")
-        _tc_set(grid, 1, 16, "tc_bed")
-        _tc_set(grid, 1, 17, "tc_bed")
-        _tc_set(grid, 3, 14, "tc_table")
-        _tc_set(grid, 5, 17, "tc_lantern")
-        _tc_set(grid, 1, 13, "tc_lantern")
-        _tc_set(grid, 5, 14, "tc_plant")
-
-        # North shrine alcove (x=11-17, y=2-4)
-        _tc_fill(grid, 11, 2, 17, 4)
+        # ── North shrine alcove: x=10..18, y=1..5  door bottom at x=14 ───
+        _tc_room_walls(grid, 10, 1, 18, 5, door_side="bottom", door_pos=14)
         _tc_set(grid, 14, 2, "tc_shrine")
         _tc_set(grid, 11, 3, "tc_lantern")
         _tc_set(grid, 17, 3, "tc_lantern")
         _tc_set(grid, 12, 2, "tc_plant")
         _tc_set(grid, 16, 2, "tc_plant")
-        _tc_fill(grid, 12, 4, 16, 4, "tc_rug")
-        _tc_set(grid, 11, 5, "tc_wall")
-        _tc_set(grid, 17, 5, "tc_wall")
+        _tc_fill(grid, 11, 4, 17, 4, "tc_rug")
 
-        # Main hall
+        # ── Main hall decorations ─────────────────────────────────────────
+        _tc_fill(grid, 13, 7, 15, 18, "tc_rug")
         _tc_set(grid, 9,  8,  "tc_lantern")
         _tc_set(grid, 19, 8,  "tc_lantern")
         _tc_set(grid, 9,  16, "tc_lantern")
         _tc_set(grid, 19, 16, "tc_lantern")
-        _tc_set(grid, 10, 12, "tc_plant")
-        _tc_set(grid, 18, 12, "tc_plant")
+        _tc_set(grid, 9,  12, "tc_plant")
+        _tc_set(grid, 19, 12, "tc_plant")
+        # Restore stairs
+        _tc_set(grid, 14, 2,  "tc_stair_up")
+        _tc_set(grid, 14, 21, "tc_stair_down")
 
-    # ── Floor 4: Elder's Chamber (top floor) ─────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # ── Floor 4: Elder's Chamber ──────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
     elif floor_num == 4:
-        # Only stair down
-        _tc_set(grid, 14, 19, "tc_stair_down")
-
-        # Elder at centre
-        _tc_set(grid, 14, 10, "tc_elder")
-
-        # North ceremony room (wide alcove x=9-19, y=2-6)
-        _tc_fill(grid, 9, 2, 19, 6)
-        _tc_set(grid, 9,  6, "tc_wall")   # side pillars narrowing entrance
-        _tc_set(grid, 19, 6, "tc_wall")
-        _tc_fill(grid, 10, 3, 18, 6, "tc_rug")
-        _tc_set(grid, 14, 2, "tc_elder")
+        # ── North ceremony alcove (wide): x=8..20, y=1..6  door bottom x=14 ─
+        _tc_room_walls(grid, 8, 1, 20, 6, door_side="bottom", door_pos=14)
         _tc_set(grid, 10, 2, "tc_shrine")
         _tc_set(grid, 18, 2, "tc_shrine")
         _tc_set(grid, 9,  2, "tc_lantern")
         _tc_set(grid, 19, 2, "tc_lantern")
         _tc_set(grid, 12, 2, "tc_plant")
         _tc_set(grid, 16, 2, "tc_plant")
-        # Restore specials that may have been overwritten by rug fill
-        _tc_set(grid, 14, 2, "tc_elder")
-        _tc_set(grid, 10, 2, "tc_shrine")
-        _tc_set(grid, 18, 2, "tc_shrine")
+        _tc_fill(grid, 9, 3, 19, 5, "tc_rug")
+        _tc_set(grid, 14, 2, "tc_elder")   # elder NPC at ceremony altar
 
-        # East premium alcove (x=23-27, y=9-15)
-        _tc_fill(grid, 23, 9, 27, 15)
-        _tc_set(grid, 22, 9,  "tc_wall")
-        _tc_set(grid, 22, 15, "tc_wall")
-        _tc_set(grid, 24, 10, "tc_shop")
-        _tc_fill(grid, 25, 9, 27, 11, "tc_counter")
-        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
-        _tc_fill(grid, 25, 13, 27, 15, "tc_counter")
-        _tc_set(grid, 23, 9,  "tc_lantern")
-        _tc_set(grid, 23, 15, "tc_lantern")
-        _tc_set(grid, 25, 9,  "tc_lantern")
-        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
-        _tc_set(grid, 24, 12, "tc_floor")
-        _tc_set(grid, 27, 9,  "tc_plant")
-        _tc_set(grid, 27, 15, "tc_plant")
+        # ── East shrine alcove: x=21..27, y=9..15  door left at y=12 ─────
+        _tc_room_walls(grid, 21, 9, 27, 15, door_side="left", door_pos=12)
+        _tc_fill(grid, 22, 10, 26, 14, "tc_rug")
+        _tc_set(grid, 24, 11, "tc_shrine")
+        _tc_set(grid, 24, 13, "tc_shrine")
+        _tc_set(grid, 22, 9,  "tc_lantern")
+        _tc_set(grid, 26, 9,  "tc_lantern")
+        _tc_set(grid, 22, 15, "tc_lantern")
+        _tc_set(grid, 26, 15, "tc_lantern")
 
-        # West shrine alcove (x=1-6, y=9-15)
-        _tc_fill(grid, 1, 9, 6, 15)
-        _tc_set(grid, 7, 9,  "tc_wall")
-        _tc_set(grid, 7, 15, "tc_wall")
-        _tc_set(grid, 3, 11, "tc_shrine")
-        _tc_set(grid, 3, 13, "tc_shrine")
-        _tc_fill(grid, 2, 11, 4, 13, "tc_rug")
-        _tc_set(grid, 3, 11, "tc_shrine")  # restore after rug
-        _tc_set(grid, 3, 13, "tc_shrine")
-        _tc_set(grid, 1, 9,  "tc_lantern")
-        _tc_set(grid, 1, 10, "tc_lantern")
-        _tc_set(grid, 1, 14, "tc_lantern")
-        _tc_set(grid, 1, 15, "tc_lantern")
-        _tc_set(grid, 5, 9,  "tc_plant")
-        _tc_set(grid, 5, 15, "tc_plant")
+        # ── West meditation alcove: x=1..7, y=9..15  door right at y=12 ──
+        _tc_room_walls(grid, 1, 9, 7, 15, door_side="right", door_pos=12)
+        _tc_fill(grid, 2, 10, 6, 14, "tc_rug")
+        _tc_set(grid, 4, 11, "tc_shrine")
+        _tc_set(grid, 4, 13, "tc_shrine")
+        _tc_set(grid, 2, 9,  "tc_lantern")
+        _tc_set(grid, 6, 9,  "tc_lantern")
+        _tc_set(grid, 2, 15, "tc_lantern")
+        _tc_set(grid, 6, 15, "tc_lantern")
 
-        # Main hall: ceremonial rug runner + flanking decorations
-        _tc_fill(grid, 13, 10, 15, 18, "tc_rug")
-        _tc_set(grid, 14, 19, "tc_stair_down")   # restore stair on rug
-        _tc_set(grid, 14, 10, "tc_elder")         # restore elder
+        # ── Main hall: ceremonial approach ────────────────────────────────
+        _tc_fill(grid, 13, 7, 15, 18, "tc_rug")
         _tc_set(grid, 9,  9,  "tc_lantern")
         _tc_set(grid, 19, 9,  "tc_lantern")
         _tc_set(grid, 9,  15, "tc_lantern")
         _tc_set(grid, 19, 15, "tc_lantern")
         _tc_set(grid, 9,  12, "tc_plant")
         _tc_set(grid, 19, 12, "tc_plant")
+        # Restore stair_down (rug may have overwritten)
+        _tc_set(grid, 14, 21, "tc_stair_down")
 
     return grid
 

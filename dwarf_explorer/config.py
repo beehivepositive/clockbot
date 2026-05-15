@@ -656,11 +656,12 @@ TC_NUM_FLOORS = 4  # was 3
 
 TC_EMOJI: dict[str, str] = {
     "tc_floor":      "\U0001F7EB",          # 🟫 wooden planks
-    "tc_wall":       "\U0001F332",          # 🌲 tree bark wall
-    "tc_stair_up":   "\U0001F53C",          # 🔼 stairs up
-    "tc_stair_down": "\U0001F53D",          # 🔽 stairs down
+    "tc_wall":       "\U0001FAB5",          # 🪵 log wall
+    "tc_stair_up":   "\U0001F53C",          # 🔼 stairs up (overridable with :staircase:)
+    "tc_stair_down": "\U0001F53D",          # 🔽 stairs down (overridable with :staircase:)
     "tc_door":       "\U0001F6AA",          # 🚪 exit door (ground floor only)
     "tc_shop":       "\U0001F9D1",          # 🧑 merchant NPC (approach from adjacent)
+    "tc_villager":   "\U0001F9D4",          # 🧔 quest villager (approach from adjacent)
     "tc_elder":      "\U0001F9D9",          # 🧙 elder NPC (approach from adjacent)
     "tc_bed":        "\U0001F6CF️",    # 🛏️ bed (walkable, rest/heal)
     "tc_counter":    "\U0001F9F1",          # 🧱 shop counter
@@ -1488,6 +1489,10 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         FOREST_EMOJI["fst_mimic"] = cache["chest"]  # same look as fst_chest by design
     if "fst_floor" in cache:
         FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
+    # Tree city staircase custom emoji
+    if "staircase" in cache:
+        TC_EMOJI["tc_stair_up"]   = cache["staircase"]
+        TC_EMOJI["tc_stair_down"] = cache["staircase"]
 
     # Empty gear socket custom emoji
     if "gear_socket" in cache:

@@ -2268,8 +2268,12 @@ def _compute_context_labels(
             for _dy2, _dx2 in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _ar2, _ac2 = vc + _dy2, vc + _dx2
                 if 0 <= _ar2 < len(grid) and 0 <= _ac2 < len(grid[_ar2]):
-                    if grid[_ar2][_ac2].terrain in ("tc_shop", "tc_elder"):
+                    _adj_t = grid[_ar2][_ac2].terrain
+                    if _adj_t in ("tc_shop", "tc_elder"):
                         action_label, action_enabled = "🛍️ Shop", True
+                        break
+                    elif _adj_t == "tc_villager":
+                        action_label, action_enabled = "💬 Talk", True
                         break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
@@ -3389,8 +3393,8 @@ async def _move_steps(
             if target.terrain not in TC_WALKABLE:
                 grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
                 _tc_block_msg = "🌲 Solid bark walls — you can't push through."
-                if target.terrain in ("tc_shop", "tc_elder"):
-                    _tc_block_msg = "🛍️ Step adjacent and use the action button to talk to the merchant."
+                if target.terrain in ("tc_shop", "tc_elder", "tc_villager"):
+                    _tc_block_msg = "🛍️ Step adjacent and use the action button to interact."
                 elif target.terrain in ("tc_counter", "tc_table", "tc_lantern", "tc_plant",
                                         "tc_barrel", "tc_bookshelf", "tc_shrine"):
                     _tc_block_msg = "🌲 Something is in the way."
@@ -7737,8 +7741,12 @@ async def handle_action(
         for _dy_a, _dx_a in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             _ar_a, _ac_a = vc + _dy_a, vc + _dx_a
             if 0 <= _ar_a < len(_tc_grid_act) and 0 <= _ac_a < len(_tc_grid_act[_ar_a]):
-                if _tc_grid_act[_ar_a][_ac_a].terrain in ("tc_shop", "tc_elder"):
+                _adj_terrain_act = _tc_grid_act[_ar_a][_ac_a].terrain
+                if _adj_terrain_act in ("tc_shop", "tc_elder"):
                     await _open_tree_city_shop(interaction, guild_id, user_id, player)
+                    return
+                elif _adj_terrain_act == "tc_villager":
+                    await _open_tree_city_villager(interaction, guild_id, user_id, player)
                     return
         _tc_grid_act2 = await _ltcv_act(player.tc_forest_id, player.tc_floor,
                                         player.tc_x, player.tc_y, db)
@@ -10211,6 +10219,42 @@ async def _open_tavern_shop(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           tavern_mode=True))
+
+
+async def _open_tree_city_villager(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player,
+) -> None:
+    """Tree city villager NPC — offers a bounty quest."""
+    from dwarf_explorer.game.quests import get_or_refresh_bounty_pool
+    import datetime as _dt_tcv
+    db = await get_database(guild_id)
+    _seed_tcv = ((getattr(player, "tc_forest_id", 0) or 0) * 9973
+                 + _dt_tcv.date.today().toordinal())
+    bounty_pool = await get_or_refresh_bounty_pool(
+        db, _seed_tcv,
+        village_id=0,
+        village_wx=getattr(player, "world_x", 0),
+        village_wy=getattr(player, "world_y", 0),
+    )
+    pool = bounty_pool[:1] if bounty_pool else []
+    if not pool:
+        from dwarf_explorer.game.renderer import render_grid
+        from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_vill
+        _grid_v = await _ltcv_vill(player.tc_forest_id, player.tc_floor,
+                                   player.tc_x, player.tc_y, db)
+        content = render_grid(_grid_v, player,
+                              "\"I have no work for you today, traveller.\"")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=_grid_v),
+        )
+        return
+    await handle_open_quest_pool(
+        interaction, guild_id, user_id,
+        pool=pool,
+        source_label="Tree City Villager",
+        source_type="tree_city_npc",
+    )
 
 
 async def _open_tree_city_shop(
