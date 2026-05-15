@@ -1032,6 +1032,31 @@ class ShopView(discord.ui.View):
         ))
 
 
+class FstChestView(discord.ui.View):
+    """Forest chest UI — simple single-view (chest contents only).
+
+    Row 0: ◀  ▶  📤 Take  📦 Loot All  ❌ Close
+    """
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        from dwarf_explorer.config import FOREST_EMOJI as _FE
+        loot_emoji = _FE.get("fst_chest", "📦")
+        for label, act in [
+            ("◀", "fst_chest_prev"),
+            ("▶", "fst_chest_next"),
+            ("📤 Take", "fst_chest_take"),
+            (f"{loot_emoji} Loot All", "fst_chest_lootall"),
+            ("❌ Close", "fst_chest_close"),
+        ]:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=_custom_id(guild_id, user_id, act),
+                row=0,
+            ))
+
+
 class ChestView(discord.ui.View):
     """Chest inventory view.
 
@@ -2211,7 +2236,7 @@ def _compute_context_labels(
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Forest tile context
-        if getattr(player, "in_forest", False):
+        if getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
             if t == "fst_exit":
                 center_label, center_enabled = "🌲 Exit", True
             elif t == "fst_nut_tree":
@@ -2224,7 +2249,9 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌀 Enter", True
             elif t in ("fst_chest", "fst_mimic"):
                 # fst_mimic looks identical to fst_chest intentionally
-                center_label, center_enabled = "📦 Open", True
+                from dwarf_explorer.config import FOREST_EMOJI as _FE
+                _ce = _FE.get("fst_chest", "📦")
+                center_label, center_enabled = f"{_ce} Open", True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Tree City tile context
@@ -3172,7 +3199,7 @@ async def _move_steps(
         grid = await load_maze_viewport(player.maze_id, player.maze_x, player.maze_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
-    elif getattr(player, "in_forest", False):
+    elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import (
             load_forest_viewport, load_forest_single_tile,
             get_forest_exit_world, get_maze_for_forest,
@@ -6662,11 +6689,23 @@ async def handle_interact(
                 "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=?",
                 (user_id, player.forest_id, fx, fy)
             )
+            # Re-open existing (partially looted) chest from state if available
+            existing_fst = _ui_state.get(user_id, {})
+            if (already and existing_fst.get("type") == "fst_chest"
+                    and existing_fst.get("forest_id") == player.forest_id
+                    and existing_fst.get("fx") == fx and existing_fst.get("fy") == fy):
+                items = existing_fst.get("items", [])
+                from dwarf_explorer.game.renderer import render_chest as _rc_fst
+                content = _rc_fst(items, [], existing_fst.get("selected", 0), "chest", "fst_chest")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=FstChestView(guild_id, user_id))
+                return
             if already:
-                content = render_grid(grid, player, "📦 The chest is empty — already looted.")
+                content = render_grid(grid, player, "📦 The cache is empty — already looted.")
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=_game_view(guild_id, user_id, player, grid=grid))
                 return
+            # Roll loot and mark as looted immediately so the chest isn't re-rolled
             loot_rng = _random.Random(hash((player.forest_id, fx, fy, "fst_chest")))
             gold_reward = loot_rng.randint(30, 100)
             item_pool = ["forest_nut", "living_root", "ancient_seed", "bark_shield", "iron_ingot"]
@@ -6677,16 +6716,18 @@ async def handle_interact(
                 "(user_id, forest_id, local_x, local_y) VALUES(?,?,?,?)",
                 (user_id, player.forest_id, fx, fy)
             )
-            player.gold = min(player.gold + gold_reward, 9999)
-            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
-            await add_to_inventory(db, user_id, item, qty)
-            from dwarf_explorer.config import ITEM_EMOJI as _ie2
-            qty_s = f"×{qty} " if qty > 1 else ""
-            content = render_grid(grid, player,
-                f"📦 Forest cache! **{gold_reward}** gold + {_ie2.get(item,'📦')} {qty_s}"
-                f"**{item.replace('_',' ').title()}**!")
+            items = [
+                {"item_id": "gold_coin", "quantity": gold_reward},
+                {"item_id": item, "quantity": qty},
+            ]
+            _ui_state[user_id] = {
+                "type": "fst_chest", "items": items, "selected": 0,
+                "fx": fx, "fy": fy, "forest_id": player.forest_id,
+            }
+            from dwarf_explorer.game.renderer import render_chest as _rc_fst
+            content = _rc_fst(items, [], 0, "chest", "fst_chest")
             await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+                                                    view=FstChestView(guild_id, user_id))
             return
 
         elif ftile.terrain == "fst_mimic":
@@ -11117,6 +11158,110 @@ async def handle_chest_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     await handle_inv_close(interaction, guild_id, user_id)
+
+
+# ── Forest chest handlers ─────────────────────────────────────────────────────
+
+async def _fst_chest_render(guild_id: int, user_id: int) -> tuple[str, discord.ui.View]:
+    """Rebuild the forest chest UI from _ui_state."""
+    state = _ui_state.get(user_id, {})
+    items = state.get("items", [])
+    selected = state.get("selected", 0)
+    from dwarf_explorer.game.renderer import render_chest as _rc_fst2
+    content = _rc_fst2(items, [], selected, "chest", "fst_chest")
+    return content, FstChestView(guild_id, user_id)
+
+
+async def handle_fst_chest_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "fst_chest":
+        await handle_inv_close(interaction, guild_id, user_id)
+        return
+    items = state.get("items", [])
+    total = max(1, len(items))
+    _ui_state[user_id]["selected"] = (state.get("selected", 0) + delta) % total
+    content, view = await _fst_chest_render(guild_id, user_id)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_fst_chest_take(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "fst_chest":
+        await handle_inv_close(interaction, guild_id, user_id)
+        return
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    items = state.get("items", [])
+    sel = state.get("selected", 0)
+    suffix = ""
+    if sel < len(items):
+        item = items[sel]
+        item_id = item["item_id"]
+        qty = item.get("quantity", 1)
+        if item_id == "gold_coin":
+            _apply_gold_cap(player, qty)
+            await update_player_stats(db, user_id, gold=player.gold)
+            suffix = f"\n*Collected {qty} gold!*"
+        else:
+            await add_to_inventory(db, user_id, item_id, qty)
+            qty_s = f"×{qty} " if qty > 1 else ""
+            suffix = f"\n*Took {qty_s}{item_id.replace('_', ' ').title()}.*"
+        # Remove taken item and clamp cursor
+        new_items = [it for i, it in enumerate(items) if i != sel]
+        new_sel = min(sel, max(0, len(new_items) - 1))
+        _ui_state[user_id]["items"] = new_items
+        _ui_state[user_id]["selected"] = new_sel
+    else:
+        suffix = "\n*(Empty slot)*"
+    content, view = await _fst_chest_render(guild_id, user_id)
+    await interaction.response.edit_message(embed=_embed(content + suffix), content=None, view=view)
+
+
+async def handle_fst_chest_lootall(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    if state.get("type") != "fst_chest":
+        await handle_inv_close(interaction, guild_id, user_id)
+        return
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    items = state.get("items", [])
+    taken: list[str] = []
+    for item in items:
+        item_id = item["item_id"]
+        qty = item.get("quantity", 1)
+        if item_id == "gold_coin":
+            _apply_gold_cap(player, qty)
+            taken.append(f"{qty} gold")
+        else:
+            await add_to_inventory(db, user_id, item_id, qty)
+            qty_s = f"×{qty} " if qty > 1 else ""
+            taken.append(f"{qty_s}{item_id.replace('_', ' ').title()}")
+    if player.gold != (await get_or_create_player(db, user_id, interaction.user.display_name)).gold:
+        await update_player_stats(db, user_id, gold=player.gold)
+    _ui_state[user_id]["items"] = []
+    _ui_state[user_id]["selected"] = 0
+    suffix = f"\n*Looted: {', '.join(taken)}.*" if taken else "\n*Cache was empty.*"
+    content, view = await _fst_chest_render(guild_id, user_id)
+    await interaction.response.edit_message(embed=_embed(content + suffix), content=None, view=view)
+
+
+async def handle_fst_chest_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.pop(user_id, {})
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await _cached_grid(user_id, player, seed, db)
+    content = render_grid(grid, player)
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Gear Machine handlers ─────────────────────────────────────────────────────

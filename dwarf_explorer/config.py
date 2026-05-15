@@ -1474,6 +1474,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     if "chest" in cache:
         FOREST_EMOJI["fst_chest"] = cache["chest"]
         FOREST_EMOJI["maze_chest"] = cache["chest"]
+        FOREST_EMOJI["fst_mimic"] = cache["chest"]  # same look as fst_chest by design
     if "fst_floor" in cache:
         FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
 

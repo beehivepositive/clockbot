@@ -806,6 +806,8 @@ def render_chest(
         "ph_chest_small":    (2, 9),
         "ph_chest_medium":   (3, 9),
         "ph_chest_large":    (4, 9),
+        "fst_chest":         (1, 5),
+        "maze_chest":        (1, 5),
     }
     chest_labels = {
         "cave_chest":        "Small Chest",
@@ -814,6 +816,8 @@ def render_chest(
         "ph_chest_small":    "Small Chest",
         "ph_chest_medium":   "Medium Chest",
         "ph_chest_large":    "Large Chest",
+        "fst_chest":         "Forest Cache",
+        "maze_chest":        "Maze Chest",
     }
     c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
     c_total = c_rows * c_cols

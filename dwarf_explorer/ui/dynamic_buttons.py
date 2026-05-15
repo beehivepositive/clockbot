@@ -22,6 +22,8 @@ from dwarf_explorer.ui.game_view import (
     handle_combat_eat, handle_combat_end_turn,
     handle_chest_nav, handle_chest_switch, handle_chest_take,
     handle_chest_give, handle_chest_lootall, handle_chest_close,
+    handle_fst_chest_nav, handle_fst_chest_take,
+    handle_fst_chest_lootall, handle_fst_chest_close,
     handle_mine,
     handle_canoe_move, handle_canoe_dock, handle_canoe_sail,
     handle_canoe_dest, handle_canoe_dest_nav, handle_canoe_dest_cancel,
@@ -429,6 +431,16 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_chest_switch(interaction, gid, uid)
             elif act == "chest_close":
                 await handle_chest_close(interaction, gid, uid)
+            elif act == "fst_chest_prev":
+                await handle_fst_chest_nav(interaction, gid, uid, -1)
+            elif act == "fst_chest_next":
+                await handle_fst_chest_nav(interaction, gid, uid, 1)
+            elif act == "fst_chest_take":
+                await handle_fst_chest_take(interaction, gid, uid)
+            elif act == "fst_chest_lootall":
+                await handle_fst_chest_lootall(interaction, gid, uid)
+            elif act == "fst_chest_close":
+                await handle_fst_chest_close(interaction, gid, uid)
             # Merchant
             elif act == "merch_prev":
                 await handle_merchant_nav(interaction, gid, uid, -1)
