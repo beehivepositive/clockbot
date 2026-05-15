@@ -21,7 +21,7 @@ FOREST_H = 120    # fixed height
 
 # Clearing radii
 _CLEARING_R = 4   # normal clearing: circle of radius 4 (~9×9 bounding box)
-_CENTRAL_R  = 8   # Tree City central clearing (~17×17)
+_CENTRAL_R  = 6   # Tree City central clearing (~13×13)
 
 # Chain parameters
 _NUM_CHAIN_BEADS = 5    # intermediate beads per chain (between entry clearing and center)

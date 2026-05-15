@@ -307,12 +307,12 @@ ENEMY_STATS = {
     # Surface bandits
     "bandit":     (35, 12, 2, 20, 18),  # moderate HP/atk, carries more gold than wolves
     # Forest enemies
-    "forest_sprite":   (18,  9,  0, 12,  6),   # fast, low HP, ranged
-    "vine_creeper":    (30, 13,  1, 18, 10),   # melee, poisons
-    "corrupted_dryad": (45, 16,  3, 30, 18),   # ranged, corrupted nature spirit
-    "forest_troll":    (65, 20,  6, 45, 22),   # heavy melee, slam/roar
-    # Maze mimic — disguises as a chest; high first-strike damage
-    "chest_mimic":     (50, 22,  4, 40, 25),   # tanky, hits hard, good xp
+    "forest_sprite":   (18,  8,  0, 12,  6),   # fast, low HP, ranged
+    "vine_creeper":    (28, 11,  0, 18, 10),   # melee, poisons
+    "corrupted_dryad": (38, 13,  1, 30, 18),   # ranged, corrupted nature spirit
+    "forest_troll":    (50, 16,  2, 45, 22),   # heavy melee, slam/roar
+    # Mimic — disguises as a chest; a nasty nuisance, not a boss
+    "chest_mimic":     (22, 10,  1, 20, 15),   # low HP, moderate attack
 }
 
 # Player defaults

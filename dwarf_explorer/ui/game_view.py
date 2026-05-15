@@ -3672,6 +3672,12 @@ async def _finish_combat(
             "💠 You collect **2 Chronolite**. The rift deposits are now yours to mine."
         )
 
+    # Admin account never dies — clamp to 1 HP before the death check fires
+    if player.hp <= 0 and user_id == ADMIN_PLAYER_ID:
+        player.hp = 1
+        await update_player_stats(db, user_id, hp=1)
+        extra_msg += " 🛡️ *Admin resilience — held at 1 HP.*"
+
     if player.hp <= 0:
         # Drop all inventory items at the death location before resetting
         inv_rows = await get_inventory(db, user_id)
