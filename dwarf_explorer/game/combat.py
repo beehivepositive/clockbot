@@ -517,8 +517,9 @@ def render_arena(arena: dict, player) -> str:
     """Render the 9×9 combat arena as an emoji grid + status bar."""
     from dwarf_explorer.config import (
         TERRAIN_EMOJI, CAVE_EMOJI, VILLAGE_EMOJI, ENTITY_EMOJI, ARENA_EMOJI,
+        FOREST_EMOJI,
     )
-    ALL_TERRAIN = {**TERRAIN_EMOJI, **CAVE_EMOJI, **VILLAGE_EMOJI}
+    ALL_TERRAIN = {**TERRAIN_EMOJI, **CAVE_EMOJI, **VILLAGE_EMOJI, **FOREST_EMOJI}
 
     is_naval = arena.get("naval", False)
     grid = arena["grid"]

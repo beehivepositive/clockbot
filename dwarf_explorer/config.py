@@ -48,7 +48,7 @@ TERRAIN_EMOJI = {
     "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
     "sapling":     "\U0001F331",    # 🌱
-    "short_grass": "\U0001F7E9",    # 🟩
+    "short_grass": "\U0001F33F",    # 🌿  short grass (overridable with :grass:)
     "seedling":    "\U0001FAB4",    # 🪴
 }
 
@@ -479,6 +479,7 @@ ARENA_IMPASSABLE = {
     "mountain", "snow", "dense_forest",
     "stone_wall", "b_wall", "void", "cave_rock",
     "river",
+    "fst_tree",   # forest tree-walls block movement in forest arenas
     # Note: deep_water and shallow_water are passable for ocean combat
 }
 
