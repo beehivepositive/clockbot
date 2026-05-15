@@ -48,7 +48,7 @@ TERRAIN_EMOJI = {
     "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
     "sapling":     "\U0001F331",    # 🌱
-    "short_grass": "\U0001F33F",    # 🌿  short grass (overridable with :grass:)
+    "short_grass": "\U0001F7E9",    # 🟩  short grass
     "seedling":    "\U0001FAB4",    # 🪴
 }
 
@@ -616,7 +616,7 @@ SKY_ENCOUNTER_RATES = {
 
 FOREST_EMOJI: dict[str, str] = {
     # Interior floor / wall
-    "fst_floor":        "\U0001F7EB",   # 🟫 mossy floor (overridable with :fst_floor:)
+    "fst_floor":        "\U0001F7E9",   # 🟩 forest floor (overridable with :fst_floor:)
     "fst_tree":         "\U0001F333",   # 🌳 impassable ancient tree wall
     # Special tiles
     "fst_exit":         "\U0001F6AA",   # 🚪 forest exit (returns to overworld)
