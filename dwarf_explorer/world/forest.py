@@ -670,64 +670,329 @@ async def load_maze_single_tile(
 
 # ── Tree City interior ────────────────────────────────────────────────────────────
 
-TC_W = 15   # floor width
-TC_H = 7    # floor height
-TC_NUM_FLOORS = 3
+from dwarf_explorer.config import TC_W, TC_H, TC_NUM_FLOORS
+
+_TC_CX = 14       # ellipse center X
+_TC_CY = 12       # ellipse center Y
+_TC_RX = 9.0      # ellipse X radius
+_TC_RY = 8.0      # ellipse Y radius
+_TC_ENTRY_X, _TC_ENTRY_Y = 14, 21   # player spawn when entering from forest
+_TC_LAND_UP_X, _TC_LAND_UP_Y = 14, 16    # spawn position when arriving via stair UP
+_TC_LAND_DOWN_X, _TC_LAND_DOWN_Y = 14, 9  # spawn position when arriving via stair DOWN
+
+
+def _in_tc_ellipse(x: int, y: int) -> bool:
+    return ((x - _TC_CX) / _TC_RX) ** 2 + ((y - _TC_CY) / _TC_RY) ** 2 < 1.0
+
+
+def _tc_fill(grid: list[list[str]], x1: int, y1: int, x2: int, y2: int,
+             tile: str = "tc_floor") -> None:
+    for y in range(max(0, y1), min(TC_H, y2 + 1)):
+        for x in range(max(0, x1), min(TC_W, x2 + 1)):
+            grid[y][x] = tile
+
+
+def _tc_set(grid: list[list[str]], x: int, y: int, tile: str) -> None:
+    if 0 <= x < TC_W and 0 <= y < TC_H:
+        grid[y][x] = tile
+
+
+def _gen_tc_floor(floor_num: int) -> list[list[str]]:
+    """Generate a single tree-city floor as a 2-D grid of tile-type strings."""
+    grid = [["tc_wall"] * TC_W for _ in range(TC_H)]
+
+    # Carve the oval trunk interior
+    for y in range(TC_H):
+        for x in range(TC_W):
+            if _in_tc_ellipse(x, y):
+                grid[y][x] = "tc_floor"
+
+    # ── Floor 1: Great Hall (entry, market) ──────────────────────────────────
+    if floor_num == 1:
+        # South corridor → exit door
+        _tc_fill(grid, 13, 20, 15, 22)
+        _tc_fill(grid, 14, 20, 14, 23)
+        _tc_set(grid, 14, 23, "tc_door")
+
+        # Stair up (north area)
+        _tc_set(grid, 14, 5, "tc_stair_up")
+
+        # North shrine niche (x=11-17, y=2-4)
+        _tc_fill(grid, 11, 2, 17, 4)
+        _tc_set(grid, 14, 2, "tc_shrine")
+        _tc_set(grid, 11, 3, "tc_lantern")
+        _tc_set(grid, 17, 3, "tc_lantern")
+        _tc_set(grid, 12, 2, "tc_plant")
+        _tc_set(grid, 16, 2, "tc_plant")
+        _tc_set(grid, 11, 5, "tc_wall")    # narrow the entrance
+        _tc_set(grid, 17, 5, "tc_wall")
+
+        # East market alcove (x=23-27, y=9-15)
+        _tc_fill(grid, 23, 9, 27, 15)
+        _tc_set(grid, 22, 9,  "tc_wall")   # frame pillars at entrance
+        _tc_set(grid, 22, 15, "tc_wall")
+        # Stall 1 (north)
+        _tc_set(grid, 24, 9,  "tc_lantern")
+        _tc_set(grid, 24, 10, "tc_shop")
+        _tc_fill(grid, 25, 9, 27, 10, "tc_counter")
+        _tc_set(grid, 27, 9,  "tc_plant")
+        # Stall 2 (south)
+        _tc_set(grid, 24, 15, "tc_lantern")
+        _tc_set(grid, 24, 14, "tc_shop")
+        _tc_fill(grid, 25, 14, 27, 15, "tc_counter")
+        _tc_set(grid, 27, 15, "tc_plant")
+        # Shared back wall + central rug
+        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
+        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
+        _tc_set(grid, 24, 12, "tc_floor")   # keep centre walkable
+
+        # West storage alcove (x=1-5, y=9-15)
+        _tc_fill(grid, 1, 9, 5, 15)
+        _tc_set(grid, 6, 9,  "tc_wall")
+        _tc_set(grid, 6, 15, "tc_wall")
+        _tc_set(grid, 5, 9,  "tc_lantern")
+        _tc_set(grid, 5, 15, "tc_lantern")
+        _tc_set(grid, 1, 10, "tc_barrel")
+        _tc_set(grid, 1, 11, "tc_barrel")
+        _tc_set(grid, 1, 13, "tc_barrel")
+        _tc_set(grid, 1, 14, "tc_barrel")
+        _tc_set(grid, 3, 12, "tc_table")
+        _tc_set(grid, 2, 9,  "tc_plant")
+        _tc_set(grid, 2, 15, "tc_plant")
+
+        # Main hall: central rug runner + lanterns + plants
+        _tc_fill(grid, 13, 11, 15, 18, "tc_rug")
+        _tc_set(grid, 14, 19, "tc_floor")   # south path stays clear
+        _tc_set(grid, 14, 20, "tc_floor")
+        _tc_set(grid, 9,  7,  "tc_lantern")
+        _tc_set(grid, 19, 7,  "tc_lantern")
+        _tc_set(grid, 9,  17, "tc_lantern")
+        _tc_set(grid, 19, 17, "tc_lantern")
+        _tc_set(grid, 9,  12, "tc_plant")
+        _tc_set(grid, 19, 12, "tc_plant")
+        # Restore stair on rug
+        _tc_set(grid, 14, 5,  "tc_stair_up")
+
+    # ── Floor 2: Living Quarters ──────────────────────────────────────────────
+    elif floor_num == 2:
+        _tc_set(grid, 14, 5,  "tc_stair_up")
+        _tc_set(grid, 14, 19, "tc_stair_down")
+
+        # North rest niche (x=10-18, y=2-5) — small bunk beds
+        _tc_fill(grid, 10, 2, 18, 5)
+        _tc_set(grid, 10, 5, "tc_wall")
+        _tc_set(grid, 18, 5, "tc_wall")
+        _tc_set(grid, 11, 2, "tc_bed")
+        _tc_set(grid, 12, 2, "tc_bed")
+        _tc_set(grid, 16, 2, "tc_bed")
+        _tc_set(grid, 17, 2, "tc_bed")
+        _tc_set(grid, 14, 2, "tc_plant")
+        _tc_set(grid, 10, 3, "tc_lantern")
+        _tc_set(grid, 18, 3, "tc_lantern")
+
+        # East bedrooms — 2 rooms separated by a wall row
+        # Bedroom A (y=8-11)
+        _tc_fill(grid, 23, 8, 27, 11)
+        _tc_set(grid, 22, 8,  "tc_wall")
+        _tc_fill(grid, 22, 12, 27, 12, "tc_wall")   # separator row
+        _tc_set(grid, 27, 8,  "tc_bed")
+        _tc_set(grid, 27, 9,  "tc_bed")
+        _tc_set(grid, 25, 10, "tc_table")
+        _tc_set(grid, 23, 8,  "tc_lantern")
+        _tc_set(grid, 27, 11, "tc_plant")
+        # Bedroom B (y=13-17)
+        _tc_fill(grid, 23, 13, 27, 17)
+        _tc_set(grid, 22, 13, "tc_wall")
+        _tc_set(grid, 22, 17, "tc_wall")
+        _tc_set(grid, 27, 16, "tc_bed")
+        _tc_set(grid, 27, 17, "tc_bed")
+        _tc_set(grid, 25, 14, "tc_table")
+        _tc_set(grid, 23, 17, "tc_lantern")
+        _tc_set(grid, 27, 13, "tc_plant")
+
+        # West library / common room (x=1-6, y=8-16)
+        _tc_fill(grid, 1, 8, 6, 16)
+        _tc_set(grid, 7, 8,  "tc_wall")
+        _tc_set(grid, 7, 16, "tc_wall")
+        for _by in [8, 9, 10, 12, 13, 14, 16]:
+            _tc_set(grid, 1, _by, "tc_bookshelf")
+        _tc_set(grid, 1, 11, "tc_lantern")
+        _tc_set(grid, 1, 15, "tc_lantern")
+        _tc_set(grid, 6, 8,  "tc_lantern")
+        _tc_set(grid, 6, 16, "tc_lantern")
+        _tc_set(grid, 3, 9,  "tc_table")
+        _tc_set(grid, 3, 14, "tc_table")
+        _tc_set(grid, 5, 12, "tc_plant")
+        _tc_fill(grid, 2, 11, 5, 13, "tc_rug")
+
+        # Main hall
+        _tc_set(grid, 9,  8,  "tc_lantern")
+        _tc_set(grid, 19, 8,  "tc_lantern")
+        _tc_set(grid, 9,  16, "tc_lantern")
+        _tc_set(grid, 19, 16, "tc_lantern")
+        _tc_set(grid, 10, 12, "tc_plant")
+        _tc_set(grid, 18, 12, "tc_plant")
+        _tc_fill(grid, 13, 9, 15, 17, "tc_rug")
+        # Restore stairs (overwrite rug)
+        _tc_set(grid, 14, 5,  "tc_stair_up")
+        _tc_set(grid, 14, 19, "tc_stair_down")
+
+    # ── Floor 3: Upper Hall (secondary market + more bedrooms) ───────────────
+    elif floor_num == 3:
+        _tc_set(grid, 14, 5,  "tc_stair_up")
+        _tc_set(grid, 14, 19, "tc_stair_down")
+
+        # East secondary market (x=23-27, y=8-16)
+        _tc_fill(grid, 23, 8, 27, 16)
+        _tc_set(grid, 22, 8,  "tc_wall")
+        _tc_set(grid, 22, 16, "tc_wall")
+        _tc_set(grid, 24, 9,  "tc_lantern")
+        _tc_set(grid, 24, 10, "tc_shop")
+        _tc_fill(grid, 25, 9, 27, 11, "tc_counter")
+        _tc_set(grid, 24, 15, "tc_lantern")
+        _tc_set(grid, 24, 14, "tc_shop")
+        _tc_fill(grid, 25, 13, 27, 15, "tc_counter")
+        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
+        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
+        _tc_set(grid, 24, 12, "tc_floor")
+        _tc_set(grid, 27, 8,  "tc_plant")
+        _tc_set(grid, 27, 16, "tc_plant")
+
+        # West bedrooms (2 rooms)
+        # Room A (y=8-12)
+        _tc_fill(grid, 1, 8, 5, 12)
+        _tc_set(grid, 6, 8,  "tc_wall")
+        _tc_fill(grid, 6, 12, 6, 13, "tc_wall")
+        _tc_set(grid, 1, 8,  "tc_bed")
+        _tc_set(grid, 1, 9,  "tc_bed")
+        _tc_set(grid, 3, 11, "tc_table")
+        _tc_set(grid, 5, 8,  "tc_lantern")
+        _tc_set(grid, 1, 12, "tc_lantern")
+        _tc_set(grid, 5, 11, "tc_plant")
+        # Room B (y=13-17)
+        _tc_fill(grid, 1, 13, 5, 17)
+        _tc_set(grid, 6, 13, "tc_wall")
+        _tc_set(grid, 6, 17, "tc_wall")
+        _tc_set(grid, 1, 16, "tc_bed")
+        _tc_set(grid, 1, 17, "tc_bed")
+        _tc_set(grid, 3, 14, "tc_table")
+        _tc_set(grid, 5, 17, "tc_lantern")
+        _tc_set(grid, 1, 13, "tc_lantern")
+        _tc_set(grid, 5, 14, "tc_plant")
+
+        # North shrine alcove (x=11-17, y=2-4)
+        _tc_fill(grid, 11, 2, 17, 4)
+        _tc_set(grid, 14, 2, "tc_shrine")
+        _tc_set(grid, 11, 3, "tc_lantern")
+        _tc_set(grid, 17, 3, "tc_lantern")
+        _tc_set(grid, 12, 2, "tc_plant")
+        _tc_set(grid, 16, 2, "tc_plant")
+        _tc_fill(grid, 12, 4, 16, 4, "tc_rug")
+        _tc_set(grid, 11, 5, "tc_wall")
+        _tc_set(grid, 17, 5, "tc_wall")
+
+        # Main hall
+        _tc_set(grid, 9,  8,  "tc_lantern")
+        _tc_set(grid, 19, 8,  "tc_lantern")
+        _tc_set(grid, 9,  16, "tc_lantern")
+        _tc_set(grid, 19, 16, "tc_lantern")
+        _tc_set(grid, 10, 12, "tc_plant")
+        _tc_set(grid, 18, 12, "tc_plant")
+
+    # ── Floor 4: Elder's Chamber (top floor) ─────────────────────────────────
+    elif floor_num == 4:
+        # Only stair down
+        _tc_set(grid, 14, 19, "tc_stair_down")
+
+        # Elder at centre
+        _tc_set(grid, 14, 10, "tc_elder")
+
+        # North ceremony room (wide alcove x=9-19, y=2-6)
+        _tc_fill(grid, 9, 2, 19, 6)
+        _tc_set(grid, 9,  6, "tc_wall")   # side pillars narrowing entrance
+        _tc_set(grid, 19, 6, "tc_wall")
+        _tc_fill(grid, 10, 3, 18, 6, "tc_rug")
+        _tc_set(grid, 14, 2, "tc_elder")
+        _tc_set(grid, 10, 2, "tc_shrine")
+        _tc_set(grid, 18, 2, "tc_shrine")
+        _tc_set(grid, 9,  2, "tc_lantern")
+        _tc_set(grid, 19, 2, "tc_lantern")
+        _tc_set(grid, 12, 2, "tc_plant")
+        _tc_set(grid, 16, 2, "tc_plant")
+        # Restore specials that may have been overwritten by rug fill
+        _tc_set(grid, 14, 2, "tc_elder")
+        _tc_set(grid, 10, 2, "tc_shrine")
+        _tc_set(grid, 18, 2, "tc_shrine")
+
+        # East premium alcove (x=23-27, y=9-15)
+        _tc_fill(grid, 23, 9, 27, 15)
+        _tc_set(grid, 22, 9,  "tc_wall")
+        _tc_set(grid, 22, 15, "tc_wall")
+        _tc_set(grid, 24, 10, "tc_shop")
+        _tc_fill(grid, 25, 9, 27, 11, "tc_counter")
+        _tc_fill(grid, 27, 11, 27, 13, "tc_counter")
+        _tc_fill(grid, 25, 13, 27, 15, "tc_counter")
+        _tc_set(grid, 23, 9,  "tc_lantern")
+        _tc_set(grid, 23, 15, "tc_lantern")
+        _tc_set(grid, 25, 9,  "tc_lantern")
+        _tc_fill(grid, 23, 11, 25, 13, "tc_rug")
+        _tc_set(grid, 24, 12, "tc_floor")
+        _tc_set(grid, 27, 9,  "tc_plant")
+        _tc_set(grid, 27, 15, "tc_plant")
+
+        # West shrine alcove (x=1-6, y=9-15)
+        _tc_fill(grid, 1, 9, 6, 15)
+        _tc_set(grid, 7, 9,  "tc_wall")
+        _tc_set(grid, 7, 15, "tc_wall")
+        _tc_set(grid, 3, 11, "tc_shrine")
+        _tc_set(grid, 3, 13, "tc_shrine")
+        _tc_fill(grid, 2, 11, 4, 13, "tc_rug")
+        _tc_set(grid, 3, 11, "tc_shrine")  # restore after rug
+        _tc_set(grid, 3, 13, "tc_shrine")
+        _tc_set(grid, 1, 9,  "tc_lantern")
+        _tc_set(grid, 1, 10, "tc_lantern")
+        _tc_set(grid, 1, 14, "tc_lantern")
+        _tc_set(grid, 1, 15, "tc_lantern")
+        _tc_set(grid, 5, 9,  "tc_plant")
+        _tc_set(grid, 5, 15, "tc_plant")
+
+        # Main hall: ceremonial rug runner + flanking decorations
+        _tc_fill(grid, 13, 10, 15, 18, "tc_rug")
+        _tc_set(grid, 14, 19, "tc_stair_down")   # restore stair on rug
+        _tc_set(grid, 14, 10, "tc_elder")         # restore elder
+        _tc_set(grid, 9,  9,  "tc_lantern")
+        _tc_set(grid, 19, 9,  "tc_lantern")
+        _tc_set(grid, 9,  15, "tc_lantern")
+        _tc_set(grid, 19, 15, "tc_lantern")
+        _tc_set(grid, 9,  12, "tc_plant")
+        _tc_set(grid, 19, 12, "tc_plant")
+
+    return grid
 
 
 def _generate_tc_interior(forest_id: int) -> dict[int, list[tuple[int, int, str]]]:
-    """Generate 3-floor tree city interior. Layout is the same for all forests."""
-    # Floor layout: (floor_num -> list of (x, y, tile_override) for non-floor special tiles)
-    specials: dict[int, list[tuple[int, int, str]]] = {
-        1: [
-            (7, 6, "tc_door"),         # exit (south wall)
-            (7, 1, "tc_stair_up"),     # stairs up (north)
-            (2, 2, "tc_shop"),         # merchant left
-            (2, 4, "tc_shop"),
-            (12, 2, "tc_counter"),     # counter right
-            (12, 4, "tc_counter"),
-        ],
-        2: [
-            (7, 5, "tc_stair_down"),
-            (7, 1, "tc_stair_up"),
-            (1, 2, "tc_bed"),
-            (1, 3, "tc_bed"),
-            (1, 4, "tc_bed"),
-            (13, 3, "tc_shop"),
-        ],
-        3: [
-            (7, 5, "tc_stair_down"),
-            (7, 3, "tc_elder"),        # elder NPC center
-            (1, 2, "tc_bed"),
-            (1, 4, "tc_bed"),
-            (13, 2, "tc_bed"),
-            (13, 4, "tc_bed"),
-        ],
-    }
-
+    """Generate all floors of the tree city interior."""
     floors: dict[int, list[tuple[int, int, str]]] = {}
     for floor_num in range(1, TC_NUM_FLOORS + 1):
+        grid = _gen_tc_floor(floor_num)
         tiles: list[tuple[int, int, str]] = []
-        override = {(sx, sy): st for sx, sy, st in specials.get(floor_num, [])}
         for y in range(TC_H):
             for x in range(TC_W):
-                if (x, y) in override:
-                    tiles.append((x, y, override[(x, y)]))
-                elif y == 0 or y == TC_H - 1 or x == 0 or x == TC_W - 1:
-                    tiles.append((x, y, "tc_wall"))
-                else:
-                    tiles.append((x, y, "tc_floor"))
+                tiles.append((x, y, grid[y][x]))
         floors[floor_num] = tiles
     return floors
 
 
-async def ensure_tree_city_built(forest_id: int, db) -> None:
-    """Lazily generate tree city floors for this forest if not yet stored."""
-    existing = await db.fetch_one(
-        "SELECT 1 FROM tree_city_tiles WHERE forest_id=? LIMIT 1", (forest_id,)
+async def ensure_tree_city_built(forest_id: int, db) -> bool:
+    """Lazily generate (or rebuild) tree city floors. Returns True if rebuilt."""
+    expected = TC_W * TC_H * TC_NUM_FLOORS
+    row = await db.fetch_one(
+        "SELECT COUNT(*) AS cnt FROM tree_city_tiles WHERE forest_id=?", (forest_id,)
     )
-    if existing:
-        return
+    if row and row["cnt"] == expected:
+        return False   # already up to date
+    # Clear stale tiles and rebuild
+    await db.execute("DELETE FROM tree_city_tiles WHERE forest_id=?", (forest_id,))
     floors = _generate_tc_interior(forest_id)
     for floor_num, tiles in floors.items():
         await db.executemany(
@@ -735,12 +1000,13 @@ async def ensure_tree_city_built(forest_id: int, db) -> None:
             "(forest_id, floor_num, local_x, local_y, tile_type) VALUES(?,?,?,?,?)",
             [(forest_id, floor_num, lx, ly, tt) for lx, ly, tt in tiles],
         )
+    return True
 
 
 async def load_tree_city_viewport(
     forest_id: int, floor_num: int, center_x: int, center_y: int, db,
 ) -> list[list[TileData]]:
-    """Load a 7×7 viewport of a tree city floor."""
+    """Load a 9×9 viewport of a tree city floor centred on (center_x, center_y)."""
     half  = VIEWPORT_CENTER
     x_min = center_x - half
     y_min = center_y - half

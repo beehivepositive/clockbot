@@ -650,21 +650,32 @@ MAZE_WALKABLE: frozenset[str] = frozenset({
 })
 
 # Tree City interior tiles
+TC_W  = 29    # floor width (was 15)
+TC_H  = 25    # floor height (was 7)
+TC_NUM_FLOORS = 4  # was 3
+
 TC_EMOJI: dict[str, str] = {
-    "tc_floor":      "\U0001F7EB",   # 🟫 wooden planks
-    "tc_wall":       "\U0001F332",   # 🌲 tree bark wall
-    "tc_stair_up":   "\U0001F53C",   # 🔼 stairs up
-    "tc_stair_down": "\U0001F53D",   # 🔽 stairs down
-    "tc_door":       "\U0001F6AA",   # 🚪 exit door (ground floor only)
-    "tc_shop":       "\U0001F9D1",   # 🧑 merchant NPC
-    "tc_elder":      "\U0001F9D9",   # 🧙 elder NPC (acts as premium shop)
-    "tc_bed":        "\U0001F6CF️",  # 🛏️ bed (rest/heal)
-    "tc_counter":    "\U0001FAB5",   # 🪵 wooden counter
+    "tc_floor":      "\U0001F7EB",          # 🟫 wooden planks
+    "tc_wall":       "\U0001F332",          # 🌲 tree bark wall
+    "tc_stair_up":   "\U0001F53C",          # 🔼 stairs up
+    "tc_stair_down": "\U0001F53D",          # 🔽 stairs down
+    "tc_door":       "\U0001F6AA",          # 🚪 exit door (ground floor only)
+    "tc_shop":       "\U0001F9D1",          # 🧑 merchant NPC (approach from adjacent)
+    "tc_elder":      "\U0001F9D9",          # 🧙 elder NPC (approach from adjacent)
+    "tc_bed":        "\U0001F6CF️",    # 🛏️ bed (walkable, rest/heal)
+    "tc_counter":    "\U0001F9F1",          # 🧱 shop counter
+    "tc_rug":        "\U0001F7E5",          # 🟥 decorative rug (walkable)
+    "tc_table":      "\U0001FAB5",          # 🪵 wooden table
+    "tc_lantern":    "\U0001F56F️",    # 🕯️ lantern
+    "tc_plant":      "\U0001F33F",          # 🌿 plant
+    "tc_barrel":     "\U0001F6E2️",    # 🛢️ barrel
+    "tc_bookshelf":  "\U0001F4DA",          # 📚 bookshelf
+    "tc_shrine":     "⛩️",        # ⛩️ shrine
 }
 
 TC_WALKABLE: frozenset[str] = frozenset({
-    "tc_floor", "tc_door", "tc_stair_up", "tc_stair_down",
-    "tc_shop", "tc_elder", "tc_bed",
+    "tc_floor", "tc_rug", "tc_door", "tc_stair_up", "tc_stair_down", "tc_bed",
+    # Note: tc_shop and tc_elder are NOT walkable — player approaches from adjacent
 })
 
 # Random encounter rates inside forest (chance per step)

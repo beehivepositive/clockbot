@@ -2258,14 +2258,19 @@ def _compute_context_labels(
         if getattr(player, "in_tree_city", False):
             if t == "tc_door":
                 center_label, center_enabled = "🚪 Exit", True
-            elif t in ("tc_shop", "tc_elder"):
-                center_label, center_enabled = "🛍️ Shop", True
             elif t == "tc_bed":
                 center_label, center_enabled = "🛏️ Rest", True
             elif t == "tc_stair_up":
                 center_label, center_enabled = "🔼 Up", True
             elif t == "tc_stair_down":
                 center_label, center_enabled = "🔽 Down", True
+            # Adjacency: show action button when next to a merchant NPC
+            for _dy2, _dx2 in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar2, _ac2 = vc + _dy2, vc + _dx2
+                if 0 <= _ar2 < len(grid) and 0 <= _ac2 < len(grid[_ar2]):
+                    if grid[_ar2][_ac2].terrain in ("tc_shop", "tc_elder"):
+                        action_label, action_enabled = "🛍️ Shop", True
+                        break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Maze tile context
@@ -3321,14 +3326,13 @@ async def _move_steps(
                 player.in_tree_city = True
                 player.tc_forest_id = player.forest_id
                 player.tc_floor = 1
-                player.tc_x = 7
-                player.tc_y = 5
+                player.tc_x, player.tc_y = 14, 21
                 await db.execute(
                     "UPDATE players SET forest_x=?, forest_y=?, in_tree_city=1, "
-                    "tc_forest_id=?, tc_floor=1, tc_x=7, tc_y=5 WHERE user_id=?",
+                    "tc_forest_id=?, tc_floor=1, tc_x=14, tc_y=21 WHERE user_id=?",
                     (nx, ny, player.forest_id, user_id)
                 )
-                grid = await _ltcv2(player.tc_forest_id, 1, 7, 5, db)
+                grid = await _ltcv2(player.tc_forest_id, 1, 14, 21, db)
                 return render_grid(grid, player,
                     "🌲 You push open the great wooden door and step inside the **Tree City**."), \
                        _game_view(guild_id, user_id, player, grid=grid)
@@ -3371,14 +3375,26 @@ async def _move_steps(
             load_tree_city_single_tile as _ltcs,
             ensure_tree_city_built,
         )
-        await ensure_tree_city_built(player.tc_forest_id, db)
+        _tc_rebuilt = await ensure_tree_city_built(player.tc_forest_id, db)
+        if _tc_rebuilt:
+            player.tc_floor = 1
+            player.tc_x, player.tc_y = 14, 21
+            await db.execute(
+                "UPDATE players SET tc_floor=1, tc_x=14, tc_y=21 WHERE user_id=?", (user_id,)
+            )
 
         for _ in range(steps):
             nx, ny = player.tc_x + dx, player.tc_y + dy
             target = await _ltcs(player.tc_forest_id, player.tc_floor, nx, ny, db)
             if target.terrain not in TC_WALKABLE:
                 grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-                return render_grid(grid, player, "🌲 Solid tree bark blocks your path."), \
+                _tc_block_msg = "🌲 Solid bark walls — you can't push through."
+                if target.terrain in ("tc_shop", "tc_elder"):
+                    _tc_block_msg = "🛍️ Step adjacent and use the action button to talk to the merchant."
+                elif target.terrain in ("tc_counter", "tc_table", "tc_lantern", "tc_plant",
+                                        "tc_barrel", "tc_bookshelf", "tc_shrine"):
+                    _tc_block_msg = "🌲 Something is in the way."
+                return render_grid(grid, player, _tc_block_msg), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Exit door (floor 1 only) → back to forest
@@ -3403,15 +3419,15 @@ async def _move_steps(
 
             # Stairs up
             if target.terrain == "tc_stair_up":
-                if player.tc_floor < 3:
+                if player.tc_floor < 4:
                     player.tc_floor += 1
-                    player.tc_x, player.tc_y = 7, 5   # appear at stair_down on next floor
+                    player.tc_x, player.tc_y = 14, 16   # appear near stair_down on next floor
                     await db.execute(
-                        "UPDATE players SET tc_floor=?, tc_x=7, tc_y=5 WHERE user_id=?",
+                        "UPDATE players SET tc_floor=?, tc_x=14, tc_y=16 WHERE user_id=?",
                         (player.tc_floor, user_id)
                     )
                     grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-                    floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
+                    floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
                     fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
                     return render_grid(grid, player,
                         f"🔼 You climb the stairs to the **{fname}**."), \
@@ -3425,13 +3441,13 @@ async def _move_steps(
             if target.terrain == "tc_stair_down":
                 if player.tc_floor > 1:
                     player.tc_floor -= 1
-                    player.tc_x, player.tc_y = 7, 1   # appear at stair_up on previous floor
+                    player.tc_x, player.tc_y = 14, 9   # appear near stair_up on previous floor
                     await db.execute(
-                        "UPDATE players SET tc_floor=?, tc_x=7, tc_y=1 WHERE user_id=?",
+                        "UPDATE players SET tc_floor=?, tc_x=14, tc_y=9 WHERE user_id=?",
                         (player.tc_floor, user_id)
                     )
                     grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-                    floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
+                    floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
                     fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
                     return render_grid(grid, player,
                         f"🔽 You descend to the **{fname}**."), \
@@ -6765,16 +6781,28 @@ async def handle_interact(
         elif ftile.terrain == "fst_tree_city":
             # Enter the tree city interior
             from dwarf_explorer.world.forest import ensure_tree_city_built, load_tree_city_viewport as _ltcv_enter
-            await ensure_tree_city_built(player.forest_id, db)
+            _tc_rebuilt_i = await ensure_tree_city_built(player.forest_id, db)
+            if _tc_rebuilt_i:
+                player.tc_floor = 1
+                player.tc_x, player.tc_y = 14, 21
+                await db.execute(
+                    "UPDATE players SET tc_floor=1, tc_x=14, tc_y=21 WHERE user_id=?", (user_id,)
+                )
+                from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_i
+                grid = await _ltcv_i(player.forest_id, 1, 14, 21, db)
+                content = render_grid(grid, player, "🌲 The Tree City was rebuilt — you appear at the entrance.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
             player.in_tree_city = True
             player.tc_forest_id = player.forest_id
             player.tc_floor = 1
-            player.tc_x, player.tc_y = 7, 5
+            player.tc_x, player.tc_y = 14, 21
             await db.execute(
-                "UPDATE players SET in_tree_city=1, tc_forest_id=?, tc_floor=1, tc_x=7, tc_y=5 WHERE user_id=?",
+                "UPDATE players SET in_tree_city=1, tc_forest_id=?, tc_floor=1, tc_x=14, tc_y=21 WHERE user_id=?",
                 (player.forest_id, user_id)
             )
-            grid = await _ltcv_enter(player.tc_forest_id, 1, 7, 5, db)
+            grid = await _ltcv_enter(player.tc_forest_id, 1, 14, 21, db)
             content = render_grid(grid, player,
                 "🌲 You push open the great wooden door and step inside the **Tree City**.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -7695,6 +7723,30 @@ async def handle_action(
         hand_items.add(player.hand_1)
     if player.hand_2:
         hand_items.add(player.hand_2)
+
+    # ── Tree city: adjacent shop NPC ─────────────────────────────────────────
+    if getattr(player, "in_tree_city", False):
+        from dwarf_explorer.world.forest import (
+            load_tree_city_viewport as _ltcv_act,
+            ensure_tree_city_built as _etcb_act,
+        )
+        await _etcb_act(player.tc_forest_id, db)
+        _tc_grid_act = await _ltcv_act(player.tc_forest_id, player.tc_floor,
+                                       player.tc_x, player.tc_y, db)
+        vc = 4
+        for _dy_a, _dx_a in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            _ar_a, _ac_a = vc + _dy_a, vc + _dx_a
+            if 0 <= _ar_a < len(_tc_grid_act) and 0 <= _ac_a < len(_tc_grid_act[_ar_a]):
+                if _tc_grid_act[_ar_a][_ac_a].terrain in ("tc_shop", "tc_elder"):
+                    await _open_tree_city_shop(interaction, guild_id, user_id, player)
+                    return
+        _tc_grid_act2 = await _ltcv_act(player.tc_forest_id, player.tc_floor,
+                                        player.tc_x, player.tc_y, db)
+        content = render_grid(_tc_grid_act2, player, "🌲 Nothing to use here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player,
+                                                                grid=_tc_grid_act2))
+        return
 
     # ── Player house: enter edit mode ────────────────────────────────────────
     if player.in_house and player.house_type == "player_house":
