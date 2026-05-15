@@ -200,6 +200,12 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             tc_floor=row["tc_floor"] if "tc_floor" in cols else 1,
             tc_x=row["tc_x"] if "tc_x" in cols else 0,
             tc_y=row["tc_y"] if "tc_y" in cols else 0,
+            # Grove state
+            in_grove=bool(row["in_grove"]) if "in_grove" in cols else False,
+            grove_id=row["grove_id"] if "grove_id" in cols else None,
+            grove_x=row["grove_x"] if "grove_x" in cols else 0,
+            grove_y=row["grove_y"] if "grove_y" in cols else 0,
+            grove_forest_id=row["grove_forest_id"] if "grove_forest_id" in cols else None,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "

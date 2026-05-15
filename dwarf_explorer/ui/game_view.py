@@ -129,7 +129,7 @@ from dwarf_explorer.world.villages import (
     get_recruitable_npc_positions, is_npc_recruitable_for_player,
     get_replacement_npc_position,
 )
-from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship, can_move_shipwreck
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship, can_move_shipwreck, can_move_grove
 from dwarf_explorer.world.shipwrecks import load_shipwreck_viewport, get_tile_at as get_shipwreck_tile
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
@@ -187,6 +187,8 @@ def _vp_cache_key(player) -> tuple:
         return ("tree_city", player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y)
     if getattr(player, "in_maze", False):
         return ("maze", getattr(player, "maze_id", 0), getattr(player, "maze_x", 0), getattr(player, "maze_y", 0))
+    if getattr(player, "in_grove", False):
+        return ("grove", getattr(player, "grove_id", 0), getattr(player, "grove_x", 0), getattr(player, "grove_y", 0))
     if getattr(player, "in_forest", False):
         return ("forest", getattr(player, "forest_id", 0), getattr(player, "forest_x", 0), getattr(player, "forest_y", 0))
     return ("world", player.world_x, player.world_y)
@@ -229,6 +231,9 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif getattr(player, "in_maze", False):
         from dwarf_explorer.world.forest import load_maze_viewport as _lmv_cache
         grid = await _lmv_cache(player.maze_id, player.maze_x, player.maze_y, db)
+    elif getattr(player, "in_grove", False):
+        from dwarf_explorer.world.forest import load_grove_viewport as _lgv_cache
+        grid = await _lgv_cache(player.grove_id, player.grove_x, player.grove_y, db)
     elif getattr(player, "in_forest", False):
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_cache
         grid = await _lfv_cache(player.forest_id, player.forest_x, player.forest_y, db)
@@ -2269,8 +2274,14 @@ def _compute_context_labels(
                 _ar2, _ac2 = vc + _dy2, vc + _dx2
                 if 0 <= _ar2 < len(grid) and 0 <= _ac2 < len(grid[_ar2]):
                     _adj_t = grid[_ar2][_ac2].terrain
-                    if _adj_t in ("tc_shop", "tc_elder"):
+                    if _adj_t == "tc_shop":
                         action_label, action_enabled = "🛍️ Shop", True
+                        break
+                    elif _adj_t == "tc_elder":
+                        if getattr(player, "tc_floor", 1) == 4:
+                            action_label, action_enabled = "⚔️ Quest", True
+                        else:
+                            action_label, action_enabled = "🛍️ Shop", True
                         break
                     elif _adj_t == "tc_villager":
                         action_label, action_enabled = "💬 Talk", True
@@ -3208,6 +3219,35 @@ async def _move_steps(
         grid = await load_maze_viewport(player.maze_id, player.maze_x, player.maze_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
+    elif getattr(player, "in_grove", False):
+        from dwarf_explorer.world.forest import load_grove_viewport as _lgv2, load_grove_single_tile as _lgst2
+        nx, ny = player.grove_x + dx, player.grove_y + dy
+        target = await _lgst2(player.grove_id, nx, ny, db)
+        ok_move, block_msg = can_move_grove(target)
+        if not ok_move:
+            grove_grid2 = await _lgv2(player.grove_id, player.grove_x, player.grove_y, db)
+            content = render_grid(grove_grid2, player, block_msg or "🌳 Ancient trees bar your path.")
+            return content, _game_view(guild_id, user_id, player, grid=grove_grid2)
+        # Check grove exit
+        if target.terrain == "grove_exit":
+            # Return to forest
+            player.in_grove = False
+            player.grove_id = None
+            await db.execute(
+                "UPDATE players SET in_grove=0, grove_id=NULL WHERE user_id=?", (user_id,)
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_gr
+            forest_grid2 = await _lfv_gr(player.forest_id, player.forest_x, player.forest_y, db)
+            content = render_grid(forest_grid2, player, "🌿 You step back through the bark into the forest.")
+            return content, _game_view(guild_id, user_id, player, grid=forest_grid2)
+        player.grove_x, player.grove_y = nx, ny
+        await db.execute(
+            "UPDATE players SET grove_x=?, grove_y=? WHERE user_id=?", (nx, ny, user_id)
+        )
+        grove_grid3 = await _lgv2(player.grove_id, player.grove_x, player.grove_y, db)
+        content = render_grid(grove_grid3, player)
+        return content, _game_view(guild_id, user_id, player, grid=grove_grid3)
+
     elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import (
             load_forest_viewport, load_forest_single_tile,
@@ -3219,6 +3259,39 @@ async def _move_steps(
             target = await load_forest_single_tile(player.forest_id, nx, ny, db)
             ok, reason = can_move_forest(target)
             if not ok:
+                # Wayerwood secret passage
+                if (target.terrain == "fst_tree"
+                        and getattr(player, "accessory", None) == "wayerwood"):
+                    from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt2
+                    _ww_tgt = await _gwwt2(player.forest_id, db)
+                    if _ww_tgt and nx == _ww_tgt[0] and ny == _ww_tgt[1]:
+                        # Enter the grove!
+                        from dwarf_explorer.world.forest import (
+                            ensure_grove_built as _egb, load_grove_viewport as _lgv,
+                        )
+                        _grove_id = await _egb(player.forest_id, db)
+                        # Enter at south exit tile of grove (cy + R = 9+7=16, cx=9)
+                        _gx, _gy = 9, 16
+                        player.in_grove = True
+                        player.grove_id = _grove_id
+                        player.grove_x = _gx
+                        player.grove_y = _gy
+                        player.grove_forest_id = player.forest_id
+                        await db.execute(
+                            "UPDATE players SET in_grove=1, grove_id=?, grove_x=?, grove_y=?, "
+                            "grove_forest_id=?, forest_x=?, forest_y=? WHERE user_id=?",
+                            (_grove_id, _gx, _gy, player.forest_id,
+                             player.forest_x, player.forest_y, user_id),
+                        )
+                        _grove_grid = await _lgv(_grove_id, _gx, _gy, db)
+                        return (
+                            render_grid(
+                                _grove_grid, player,
+                                "🌿 *The wayerwood glows white — the bark parts before you...*\n"
+                                "You step through into a hidden grove.",
+                            ),
+                            _game_view(guild_id, user_id, player, grid=_grove_grid),
+                        )
                 grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
 
@@ -3371,7 +3444,24 @@ async def _move_steps(
                 return content, view
 
         grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+        # Wayerwood hint (if equipped and in forest)
+        _ww_status_hint = ""
+        if (getattr(player, "in_forest", False)
+                and not getattr(player, "in_grove", False)
+                and getattr(player, "accessory", None) == "wayerwood"):
+            from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt
+            _ww_target = await _gwwt(player.forest_id, db)
+            if _ww_target:
+                _ww_tx2, _ww_ty2 = _ww_target
+                _dist_now  = abs(player.forest_x - _ww_tx2) + abs(player.forest_y - _ww_ty2)
+                _dist_prev = abs((player.forest_x - dx) - _ww_tx2) + abs((player.forest_y - dy) - _ww_ty2)
+                if _dist_now < _dist_prev:
+                    _ww_status_hint = "🪄 *The wayerwood pulses... pulling you forward.*"
+                elif _dist_now > _dist_prev:
+                    _ww_status_hint = "🪄 *The wayerwood dims... you've veered away.*"
+                else:
+                    _ww_status_hint = "🪄 *The wayerwood hums steadily.*"
+        return render_grid(grid, player, _ww_status_hint or None), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import (
@@ -6608,6 +6698,14 @@ async def handle_interact(
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
+    elif getattr(player, "in_grove", False):
+        from dwarf_explorer.world.forest import load_grove_viewport as _lgv_i
+        grid = await _lgv_i(player.grove_id, player.grove_x, player.grove_y, db)
+        content = render_grid(grid, player, "🌿 Nothing to interact with in the grove here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
     elif getattr(player, "in_forest", False):
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_i, load_forest_single_tile as _lfst_i
         ftile = await _lfst_i(player.forest_id, player.forest_x, player.forest_y, db)
@@ -6702,18 +6800,24 @@ async def handle_interact(
             return
 
         elif ftile.terrain == "fst_chest":
-            # Per-position chest tracking: (user_id, forest_id, local_x, local_y)
+            import datetime as _dt_fst
+            _today_ord = _dt_fst.date.today().toordinal()
             fx, fy = player.forest_x, player.forest_y
+            # 24-hour server-wide reset: loot_day must equal today
             already = await db.fetch_one(
                 "SELECT 1 FROM player_forest_chest_loots "
-                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=?",
-                (user_id, player.forest_id, fx, fy)
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
+                (user_id, player.forest_id, fx, fy, _today_ord),
             )
-            # Re-open existing (partially looted) chest from state if available
+            # Determine if this position is a mimic today (daily hash)
+            _mimic_rng = _random.Random(hash((player.forest_id, fx, fy, _today_ord, "mimic")))
+            _is_mimic_today = _mimic_rng.random() < 0.33
+            # Re-open existing partially-looted chest from state if available
             existing_fst = _ui_state.get(user_id, {})
             if (already and existing_fst.get("type") == "fst_chest"
                     and existing_fst.get("forest_id") == player.forest_id
-                    and existing_fst.get("fx") == fx and existing_fst.get("fy") == fy):
+                    and existing_fst.get("fx") == fx and existing_fst.get("fy") == fy
+                    and existing_fst.get("loot_day") == _today_ord):
                 items = existing_fst.get("items", [])
                 from dwarf_explorer.game.renderer import render_chest as _rc_fst
                 content = _rc_fst(items, [], existing_fst.get("selected", 0), "chest", "fst_chest")
@@ -6721,20 +6825,53 @@ async def handle_interact(
                                                         view=FstChestView(guild_id, user_id))
                 return
             if already:
-                content = render_grid(grid, player, "📦 The cache is empty — already looted.")
+                content = render_grid(grid, player, "📦 The cache is empty — resets at midnight.")
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=_game_view(guild_id, user_id, player, grid=grid))
                 return
-            # Roll loot and mark as looted immediately so the chest isn't re-rolled
-            loot_rng = _random.Random(hash((player.forest_id, fx, fy, "fst_chest")))
+            # Mimic check
+            if _is_mimic_today:
+                enemy_type = "chest_mimic"
+                from dwarf_explorer.config import ENEMY_STATS as _ES_fm2, COMBAT_MOVES_DEFAULT as _CMD_fm2
+                arena_rng2 = _random.Random(hash((user_id, fx, fy, "fst_chest_mimic", _today_ord)))
+                arena2, ex2, ey2 = build_arena_from_viewport(grid, enemy_type, arena_rng2)
+                player.in_combat = True
+                player.combat_enemy_type = enemy_type
+                player.combat_enemy_hp = _ES_fm2[enemy_type][0]
+                player.combat_enemy_x = ex2
+                player.combat_enemy_y = ey2
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = _CMD_fm2 + (1 if player.accessory == "ring_of_time" else 0)
+                _ui_state[user_id] = {
+                    "type": "combat", "arena": arena2,
+                    "mimic_forest_id": player.forest_id,
+                    "mimic_forest_x":  fx,
+                    "mimic_forest_y":  fy,
+                }
+                await save_combat_state(db, user_id, player)
+                content = (
+                    "💀 **It's a MIMIC!** The chest snaps open — rows of teeth, lunging!\n\n"
+                    + render_arena(arena2, player)
+                )
+                view = CombatView(guild_id, user_id, trapped=arena2["player_trapped"],
+                                  moves_left=player.combat_moves_left)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            # Roll loot (seeded by forest + position + day so same player always gets same loot today)
+            loot_rng = _random.Random(hash((player.forest_id, fx, fy, _today_ord, "loot")))
             gold_reward = loot_rng.randint(30, 100)
+            # xyphem chance: 35% per chest (at most 1 per chest per day)
+            _has_xyphem = loot_rng.random() < 0.35
             item_pool = ["forest_nut", "living_root", "ancient_seed", "bark_shield", "iron_ingot"]
+            if _has_xyphem:
+                item_pool.insert(0, "xyphem")
             item = loot_rng.choice(item_pool)
             qty = loot_rng.randint(1, 3) if item in ("forest_nut", "living_root") else 1
             await db.execute(
                 "INSERT OR IGNORE INTO player_forest_chest_loots"
-                "(user_id, forest_id, local_x, local_y) VALUES(?,?,?,?)",
-                (user_id, player.forest_id, fx, fy)
+                "(user_id, forest_id, local_x, local_y, loot_day) VALUES(?,?,?,?,?)",
+                (user_id, player.forest_id, fx, fy, _today_ord),
             )
             items = [
                 {"item_id": "gold_coin", "quantity": gold_reward},
@@ -6743,6 +6880,7 @@ async def handle_interact(
             _ui_state[user_id] = {
                 "type": "fst_chest", "items": items, "selected": 0,
                 "fx": fx, "fy": fy, "forest_id": player.forest_id,
+                "loot_day": _today_ord,
             }
             from dwarf_explorer.game.renderer import render_chest as _rc_fst
             content = _rc_fst(items, [], 0, "chest", "fst_chest")
@@ -7742,8 +7880,14 @@ async def handle_action(
             _ar_a, _ac_a = vc + _dy_a, vc + _dx_a
             if 0 <= _ar_a < len(_tc_grid_act) and 0 <= _ac_a < len(_tc_grid_act[_ar_a]):
                 _adj_terrain_act = _tc_grid_act[_ar_a][_ac_a].terrain
-                if _adj_terrain_act in ("tc_shop", "tc_elder"):
+                if _adj_terrain_act == "tc_shop":
                     await _open_tree_city_shop(interaction, guild_id, user_id, player)
+                    return
+                elif _adj_terrain_act == "tc_elder":
+                    if getattr(player, "tc_floor", 1) == 4:
+                        await _open_tree_city_elder(interaction, guild_id, user_id, player)
+                    else:
+                        await _open_tree_city_shop(interaction, guild_id, user_id, player)
                     return
                 elif _adj_terrain_act == "tc_villager":
                     await _open_tree_city_villager(interaction, guild_id, user_id, player)
@@ -10257,6 +10401,98 @@ async def _open_tree_city_villager(
     )
 
 
+async def _open_tree_city_elder(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player,
+) -> None:
+    """Floor 4 elder NPC — offers and completes The Wayerwood main quest."""
+    from dwarf_explorer.game.quests import (
+        create_wayerwood_quest, has_wayerwood_quest, get_active_quests,
+    )
+    from dwarf_explorer.ui.quest_view import QuestOfferView, render_quest_offer
+    from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_eld
+    db = await get_database(guild_id)
+
+    # Check if player already has the quest
+    already_has = await has_wayerwood_quest(db, user_id)
+
+    if already_has:
+        # Check if they have the crafting materials
+        stick_rows = await db.fetch_all(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
+        )
+        xyphem_rows = await db.fetch_all(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,)
+        )
+        stick_count  = sum(r["quantity"] for r in stick_rows)
+        xyphem_count = sum(r["quantity"] for r in xyphem_rows)
+
+        if stick_count >= 1 and xyphem_count >= 5:
+            # Craft the wayerwood!
+            from dwarf_explorer.database.repositories import remove_from_inventory, add_to_inventory
+            await remove_from_inventory(db, user_id, "stick",  1)
+            await remove_from_inventory(db, user_id, "xyphem", 5)
+            await add_to_inventory(db, user_id, "wayerwood", 1)
+            # Complete the quest
+            row = await db.fetch_one(
+                "SELECT pq.id FROM player_quests pq JOIN quests q ON pq.quest_id=q.id "
+                "WHERE pq.user_id=? AND q.title='The Wayerwood' AND pq.status='active'",
+                (user_id,),
+            )
+            if row:
+                await db.execute(
+                    "UPDATE player_quests SET status='completed', completed_at=datetime('now') "
+                    "WHERE id=?", (row["id"],)
+                )
+                await db.execute("UPDATE players SET xp=xp+200 WHERE user_id=?", (user_id,))
+            grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+            content = render_grid(
+                grid, player,
+                "🪄 *\"The wood takes shape...\"*\n\n"
+                "The elder weaves the xyphem into the stick. A soft glow pulses through it.\n"
+                "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n\n"
+                "*(⚔️ Quest Completed: The Wayerwood — +200 XP)*",
+            )
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        # Has quest, missing materials
+        grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+        need_stick  = max(0, 1 - stick_count)
+        need_xyphem = max(0, 5 - xyphem_count)
+        content = render_grid(
+            grid, player,
+            f"🌿 *\"Not yet ready. You still need:\"*\n\n"
+            f"{'✅' if need_stick == 0 else '❌'} **1 Stick** "
+            f"({stick_count}/1)\n"
+            f"{'✅' if need_xyphem == 0 else '❌'} **5 Xyphem** "
+            f"({xyphem_count}/5) — found in forest chests (🏵️)",
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    # Offer the quest for the first time
+    quest_id = await create_wayerwood_quest(db)
+    quest_row = await db.fetch_one(
+        "SELECT id, quest_type, quest_subtype, title, description, target_id, target_count, "
+        "reward_gold, reward_xp, reward_item FROM quests WHERE id=?",
+        (quest_id,),
+    )
+    if not quest_row:
+        return
+    q_dict = dict(quest_row)
+    _ui_state[user_id] = {"type": "quest_offer", "quest_id": quest_id, "is_main_quest": True}
+    content = (
+        "🌿 *\"Traveller... you have reached the heart of the tree. Good.\"*\n\n"
+        + render_quest_offer(q_dict, "Elder of the Grove")
+    )
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=QuestOfferView(guild_id, user_id),
+    )
+
+
 async def _open_tree_city_shop(
     interaction: discord.Interaction, guild_id: int, user_id: int, player,
 ) -> None:
@@ -11770,6 +12006,51 @@ async def handle_quest_close(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+async def handle_quest_main(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open the main quest list view."""
+    from dwarf_explorer.ui.quest_view import MainQuestView, render_main_quest_list
+    db = await get_database(guild_id)
+    _ui_state[user_id] = {"type": "main_quest_view", "index": 0}
+    content = await render_main_quest_list(db, user_id, 0)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=MainQuestView(guild_id, user_id),
+    )
+
+
+async def handle_mq_nav(
+    interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
+) -> None:
+    """Navigate main quest list."""
+    from dwarf_explorer.ui.quest_view import MainQuestView, render_main_quest_list
+    db = await get_database(guild_id)
+    state = _ui_state.get(user_id, {})
+    idx = state.get("index", 0) + delta
+    _ui_state[user_id] = {"type": "main_quest_view", "index": idx}
+    content = await render_main_quest_list(db, user_id, idx)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=MainQuestView(guild_id, user_id),
+    )
+
+
+async def handle_mq_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close main quest view and return to game."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    seed = await get_or_create_world(db, guild_id)
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
+
+
 # ── NPC quest button ─────────────────────────────────────────────────────────
 
 async def handle_npc_quest(
@@ -12137,11 +12418,39 @@ async def handle_quest_offer_accept(
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
+
+    # Handle elder/NPC quest offer (quest_offer type with quest_id)
+    if state.get("type") == "quest_offer" and state.get("quest_id"):
+        from dwarf_explorer.game.quests import accept_quest
+        quest_id = state["quest_id"]
+        _is_main = state.get("is_main_quest", False)
+        accepted = await accept_quest(db, user_id, quest_id, source_type="tree_city_elder",
+                                      is_main_quest=_is_main)
+        _ui_state.pop(user_id, None)
+        seed = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        if accepted:
+            from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
+            content = "✅ Quest accepted!\n\n" + await render_quest_list(db, user_id, 0)
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=QuestView(guild_id, user_id),
+            )
+        else:
+            content = render_grid(grid, player, "⚠️ Could not accept quest (already accepted or log full).")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+        return
+
     merch_quest = state.get("merch_quest")
     if not merch_quest:
         return
     from dwarf_explorer.game.quests import accept_quest
-    ok = await accept_quest(db, user_id, merch_quest["id"], source_type="merchant")
+    _is_main = state.get("is_main_quest", False)
+    ok = await accept_quest(db, user_id, merch_quest["id"], source_type="merchant",
+                            is_main_quest=_is_main)
     if ok:
         await add_to_inventory(db, user_id, "merchant_parcel", 1)
         _ui_state.pop(user_id, None)

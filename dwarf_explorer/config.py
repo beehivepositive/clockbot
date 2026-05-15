@@ -145,6 +145,8 @@ ITEM_EMOJI = {
     "pickaxe": "\u26CF\uFE0F",      # ⛏️
     "log": "\U0001FAB5",             # 🪵
     "stick": "\U0001F38B",           # 🎋
+    "xyphem": "\U0001F3F5",          # 🏵️ rosette crystal
+    "wayerwood": "\U0001FA84",       # 🪄 magical divining rod
     "resin": "\U0001F7E1",           # 🟡
     "plant_fiber": "\U0001F9F5",     # 🧵
     "dry_grass": "\U0001F33E",       # 🌾
@@ -674,6 +676,19 @@ TC_EMOJI: dict[str, str] = {
     "tc_shrine":     "⛩️",        # ⛩️ shrine
 }
 
+# ── Grove biome tiles ──────────────────────────────────────────────────────────
+GROVE_W = 19
+GROVE_H = 19
+
+GROVE_EMOJI: dict[str, str] = {
+    "grove_floor":  "\U0001F7E9",   # 🟩 mossy ground
+    "grove_wall":   "\U0001F333",   # 🌳 ancient tree
+    "grove_statue": "\U0001F5FF",   # 🗿 statue
+    "grove_exit":   "\U0001F6AA",   # 🚪 portal back
+}
+
+GROVE_WALKABLE: frozenset[str] = frozenset({"grove_floor", "grove_exit"})
+
 TC_WALKABLE: frozenset[str] = frozenset({
     "tc_floor", "tc_rug", "tc_door", "tc_stair_up", "tc_stair_down", "tc_bed",
     # Note: tc_shop and tc_elder are NOT walkable — player approaches from adjacent
@@ -1100,6 +1115,7 @@ ITEM_EQUIP_SLOTS = {
     "ring_of_defense":     "accessory",
     "ring_of_sight":       "accessory",
     "ring_of_luck":        "accessory",
+    "wayerwood":           "accessory",
     "flint_and_steel":     "hand",
     "hoe":                 "hand",
     "hammer":              "hand",

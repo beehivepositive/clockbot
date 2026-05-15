@@ -32,6 +32,9 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return FOREST_EMOJI.get(tile.terrain, FOREST_EMOJI["maze_wall"])
     if location == "tree_city":
         return TC_EMOJI.get(tile.terrain, TC_EMOJI.get("tc_wall", "\U0001F332"))
+    if location == "grove":
+        from dwarf_explorer.config import GROVE_EMOJI as _GE
+        return _GE.get(tile.terrain, _GE.get("grove_wall", "\U0001F333"))
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",

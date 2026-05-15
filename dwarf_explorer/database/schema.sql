@@ -382,3 +382,20 @@ CREATE TABLE IF NOT EXISTS tree_city_tiles (
     tile_type TEXT    NOT NULL,
     PRIMARY KEY (forest_id, floor_num, local_x, local_y)
 );
+
+CREATE TABLE IF NOT EXISTS grove_areas (
+    grove_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    width     INTEGER NOT NULL DEFAULT 19,
+    height    INTEGER NOT NULL DEFAULT 19
+);
+
+CREATE TABLE IF NOT EXISTS grove_tiles (
+    grove_id  INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (grove_id, local_x, local_y)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grove_tiles ON grove_tiles(grove_id, local_x, local_y);

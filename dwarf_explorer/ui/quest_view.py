@@ -76,16 +76,46 @@ class QuestView(discord.ui.View):
             row=0,
         ))
 
-        # Row 1: Set Target | Close
+        # Row 1: Set Target | Main | Close
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary, label="📍 Set Target",
             custom_id=_custom_id(gid, uid, "quest_set_target"),
             row=1,
         ))
         self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="⚔️ Main",
+            custom_id=_custom_id(gid, uid, "quest_main"),
+            row=1,
+        ))
+        self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary, label="✖ Close",
             custom_id=_custom_id(gid, uid, "quest_close"),
             row=1,
+        ))
+
+
+class MainQuestView(discord.ui.View):
+    """Shows main quests with prev/next navigation and close."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="◀ Prev",
+            custom_id=_custom_id(gid, uid, "mq_prev"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="⚔️ Main Quests",
+            custom_id=_custom_id(gid, uid, "mq_header"),
+            disabled=True, row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="Next ▶",
+            custom_id=_custom_id(gid, uid, "mq_next"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="✖ Close",
+            custom_id=_custom_id(gid, uid, "mq_close"), row=1,
         ))
 
 
@@ -114,6 +144,19 @@ async def render_quest_list(db, user_id: int, index: int, in_village: bool = Fal
         if subtype == "kill":
             body += f"\n\n*⚔️ Target area marked on map near ({marker_x}, {_flip_y(marker_y, _loc_type)})*"
 
+    return header + body
+
+
+async def render_main_quest_list(db, user_id: int, index: int) -> str:
+    from dwarf_explorer.game.quests import get_main_quests
+    quests = await get_main_quests(db, user_id)
+    if not quests:
+        return "⚔️ **Main Quests** — You have no active main quests.\n\n*Seek out legendary NPCs to begin a main quest.*"
+    index = max(0, min(index, len(quests) - 1))
+    q = quests[index]
+    total = len(quests)
+    header = f"⚔️ **Main Quests** ({total} active)  —  Quest {index + 1} of {total}\n\n"
+    body = render_quest_summary(q)
     return header + body
 
 

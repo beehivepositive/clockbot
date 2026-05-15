@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import math as _math
 import random
 import sys
 
@@ -130,8 +131,8 @@ def _branch_off(
 # ── Forest interior generation ───────────────────────────────────────────────────
 
 def _generate_forest_interior(
-    forest_id: int, seed: int, world_x: int, world_y: int, num_exits: int = 2,
-) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]]]:
+    forest_id: int, seed: int, world_x: int, world_y: int, num_exits: int = 1,
+) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]], tuple[int, int]]:
     """Generate a forest interior as a bead-chain of clearings.
 
     Design:
@@ -238,6 +239,16 @@ def _generate_forest_interior(
     grid[center_y][center_x] = "fst_tree_city"
     specials.add((center_x, center_y))
 
+    # Decorative trees scattered inside the central clearing
+    for _ty_dec in range(center_y - _CENTRAL_R + 1, center_y + _CENTRAL_R):
+        for _tx_dec in range(center_x - _CENTRAL_R + 1, center_x + _CENTRAL_R):
+            _d2 = (_tx_dec - center_x) ** 2 + (_ty_dec - center_y) ** 2
+            # Only in inner zone (not outermost ring — keep paths clear)
+            if 4 <= _d2 <= (_CENTRAL_R - 2) ** 2:
+                if (_tx_dec, _ty_dec) not in specials and grid[_ty_dec][_tx_dec] == "fst_floor":
+                    if rng.random() < 0.22:
+                        grid[_ty_dec][_tx_dec] = "fst_tree"
+
     # Exit tiles on boundary
     for ex, ey in exits:
         grid[ey][ex] = "fst_exit"
@@ -249,19 +260,13 @@ def _generate_forest_interior(
             grid[far[1]][far[0]] = "fst_ancient_tree"
             specials.add(far)
 
-    # Chests and mimics in remaining dead-ends
+    # Place exactly 5 chest positions (all stored as fst_chest; mimic randomised at runtime)
+    # Pick the 5 dead-ends that are farthest from the center
     remaining = [d for d in dead_ends if d not in specials]
-    rng.shuffle(remaining)
-    num_chests = min(4, len(remaining))
-    num_mimics = min(5, max(0, len(remaining) - num_chests))
-    for di, (dx, dy) in enumerate(remaining):
-        if di < num_chests:
-            grid[dy][dx] = "fst_chest"
-        elif di < num_chests + num_mimics:
-            grid[dy][dx] = "fst_mimic"
-        else:
-            break
-        specials.add((dx, dy))
+    remaining.sort(key=lambda p: -(abs(p[0] - center_x) + abs(p[1] - center_y)))
+    for (cx2, cy2) in remaining[:5]:
+        grid[cy2][cx2] = "fst_chest"
+        specials.add((cx2, cy2))
 
     # Nut trees scattered in chain clearings (not on specials, not near center)
     chain_flat = [b for chain in all_chain_beads for b in chain]
@@ -282,7 +287,26 @@ def _generate_forest_interior(
     tiles: list[tuple[int, int, str]] = [
         (x, y, grid[y][x]) for y in range(H) for x in range(W)
     ]
-    return W, H, tiles, exits
+
+    # Wayerwood target: a fst_tree tile just outside the central clearing
+    _ww_angle = _math.radians((forest_id * 73 + seed * 37) % 360)
+    _ww_tx = center_x + round((_CENTRAL_R + 1) * _math.cos(_ww_angle))
+    _ww_ty = center_y + round((_CENTRAL_R + 1) * _math.sin(_ww_angle))
+    _ww_tx = max(1, min(W - 2, _ww_tx))
+    _ww_ty = max(1, min(H - 2, _ww_ty))
+    # Ensure it's actually a tree tile; if not, search nearby
+    for _da in range(0, 360, 10):
+        _r2 = _math.radians(_da)
+        _cx2 = center_x + round((_CENTRAL_R + 1) * _math.cos(_r2))
+        _cy2 = center_y + round((_CENTRAL_R + 1) * _math.sin(_r2))
+        _cx2 = max(1, min(W - 2, _cx2))
+        _cy2 = max(1, min(H - 2, _cy2))
+        if grid[_cy2][_cx2] == "fst_tree":
+            _ww_tx, _ww_ty = _cx2, _cy2
+            break
+    wayerwood_target = (_ww_tx, _ww_ty)
+
+    return W, H, tiles, exits, wayerwood_target
 
 
 # ── Maze generation (kept for legacy forests) ────────────────────────────────────
@@ -418,7 +442,7 @@ async def create_forest_area(
     forest_id = cur.lastrowid
 
     # Generate forest grid in a thread (CPU-heavy)
-    width, height, forest_tiles, exit_positions = await asyncio.to_thread(
+    width, height, forest_tiles, exit_positions, wayerwood_target = await asyncio.to_thread(
         _generate_forest_interior,
         forest_id, seed, overworld_positions[0][0], overworld_positions[0][1], n,
     )
@@ -426,6 +450,13 @@ async def create_forest_area(
     await db.execute(
         "UPDATE forest_areas SET width=?, height=? WHERE forest_id=?",
         (width, height, forest_id),
+    )
+
+    # Store wayerwood target tile
+    _ww_tx_store, _ww_ty_store = wayerwood_target
+    await db.execute(
+        "UPDATE forest_areas SET wayerwood_tx=?, wayerwood_ty=? WHERE forest_id=?",
+        (_ww_tx_store, _ww_ty_store, forest_id),
     )
     await db.executemany(
         "INSERT OR IGNORE INTO forest_tiles (forest_id, local_x, local_y, tile_type)"
@@ -488,21 +519,6 @@ async def place_forest_areas(seed: int, db) -> None:
 
     for wx, wy in chosen:
         ow_entrances = [(wx, wy)]
-        for _ in range(500):
-            ox = wx + rng.randint(-30, 30)
-            oy = wy + rng.randint(-30, 30)
-            if not (0 < ox < WORLD_SIZE - 1 and 0 < oy < WORLD_SIZE - 1):
-                continue
-            if get_biome(ox, oy, seed) != "dense_forest":
-                continue
-            if abs(ox - wx) + abs(oy - wy) < 20:
-                continue
-            for ddx, ddy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-                if get_biome(ox + ddx, oy + ddy, seed) in WALKABLE_BIOMES:
-                    ow_entrances.append((ox, oy))
-                    break
-            if len(ow_entrances) >= 2:
-                break
 
         already = await db.fetch_one(
             "SELECT 1 FROM forest_entrances WHERE world_x=? AND world_y=?",
@@ -679,6 +695,13 @@ _TC_RY = 8.0      # ellipse Y radius
 _TC_ENTRY_X, _TC_ENTRY_Y = 14, 21   # player spawn when entering from forest
 _TC_LAND_UP_X, _TC_LAND_UP_Y = 14, 7     # spawn when arriving via stair UP (south of north alcove)
 _TC_LAND_DOWN_X, _TC_LAND_DOWN_Y = 14, 17 # spawn when arriving via stair DOWN (north of south alcove)
+
+# ── Grove constants ─────────────────────────────────────────────────────────────
+_GROVE_W  = 19
+_GROVE_H  = 19
+_GROVE_R  = 7
+_GROVE_CX = 9
+_GROVE_CY = 9
 
 
 def _in_tc_ellipse(x: int, y: int) -> bool:
@@ -1036,3 +1059,104 @@ async def load_tree_city_single_tile(
         terrain=row["tile_type"] if row else "tc_wall",
         world_x=local_x, world_y=local_y,
     )
+
+
+# ── Grove interior ────────────────────────────────────────────────────────────────
+
+def _generate_grove(forest_id: int, seed: int) -> list[tuple[int, int, str]]:
+    """Generate a small circular grove with a statue at the centre."""
+    rng = random.Random(seed ^ forest_id * 0xA5B5C5)
+    W, H = _GROVE_W, _GROVE_H
+    cx, cy = _GROVE_CX, _GROVE_CY
+    grid: list[list[str]] = [["grove_wall"] * W for _ in range(H)]
+
+    # Carve circular clearing
+    for gy in range(H):
+        for gx in range(W):
+            if (gx - cx) ** 2 + (gy - cy) ** 2 <= _GROVE_R ** 2:
+                grid[gy][gx] = "grove_floor"
+
+    # Statue at centre
+    grid[cy][cx] = "grove_statue"
+
+    # Sparse decorative trees inside
+    for gy in range(H):
+        for gx in range(W):
+            if grid[gy][gx] == "grove_floor" and (gx, gy) != (cx, cy):
+                d2 = (gx - cx) ** 2 + (gy - cy) ** 2
+                if d2 >= (_GROVE_R - 2) ** 2 and rng.random() < 0.25:
+                    grid[gy][gx] = "grove_wall"
+
+    # Exit at south wall
+    grid[cy + _GROVE_R][cx] = "grove_exit"
+
+    return [(gx, gy, grid[gy][gx]) for gy in range(H) for gx in range(W)]
+
+
+async def ensure_grove_built(forest_id: int, db) -> int:
+    """Lazily build the grove for this forest. Returns grove_id."""
+    row = await db.fetch_one(
+        "SELECT grove_id FROM grove_areas WHERE forest_id=?", (forest_id,)
+    )
+    if row:
+        return row["grove_id"]
+    # Build it
+    seed_row = await db.fetch_one("SELECT seed FROM world WHERE guild_id=0")
+    seed = seed_row["seed"] if seed_row else forest_id
+    grove_tiles = _generate_grove(forest_id, seed)
+    cur = await db.execute(
+        "INSERT INTO grove_areas (forest_id, width, height) VALUES (?, ?, ?)",
+        (forest_id, _GROVE_W, _GROVE_H),
+    )
+    grove_id = cur.lastrowid
+    await db.executemany(
+        "INSERT OR IGNORE INTO grove_tiles (grove_id, local_x, local_y, tile_type) VALUES (?,?,?,?)",
+        [(grove_id, gx, gy, tt) for gx, gy, tt in grove_tiles],
+    )
+    return grove_id
+
+
+async def load_grove_viewport(
+    grove_id: int, center_x: int, center_y: int, db,
+) -> list:
+    """Load a 9×9 viewport of the grove centred on (center_x, center_y)."""
+    from dwarf_explorer.config import VIEWPORT_SIZE, VIEWPORT_CENTER
+    from dwarf_explorer.world.generator import TileData
+    half  = VIEWPORT_CENTER
+    x_min = center_x - half
+    y_min = center_y - half
+    rows = await db.fetch_all(
+        "SELECT local_x, local_y, tile_type FROM grove_tiles"
+        " WHERE grove_id=? AND local_x>=? AND local_x<=? AND local_y>=? AND local_y<=?",
+        (grove_id, x_min, center_x + half, y_min, center_y + half),
+    )
+    tile_map = {(r["local_x"], r["local_y"]): r["tile_type"] for r in rows}
+    grid = []
+    for vy in range(VIEWPORT_SIZE):
+        row = []
+        for vx in range(VIEWPORT_SIZE):
+            cx2 = x_min + vx
+            cy2 = y_min + vy
+            row.append(TileData(terrain=tile_map.get((cx2, cy2), "grove_wall"), world_x=cx2, world_y=cy2))
+        grid.append(row)
+    return grid
+
+
+async def load_grove_single_tile(grove_id: int, local_x: int, local_y: int, db):
+    from dwarf_explorer.world.generator import TileData
+    row = await db.fetch_one(
+        "SELECT tile_type FROM grove_tiles WHERE grove_id=? AND local_x=? AND local_y=?",
+        (grove_id, local_x, local_y),
+    )
+    return TileData(terrain=row["tile_type"] if row else "grove_wall", world_x=local_x, world_y=local_y)
+
+
+async def get_wayerwood_target(forest_id: int, db) -> tuple[int, int] | None:
+    """Return the wayerwood target (local_x, local_y) for this forest, or None."""
+    row = await db.fetch_one(
+        "SELECT wayerwood_tx, wayerwood_ty FROM forest_areas WHERE forest_id=?",
+        (forest_id,),
+    )
+    if row and row["wayerwood_tx"] is not None:
+        return row["wayerwood_tx"], row["wayerwood_ty"]
+    return None

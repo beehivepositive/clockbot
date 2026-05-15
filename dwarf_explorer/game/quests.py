@@ -49,6 +49,8 @@ _ITEM_NAMES = {
     "wheat":      "Wheat",
     "carrot":     "Carrots",
     "potato":     "Potatoes",
+    "xyphem":      "Xyphem",
+    "wayerwood":   "Wayerwood",
 }
 
 # ── Quest templates ────────────────────────────────────────────────────────────
@@ -807,11 +809,13 @@ async def accept_quest(
     source_type: str = "village_npc",
     bounty_wx: int | None = None,
     bounty_wy: int | None = None,
+    is_main_quest: bool = False,
 ) -> bool:
-    """Accept a quest. Returns False if player already has MAX_PLAYER_QUESTS active."""
-    count = await get_active_quest_count(db, user_id)
-    if count >= MAX_PLAYER_QUESTS:
-        return False
+    """Accept a quest. Main quests bypass the MAX_PLAYER_QUESTS cap."""
+    if not is_main_quest:
+        count = await get_active_quest_count(db, user_id)
+        if count >= MAX_PLAYER_QUESTS:
+            return False
     # Check not already accepted
     existing = await db.fetch_one(
         "SELECT id FROM player_quests WHERE user_id = ? AND quest_id = ? AND status = 'active'",
@@ -821,9 +825,9 @@ async def accept_quest(
         return False
     await db.execute(
         "INSERT OR REPLACE INTO player_quests "
-        "(user_id, quest_id, progress, status, accepted_at, bounty_wx, bounty_wy, source_type) "
-        "VALUES (?, ?, 0, 'active', datetime('now'), ?, ?, ?)",
-        (user_id, quest_id, bounty_wx, bounty_wy, source_type),
+        "(user_id, quest_id, progress, status, accepted_at, bounty_wx, bounty_wy, source_type, is_main_quest) "
+        "VALUES (?, ?, 0, 'active', datetime('now'), ?, ?, ?, ?)",
+        (user_id, quest_id, bounty_wx, bounty_wy, source_type, 1 if is_main_quest else 0),
     )
     return True
 
@@ -1032,3 +1036,56 @@ def render_quest_summary(q: dict) -> str:
                 f"Reward: {q['reward_gold']}🪙 +{q['reward_xp']}xp"
                 + (f" +{q['reward_item']}" if q.get("reward_item") else ""))
     return f"**{q['title']}**\n{q['description']}"
+
+
+async def get_main_quests(db, user_id: int) -> list[dict]:
+    """Return all active main quests for the player."""
+    rows = await db.fetch_all(
+        "SELECT pq.id, pq.quest_id, pq.progress, pq.status, pq.accepted_at, "
+        "pq.bounty_wx, pq.bounty_wy, pq.source_type, "
+        "q.quest_type, q.quest_subtype, q.title, q.description, "
+        "q.target_id, q.target_count, q.reward_gold, q.reward_xp, q.reward_item "
+        "FROM player_quests pq "
+        "JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id = ? AND pq.is_main_quest = 1 AND pq.status = 'active' "
+        "ORDER BY pq.accepted_at",
+        (user_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+async def create_wayerwood_quest(db) -> int:
+    """Get or create the Wayerwood main quest row. Returns quest_id."""
+    row = await db.fetch_one(
+        "SELECT id FROM quests WHERE title='The Wayerwood' LIMIT 1"
+    )
+    if row:
+        return row["id"]
+    cur = await db.execute(
+        "INSERT INTO quests "
+        "(quest_type, quest_subtype, title, description, target_id, target_count, "
+        " reward_gold, reward_xp, reward_item, source_type) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "main", "craft",
+            "The Wayerwood",
+            "The elder of the tree city has tasked you with forging a Wayerwood — a magical divining rod "
+            "that senses a hidden grove within the forest. Gather **1 Stick** and **5 Xyphem** crystals "
+            "(found in forest chests), then return to the elder to have it crafted.",
+            "xyphem", 5,
+            0, 200, "wayerwood",
+            "tree_city_elder",
+        ),
+    )
+    return cur.lastrowid
+
+
+async def has_wayerwood_quest(db, user_id: int) -> bool:
+    """Return True if player already has The Wayerwood quest active."""
+    row = await db.fetch_one(
+        "SELECT 1 FROM player_quests pq "
+        "JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id=? AND q.title='The Wayerwood' AND pq.status='active'",
+        (user_id,),
+    )
+    return bool(row)

@@ -468,6 +468,20 @@ class Database:
     tile_type TEXT    NOT NULL,
     PRIMARY KEY (forest_id, floor_num, local_x, local_y)
 )""",
+                # Grove tables
+                """CREATE TABLE IF NOT EXISTS grove_areas (
+    grove_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    forest_id INTEGER NOT NULL,
+    width     INTEGER NOT NULL DEFAULT 19,
+    height    INTEGER NOT NULL DEFAULT 19
+)""",
+                """CREATE TABLE IF NOT EXISTS grove_tiles (
+    grove_id  INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (grove_id, local_x, local_y)
+)""",
             ]
             for mig_sql in migrations:
                 try:
@@ -480,6 +494,45 @@ class Database:
                         _log.warning("Migration warning (%s): %.120s", e, mig_sql)
                 except Exception as e:
                     _log.error("Migration error (%s): %.120s", e, mig_sql)
+            # ── Grove state columns on players ───────────────────────────────────
+            _player_cols = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+            for _col, _def in [("in_grove", "0"), ("grove_id", "NULL"), ("grove_x", "0"),
+                               ("grove_y", "0"), ("grove_forest_id", "NULL")]:
+                if _col not in _player_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE players ADD COLUMN {_col} INTEGER DEFAULT {_def}")
+                        conn.commit()
+                    except Exception as e:
+                        _log.warning("Grove column migration warning (%s): %s", e, _col)
+
+            # ── is_main_quest column on player_quests ─────────────────────────────
+            _pq_cols = {r[1] for r in conn.execute("PRAGMA table_info(player_quests)").fetchall()}
+            if "is_main_quest" not in _pq_cols:
+                try:
+                    conn.execute("ALTER TABLE player_quests ADD COLUMN is_main_quest INTEGER NOT NULL DEFAULT 0")
+                    conn.commit()
+                except Exception as e:
+                    _log.warning("is_main_quest migration warning: %s", e)
+
+            # ── loot_day column on player_forest_chest_loots ──────────────────────
+            _fchest_cols = {r[1] for r in conn.execute("PRAGMA table_info(player_forest_chest_loots)").fetchall()}
+            if "loot_day" not in _fchest_cols:
+                try:
+                    conn.execute("ALTER TABLE player_forest_chest_loots ADD COLUMN loot_day INTEGER NOT NULL DEFAULT 0")
+                    conn.commit()
+                except Exception as e:
+                    _log.warning("loot_day migration warning: %s", e)
+
+            # ── wayerwood_tx / wayerwood_ty columns on forest_areas ───────────────
+            _fa_cols = {r[1] for r in conn.execute("PRAGMA table_info(forest_areas)").fetchall()}
+            if "wayerwood_tx" not in _fa_cols:
+                try:
+                    conn.execute("ALTER TABLE forest_areas ADD COLUMN wayerwood_tx INTEGER DEFAULT NULL")
+                    conn.execute("ALTER TABLE forest_areas ADD COLUMN wayerwood_ty INTEGER DEFAULT NULL")
+                    conn.commit()
+                except Exception as e:
+                    _log.warning("wayerwood_tx migration warning: %s", e)
+
             # ── Inventory table rebuild (remove UNIQUE, add slot_index) ──────────
             inv_cols = {row[1] for row in conn.execute("PRAGMA table_info(inventory)").fetchall()}
             if "slot_index" not in inv_cols:

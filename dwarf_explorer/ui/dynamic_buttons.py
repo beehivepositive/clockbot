@@ -75,6 +75,9 @@ from dwarf_explorer.ui.game_view import (
     handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
     handle_qswap, handle_qswap_pass,
     handle_npc_quest,
+    handle_quest_main,
+    handle_mq_nav,
+    handle_mq_close,
     handle_tavern_buy, handle_tavern_close,
     handle_crew_npc_talk, handle_dialogue_nav, handle_dialogue_confirm, handle_dialogue_cancel,
     handle_ship_crew_view, handle_crew_task_cycle, handle_crew_fire, handle_crew_close,
@@ -497,6 +500,16 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_quest_close(interaction, gid, uid)
             elif act == "quest_set_target":
                 await handle_quest_set_target(interaction, gid, uid)
+            elif act == "quest_main":
+                await handle_quest_main(interaction, gid, uid)
+            elif act == "mq_prev":
+                await handle_mq_nav(interaction, gid, uid, -1)
+            elif act == "mq_next":
+                await handle_mq_nav(interaction, gid, uid, 1)
+            elif act == "mq_close":
+                await handle_mq_close(interaction, gid, uid)
+            elif act == "mq_header":
+                await interaction.response.defer()
             # Quest pool (village / bounty board)
             elif act == "qpool_prev":
                 await handle_qpool_nav(interaction, gid, uid, -1)

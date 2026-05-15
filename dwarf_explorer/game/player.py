@@ -8,6 +8,7 @@ from dwarf_explorer.config import (
     COMBAT_MOVES_DEFAULT, CANOE_PASSABLE, OCEAN_WALKABLE, SHIP_WALKABLE,
     SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE, TEMPLE_WALKABLE,
     FOREST_WALKABLE, MAZE_WALKABLE,
+    GROVE_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -113,6 +114,12 @@ class Player:
     tc_floor: int = 1
     tc_x: int = 0
     tc_y: int = 0
+    # Grove interior state
+    in_grove: bool = False
+    grove_id: int | None = None
+    grove_x: int = 0
+    grove_y: int = 0
+    grove_forest_id: int | None = None  # forest_id of forest that contains this grove
     # Combat state
     in_combat: bool = False
     combat_enemy_type: str | None = None
@@ -189,6 +196,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_maze(target_tile)
     if getattr(player, "in_forest", False):
         return can_move_forest(target_tile)
+    if getattr(player, "in_grove", False):
+        return can_move_grove(target_tile)
 
     terrain = target_tile.structure or target_tile.terrain
 
@@ -278,5 +287,15 @@ def can_move_maze(target_tile: TileData) -> tuple[bool, str]:
     if t == "maze_wall":
         return False, "A hedge wall blocks your path."
     if t not in MAZE_WALKABLE:
+        return False, "You can't go that way."
+    return True, ""
+
+
+def can_move_grove(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a grove."""
+    t = target_tile.terrain
+    if t == "grove_wall":
+        return False, "🌳 Ancient trees bar your path."
+    if t not in GROVE_WALKABLE:
         return False, "You can't go that way."
     return True, ""
