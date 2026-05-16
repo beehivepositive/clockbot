@@ -712,7 +712,21 @@ async def get_or_refresh_bounty_pool(
     if village_id is not None:
         rng_seed ^= village_id * 0x1337
     rng = random.Random(rng_seed)
-    all_bounties = _BOUNTY_TEMPLATES[:]
+
+    # Ocean quests (shark, sea serpent) only available at harbor villages
+    is_harbor_village = False
+    if village_wx is not None and village_wy is not None:
+        harbor_near = await db.fetch_one(
+            "SELECT 1 FROM tile_overrides WHERE tile_type='harbor'"
+            " AND ABS(world_x - ?) <= 6 AND ABS(world_y - ?) <= 6 LIMIT 1",
+            (village_wx, village_wy),
+        )
+        is_harbor_village = harbor_near is not None
+
+    all_bounties = [
+        t for t in _BOUNTY_TEMPLATES
+        if is_harbor_village or t.get("location_type") != "ocean"
+    ]
     rng.shuffle(all_bounties)
 
     quests_out: list[dict] = []

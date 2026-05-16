@@ -334,17 +334,23 @@ class GameView(discord.ui.View):
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
-        # ── Row 0: Nav | Inventory | Edit ─────────────────────────────────────
+        # ── Row 0: Inventory | Nav | Quests | Edit ────────────────────────────
+        inventory_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Inv", emoji="\U0001F392",
+            custom_id=_custom_id(self.guild_id, self.user_id, "inventory"),
+            row=0,
+        )
         nav_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Nav", emoji="\U0001F9ED",
             custom_id=_custom_id(self.guild_id, self.user_id, "nav_open"),
             row=0,
         )
-        inventory_btn = discord.ui.Button(
+        quests_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="Inv", emoji="\U0001F392",
-            custom_id=_custom_id(self.guild_id, self.user_id, "inventory"),
+            label="Quests", emoji="\U0001F4CB",
+            custom_id=_custom_id(self.guild_id, self.user_id, "quests"),
             row=0,
         )
         edit_btn = discord.ui.Button(
@@ -457,7 +463,7 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
-        row0 = [nav_btn, inventory_btn]
+        row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
@@ -2143,6 +2149,10 @@ _QUEST_NPC_TILES = {
     "b_priest", "b_tavern_npc", "b_farmer_npc",
     "b_blacksmith_npc", "b_resident",
     "vil_villager", "vil_guard",
+    # Tree city NPCs
+    "tc_elder", "tc_archivist", "tc_villager",
+    # Rift NPC
+    "rift_archivist",
 }
 
 
@@ -2276,19 +2286,16 @@ def _compute_context_labels(
                     if _adj_t == "tc_shop":
                         action_label, action_enabled = "🛍️ Shop", True
                         break
-                    elif _adj_t == "tc_elder":
-                        if getattr(player, "tc_floor", 1) == 4:
-                            action_label, action_enabled = "⚔️ Quest", True
-                        else:
-                            action_label, action_enabled = "🛍️ Shop", True
+            # TC NPC tiles → bottom-right talk button
+            _tc_npc_adj = False
+            for _dy_n, _dx_n in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_n, _ac_n = vc + _dy_n, vc + _dx_n
+                if 0 <= _ar_n < len(grid) and 0 <= _ac_n < len(grid[_ar_n]):
+                    if grid[_ar_n][_ac_n].terrain in _QUEST_NPC_TILES:
+                        _tc_npc_adj = True
                         break
-                    elif _adj_t == "tc_villager":
-                        action_label, action_enabled = "💬 Talk", True
-                        break
-                    elif _adj_t == "tc_archivist":
-                        action_label, action_enabled = "📜 Speak", True
-                        break
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            _tc_npc_label = ("💬", True) if _tc_npc_adj else ("", False)
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _tc_npc_label[0], _tc_npc_label[1], False, False, False
 
         # Maze tile context
         if getattr(player, "in_maze", False):
@@ -2494,16 +2501,8 @@ def _compute_context_labels(
         action_label, action_enabled = "🌾 Farmer", True
     elif "b_lumber_npc" in adj_terrains and not action_enabled:
         action_label, action_enabled = "🪵 Mill", True
-    elif "b_resident" in adj_terrains and not action_enabled:
-        action_label, action_enabled = "💬 Chat", True
     elif "b_pet" in adj_terrains and not action_enabled:
         action_label, action_enabled = "🐱 Pet", True
-    elif "vil_villager" in adj_terrains and not action_enabled:
-        action_label, action_enabled = "💬 Talk", True
-    elif "vil_guard" in adj_terrains and not action_enabled:
-        action_label, action_enabled = "💬 Talk", True
-    elif "rift_archivist" in adj_terrains and not action_enabled:
-        action_label, action_enabled = "📜 Speak", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
     elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
@@ -7992,18 +7991,6 @@ async def handle_action(
                 if _adj_terrain_act == "tc_shop":
                     await _open_tree_city_shop(interaction, guild_id, user_id, player)
                     return
-                elif _adj_terrain_act == "tc_elder":
-                    if getattr(player, "tc_floor", 1) == 4:
-                        await _open_tree_city_elder(interaction, guild_id, user_id, player)
-                    else:
-                        await _open_tree_city_shop(interaction, guild_id, user_id, player)
-                    return
-                elif _adj_terrain_act == "tc_villager":
-                    await _open_tree_city_villager(interaction, guild_id, user_id, player)
-                    return
-                elif _adj_terrain_act == "tc_archivist":
-                    await _open_tc_archivist(interaction, guild_id, user_id, player)
-                    return
         _tc_grid_act2 = await _ltcv_act(player.tc_forest_id, player.tc_floor,
                                         player.tc_x, player.tc_y, db)
         content = render_grid(_tc_grid_act2, player, "🌲 Nothing to use here.")
@@ -8029,20 +8016,6 @@ async def handle_action(
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grove_grid_act))
         return
-
-    # ── Cave/Rift: adjacent archivist ────────────────────────────────────────
-    if player.in_cave and not getattr(player, "in_tree_city", False):
-        from dwarf_explorer.world.caves import load_cave_viewport as _lcv_act
-        _cave_grid_act = await _lcv_act(player.cave_id, player.cave_x, player.cave_y, db)
-        vc = 4
-        _archivist_adj = any(
-            _cave_grid_act[vc + dy][vc + dx].terrain == "rift_archivist"
-            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
-            if 0 <= vc + dy < len(_cave_grid_act) and 0 <= vc + dx < len(_cave_grid_act[vc + dy])
-        )
-        if _archivist_adj:
-            await _open_rift_archivist(interaction, guild_id, user_id, player)
-            return
 
     # ── Player house: enter edit mode ────────────────────────────────────────
     if player.in_house and player.house_type == "player_house":
@@ -12548,6 +12521,129 @@ async def handle_npc_talk(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
+    import hashlib as _h_mod
+    def _hash(s): return int(_h_mod.md5(s.encode()).hexdigest(), 16)
+
+    # ── Tree city context ────────────────────────────────────────────────────
+    if getattr(player, "in_tree_city", False):
+        from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_talk
+        tc_grid = await _ltcv_talk(
+            player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db
+        )
+        vc = len(tc_grid) // 2
+        adj_npc: dict[str, tuple] = {}
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = vc + dr, vc + dc
+            if 0 <= nr < len(tc_grid) and 0 <= nc < len(tc_grid[nr]):
+                tile = tc_grid[nr][nc]
+                if tile and tile.terrain in _QUEST_NPC_TILES:
+                    adj_npc[tile.terrain] = (getattr(tile, "local_x", 0), getattr(tile, "local_y", 0))
+
+        npc_name, lore_text, pool, context = "Tree Dweller", "...", [], "tree_city"
+        if "tc_elder" in adj_npc:
+            npc_name = "Tree Elder"
+            lore_text = (
+                "This great tree has stood for centuries. We who dwell within it are its memory — "
+                "and its will. You have climbed far, traveller. That is not nothing."
+            )
+            # Elder quest on floor 4
+            if getattr(player, "tc_floor", 1) == 4:
+                from dwarf_explorer.game.quests import get_or_refresh_village_pool as _gvp_tc
+                # Use tc_forest_id as a pseudo-village so pool is stable per forest
+                _tc_pool = await _gvp_tc(db, player.tc_forest_id, seed)
+                pool = _tc_pool[:1]
+        elif "tc_archivist" in adj_npc:
+            npc_name = "Tree City Archivist"
+            has_crystal = getattr(player, "has_warp_crystal", False)
+            if has_crystal:
+                lore_text = (
+                    "You already hold a Chronolite shard — I see its resonance in the air around you. "
+                    "Good. Guard it well. The Temporal Rifts grow unstable."
+                )
+            else:
+                lore_text = (
+                    "I have catalogued every ring of this ancient tree. Did you know there is a grove "
+                    "deep in the forest where time moves strangely? A stone idol stands at its heart. "
+                    "Those who touch it... change."
+                )
+        elif "tc_villager" in adj_npc:
+            npc_name = "Tree Dweller"
+            _hv = _hash(f"tcv{player.tc_forest_id}{player.tc_x}{player.tc_y}")
+            tc_lore = [
+                "High up in the canopy the wind sounds different. Like breathing.",
+                "We rarely go to the ground anymore. The forest floor is not safe at night.",
+                "The elder knows things about this tree that no scroll records.",
+                "I was born in this tree. Forty rings up. Never seen the ocean.",
+            ]
+            lore_text = tc_lore[_hv % len(tc_lore)]
+
+        options = [{"label": "Tell me about yourself", "action": "lore"}]
+        if pool:
+            options.append({"label": f"📋 I'm looking for work ({npc_name})", "action": "quest_pool"})
+        options.append({"label": "Farewell", "action": "close"})
+        state = {
+            "type": "npc_dialogue", "npc_type": "tc_npc",
+            "npc_name": npc_name,
+            "text": "Greetings, wanderer. What brings you to the great tree?",
+            "options": options, "selected": 0,
+            "context": context, "quest_pool": pool,
+            "lore_text": lore_text, "source_label": npc_name,
+        }
+        _ui_state[user_id] = state
+        content = _render_dialogue(npc_name, state["text"], options, 0)
+        view = DialogueView(guild_id, user_id, options, 0)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # ── Cave/Rift context ────────────────────────────────────────────────────
+    if player.in_cave and not getattr(player, "in_tree_city", False):
+        from dwarf_explorer.world.caves import load_cave_viewport as _lcv_talk
+        cave_grid = await _lcv_talk(player.cave_id, player.cave_x, player.cave_y, db)
+        vc = len(cave_grid) // 2
+        adj_npc_cave: dict[str, tuple] = {}
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = vc + dr, vc + dc
+            if 0 <= nr < len(cave_grid) and 0 <= nc < len(cave_grid[nr]):
+                tile = cave_grid[nr][nc]
+                if tile and tile.terrain in _QUEST_NPC_TILES:
+                    adj_npc_cave[tile.terrain] = ()
+
+        if "rift_archivist" in adj_npc_cave:
+            has_crystal = getattr(player, "has_warp_crystal", False)
+            if has_crystal:
+                npc_name = "Panicked Scholar"
+                lore_text = (
+                    "You already carry Chronolite resonance — then you understand the danger! "
+                    "The temporal echo that haunts this rift was once a person, like you and I. "
+                    "Time fractured around them. Please — do not linger here."
+                )
+            else:
+                npc_name = "Panicked Scholar"
+                lore_text = (
+                    "I was studying the sundial when it activated and pulled me here! "
+                    "This is a Temporal Rift — a fold in time itself. The creature deeper in "
+                    "this place is dangerous beyond measure. There is a grove in the forest... "
+                    "a stone idol there holds the key to navigating these rifts safely."
+                )
+            options = [
+                {"label": "Tell me what you know", "action": "lore"},
+                {"label": "Farewell", "action": "close"},
+            ]
+            state = {
+                "type": "npc_dialogue", "npc_type": "rift_npc",
+                "npc_name": npc_name,
+                "text": "Oh thank goodness — a living person! Please, you must listen!",
+                "options": options, "selected": 0,
+                "context": "rift",
+                "lore_text": lore_text, "source_label": npc_name,
+            }
+            _ui_state[user_id] = state
+            content = _render_dialogue(npc_name, state["text"], options, 0)
+            view = DialogueView(guild_id, user_id, options, 0)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+    # ── Village / building context ───────────────────────────────────────────
     # Load the correct grid based on context
     if player.in_house:
         context = "building"
@@ -12578,9 +12674,6 @@ async def handle_npc_talk(
     )
 
     # NPC-specific lore texts and quest pool resolution
-    import hashlib as _h_mod
-    def _hash(s): return int(_h_mod.md5(s.encode()).hexdigest(), 16)
-
     if "b_priest" in adj_npc:
         npc_name = "Village Priest"
         lore_text = "The light of the gods watches over this village. May your journey be blessed."
@@ -13251,6 +13344,44 @@ async def handle_dialogue_nav(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+async def _dialogue_return_to_view(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    player, ctx: str, db, msg: str
+) -> None:
+    """Return to the correct game view after closing a dialogue, based on context."""
+    seed = await get_or_create_world(db, guild_id)
+    if ctx == "tree_city" and getattr(player, "in_tree_city", False):
+        from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_dlg
+        grid = await _ltcv_dlg(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+        content = render_grid(grid, player, msg)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+    elif ctx == "rift" and player.in_cave:
+        from dwarf_explorer.world.caves import load_cave_viewport as _lcv_dlg
+        grid = await _lcv_dlg(player.cave_id, player.cave_x, player.cave_y, db)
+        content = render_grid(grid, player, msg)
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+    elif ctx == "village" and player.in_village:
+        grid = await load_village_viewport(
+            player.village_id, player.village_x, player.village_y, db, user_id=user_id
+        )
+        content = render_grid(grid, player, msg)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+    else:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        content = render_grid(grid, player, msg)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+
+
 async def handle_dialogue_confirm(
     interaction: discord.Interaction, guild_id: int, user_id: int, action: str
 ) -> None:
@@ -13261,24 +13392,8 @@ async def handle_dialogue_confirm(
 
     if action == "close" or state.get("type") != "npc_dialogue":
         _ui_state.pop(user_id, None)
-        # Return to the correct view based on context
         ctx = state.get("context", "building") if state else "building"
-        if ctx == "village" and player.in_village:
-            grid = await load_village_viewport(
-                player.village_id, player.village_x, player.village_y, db, user_id=user_id
-            )
-            content = render_grid(grid, player, "Farewell.")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=_game_view(guild_id, user_id, player, grid=grid),
-            )
-        else:
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            content = render_grid(grid, player, "Farewell.")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=_game_view(guild_id, user_id, player, grid=grid),
-            )
+        await _dialogue_return_to_view(interaction, guild_id, user_id, player, ctx, db, "Farewell.")
         return
 
     if action == "lore":
@@ -13306,18 +13421,7 @@ async def handle_dialogue_confirm(
             )
         else:
             ctx = state.get("context", "building")
-            if ctx == "village" and player.in_village:
-                grid = await load_village_viewport(
-                    player.village_id, player.village_x, player.village_y, db, user_id=user_id
-                )
-                content = render_grid(grid, player, "I have no work for you right now.")
-            else:
-                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-                content = render_grid(grid, player, "I have no work for you right now.")
-            await interaction.response.edit_message(
-                embed=_embed(content), content=None,
-                view=_game_view(guild_id, user_id, player, grid=grid),
-            )
+            await _dialogue_return_to_view(interaction, guild_id, user_id, player, ctx, db, "I have no work for you right now.")
         return
 
     if action == "hire_crew":
@@ -13373,22 +13477,7 @@ async def handle_dialogue_cancel(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.pop(user_id, {})
     ctx = state.get("context", "building")
-    if ctx == "village" and player.in_village:
-        grid = await load_village_viewport(
-            player.village_id, player.village_x, player.village_y, db, user_id=user_id
-        )
-        content = render_grid(grid, player, "You end the conversation.")
-        await interaction.response.edit_message(
-            embed=_embed(content), content=None,
-            view=_game_view(guild_id, user_id, player, grid=grid),
-        )
-    else:
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-        content = render_grid(grid, player, "You end the conversation.")
-        await interaction.response.edit_message(
-            embed=_embed(content), content=None,
-            view=_game_view(guild_id, user_id, player, grid=grid),
-        )
+    await _dialogue_return_to_view(interaction, guild_id, user_id, player, ctx, db, "You end the conversation.")
 
 
 # ── Ship crew management handlers ─────────────────────────────────────────────
