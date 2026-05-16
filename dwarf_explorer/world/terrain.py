@@ -114,8 +114,8 @@ def get_biome(x: int, y: int, seed: int) -> str:
         if x >= c - 3:  return "sand"
 
     # ── Normal Whittaker-style land biomes ───────────────────────────────────
-    e = fbm(x, y, seed)
-    m = fbm(x, y, seed + _MOISTURE_OFFSET)
+    e = fbm(x, y, seed, octaves=3, base_scale=48.0)
+    m = fbm(x, y, seed + _MOISTURE_OFFSET, octaves=3, base_scale=48.0)
 
     if e > 0.65:
         return "snow" if m > 0.55 else "mountain"

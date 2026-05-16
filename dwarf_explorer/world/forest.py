@@ -132,6 +132,7 @@ def _branch_off(
 
 def _generate_forest_interior(
     forest_id: int, seed: int, world_x: int, world_y: int, num_exits: int = 1,
+    has_city: bool = True,
 ) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]], tuple[int, int]]:
     """Generate a forest interior as a bead-chain of clearings.
 
@@ -235,9 +236,10 @@ def _generate_forest_interior(
     # ── 4. Place special tiles ───────────────────────────────────────────────────
     specials: set[tuple[int, int]] = set()
 
-    # Tree City at center of central clearing
-    grid[center_y][center_x] = "fst_tree_city"
-    specials.add((center_x, center_y))
+    # Tree City at center of central clearing (only for the chosen forest)
+    if has_city:
+        grid[center_y][center_x] = "fst_tree_city"
+        specials.add((center_x, center_y))
 
     # Decorative trees scattered inside the central clearing
     for _ty_dec in range(center_y - _CENTRAL_R + 1, center_y + _CENTRAL_R):
@@ -421,11 +423,13 @@ async def create_forest_area(
     seed: int,
     overworld_positions: list[tuple[int, int]],
     db,
+    has_city: bool = True,
 ) -> None:
     """Create one forest interior linked to overworld_positions entrances.
 
     Idempotent: silently skips if any position is already linked.
     New forests use the bead-chain design; no standalone maze is created.
+    When has_city=False the tree city and grove are omitted (secondary forests).
     """
     for wx, wy in overworld_positions:
         existing = await db.fetch_one(
@@ -445,6 +449,7 @@ async def create_forest_area(
     width, height, forest_tiles, exit_positions, wayerwood_target = await asyncio.to_thread(
         _generate_forest_interior,
         forest_id, seed, overworld_positions[0][0], overworld_positions[0][1], n,
+        has_city,
     )
 
     await db.execute(
@@ -464,14 +469,15 @@ async def create_forest_area(
         [(forest_id, lx, ly, tt) for lx, ly, tt in forest_tiles],
     )
 
-    # Generate tree city floors for this forest (stored once at creation)
-    tc_floors = _generate_tc_interior(forest_id)
-    for floor_num, tiles in tc_floors.items():
-        await db.executemany(
-            "INSERT OR IGNORE INTO tree_city_tiles"
-            "(forest_id, floor_num, local_x, local_y, tile_type) VALUES(?,?,?,?,?)",
-            [(forest_id, floor_num, lx, ly, tt) for lx, ly, tt in tiles],
-        )
+    # Generate tree city floors for this forest (only for the primary forest)
+    if has_city:
+        tc_floors = _generate_tc_interior(forest_id)
+        for floor_num, tiles in tc_floors.items():
+            await db.executemany(
+                "INSERT OR IGNORE INTO tree_city_tiles"
+                "(forest_id, floor_num, local_x, local_y, tile_type) VALUES(?,?,?,?,?)",
+                [(forest_id, floor_num, lx, ly, tt) for lx, ly, tt in tiles],
+            )
 
     # Link each overworld tile to its local exit marker, and create tile_override
     for i, (wx, wy) in enumerate(overworld_positions):
@@ -517,7 +523,7 @@ async def place_forest_areas(seed: int, db) -> None:
         ):
             chosen.append(pos)
 
-    for wx, wy in chosen:
+    for idx, (wx, wy) in enumerate(chosen):
         ow_entrances = [(wx, wy)]
 
         already = await db.fetch_one(
@@ -527,7 +533,7 @@ async def place_forest_areas(seed: int, db) -> None:
         if already:
             continue
 
-        await create_forest_area(seed, ow_entrances, db)
+        await create_forest_area(seed, ow_entrances, db, has_city=(idx == 0))
 
 
 async def ensure_forests_placed(seed: int, db) -> None:

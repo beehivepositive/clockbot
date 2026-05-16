@@ -471,15 +471,14 @@ def render_inventory(
             if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
                 left_emoji  = _item_emoji("canoe_left")
                 right_emoji = _item_emoji("canoe_right")
-                cursor_left  = (i == selected) and cursor_mode == "inventory"
-                cursor_right = (i + 1 == selected) and cursor_mode == "inventory"
-                # Seamless: left_emoji + right_emoji flush together, total padding = 2 chars
-                if cursor_left:
-                    slots.append(f"{left_emoji}◀︎{right_emoji}{_PAD}")
-                elif cursor_right:
-                    slots.append(f"{left_emoji}{right_emoji}◀︎{_PAD}")
+                cursor_on_pair = (
+                    (i == selected or i + 1 == selected) and cursor_mode == "inventory"
+                )
+                # Centered: 1 pad on each side; cursor always shown on right piece
+                if cursor_on_pair:
+                    slots.append(f"{_PAD}{left_emoji}{right_emoji}◀︎")
                 else:
-                    slots.append(f"{left_emoji}{right_emoji}{_PAD * 2}")
+                    slots.append(f"{_PAD}{left_emoji}{right_emoji}{_PAD}")
                 continue
             qty = item["quantity"]
             is_selected = item_id in selections

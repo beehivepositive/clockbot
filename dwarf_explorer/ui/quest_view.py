@@ -42,10 +42,10 @@ def _sp(guild_id: int, user_id: int, tag: str, row: int) -> discord.ui.Button:
 class QuestView(discord.ui.View):
     """D-pad quest log.
 
-    Row 0: ← tab  |  ↑ quest up  |  tab →
-    Row 1: spacer  |  📍 Set/Unset Target  |  spacer
-    Row 2: spacer  |  ↓ quest down  |  spacer
-    Row 3: ✖ Abandon (or Confirm/Keep)  |  spacer  |  ✖ Close
+    Row 0: ⬆️ (up navigation, centered)
+    Row 1: ⬅️ (tab left) | 📍 (set/unset target) | ➡️ (tab right)
+    Row 2: ⬇️ (down navigation, centered)
+    Row 3: ✖ Abandon (or Confirm/Keep) | ✖ Close
     """
 
     def __init__(
@@ -61,61 +61,61 @@ class QuestView(discord.ui.View):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
-        other_tab_label = "⚔️ Main" if tab == "side" else "📋 Side"
-
-        # ── Row 0: ← tab | ↑ up | tab → ──────────────────────────────────────
+        # ── Row 0: ⬆️ up (single button) ──────────────────────────────────────
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label=f"◀ {other_tab_label}",
-            custom_id=_custom_id(gid, uid, "quest_tab_left"),
-            row=0,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="↑",
+            emoji="⬆️",
+            label="​",
             custom_id=_custom_id(gid, uid, "quest_up"),
             disabled=no_quests,
             row=0,
         ))
+
+        # ── Row 1: ⬅️ tab left | 📍 target | ➡️ tab right ────────────────────
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label=f"{other_tab_label} ▶",
-            custom_id=_custom_id(gid, uid, "quest_tab_right"),
-            row=0,
+            emoji="⬅️",
+            label="​",
+            custom_id=_custom_id(gid, uid, "quest_tab_left"),
+            row=1,
         ))
-
-        # ── Row 1: spacer | Set/Unset Target | spacer ─────────────────────────
-        self.add_item(_sp(gid, uid, "r1l", 1))
         if has_target:
             target_btn = discord.ui.Button(
                 style=discord.ButtonStyle.danger,
-                label="📍 Unset Target",
+                emoji="📍",
+                label="​",
                 custom_id=_custom_id(gid, uid, "quest_set_target"),
                 row=1,
             )
         else:
             target_btn = discord.ui.Button(
                 style=discord.ButtonStyle.primary,
-                label="📍 Set Target",
+                emoji="📍",
+                label="​",
                 custom_id=_custom_id(gid, uid, "quest_set_target"),
                 disabled=no_quests,
                 row=1,
             )
         self.add_item(target_btn)
-        self.add_item(_sp(gid, uid, "r1r", 1))
-
-        # ── Row 2: spacer | ↓ down | spacer ──────────────────────────────────
-        self.add_item(_sp(gid, uid, "r2l", 2))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="↓",
+            emoji="➡️",
+            label="​",
+            custom_id=_custom_id(gid, uid, "quest_tab_right"),
+            row=1,
+        ))
+
+        # ── Row 2: ⬇️ down (single button) ───────────────────────────────────
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            emoji="⬇️",
+            label="​",
             custom_id=_custom_id(gid, uid, "quest_down"),
             disabled=no_quests,
             row=2,
         ))
-        self.add_item(_sp(gid, uid, "r2r", 2))
 
-        # ── Row 3: Abandon / Confirm / Keep | spacer | Close ──────────────────
+        # ── Row 3: Abandon / Confirm / Keep | Close (no spacer) ───────────────
         if confirm_abandon:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger,
@@ -137,7 +137,6 @@ class QuestView(discord.ui.View):
                 disabled=no_quests,
                 row=3,
             ))
-            self.add_item(_sp(gid, uid, "r3m", 3))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="✖ Close",

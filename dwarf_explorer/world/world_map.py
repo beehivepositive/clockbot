@@ -31,7 +31,7 @@ _LEGEND_ICON_ENTRIES = [
     ("sky_temple_outer", "Outer Temple",  (  0, 220, 200), "filled_diamond"),
     ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
     ("forest_entrance",  "Forest",        ( 34, 139,  34), "filled_circle"),
-    ("bandit_camp",      "Bandit Camp",   (180,  60,  60), "filled_circle"),
+    ("bandit_camp",      "Bandit Camp",   (180,  60,  60), "filled_triangle"),
     ("player_house",     "Player House",  (255, 160,  50), "outline_square"),
 ]
 
@@ -46,11 +46,11 @@ _OCEAN_LEGEND_ICON_ENTRIES = [
     ("shipwreck",      "Shipwreck",      (100, 80,  50), "outline_square"),
 ]
 
-_LEGEND_SWATCH  = 16   # px square per legend swatch (was 12)
-_LEGEND_ROW_H   = 18   # px per legend row (was 14)
+_LEGEND_SWATCH  = 16   # px square per legend swatch
+_LEGEND_ROW_H   = 20   # px per legend row
 _LEGEND_MARGIN  = 8
-_LEGEND_COL_W   = 130
-_LEGEND_COLS    = 2
+_LEGEND_COL_W   = 120  # width per column (4 columns → 480 + margins = ~496 px wide)
+_LEGEND_COLS    = 4    # horizontal layout: 4 columns = wide key image
 _LEGEND_ICON_R  = 5    # radius used when drawing icons inside legend swatches
 
 # Special tiles painted as large icons instead of plain colored squares
@@ -137,6 +137,10 @@ def _draw_icon(draw, cx: int, cy: int, style: str, color: tuple, r: int = 3) -> 
         ar = r + 1
         pts = [(cx, cy - ar), (cx - ar, cy + ar), (cx + ar, cy + ar)]
         draw.polygon(pts, fill=color, outline=white)
+    elif style == "filled_triangle":
+        ar = r + 1
+        pts = [(cx, cy - ar), (cx - ar, cy + ar), (cx + ar, cy + ar)]
+        draw.polygon(pts, fill=color, outline=(255, 255, 255))
     elif style == "arrow_left":
         ar = r + 1
         pts = [(cx - ar, cy), (cx + ar, cy - ar), (cx + ar, cy + ar)]

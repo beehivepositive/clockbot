@@ -148,6 +148,32 @@ def _cursor_item(visible: list[dict], slot_pos: int) -> dict | None:
     return next((it for it in visible if it["slot_index"] == slot_pos), None)
 
 
+async def _player_has_canoe(db, user_id: int) -> bool:
+    """Return True if the player has any canoe piece (or legacy canoe) in inventory."""
+    row = await db.fetch_one(
+        "SELECT 1 FROM inventory WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right') LIMIT 1",
+        (user_id,),
+    )
+    return bool(row)
+
+
+def _canoe_cursor_adjust(visible: list[dict], sel: int, inv_cols: int) -> int:
+    """If cursor lands on canoe_left with canoe_right adjacent on the same row, advance to right piece.
+
+    This ensures the cursor always rests on the right half of the canoe pair.
+    """
+    left = _cursor_item(visible, sel)
+    if left is None or left["item_id"] != "canoe_left":
+        return sel
+    right = _cursor_item(visible, sel + 1)
+    if right is None or right["item_id"] != "canoe_right":
+        return sel
+    # Both on same row?
+    if sel // inv_cols != (sel + 1) // inv_cols:
+        return sel
+    return sel + 1
+
+
 def _parse_emoji(s: str) -> discord.PartialEmoji | None:
     """Parse a custom emoji string '<:name:id>' into a PartialEmoji, or None for plain text."""
     m = _CUSTOM_EMOJI_RE.match(s)
@@ -261,7 +287,8 @@ async def _build_player_view(
         return await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     if player.in_ship:
         return _ship_game_view(guild_id, user_id, player)
-    return _game_view(guild_id, user_id, player, grid=grid)
+    has_canoe = await _player_has_canoe(db, user_id)
+    return _game_view(guild_id, user_id, player, grid=grid, has_canoe=has_canoe)
 
 
 def _embed(content: str) -> discord.Embed:
@@ -2165,6 +2192,7 @@ def _compute_context_labels(
     grid: list[list],
     player: Player,
     hand_items: set[str],
+    has_canoe: bool = False,
 ) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
                npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled).
@@ -2533,8 +2561,8 @@ def _compute_context_labels(
     if (not player.in_village and not player.in_house and not player.in_cave
             and not player.in_ocean and not player.in_canoe):
         _CANOE_WATER = {"river", "bridge", "shallow_water"}
-        # Accept both legacy "canoe" (single item) and new "canoe_left" (2-piece)
-        _has_canoe = "canoe" in hand_items or "canoe_left" in hand_items
+        # Accept inventory presence (has_canoe), equipped hand slot, or legacy item
+        _has_canoe = has_canoe or "canoe" in hand_items or "canoe_left" in hand_items
         if _has_canoe:
             for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
                 r, c = vc + ro, vc + co
@@ -2574,7 +2602,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                mine_dirs: frozenset[str] = frozenset(),
                grid: list[list] | None = None,
                dock_available: bool = False,
-               embark_enabled: bool = False) -> discord.ui.View:
+               embark_enabled: bool = False,
+               has_canoe: bool = False) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
     has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
 
@@ -2611,7 +2640,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             hand_items.add(player.hand_2)
         (center_label, center_enabled, action_label, action_enabled, edit_enabled,
          npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled) = \
-            _compute_context_labels(grid, player, hand_items)
+            _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
@@ -3794,6 +3823,7 @@ async def _move_steps(
         return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
 
     else:
+        _ow_has_canoe = await _player_has_canoe(db, user_id)
         for _ in range(steps):
             nx, ny = player.world_x + dx, player.world_y + dy
             target = await load_single_tile(nx, ny, seed, db)
@@ -3803,7 +3833,7 @@ async def _move_steps(
                 nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
                 qmarks = await get_player_quest_markers(db, user_id)
                 nav = _ui_state.get(user_id, {}).get("nav_target")
-                return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
+                return render_grid(grid, player, reason, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid, has_canoe=_ow_has_canoe)
             player.world_x, player.world_y = nx, ny
             await update_player_position(db, user_id, nx, ny)
 
@@ -3912,7 +3942,7 @@ async def _move_steps(
         nearby = await get_nearby_players(db, user_id, player.world_x, player.world_y)
         qmarks = await get_player_quest_markers(db, user_id)
         nav = _ui_state.get(user_id, {}).get("nav_target")
-        return render_grid(grid, player, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, other_players=nearby, quest_markers=qmarks, nav_target=nav), _game_view(guild_id, user_id, player, grid=grid, has_canoe=_ow_has_canoe)
 
 
 async def handle_move(
@@ -9399,6 +9429,7 @@ async def handle_inv_up(
     inv_rows, inv_cols = _inv_capacity(player)
     cursor_mode = state.get("cursor_mode", "inventory")
 
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
     if cursor_mode == "inventory":
         current_row = state.get("selected", 0) // inv_cols
         if current_row == 0:
@@ -9406,6 +9437,7 @@ async def handle_inv_up(
             new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
         else:
             new_sel = max(0, state["selected"] - inv_cols)
+            new_sel = _canoe_cursor_adjust(visible, new_sel, inv_cols)
             new_state = {**state, "selected": new_sel}
     elif cursor_mode == "equipped":
         new_state = {**state, "cursor_mode": "gold"}
@@ -9431,12 +9463,15 @@ async def handle_inv_down(
     total_slots = inv_rows * inv_cols
     cursor_mode = state.get("cursor_mode", "inventory")
 
+    visible = [it for it in items if it["item_id"] != "gold_coin"]
     if cursor_mode == "gold":
         new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
     elif cursor_mode == "equipped":
-        new_state = {**state, "cursor_mode": "inventory", "selected": 0}
+        start_sel = _canoe_cursor_adjust(visible, 0, inv_cols)
+        new_state = {**state, "cursor_mode": "inventory", "selected": start_sel}
     else:
         new_sel = min(total_slots - 1, state.get("selected", 0) + inv_cols)
+        new_sel = _canoe_cursor_adjust(visible, new_sel, inv_cols)
         new_state = {**state, "selected": new_sel}
 
     _ui_state[user_id] = {**new_state, "type": "inventory"}
@@ -10298,6 +10333,34 @@ async def handle_inv_move_confirm(
 
     if origin == sel or origin_item is None:
         msg = "\n*(Nothing to move)*"
+
+    elif origin_item["item_id"] in ("canoe_left", "canoe_right"):
+        # Canoe 2-piece: always move both halves together as a unit.
+        # Find the paired half: left is at origin, right at origin+1 (or vice-versa).
+        left_item  = origin_item if origin_item["item_id"] == "canoe_left" else _cursor_item(visible, origin - 1)
+        right_item = _cursor_item(visible, origin + 1) if origin_item["item_id"] == "canoe_left" else origin_item
+        if left_item and right_item and left_item["item_id"] == "canoe_left" and right_item["item_id"] == "canoe_right":
+            # Destination slot: where left piece goes. Right piece goes to dest+1.
+            # Ensure both dest slots are on the same row and neither wraps
+            dest_left  = sel if origin_item["item_id"] == "canoe_left" else sel - 1
+            dest_right = dest_left + 1
+            if dest_left >= 0 and dest_right < inv_rows * inv_cols and dest_left // inv_cols == dest_right // inv_cols:
+                # Displace any items already at dest slots
+                displaced_left  = _cursor_item(visible, dest_left)
+                displaced_right = _cursor_item(visible, dest_right)
+                # Only displace if they're not the canoe pieces themselves
+                if displaced_left and displaced_left["slot_index"] not in (left_item["slot_index"], right_item["slot_index"]):
+                    await swap_inventory_slots(db, user_id, left_item["slot_index"], displaced_left["slot_index"])
+                if displaced_right and displaced_right["slot_index"] not in (left_item["slot_index"], right_item["slot_index"]):
+                    await swap_inventory_slots(db, user_id, right_item["slot_index"], displaced_right["slot_index"])
+                # Now move both canoe pieces to their destination slots
+                await swap_inventory_slots(db, user_id, left_item["slot_index"], dest_left)
+                await swap_inventory_slots(db, user_id, right_item["slot_index"], dest_right)
+                msg = "\n*🛶 Canoe moved.*"
+            else:
+                msg = "\n*(Canoe would wrap across rows — choose a different slot)*"
+        else:
+            msg = "\n*(Canoe piece is missing its pair)*"
 
     elif dest_item is not None and dest_item["item_id"] != origin_item["item_id"]:
         # Different item types — swap full stacks, ignore move_qty
@@ -12349,9 +12412,13 @@ async def handle_map(
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
+    # Send key first (horizontal legend), then the player map in an embed image
     key_file = discord.File(key_buf, filename="world_map_key.png")
+    await interaction.followup.send(file=key_file)
     map_file = discord.File(buf, filename="world_map.png")
-    await interaction.followup.send(files=[key_file, map_file])
+    map_embed = discord.Embed()
+    map_embed.set_image(url="attachment://world_map.png")
+    await interaction.followup.send(embed=map_embed, file=map_file)
 
 
 async def handle_help(
