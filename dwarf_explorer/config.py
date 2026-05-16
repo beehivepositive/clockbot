@@ -780,6 +780,7 @@ CAVE_EMOJI = {
     # Boss room tiles
     "cave_boss_door":     "\U0001F512",            # 🔒 sealed stone door (requires cave key)
     "cave_boss_floor":    "\U0001F7E5",            # 🟥 red — boss chamber floor
+    "cave_boss_trigger":  "\U0001F7E5",            # 🟥 same look as floor — triggers boss fight
     "cave_boss_chest":    "\U0001F4B0",            # 💰 boss treasure (gold bag)
 }
 
@@ -788,7 +789,7 @@ CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_mediu
                  # Lava cave tiles
                  "lava_floor", "lava_bridge",
                  # Boss room tiles (door is walkable so key-check logic runs inside the movement loop)
-                 "cave_boss_door", "cave_boss_floor", "cave_boss_chest"}
+                 "cave_boss_door", "cave_boss_floor", "cave_boss_trigger", "cave_boss_chest"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 # --- Shipwreck System ---

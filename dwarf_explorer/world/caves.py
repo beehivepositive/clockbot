@@ -128,15 +128,26 @@ def _carve_boss_room(
     floor_tiles: list[tuple[int, int]],
     width: int,
     height: int,
-) -> tuple[tuple[int, int] | None, set[tuple[int, int]], tuple[int, int] | None]:
+) -> tuple[
+    tuple[int, int] | None,
+    set[tuple[int, int]],
+    tuple[int, int] | None,
+    tuple[int, int] | None,
+]:
     """Carve a 7×5 boss room in a corner of the cave.
 
-    Returns (door_pos, boss_floor_tiles, chest_pos).
-    door_pos is the entry tile (cave_boss_door).
-    boss_floor_tiles is every room tile except the door.
-    chest_pos is the centre of the room.
+    Layout (left→right inside room):
+      col 0  = cave_boss_door  (entry gate, key required from outside)
+      col 1  = cave_boss_floor (safe antechamber — flee lands here)
+      col 2  = cave_boss_floor
+      col 3  = cave_boss_trigger (walking here spawns the Stone Guardian)
+      col 4  = cave_boss_floor
+      col 5  = cave_boss_chest (💰 boss treasure)
+      col 6  = cave_boss_floor (back wall buffer)
+
+    Returns (door_pos, boss_floor_tiles, trigger_pos, chest_pos).
     All room tiles (including door) are added to *carved*.
-    Returns (None, set(), None) if no valid placement found.
+    Returns (None, set(), None, None) if no valid placement found.
     """
     BW, BH = 7, 5
     corners = [
@@ -151,20 +162,19 @@ def _carve_boss_room(
         if brx < 2 or bry < 2 or brx + BW > width - 2 or bry + BH > height - 2:
             continue
 
-        # Door is the centre tile of the left edge of the room
+        # Door on left edge, middle row
         door_x = brx
         door_y = bry + BH // 2
-        # The corridor connects to one tile left of the door
         corr_ex, corr_ey = door_x - 1, door_y
         if corr_ex < 1:
             continue
 
-        # Find the nearest main-cave floor tile to the corridor endpoint
+        # Nearest main-cave floor tile for the approach corridor
         if not floor_tiles:
             break
         nearest = min(floor_tiles, key=lambda p: abs(p[0] - corr_ex) + abs(p[1] - corr_ey))
 
-        # Carve a 1-wide L-shaped corridor (horizontal then vertical)
+        # 1-wide L-shaped corridor (horizontal then vertical)
         cx, cy = nearest
         while cx != corr_ex:
             cx += 1 if cx < corr_ex else -1
@@ -175,7 +185,7 @@ def _carve_boss_room(
             if 1 <= cx < width - 1 and 1 <= cy < height - 1:
                 carved.add((cx, cy))
 
-        # Carve the room itself (all tiles including door)
+        # Carve room
         room_tiles: set[tuple[int, int]] = set()
         for dy in range(BH):
             for dx in range(BW):
@@ -183,11 +193,14 @@ def _carve_boss_room(
                 room_tiles.add(pos)
                 carved.add(pos)
 
-        boss_floor = room_tiles - {(door_x, door_y)}
-        chest_pos = (brx + BW // 2, bry + BH // 2)
-        return (door_x, door_y), boss_floor, chest_pos
+        # Special positions inside the room
+        trigger_pos = (brx + 3, door_y)   # 3 tiles in from door — triggers fight
+        chest_pos   = (brx + 5, door_y)   # 5 tiles in — boss chest
 
-    return None, set(), None
+        boss_floor = room_tiles - {(door_x, door_y), trigger_pos, chest_pos}
+        return (door_x, door_y), boss_floor, trigger_pos, chest_pos
+
+    return None, set(), None, None
 
 
 def _generate_cave_interior(
@@ -353,11 +366,12 @@ def _generate_cave_interior(
             stairup_position = center_tiles[0]
 
     # --- Boss room (level-3 caves only) ---
-    boss_door_pos: tuple[int, int] | None = None
-    boss_floor_tiles: set[tuple[int, int]] = set()
-    boss_chest_pos: tuple[int, int] | None = None
+    boss_door_pos:     tuple[int, int] | None = None
+    boss_trigger_pos:  tuple[int, int] | None = None
+    boss_chest_pos:    tuple[int, int] | None = None
+    boss_floor_tiles:  set[tuple[int, int]]   = set()
     if cave_level == 3 and floor_tiles:
-        boss_door_pos, boss_floor_tiles, boss_chest_pos = _carve_boss_room(
+        boss_door_pos, boss_floor_tiles, boss_trigger_pos, boss_chest_pos = _carve_boss_room(
             rng, carved, floor_tiles, width, height
         )
 
@@ -374,6 +388,8 @@ def _generate_cave_interior(
             # Boss room tiles (checked before generic chest/floor so they take priority)
             elif (x, y) == boss_door_pos:
                 tiles.append((x, y, "cave_boss_door"))
+            elif (x, y) == boss_trigger_pos:
+                tiles.append((x, y, "cave_boss_trigger"))
             elif boss_chest_pos and (x, y) == boss_chest_pos:
                 tiles.append((x, y, "cave_boss_chest"))
             elif (x, y) in boss_floor_tiles:

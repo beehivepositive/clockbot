@@ -3632,63 +3632,55 @@ async def _move_steps(
                                   moves_left=player.combat_moves_left)
                 return content, view
 
-            # ── Boss door: requires a Cave Key ──
+            # ── Boss door: costs one Cave Key per entry attempt (per player) ──
             if target.terrain == "cave_boss_door":
-                key_row = await db.fetch_one(
-                    "SELECT id FROM inventory WHERE user_id=? AND item_id='cave_key' LIMIT 1",
-                    (user_id,),
+                # Only check key when approaching from outside the boss room
+                cur_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
+                entering_from_outside = cur_tile.terrain not in (
+                    "cave_boss_floor", "cave_boss_door", "cave_boss_trigger", "cave_boss_chest"
                 )
-                if not key_row:
-                    msgs.append(
-                        "🔒 A heavy stone door seals the chamber. You need a **Cave Key** to enter.\n"
-                        "*Defeat trolls or wyverns deeper in the cave to find one.*"
+                if entering_from_outside:
+                    key_row = await db.fetch_one(
+                        "SELECT id FROM inventory WHERE user_id=? AND item_id='cave_key' LIMIT 1",
+                        (user_id,),
                     )
-                    break
-                # Consume the key and permanently unlock the door for everyone
-                await remove_from_inventory(db, user_id, "cave_key", 1)
-                await db.execute(
-                    "UPDATE cave_tiles SET tile_type='cave_boss_floor' "
-                    "WHERE cave_id=? AND local_x=? AND local_y=?",
-                    (player.cave_id, nx, ny),
-                )
-                _invalidate_vp(user_id)
-                msgs.append("🗝️ You use the **Cave Key** — the stone door grinds open!")
-                # Fall through so the player moves onto the now-unlocked tile
-
-            # ── Boss floor: triggers Stone Guardian encounter if boss still alive ──
-            if target.terrain in ("cave_boss_floor", "cave_boss_chest") and cave_level == 3:
-                if not rift_boss_defeated:
-                    if target.terrain == "cave_boss_chest":
-                        # Can't loot the chest until the guardian is defeated
-                        msgs.append("⚔️ The **Stone Guardian** stands watch. Defeat it first!")
+                    if not key_row:
+                        msgs.append(
+                            "🔒 A heavy stone door seals the chamber. You need a **Cave Key** to enter.\n"
+                            "*Defeat trolls or wyverns deeper in the cave to find one.*"
+                        )
                         break
-                    # Step onto the floor tile, then spawn the guardian
-                    player.cave_x, player.cave_y = nx, ny
-                    await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
+                    await remove_from_inventory(db, user_id, "cave_key", 1)
+                    msgs.append("🗝️ You use the **Cave Key** — the stone door grinds open. Good luck.")
+                # Fall through; door tile is walkable; door tile is NOT altered in DB
 
-                    enemy_type = "stone_guardian"
-                    grid = await load_cave_viewport(player.cave_id, nx, ny, db)
-                    arena_rng = _random.Random(hash((user_id, player.cave_id, "guardian")))
-                    arena, _ex, _ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+            # ── Boss trigger: stepping here always spawns the Stone Guardian ──
+            if target.terrain == "cave_boss_trigger" and cave_level == 3:
+                player.cave_x, player.cave_y = nx, ny
+                await update_player_cave_state(db, user_id, True, player.cave_id, nx, ny)
 
-                    player.in_combat = True
-                    player.combat_enemy_type = enemy_type
-                    player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
-                    player.combat_enemy_x = _ex
-                    player.combat_enemy_y = _ey
-                    player.combat_player_x = ARENA_SIZE // 2
-                    player.combat_player_y = ARENA_SIZE // 2
-                    player.combat_moves_left = (
-                        COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
-                    )
-                    _ui_state[user_id] = {"type": "combat", "arena": arena}
-                    await save_combat_state(db, user_id, player)
-                    content = render_arena(arena, player)
-                    view = CombatView(guild_id, user_id,
-                                      trapped=arena["player_trapped"],
-                                      moves_left=player.combat_moves_left)
-                    return content, view
-                # Boss already dead — fall through and allow free movement in the chamber
+                enemy_type = "stone_guardian"
+                grid = await load_cave_viewport(player.cave_id, nx, ny, db)
+                arena_rng = _random.Random(hash((user_id, player.cave_id, nx, ny, "guardian")))
+                arena, _ex, _ey = build_arena_from_viewport(grid, enemy_type, arena_rng)
+
+                player.in_combat = True
+                player.combat_enemy_type = enemy_type
+                player.combat_enemy_hp = ENEMY_STATS[enemy_type][0]
+                player.combat_enemy_x = _ex
+                player.combat_enemy_y = _ey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = (
+                    COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
+                )
+                _ui_state[user_id] = {"type": "combat", "arena": arena}
+                await save_combat_state(db, user_id, player)
+                content = render_arena(arena, player)
+                view = CombatView(guild_id, user_id,
+                                  trapped=arena["player_trapped"],
+                                  moves_left=player.combat_moves_left)
+                return content, view
 
             # Handle stairdown: descend to child cave (generated lazily on first visit)
             if target.terrain == "cave_stairdown":
@@ -3983,21 +3975,33 @@ async def _finish_combat(
         )
 
     # Stone Guardian victory: mark cave boss defeated, boss chest now lootable
-    if won and player.combat_enemy_type == "stone_guardian" and player.in_cave:
-        await db.execute(
-            "UPDATE caves SET boss_defeated=1 WHERE cave_id=?", (player.cave_id,)
-        )
-        extra_msg += (
-            " 💀 The **Stone Guardian** crumbles to rubble! "
-            "The boss chamber is cleared — find the 💰 chest within."
-        )
+    if player.combat_enemy_type == "stone_guardian" and player.in_cave:
+        if won:
+            extra_msg += (
+                " 💀 The **Stone Guardian** crumbles to rubble! "
+                "The 💰 chest is yours."
+            )
+        elif player.hp > 0:
+            # Fled — reposition to just inside the door (antechamber), before the trigger tile
+            door_row = await db.fetch_one(
+                "SELECT local_x, local_y FROM cave_tiles "
+                "WHERE cave_id=? AND tile_type='cave_boss_door' LIMIT 1",
+                (player.cave_id,),
+            )
+            if door_row:
+                # Place player one tile past the door — safe antechamber, before trigger
+                flee_x = door_row["local_x"] + 1
+                flee_y = door_row["local_y"]
+                player.cave_x, player.cave_y = flee_x, flee_y
+                await update_player_cave_state(db, user_id, True, player.cave_id, flee_x, flee_y)
+            extra_msg += " 🏃 You scramble back to the antechamber. The Guardian still lurks within."
 
     # Cave Key drop: cave_troll or cave_wyvern in a level-3 cave (boss not yet defeated)
     if won and player.combat_enemy_type in ("cave_troll", "cave_wyvern") and player.in_cave:
         cave_meta_k = await db.fetch_one(
-            "SELECT cave_level, boss_defeated FROM caves WHERE cave_id=?", (player.cave_id,)
+            "SELECT cave_level FROM caves WHERE cave_id=?", (player.cave_id,)
         )
-        if cave_meta_k and cave_meta_k["cave_level"] == 3 and not cave_meta_k["boss_defeated"]:
+        if cave_meta_k and cave_meta_k["cave_level"] == 3:
             existing_key = await db.fetch_one(
                 "SELECT id FROM inventory WHERE user_id=? AND item_id='cave_key' LIMIT 1",
                 (user_id,),
