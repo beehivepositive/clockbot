@@ -64,9 +64,8 @@ class QuestView(discord.ui.View):
         # ── Row 0: [spacer] ⬆️ [spacer] — centred over the middle action button ─
         self.add_item(_sp(gid, uid, "up_l", 0))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.primary,
             emoji="⬆️",
-            label="​",
             custom_id=_custom_id(gid, uid, "quest_up"),
             disabled=no_quests,
             row=0,
@@ -75,9 +74,8 @@ class QuestView(discord.ui.View):
 
         # ── Row 1: ⬅️ tab left | 📍 target | ➡️ tab right ────────────────────
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.primary,
             emoji="⬅️",
-            label="​",
             custom_id=_custom_id(gid, uid, "quest_tab_left"),
             row=1,
         ))
@@ -85,24 +83,21 @@ class QuestView(discord.ui.View):
             target_btn = discord.ui.Button(
                 style=discord.ButtonStyle.danger,
                 emoji="📍",
-                label="​",
                 custom_id=_custom_id(gid, uid, "quest_set_target"),
                 row=1,
             )
         else:
             target_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
+                style=discord.ButtonStyle.success,
                 emoji="📍",
-                label="​",
                 custom_id=_custom_id(gid, uid, "quest_set_target"),
                 disabled=no_quests,
                 row=1,
             )
         self.add_item(target_btn)
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.primary,
             emoji="➡️",
-            label="​",
             custom_id=_custom_id(gid, uid, "quest_tab_right"),
             row=1,
         ))
@@ -110,9 +105,8 @@ class QuestView(discord.ui.View):
         # ── Row 2: [spacer] ⬇️ [spacer] — centred over the middle action button ─
         self.add_item(_sp(gid, uid, "dn_l", 2))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.primary,
             emoji="⬇️",
-            label="​",
             custom_id=_custom_id(gid, uid, "quest_down"),
             disabled=no_quests,
             row=2,
@@ -178,7 +172,11 @@ async def render_unified_quest_list(
     q = quests[index]
     total = len(quests)
 
-    header = f"{tab_label} ({total}/{MAX_PLAYER_QUESTS})  —  Quest {index + 1} of {total}\n\n"
+    if tab == "main":
+        header = f"{tab_label}  —  Quest {index + 1} of {total}\n\n"
+    else:
+        header = f"{tab_label} ({total}/{MAX_PLAYER_QUESTS})  —  Quest {index + 1} of {total}\n\n"
+
     body = render_quest_summary(q)
 
     # Show completable hint when in village for fetch/delivery
@@ -198,6 +196,11 @@ async def render_unified_quest_list(
     if nav_target:
         tx, ty = nav_target
         body += f"\n\n*🎯 Nav target active → ({tx}, {_flip_y(ty)})*"
+
+    # ⚠️ warning for non-trackable quests (no world coordinates to pin)
+    trackable = bool(q.get("bounty_wx") or q.get("location_x"))
+    if not trackable:
+        header = "⚠️ " + header
 
     return header + body
 
