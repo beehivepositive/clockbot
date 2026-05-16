@@ -61,6 +61,24 @@ def _carve_circ(
                         grid[py][px] = "fst_floor"
 
 
+def _carve_blob(
+    grid: list[list[str]], cx: int, cy: int, r: int, W: int, H: int,
+    rng: random.Random,
+) -> None:
+    """Carve an irregular blob clearing instead of a perfect circle."""
+    for dy in range(-r - 2, r + 3):
+        for dx in range(-r - 2, r + 3):
+            dist = math.sqrt(dx * dx + dy * dy)
+            angle = math.atan2(dy, dx)
+            noise = rng.uniform(-1.2, 1.2)
+            threshold = r + noise
+            if dist <= threshold:
+                px, py = cx + dx, cy + dy
+                if 1 <= px < W - 1 and 1 <= py < H - 1:
+                    if grid[py][px] == "fst_tree":
+                        grid[py][px] = "fst_floor"
+
+
 def _carve_path(
     grid: list[list[str]], x1: int, y1: int, x2: int, y2: int, W: int, H: int
 ) -> None:
@@ -118,7 +136,7 @@ def _branch_off(
     tx = max(PAD, min(W - PAD - 1, parent_x + int(math.cos(angle) * step)))
     ty = max(PAD, min(H - PAD - 1, parent_y + int(math.sin(angle) * step)))
 
-    _carve_circ(grid, tx, ty, _CLEARING_R, W, H)
+    _carve_blob(grid, tx, ty, _CLEARING_R, W, H, rng)
     _carve_path(grid, parent_x, parent_y, tx, ty, W, H)
 
     dead_ends: list[tuple[int, int]] = [(tx, ty)]
@@ -158,8 +176,9 @@ def _generate_forest_interior(
 
     center_x, center_y = W // 2, H // 2
 
-    # ── 1. Central clearing ──────────────────────────────────────────────────────
-    _carve_circ(grid, center_x, center_y, _CENTRAL_R, W, H)
+    # ── 1. Central clearing (only for city forests) ──────────────────────────────
+    if has_city:
+        _carve_circ(grid, center_x, center_y, _CENTRAL_R, W, H)
 
     # ── 2. Determine exit positions (on the map boundary) ────────────────────────
     edges = ["top", "bottom", "left", "right"]
@@ -202,7 +221,7 @@ def _generate_forest_interior(
 
         # Narrow corridor from boundary inner-point to first clearing
         _carve_path(grid, inner[0], inner[1], first_c[0], first_c[1], W, H)
-        _carve_circ(grid, first_c[0], first_c[1], _CLEARING_R, W, H)
+        _carve_blob(grid, first_c[0], first_c[1], _CLEARING_R, W, H, rng)
 
         # Intermediate beads meandering toward center
         # Aim slightly off-center so two chains don't perfectly overlap
@@ -217,7 +236,7 @@ def _generate_forest_interior(
         # Carve each intermediate bead and the corridor from its predecessor
         for j, (bx, by) in enumerate(mid_beads):
             prev = chain[j]   # chain[0]=first_c, chain[1]=mid_beads[0], …
-            _carve_circ(grid, bx, by, _CLEARING_R, W, H)
+            _carve_blob(grid, bx, by, _CLEARING_R, W, H, rng)
             _carve_path(grid, prev[0], prev[1], bx, by, W, H)
 
         # Connect last bead to central clearing
@@ -232,6 +251,12 @@ def _generate_forest_interior(
         for bx, by in interior[:_NUM_TRIBUTARIES]:
             ends = _branch_off(rng, grid, bx, by, W, H, max_depth=1)
             dead_ends.extend(ends)
+
+        # Extra tributaries for non-city forests (no central clearing to fill the space)
+        if not has_city:
+            for bx, by in interior[:_NUM_TRIBUTARIES + 2]:
+                ends = _branch_off(rng, grid, bx, by, W, H, max_depth=2)
+                dead_ends.extend(ends)
 
     # ── 4. Place special tiles ───────────────────────────────────────────────────
     specials: set[tuple[int, int]] = set()
@@ -270,20 +295,43 @@ def _generate_forest_interior(
         grid[cy2][cx2] = "fst_chest"
         specials.add((cx2, cy2))
 
+    # Forest map chest — one per forest, at the farthest remaining dead-end
+    _map_chest_candidates = [d for d in dead_ends if d not in specials]
+    _map_chest_candidates.sort(key=lambda p: -(abs(p[0] - center_x) + abs(p[1] - center_y)))
+    if _map_chest_candidates:
+        mcx, mcy = _map_chest_candidates[0]
+        grid[mcy][mcx] = "fst_map_chest"
+        specials.add((mcx, mcy))
+
     # Nut trees scattered in chain clearings (not on specials, not near center)
+    # Place each nut tree at a random floor tile within the clearing radius
     chain_flat = [b for chain in all_chain_beads for b in chain]
     rng.shuffle(chain_flat)
     nut_count = 0
+    _nut_target = rng.randint(4, 7)
     for bx, by in chain_flat:
-        if nut_count >= rng.randint(4, 7):
+        if nut_count >= _nut_target:
             break
         if (bx, by) in specials:
             continue
         if abs(bx - center_x) + abs(by - center_y) < 10:
             continue   # don't place nut trees inside the central clearing area
-        grid[by][bx] = "fst_nut_tree"
-        specials.add((bx, by))
-        nut_count += 1
+        # Find random floor tile within clearing radius
+        _nut_candidates = []
+        for _ndy in range(-(_CLEARING_R - 1), _CLEARING_R):
+            for _ndx in range(-(_CLEARING_R - 1), _CLEARING_R):
+                _nd2 = _ndx * _ndx + _ndy * _ndy
+                if _nd2 <= (_CLEARING_R - 1) ** 2:
+                    _nx2, _ny2 = bx + _ndx, by + _ndy
+                    if (1 <= _nx2 < W - 1 and 1 <= _ny2 < H - 1
+                            and (_nx2, _ny2) not in specials
+                            and grid[_ny2][_nx2] == "fst_floor"):
+                        _nut_candidates.append((_nx2, _ny2))
+        if _nut_candidates:
+            _nx2, _ny2 = rng.choice(_nut_candidates)
+            grid[_ny2][_nx2] = "fst_nut_tree"
+            specials.add((_nx2, _ny2))
+            nut_count += 1
 
     # ── 5. Build tile list ───────────────────────────────────────────────────────
     tiles: list[tuple[int, int, str]] = [

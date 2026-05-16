@@ -482,6 +482,16 @@ class Database:
     tile_type TEXT    NOT NULL,
     PRIMARY KEY (grove_id, local_x, local_y)
 )""",
+                # Watering can uses counter
+                "ALTER TABLE players ADD COLUMN watering_can_uses INTEGER NOT NULL DEFAULT 0",
+                # Player map collection (forest maps etc.)
+                """CREATE TABLE IF NOT EXISTS player_map_collection (
+    user_id   INTEGER NOT NULL,
+    map_type  TEXT    NOT NULL,
+    ref_id    INTEGER NOT NULL,
+    acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, map_type, ref_id)
+)""",
             ]
             for mig_sql in migrations:
                 try:

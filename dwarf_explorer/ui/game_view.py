@@ -342,7 +342,9 @@ class GameView(discord.ui.View):
                  npc_label: str = "", npc_enabled: bool = False,
                  embark_enabled: bool = False,
                  feed_enabled: bool = False,
-                 plant_enabled: bool = False):
+                 plant_enabled: bool = False,
+                 action2_label: str = "", action2_enabled: bool = False,
+                 action2_id: str = "sp_action2"):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -350,7 +352,8 @@ class GameView(discord.ui.View):
                             center_label, center_enabled,
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
-                            embark_enabled, feed_enabled, plant_enabled)
+                            embark_enabled, feed_enabled, plant_enabled,
+                            action2_label, action2_enabled, action2_id)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -377,6 +380,8 @@ class GameView(discord.ui.View):
                        embark_enabled: bool = False,
                        feed_enabled: bool = False,
                        plant_enabled: bool = False,
+                       action2_label: str = "", action2_enabled: bool = False,
+                       action2_id: str = "sp_action2",
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -421,20 +426,48 @@ class GameView(discord.ui.View):
             )
         up_btn = self._dir_btn("up", "\u2B06\uFE0F", 1, "up" in mine_dirs)
         if action_enabled and action_label:
-            action_btn = discord.ui.Button(
-                style=discord.ButtonStyle.success,
-                label=action_label,
-                custom_id=_custom_id(self.guild_id, self.user_id, "action"),
-                row=1,
-            )
+            _action_parsed = _parse_emoji(action_label)
+            if _action_parsed:
+                action_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_action_parsed,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "action"),
+                    row=1,
+                )
+            else:
+                action_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    label=action_label,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "action"),
+                    row=1,
+                )
         else:
             action_btn = discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
-                label="\u200b", disabled=True,
+                label="​", disabled=True,
                 custom_id=_custom_id(self.guild_id, self.user_id, "sp3"),
                 row=1,
             )
 
+        # Optional second action button (fishing + watering can fill when both equipped)
+        if action2_enabled and action2_label:
+            _a2_parsed = _parse_emoji(action2_label)
+            if _a2_parsed:
+                action2_btn: discord.ui.Button | None = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_a2_parsed,
+                    custom_id=_custom_id(self.guild_id, self.user_id, action2_id),
+                    row=1,
+                )
+            else:
+                action2_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    label=action2_label,
+                    custom_id=_custom_id(self.guild_id, self.user_id, action2_id),
+                    row=1,
+                )
+        else:
+            action2_btn = None
         # ── Row 2: ⬅️ | Center | ➡️ ──────────────────────────────────────────
         left_btn  = self._dir_btn("left",  "\u2B05\uFE0F", 2, "left"  in mine_dirs)
         right_btn = self._dir_btn("right", "\u27A1\uFE0F", 2, "right" in mine_dirs)
@@ -516,7 +549,7 @@ class GameView(discord.ui.View):
             row0.append(edit_btn)
         for btn in [
             *row0,                              # row 0
-            sp1_btn, up_btn, action_btn,        # row 1: [sprint/spacer][⬆][action]
+            *([sp1_btn, up_btn, action_btn] + ([action2_btn] if action2_btn is not None else [])),  # row 1
             left_btn, center_btn, right_btn,    # row 2
             sp5_btn, down_btn, npc_btn,         # row 3: [embark/feed/spacer][⬇][npc]
         ]:
@@ -1104,13 +1137,29 @@ class FstChestView(discord.ui.View):
             ("◀", "fst_chest_prev"),
             ("▶", "fst_chest_next"),
             ("📤 Take", "fst_chest_take"),
-            (f"{loot_emoji} Loot All", "fst_chest_lootall"),
             ("❌ Close", "fst_chest_close"),
         ]:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
                 label=label,
                 custom_id=_custom_id(guild_id, user_id, act),
+                row=0,
+            ))
+        # Loot All button: use emoji= for custom emoji support
+        _loot_parsed = _parse_emoji(loot_emoji)
+        if _loot_parsed:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji=_loot_parsed,
+                label="Loot All",
+                custom_id=_custom_id(guild_id, user_id, "fst_chest_lootall"),
+                row=0,
+            ))
+        else:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=f"{loot_emoji} Loot All",
+                custom_id=_custom_id(guild_id, user_id, "fst_chest_lootall"),
                 row=0,
             ))
 
@@ -2249,9 +2298,10 @@ def _compute_context_labels(
     player: Player,
     hand_items: set[str],
     has_canoe: bool = False,
-) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool]:
+) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool, str, bool, str]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-               npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled).
+               npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
+               action2_label, action2_enabled, action2_id).
 
     center = on-tile interaction (interact button at row-2 center)
     action = adjacent-tile interaction (action button at row-1 col-2)
@@ -2263,10 +2313,11 @@ def _compute_context_labels(
 
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
+    action2_label, action2_enabled, action2_id = "", False, "sp_action2"
     edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
@@ -2299,7 +2350,7 @@ def _compute_context_labels(
                     center_label, center_enabled = "🔨 Repair", True
                 else:
                     center_label, center_enabled = "🕳️ Damage", False
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Shipwreck tile context
         if getattr(player, "in_shipwreck", False):
@@ -2307,7 +2358,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "\U0001F300 Exit", True
             elif t == "sw_chest":
                 center_label, center_enabled = "\U0001F4B0 Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Temple tile context (outer & main)
         if getattr(player, "in_temple", False):
@@ -2321,7 +2372,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌀 Enter", True
             elif t == "temple_portal_locked":
                 center_label, center_enabled = "🔒 Locked", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Sky biome tile context
         if getattr(player, "in_sky", False):
@@ -2333,7 +2384,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "✨ Inspect", True
             elif t == "sky_temple":
                 center_label, center_enabled = "\U0001F3DB️ Inspect", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Forest tile context
         if getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
@@ -2352,7 +2403,11 @@ def _compute_context_labels(
                 from dwarf_explorer.config import FOREST_EMOJI as _FE
                 _ce = _FE.get("fst_chest", "📦")
                 center_label, center_enabled = f"{_ce} Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            elif t == "fst_map_chest":
+                from dwarf_explorer.config import FOREST_EMOJI as _FE3
+                _mce = _FE3.get("fst_map_chest", "🗺️")
+                center_label, center_enabled = _mce, True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Tree City tile context
         if getattr(player, "in_tree_city", False):
@@ -2381,7 +2436,7 @@ def _compute_context_labels(
                         _tc_npc_adj = True
                         break
             _tc_npc_label = ("💬", True) if _tc_npc_adj else ("", False)
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _tc_npc_label[0], _tc_npc_label[1], False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _tc_npc_label[0], _tc_npc_label[1], False, False, False, "", False, "sp_action2"
 
         # Maze tile context
         if getattr(player, "in_maze", False):
@@ -2390,7 +2445,7 @@ def _compute_context_labels(
             elif t in ("maze_chest", "maze_mimic"):
                 # maze_mimic looks identical to maze_chest intentionally
                 center_label, center_enabled = "💰 Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Grove tile context
         if getattr(player, "in_grove", False):
@@ -2403,7 +2458,7 @@ def _compute_context_labels(
                     if grid[_ar_g][_ac_g].terrain == "grove_statue":
                         action_label, action_enabled = "🗿 Touch", True
                         break
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Bandit camp tile context
         if getattr(player, "in_bandit_camp", False):
@@ -2419,7 +2474,7 @@ def _compute_context_labels(
                         _bc_bandit_adj = True
                         break
             _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2"
 
         # Island tile context
         if player.in_island:
@@ -2443,7 +2498,7 @@ def _compute_context_labels(
                         local_adj.add(_adj.terrain)
             if "fishing_rod" in hand_items and local_adj & {"island_void", "vol_void"}:
                 action_label, action_enabled = "🎣 Fish", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
@@ -2605,9 +2660,30 @@ def _compute_context_labels(
         action_label, action_enabled = "🪵 Mill", True
     elif "b_pet" in adj_terrains and not action_enabled:
         action_label, action_enabled = "🐱 Pet", True
-    elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
-        action_label, action_enabled = "🎣 Fish", True
-    elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
+    else:
+        # Fishing and/or watering can fill (can show simultaneously when both equipped)
+        _water_adj = adj_terrains & {"river", "bridge", "shallow_water", "deep_water",
+                                     "vil_well", "vil_fountain"}
+        has_rod = "fishing_rod" in hand_items
+        has_can = "watering_can" in hand_items
+        from dwarf_explorer.config import ITEM_EMOJI as _IE_wc
+        _wc_emoji = _IE_wc.get("watering_can", "🪣")
+
+        if has_rod and has_can and _water_adj:
+            # Both equipped + adjacent water — show two buttons, main hand first
+            if player.hand_1 == "fishing_rod":
+                action_label, action_enabled = "🎣 Fish", True
+                action2_label, action2_enabled, action2_id = _wc_emoji, True, "fill_watering_can"
+            else:
+                # hand_1 = watering_can → fill is primary, fish is secondary
+                action_label, action_enabled = _wc_emoji, True
+                action2_label, action2_enabled, action2_id = "🎣 Fish", True, "fish_secondary"
+        elif has_rod and _water_adj:
+            action_label, action_enabled = "🎣 Fish", True
+        elif has_can and _water_adj:
+            action_label, action_enabled = _wc_emoji, True
+
+    if not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
         # Offer to build a house on the current tile if house_kit is equipped and tile is buildable
         _bt = center_tile.terrain
         _build_ok = (
@@ -2660,7 +2736,9 @@ def _compute_context_labels(
         if center_tile and center_tile.terrain == "vil_farmland":
             plant_enabled = True
 
-    return center_label, center_enabled, action_label, action_enabled, edit_enabled, npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled
+    return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
+            npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
+            action2_label, action2_enabled, action2_id)
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -2702,6 +2780,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
 
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
+    action2_label, action2_enabled, action2_id = "", False, "sp_action2"
     edit_enabled = False
     npc_label, npc_enabled = "", False
 
@@ -2713,7 +2792,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
         if player.hand_2:
             hand_items.add(player.hand_2)
         (center_label, center_enabled, action_label, action_enabled, edit_enabled,
-         npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled) = \
+         npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
+         action2_label, action2_enabled, action2_id) = \
             _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
     return GameView(guild_id, user_id,
@@ -2729,7 +2809,10 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     npc_enabled=npc_enabled,
                     embark_enabled=embark_enabled,
                     feed_enabled=feed_enabled,
-                    plant_enabled=plant_enabled)
+                    plant_enabled=plant_enabled,
+                    action2_label=action2_label,
+                    action2_enabled=action2_enabled,
+                    action2_id=action2_id)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -5129,6 +5212,37 @@ async def handle_embark(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+async def handle_fill_watering_can(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Fill the equipped watering can from an adjacent water source."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    has_can = player.hand_1 == "watering_can" or player.hand_2 == "watering_can"
+    if not has_can:
+        seed = await get_or_create_world(db, guild_id)
+        grid = await _cached_grid(user_id, player, seed, db)
+        content = render_grid(grid, player, "🪣 You don't have a watering can equipped.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+    player.watering_can_uses = 9
+    await db.execute("UPDATE players SET watering_can_uses=9 WHERE user_id=?", (user_id,))
+    seed = await get_or_create_world(db, guild_id)
+    grid = await _cached_grid(user_id, player, seed, db)
+    content = render_grid(grid, player, "🪣 You fill the watering can. **(9/9)**")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_fish_secondary(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Fish from water — called when fishing rod is the off-hand secondary action."""
+    # Reuse the same logic as handle_action's fishing branch
+    await handle_action(interaction, guild_id, user_id)
+
+
 async def handle_feed_cat(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -7263,11 +7377,28 @@ async def handle_interact(
                 (player.forest_x + player.forest_id * 10000,
                  player.forest_y + player.forest_id * 10000)
             )
-            player.hp = min(player.max_hp, player.hp + qty * 8)
-            await update_player_stats(db, user_id, hp=player.hp)
             content = render_grid(grid, player,
-                f"🌰 You gather **{qty} Forest Nut{'s' if qty > 1 else ''}** from the branches. "
-                f"(+{qty * 8} HP — {player.hp}/{player.max_hp})")
+                f"🌰 You gather **{qty} Forest Nut{'s' if qty > 1 else ''}** from the branches.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif ftile.terrain == "fst_map_chest":
+            # Check if already collected
+            _fmap_check = await db.fetch_one(
+                "SELECT 1 FROM player_map_collection WHERE user_id=? AND map_type='forest' AND ref_id=?",
+                (user_id, player.forest_id)
+            )
+            if _fmap_check:
+                content = render_grid(grid, player,
+                    "🗺️ You already have this forest's map in your navigation menu.")
+            else:
+                await db.execute(
+                    "INSERT OR IGNORE INTO player_map_collection(user_id, map_type, ref_id) VALUES(?,?,?)",
+                    (user_id, "forest", player.forest_id)
+                )
+                content = render_grid(grid, player,
+                    "🗺️ You found the **Forest Map**! It has been added to your 🧭 navigation menu.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
@@ -7278,6 +7409,11 @@ async def handle_interact(
                 content = render_grid(grid, player,
                     "🌲 *'Water me, and I shall give you what the forest guards.'*\n"
                     "Equip a 🪣 **Watering Can** and interact again.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+            if player.watering_can_uses <= 0:
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=_game_view(guild_id, user_id, player, grid=grid))
                 return
@@ -7303,6 +7439,8 @@ async def handle_interact(
                 "INSERT OR REPLACE INTO farm_watered_at(world_x, world_y, last_watered) VALUES(?,?,datetime('now'))",
                 (key_x, key_y)
             )
+            player.watering_can_uses = max(0, player.watering_can_uses - 1)
+            await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
             content = render_grid(grid, player,
                 f"🌲 You pour water at the roots of the **Ancient Tree**. "
                 f"It shudders — and drops **{qty} Ancient Seed{'s' if qty > 1 else ''}** at your feet!\n"
@@ -8291,21 +8429,39 @@ async def handle_interact(
 
         elif terrain == "sapling" and "watering_can" in hand_items:
             # Water sapling → forest
-            await set_tile_override(db, wx, wy, "forest")
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
+            if player.watering_can_uses <= 0:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+            else:
+                await set_tile_override(db, wx, wy, "forest")
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
 
         elif terrain == "short_grass" and "watering_can" in hand_items:
             # Water short grass → grass
-            await set_tile_override(db, wx, wy, "grass")
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "You water the short grass. It grows lush!")
+            if player.watering_can_uses <= 0:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+            else:
+                await set_tile_override(db, wx, wy, "grass")
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "You water the short grass. It grows lush!")
 
         elif terrain == "seedling" and "watering_can" in hand_items:
             # Water seedling → grass
-            await set_tile_override(db, wx, wy, "grass")
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "You water the seedling. It grows into grass!")
+            if player.watering_can_uses <= 0:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+            else:
+                await set_tile_override(db, wx, wy, "grass")
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "You water the seedling. It grows into grass!")
 
         elif terrain == "crop_ripe":
             # Harvest ripe crop
@@ -8318,24 +8474,30 @@ async def handle_interact(
 
         elif terrain in ("crop_planted", "crop_sprout") and "watering_can" in hand_items:
             # Water the crop — 5-minute cooldown between stages
-            last_str = await get_farm_last_watered(db, wx, wy)
-            can_water = True
-            if last_str:
-                try:
-                    last_dt = datetime.fromisoformat(last_str)
-                    can_water = (datetime.utcnow() - last_dt) >= timedelta(minutes=5)
-                except ValueError:
-                    can_water = True
-            if can_water:
-                next_stage = "crop_sprout" if terrain == "crop_planted" else "crop_ripe"
-                stage_name = "a sprout" if next_stage == "crop_sprout" else "a ripe crop"
-                await set_tile_override(db, wx, wy, next_stage)
-                await set_farm_watered(db, wx, wy)
+            if player.watering_can_uses <= 0:
                 grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, f"💧 You water the crop. It grows into {stage_name}!")
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
             else:
-                grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, "💧 The crop needs more time before the next watering (5 min cooldown).")
+                last_str = await get_farm_last_watered(db, wx, wy)
+                can_water = True
+                if last_str:
+                    try:
+                        last_dt = datetime.fromisoformat(last_str)
+                        can_water = (datetime.utcnow() - last_dt) >= timedelta(minutes=5)
+                    except ValueError:
+                        can_water = True
+                if can_water:
+                    next_stage = "crop_sprout" if terrain == "crop_planted" else "crop_ripe"
+                    stage_name = "a sprout" if next_stage == "crop_sprout" else "a ripe crop"
+                    await set_tile_override(db, wx, wy, next_stage)
+                    await set_farm_watered(db, wx, wy)
+                    player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                    await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, f"💧 You water the crop. It grows into {stage_name}!")
+                else:
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, "💧 The crop needs more time before the next watering (5 min cooldown).")
 
         elif terrain == "farmland" and "seed" in hand_items:
             # Plant seed on farmland
@@ -8632,6 +8794,11 @@ async def handle_action(
 
         if center_vt in _VIL_SEEDS_TILES and "watering_can" in hand_items_v:
             # Water seeds → mature crop
+            if player.watering_can_uses <= 0:
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
             crop_info = next(
                 (c for c in FARM_CROPS.values() if c["planted"] == center_vt), None
             )
@@ -8641,6 +8808,8 @@ async def handle_action(
                 content = render_grid(grid, player, f"💧 You water the seeds. A {crop_info['emoji']} crop sprouts!")
             else:
                 content = render_grid(grid, player, "💧 You water the soil.")
+            player.watering_can_uses = max(0, player.watering_can_uses - 1)
+            await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
@@ -8779,14 +8948,36 @@ async def handle_action(
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
-        # Fishing (overworld)
-        if "fishing_rod" in hand_items and await _is_adjacent_to_water(player, seed, db):
+        # Fishing or watering can fill (overworld) — check hand_1 for priority
+        _water_adj_act = await _is_adjacent_to_water(player, seed, db)
+        if player.hand_1 == "watering_can" and _water_adj_act:
+            await handle_fill_watering_can(interaction, guild_id, user_id)
+            return
+        elif player.hand_1 == "fishing_rod" and _water_adj_act:
             roll = _random.random()
             if roll < 0.50:
                 await add_to_inventory(db, user_id, "fish", 1)
                 msg = "🎣 You cast your line... and reel in a **fish**!"
             elif roll < 0.51:
-                # 1% chance: map fragment
+                await add_to_inventory(db, user_id, "map_fragment", 1)
+                msg = "🎣 You reel in something unusual — a **map fragment**!"
+            else:
+                msg = "🎣 You cast your line... the fish got away."
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, msg)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+        elif "watering_can" in hand_items and _water_adj_act:
+            # watering_can must be hand_2 (hand_1 is something else)
+            await handle_fill_watering_can(interaction, guild_id, user_id)
+            return
+        elif "fishing_rod" in hand_items and _water_adj_act:
+            roll = _random.random()
+            if roll < 0.50:
+                await add_to_inventory(db, user_id, "fish", 1)
+                msg = "🎣 You cast your line... and reel in a **fish**!"
+            elif roll < 0.51:
                 await add_to_inventory(db, user_id, "map_fragment", 1)
                 msg = "🎣 You reel in something unusual — a **map fragment**!"
             else:
@@ -11452,9 +11643,10 @@ async def handle_warp_close(
 
 
 class NavView(discord.ui.View):
-    """Navigation overlay: World Map | Warp (if crystal) | Close."""
+    """Navigation overlay: World Map | Warp (if crystal) | Forest Map (if unlocked) | Close."""
 
-    def __init__(self, guild_id: int, user_id: int, has_warp_crystal: bool = False):
+    def __init__(self, guild_id: int, user_id: int, has_warp_crystal: bool = False,
+                 has_forest_map: bool = False):
         super().__init__(timeout=None)
         map_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
@@ -11471,6 +11663,13 @@ class NavView(discord.ui.View):
                 row=0,
             )
             self.add_item(warp_btn)
+        if has_forest_map:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label="Forest Map", emoji="🌲",
+                custom_id=_custom_id(guild_id, user_id, "forest_map"),
+                row=0,
+            ))
         close_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="✖ Close",
@@ -11520,24 +11719,79 @@ async def _fetch_or_cache_avatar(
 async def handle_nav_open(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Show the base world map immediately (no player overlays for speed).
-
-    The full map with all player positions + key is generated when the player
-    presses the 🗺️ Map button.
-    """
+    """Show the navigation overlay with map/warp/forest map buttons."""
     await interaction.response.defer()
     db = await get_database(guild_id)
-    seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     has_crystal = getattr(player, "has_warp_crystal", False)
-    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
-    # Show the nav buttons overlaid on the current game viewport (no preview map needed —
-    # pressing "Map" will send the full map as a separate message)
-    grid = await _cached_grid(user_id, player, seed, db)
-    _nav = _ui_state.get(user_id, {}).get("nav_target")
-    content = render_grid(grid, player, nav_target=_nav)
+    has_forest_map = False
+    if player.in_forest and player.forest_id:
+        _fmap = await db.fetch_one(
+            "SELECT 1 FROM player_map_collection WHERE user_id=? AND map_type='forest' AND ref_id=?",
+            (user_id, player.forest_id)
+        )
+        has_forest_map = (_fmap is not None)
+    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=has_forest_map)
+    await interaction.edit_original_response(content=None, embed=None, attachments=[], view=view)
+
+
+async def handle_forest_map(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Render the current forest interior as a PIL image."""
+    await interaction.response.defer()
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not player.in_forest or not player.forest_id:
+        await interaction.edit_original_response(
+            content="📍 You're not currently in a forest.", embed=None, attachments=[], view=None
+        )
+        return
+    tiles = await db.fetch_all(
+        "SELECT local_x, local_y, tile_type FROM forest_tiles WHERE forest_id=?",
+        (player.forest_id,)
+    )
+    if not tiles:
+        await interaction.edit_original_response(
+            content="🗺️ Forest map data not available.", embed=None, attachments=[], view=None
+        )
+        return
+    import io
+    from PIL import Image, ImageDraw
+    from dwarf_explorer.world.forest import FOREST_W, FOREST_H
+    SCALE = 4
+    img = Image.new("RGB", (FOREST_W * SCALE, FOREST_H * SCALE), (34, 80, 34))
+    draw = ImageDraw.Draw(img)
+    COLOR_MAP = {
+        "fst_floor":        (139, 115, 85),
+        "fst_chest":        (200, 170, 50),
+        "fst_map_chest":    (200, 170, 50),
+        "fst_nut_tree":     (100, 160, 60),
+        "fst_ancient_tree": (60,  200, 60),
+        "fst_tree_city":    (180, 100, 20),
+        "fst_exit":         (220, 220, 220),
+    }
+    for tile in tiles:
+        tx, ty, tt = tile["local_x"], tile["local_y"], tile["tile_type"]
+        color = COLOR_MAP.get(tt)
+        if color:
+            draw.rectangle(
+                [tx * SCALE, ty * SCALE, (tx + 1) * SCALE - 1, (ty + 1) * SCALE - 1],
+                fill=color,
+            )
+    # Player dot
+    px_center = player.forest_x * SCALE + SCALE // 2
+    py_center = player.forest_y * SCALE + SCALE // 2
+    r = max(2, SCALE)
+    draw.ellipse([px_center - r, py_center - r, px_center + r, py_center + r], fill=(255, 50, 50))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    file = discord.File(buf, filename="forest_map.png")
+    has_crystal = getattr(player, "has_warp_crystal", False)
+    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=True)
     await interaction.edit_original_response(
-        embed=_embed(content), attachments=[], view=view
+        content=None, embed=None, attachments=[file], view=view
     )
 
 

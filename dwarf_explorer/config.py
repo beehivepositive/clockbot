@@ -638,6 +638,7 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_maze_door":    "\U0001F300",   # 🌀 entrance to maze branch
     "fst_nut_tree":     "\U0001F330",   # 🌰 nut tree (interact to gather forest nuts)
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
+    "fst_map_chest":    "\U0001F5FA️",  # 🗺️ map chest (contains forest map)
     "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
     # Maze tiles
     "maze_wall":        "\U0001F333",   # 🌳 dense forest wall (impassable)
@@ -655,7 +656,7 @@ FOREST_EMOJI: dict[str, str] = {
 
 FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
-    "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic",
+    "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({
@@ -1499,6 +1500,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("small_pouch",  "pouch"),
         ("medium_pouch", "pouch"),
         ("large_pouch",  "pouch"),
+        # Watering can
+        ("watering_can", "watering_can"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:
@@ -1568,6 +1571,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         FOREST_EMOJI["fst_chest"] = cache["chest"]
         FOREST_EMOJI["maze_chest"] = cache["chest"]
         FOREST_EMOJI["fst_mimic"] = cache["chest"]  # same look as fst_chest by design
+        # fst_map_chest keeps its map emoji (🗺️) — no override needed
     if "fst_floor" in cache:
         FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
     # Tree city staircase custom emoji

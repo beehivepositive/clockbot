@@ -207,6 +207,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             grove_y=row["grove_y"] if "grove_y" in cols else 0,
             grove_forest_id=row["grove_forest_id"] if "grove_forest_id" in cols else None,
             has_warp_crystal=bool(row["has_warp_crystal"]) if "has_warp_crystal" in cols else False,
+            watering_can_uses=int(row["watering_can_uses"]) if "watering_can_uses" in cols else 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "

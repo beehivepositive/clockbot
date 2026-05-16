@@ -370,6 +370,14 @@ CREATE TABLE IF NOT EXISTS player_forest_chest_loots (
     PRIMARY KEY (user_id, forest_id, local_x, local_y)
 );
 
+CREATE TABLE IF NOT EXISTS player_map_collection (
+    user_id   INTEGER NOT NULL,
+    map_type  TEXT    NOT NULL,
+    ref_id    INTEGER NOT NULL,
+    acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, map_type, ref_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_forest_entrances_pos ON forest_entrances(world_x, world_y);
 CREATE INDEX IF NOT EXISTS idx_forest_tiles_area ON forest_tiles(forest_id, local_x, local_y);
 CREATE INDEX IF NOT EXISTS idx_maze_tiles_area ON maze_tiles(maze_id, local_x, local_y);

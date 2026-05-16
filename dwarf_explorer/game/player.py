@@ -143,6 +143,7 @@ class Player:
     pouch: str | None = None
     coin_purse: str | None = None
     avatar_emoji: str | None = None
+    watering_can_uses: int = 0  # 0 = empty, 1-9 = uses remaining
     # Warp crystal state
     has_warp_crystal: bool = False
     # Bandit camp interior state

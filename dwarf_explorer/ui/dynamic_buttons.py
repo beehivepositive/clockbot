@@ -34,6 +34,7 @@ async def _bg_avatar_refresh(guild: discord.Guild, user_id: int, db) -> None:
         pass
 from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_sprint,
+    handle_fill_watering_can, handle_fish_secondary, handle_forest_map,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
     handle_shop_nav, handle_shop_buy, handle_shop_sell, handle_shop_mode,
@@ -169,6 +170,8 @@ _IGNORED_ACTIONS = {
     # Quest spacers (qsp_*)  — caught dynamically below
     # NPC button spacer
     "sp_npc",
+    # Action2 spacer (when no second action available)
+    "sp_action2",
     # Dialogue spacer
     "dlg_sp1",
     # Puzzle board info labels (disabled counters)
@@ -706,6 +709,12 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_nav_open(interaction, gid, uid)
             elif act == "nav_close":
                 await handle_nav_close(interaction, gid, uid)
+            elif act == "fill_watering_can":
+                await handle_fill_watering_can(interaction, gid, uid)
+            elif act == "fish_secondary":
+                await handle_fish_secondary(interaction, gid, uid)
+            elif act == "forest_map":
+                await handle_forest_map(interaction, gid, uid)
             elif act == "map_close":
                 # Delete the standalone map message
                 try:
