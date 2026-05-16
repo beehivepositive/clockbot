@@ -1124,7 +1124,7 @@ async def get_active_quests(db, user_id: int) -> list[dict]:
         "q.reward_gold, q.reward_xp, q.reward_item, q.location_x, q.location_y, "
         "q.source_type, q.quest_subtype, q.location_type "
         "FROM player_quests pq JOIN quests q ON pq.quest_id = q.id "
-        "WHERE pq.user_id = ? AND pq.status = 'active' AND (pq.is_main_quest = 0 OR pq.is_main_quest IS NULL) "
+        "WHERE pq.user_id = ? AND pq.status = 'active' AND pq.is_main_quest = 0 "
         "ORDER BY pq.accepted_at",
         (user_id,),
     )

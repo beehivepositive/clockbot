@@ -221,6 +221,8 @@ def _vp_cache_key(player) -> tuple:
         return ("grove", getattr(player, "grove_id", 0), getattr(player, "grove_x", 0), getattr(player, "grove_y", 0))
     if getattr(player, "in_forest", False):
         return ("forest", getattr(player, "forest_id", 0), getattr(player, "forest_x", 0), getattr(player, "forest_y", 0))
+    if getattr(player, "in_bandit_camp", False):
+        return ("bandit_camp", getattr(player, "bandit_camp_id", 0), getattr(player, "bc_x", 0), getattr(player, "bc_y", 0))
     return ("world", player.world_x, player.world_y)
 
 
@@ -267,6 +269,15 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif getattr(player, "in_forest", False):
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_cache
         grid = await _lfv_cache(player.forest_id, player.forest_x, player.forest_y, db)
+    elif getattr(player, "in_bandit_camp", False):
+        from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_cache
+        _bc_row_cache = await db.fetch_one(
+            "SELECT world_x, world_y FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+        )
+        if _bc_row_cache:
+            grid = _lbcv_cache(player.bc_x, player.bc_y, int(_bc_row_cache["world_x"]), int(_bc_row_cache["world_y"]))
+        else:
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -287,6 +298,8 @@ async def _build_player_view(
         return await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     if player.in_ship:
         return _ship_game_view(guild_id, user_id, player)
+    if getattr(player, "in_bandit_camp", False):
+        return _game_view(guild_id, user_id, player, grid=grid)
     has_canoe = await _player_has_canoe(db, user_id)
     if player.in_canoe:
         seed = await get_or_create_world(db, guild_id)
@@ -496,14 +509,25 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
+        # Blank flanking buttons so up/down sit centred above left/center/right
+        _sp = discord.ButtonStyle.secondary
+        blank_ul = discord.ui.Button(style=_sp, label="​", disabled=True,
+                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_ul"), row=1)
+        blank_ur = discord.ui.Button(style=_sp, label="​", disabled=True,
+                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_ur"), row=1)
+        blank_dl = discord.ui.Button(style=_sp, label="​", disabled=True,
+                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_dl"), row=3)
+        blank_dr = discord.ui.Button(style=_sp, label="​", disabled=True,
+                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_dr"), row=3)
+
         row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
-            *row0,                                   # row 0
-            sp1_btn, up_btn, action_btn,             # row 1
-            left_btn, center_btn, right_btn,         # row 2
-            sp5_btn, down_btn, npc_btn,              # row 3
+            *row0,                                                      # row 0
+            blank_ul, up_btn, blank_ur, sp1_btn, action_btn,           # row 1: [_][⬆][_][sprint][action]
+            left_btn, center_btn, right_btn,                            # row 2
+            blank_dl, down_btn, blank_dr, sp5_btn, npc_btn,            # row 3: [_][⬇][_][embark/feed][npc]
         ]:
             self.add_item(btn)
 
@@ -1245,18 +1269,11 @@ class CombatView(discord.ui.View):
                 label=emoji, disabled=disabled,
                 custom_id=_custom_id(gid, uid, action), row=2,
             ))
-        if enemy_type == "bandit":
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.success,
-                label="💰 Bribe", disabled=disabled,
-                custom_id=_custom_id(gid, uid, "c_bribe"), row=2,
-            ))
-        else:
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label="\u200b", disabled=True,
-                custom_id=_custom_id(gid, uid, "csp0"), row=2,
-            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="​", disabled=True,
+            custom_id=_custom_id(gid, uid, "csp0"), row=2,
+        ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="\u200b", disabled=True,
@@ -1280,6 +1297,24 @@ class BribeModal(discord.ui.Modal, title="Bribe the Bandit"):
 
     async def on_submit(self, interaction: discord.Interaction):  # type: ignore[override]
         await handle_bribe_submit(interaction, self._gid, self._uid, self.amount.value)
+
+
+class _BandtCampBribeModal(discord.ui.Modal, title="Bribe the Bandit"):
+    """Modal for bribing a bandit inside a camp (dialogue context, not combat)."""
+    amount = discord.ui.TextInput(
+        label="Coins to offer",
+        placeholder="10 coins = ~25%  |  50 coins = 100%  |  success = 10 moves safe",
+        min_length=1,
+        max_length=6,
+    )
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__()
+        self._gid = guild_id
+        self._uid = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):  # type: ignore[override]
+        await _handle_camp_bribe_submit(interaction, self._gid, self._uid, self.amount.value)
 
 
 class ConsumablesView(discord.ui.View):
@@ -2383,6 +2418,22 @@ def _compute_context_labels(
                         break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
+        # Bandit camp tile context
+        if getattr(player, "in_bandit_camp", False):
+            if t == "bc_exit":
+                center_label, center_enabled = "🚪 Leave", True
+            # NPC button when adjacent to a bandit
+            _bc_bandit_adj = False
+            for _dy_bc, _dx_bc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_bc, _ac_bc = vc + _dy_bc, vc + _dx_bc
+                if 0 <= _ar_bc < len(grid) and 0 <= _ac_bc < len(grid[_ar_bc]):
+                    _bc_tile = grid[_ar_bc][_ac_bc]
+                    if _bc_tile and _bc_tile.terrain == "bc_bandit":
+                        _bc_bandit_adj = True
+                        break
+            _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False
+
         # Island tile context
         if player.in_island:
             if t in ("island_dock", "vol_dock"):
@@ -3326,6 +3377,124 @@ async def _move_steps(
         grid = await load_maze_viewport(player.maze_id, player.maze_x, player.maze_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
+    elif getattr(player, "in_bandit_camp", False):
+        from dwarf_explorer.world.bandit_camp import (
+            load_camp_viewport as _lbcv_mv,
+            generate_camp_grid as _bcgrid_mv,
+            get_bandit_positions as _bcbandits,
+            BANDIT_CAMP_SIZE as _BCS,
+        )
+        from dwarf_explorer.game.player import can_move_bandit_camp as _cmbc
+        # Look up camp world coords from DB
+        _bc_camp_row = await db.fetch_one(
+            "SELECT world_x, world_y, max_bandits, bandit_kills, cleared_at "
+            "FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+        )
+        _bc_wx = int(_bc_camp_row["world_x"]) if _bc_camp_row else 0
+        _bc_wy = int(_bc_camp_row["world_y"]) if _bc_camp_row else 0
+        import time as _bctime
+        _cleared = _bc_camp_row and _bc_camp_row["cleared_at"] and \
+                   (int(_bctime.time()) - int(_bc_camp_row["cleared_at"])) < 86400
+
+        nx_bc, ny_bc = player.bc_x + dx, player.bc_y + dy
+        # Bounds check
+        if 0 <= nx_bc < _BCS and 0 <= ny_bc < _BCS:
+            _bc_full_grid = _bcgrid_mv(_bc_wx, _bc_wy)
+            _bc_tile_type = _bc_full_grid[ny_bc][nx_bc]
+            from dwarf_explorer.world.generator import TileData as _TileData
+            _bc_td = _TileData(terrain=_bc_tile_type, emoji="", walkable=_bc_tile_type in __import__(
+                "dwarf_explorer.config", fromlist=["BANDIT_CAMP_WALKABLE"]
+            ).BANDIT_CAMP_WALKABLE, world_x=nx_bc, world_y=ny_bc)
+            ok_bc, reason_bc = _cmbc(_bc_td)
+        else:
+            ok_bc, reason_bc = False, "You can't go that way."
+            _bc_tile_type = "bc_void"
+
+        if not ok_bc:
+            _bc_grid_err = _lbcv_mv(player.bc_x, player.bc_y, _bc_wx, _bc_wy)
+            content = render_grid(_bc_grid_err, player, reason_bc or "That's in the way.")
+            return content, _game_view(guild_id, user_id, player, grid=_bc_grid_err)
+
+        # Check exit tile — return to overworld
+        if _bc_tile_type == "bc_exit":
+            player.in_bandit_camp = False
+            player.bandit_camp_id = None
+            player.bandit_bribe_remaining = 0
+            await db.execute(
+                "UPDATE players SET in_bandit_camp=0, bandit_camp_id=NULL, "
+                "bandit_bribe_remaining=0 WHERE user_id=?", (user_id,)
+            )
+            _exit_grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            content = render_grid(_exit_grid, player, "🚪 You leave the bandit camp.")
+            has_canoe_bc = await _player_has_canoe(db, user_id)
+            return content, _game_view(guild_id, user_id, player, grid=_exit_grid, has_canoe=has_canoe_bc)
+
+        # Move player inside the camp
+        player.bc_x, player.bc_y = nx_bc, ny_bc
+        # Decrement bribe counter
+        if player.bandit_bribe_remaining > 0:
+            player.bandit_bribe_remaining -= 1
+        await db.execute(
+            "UPDATE players SET bc_x=?, bc_y=?, bandit_bribe_remaining=? WHERE user_id=?",
+            (nx_bc, ny_bc, player.bandit_bribe_remaining, user_id)
+        )
+
+        # Check proximity combat (within Manhattan 2 of any bc_bandit, camp not cleared, not bribed)
+        _bc_full_grid2 = _bcgrid_mv(_bc_wx, _bc_wy)
+        _bandit_positions = _bcbandits(_bc_wx, _bc_wy)
+        _nearest_dist = min(
+            (abs(bx - player.bc_x) + abs(by - player.bc_y) for bx, by in _bandit_positions),
+            default=999
+        )
+        if _nearest_dist <= 2 and not _cleared and player.bandit_bribe_remaining == 0:
+            # Trigger bandit combat
+            _bc_view_grid = _lbcv_mv(player.bc_x, player.bc_y, _bc_wx, _bc_wy)
+            _ui_state[user_id] = {
+                "type": "combat",
+                "arena": None,
+                "camp_id": player.bandit_camp_id,
+                "camp_wx": _bc_wx,
+                "camp_wy": _bc_wy,
+            }
+            arena_rng_bc = _random.Random(hash((user_id, player.bc_x, player.bc_y, "bc_combat")))
+            arena_bc, _ex, _ey = build_arena_from_viewport(_bc_view_grid, "bandit", arena_rng_bc)
+            _ui_state[user_id]["arena"] = arena_bc
+            player.in_combat = True
+            player.combat_enemy_type = "bandit"
+            player.combat_enemy_hp = ENEMY_STATS["bandit"][0]
+            player.combat_enemy_x = _ex
+            player.combat_enemy_y = _ey
+            player.combat_player_x = ARENA_SIZE // 2
+            player.combat_player_y = ARENA_SIZE // 2
+            player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                1 if player.accessory == "ring_of_time" else 0
+            )
+            await save_combat_state(db, user_id, player)
+            from dwarf_explorer.game.combat import render_arena as _ra_bc
+            content_bc = _ra_bc(arena_bc, player)
+            view_bc = CombatView(guild_id, user_id,
+                                 trapped=arena_bc["player_trapped"],
+                                 moves_left=player.combat_moves_left,
+                                 enemy_type="bandit")
+            return content_bc, view_bc
+
+        # Normal move — load viewport
+        _bc_vp = _lbcv_mv(player.bc_x, player.bc_y, _bc_wx, _bc_wy)
+        # Determine if a bandit is adjacent (for NPC talk button)
+        _bc_full3 = _bcgrid_mv(_bc_wx, _bc_wy)
+        _bc_adj_bandit = any(
+            0 <= player.bc_x + ddx < _BCS and 0 <= player.bc_y + ddy < _BCS
+            and _bc_full3[player.bc_y + ddy][player.bc_x + ddx] == "bc_bandit"
+            for ddx, ddy in [(-1,0),(1,0),(0,-1),(0,1)]
+        )
+        _bc_content = render_grid(_bc_vp, player)
+        _bc_view = _game_view(
+            guild_id, user_id, player, grid=_bc_vp,
+            npc_label="\U0001F9B9" if _bc_adj_bandit else "",
+            npc_enabled=_bc_adj_bandit,
+        )
+        return _bc_content, _bc_view
+
     elif getattr(player, "in_grove", False):
         from dwarf_explorer.world.forest import load_grove_viewport as _lgv2, load_grove_single_tile as _lgst2
         nx, ny = player.grove_x + dx, player.grove_y + dy
@@ -3920,43 +4089,30 @@ async def _move_steps(
                         "or seek the 🌀 maze deep within."), \
                            _game_view(guild_id, user_id, player, grid=grid)
 
-            # ── Bandit camp aggro: guaranteed combat within 2 tiles of an active camp ──
-            import time as _btime
-            _camp = await db.fetch_one(
-                "SELECT world_x, world_y, id FROM bandit_camps "
-                "WHERE ABS(world_x - ?) <= 2 AND ABS(world_y - ?) <= 2 "
-                "AND (cleared_at IS NULL OR (? - cleared_at) > 86400) LIMIT 1",
-                (nx, ny, int(_btime.time())),
-            )
-            if _camp:
-                _ui_state[user_id] = {
-                    "type": "combat",
-                    "arena": None,
-                    "camp_wx": int(_camp["world_x"]),
-                    "camp_wy": int(_camp["world_y"]),
-                    "camp_id": int(_camp["id"]),
-                }
-                grid = await load_viewport(nx, ny, seed, db)
-                arena_rng = _random.Random(hash((user_id, nx, ny, "bandit_camp")))
-                arena, ex, ey = build_arena_from_viewport(grid, "bandit", arena_rng)
-                _ui_state[user_id]["arena"] = arena
-                player.in_combat = True
-                player.combat_enemy_type = "bandit"
-                player.combat_enemy_hp = ENEMY_STATS["bandit"][0]
-                player.combat_enemy_x = ex
-                player.combat_enemy_y = ey
-                player.combat_player_x = ARENA_SIZE // 2
-                player.combat_player_y = ARENA_SIZE // 2
-                player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
-                    1 if player.accessory == "ring_of_time" else 0
+            # ── Bandit camp entry: step onto tile to enter the interior ────────────
+            if target.structure == "bandit_camp":
+                _bc_row = await db.fetch_one(
+                    "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
+                    "FROM bandit_camps WHERE world_x=? AND world_y=?",
+                    (nx, ny),
                 )
-                await save_combat_state(db, user_id, player)
-                content = render_arena(arena, player)
-                view = CombatView(guild_id, user_id,
-                                  trapped=arena["player_trapped"],
-                                  moves_left=player.combat_moves_left,
-                                  enemy_type="bandit")
-                return content, view
+                if _bc_row:
+                    from dwarf_explorer.world.bandit_camp import BC_ENTRY_X, BC_ENTRY_Y
+                    player.in_bandit_camp = True
+                    player.bandit_camp_id = int(_bc_row["id"])
+                    player.bc_x = BC_ENTRY_X
+                    player.bc_y = BC_ENTRY_Y
+                    # Store the overworld return position
+                    await db.execute(
+                        "UPDATE players SET in_bandit_camp=1, bandit_camp_id=?, bc_x=?, bc_y=?, "
+                        "world_x=?, world_y=? WHERE user_id=?",
+                        (_bc_row["id"], BC_ENTRY_X, BC_ENTRY_Y, nx, ny, user_id),
+                    )
+                    from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv
+                    bc_grid = _lbcv(player.bc_x, player.bc_y, int(_bc_row["world_x"]), int(_bc_row["world_y"]))
+                    content = render_grid(bc_grid, player,
+                        "🏕️ You enter the **Bandit Camp**. Stay sharp — they attack on sight.")
+                    return content, _game_view(guild_id, user_id, player, grid=bc_grid)
 
             # 0.2% travelling merchant encounter
             merch_rng = _random.Random(hash((user_id, nx, ny, player.xp // 20, "merchant")))
@@ -4536,6 +4692,68 @@ async def handle_bribe_submit(
         return
 
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def _handle_camp_bribe_submit(
+    interaction: discord.Interaction, guild_id: int, user_id: int, amount_str: str
+) -> None:
+    """Process a bribe offered to a bandit inside a camp (dialogue, not combat)."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    try:
+        amount = int(amount_str.strip())
+    except ValueError:
+        await interaction.response.send_message("Please enter a whole number.", ephemeral=True)
+        return
+    if amount <= 0:
+        await interaction.response.send_message("Must offer at least 1 coin.", ephemeral=True)
+        return
+    if amount > player.gold:
+        await interaction.response.send_message(
+            f"You only have **{player.gold}** coins!", ephemeral=True
+        )
+        return
+
+    # Deduct coins; 10 coins = 25%, 50 coins = 100%, linear clamp
+    player.gold -= amount
+    chance = min(1.0, 0.05 + (amount - 1) * (0.95 / 49))
+    pct = int(chance * 100)
+
+    from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_bribe
+    _bc_row_bribe = await db.fetch_one(
+        "SELECT world_x, world_y FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+    )
+
+    import random as _r_bribe
+    if _r_bribe.random() < chance:
+        player.bandit_bribe_remaining = 10
+        await db.execute(
+            "UPDATE players SET gold=?, bandit_bribe_remaining=10 WHERE user_id=?",
+            (player.gold, user_id)
+        )
+        msg = (
+            f"💰 You offered **{amount} coin{'s' if amount != 1 else ''}** ({pct}% chance) — "
+            f"the bandit pockets the gold and waves you off. "
+            f"**You have 10 moves of safe passage.**"
+        )
+    else:
+        await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+        msg = (
+            f"💸 The bandit snatches your **{amount} coin{'s' if amount != 1 else ''}** "
+            f"and laughs in your face! ({pct}% chance — failed) Watch your back."
+        )
+
+    if _bc_row_bribe:
+        bc_grid = _lbcv_bribe(player.bc_x, player.bc_y, int(_bc_row_bribe["world_x"]), int(_bc_row_bribe["world_y"]))
+    else:
+        bc_grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(bc_grid, player, msg)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=bc_grid),
+    )
 
 
 async def handle_combat_eat(
@@ -12418,17 +12636,20 @@ async def handle_map(
 ) -> None:
     # Defer immediately — map generation fetches avatar images and renders a PNG,
     # which routinely exceeds Discord's 3-second interaction window.
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer()
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    has_crystal = getattr(player, "has_warp_crystal", False)
+
+    # Back button — returns to nav overlay (Close goes back to game)
+    _map_back_view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
 
     from dwarf_explorer.database.repositories import get_player_ocean_quest_markers
 
     if player.in_high_seas:
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
-        # Fetch player avatar for ocean map
         ocean_avatar: bytes | None = None
         try:
             member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
@@ -12445,20 +12666,22 @@ async def handle_map(
             has_wilderness_quests=bool(overworld_qmarks),
             player_avatar=ocean_avatar,
         )
-        file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file)
+        buf.seek(0)
+        map_file = discord.File(buf, filename="ocean_map.png")
+        embed = discord.Embed(title="🗺️ Ocean Map")
+        embed.set_image(url="attachment://ocean_map.png")
+        await interaction.edit_original_response(embed=embed, attachments=[map_file], view=_map_back_view)
         return
 
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
-        # Show ocean map centred on the island/volcano island the player is visiting/caving under
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
-        ocean_avatar: bytes | None = None
+        ocean_avatar_b: bytes | None = None
         try:
             member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
             asset = member.guild_avatar or member.avatar
             if asset:
-                ocean_avatar = await asset.with_size(32).read()
+                ocean_avatar_b = await asset.with_size(32).read()
         except Exception:
             pass
         from dwarf_explorer.world.world_map import generate_ocean_map
@@ -12467,10 +12690,13 @@ async def handle_map(
             player.island_ox, player.island_oy,
             ocean_quest_markers=ocean_qmarks,
             has_wilderness_quests=bool(overworld_qmarks),
-            player_avatar=ocean_avatar,
+            player_avatar=ocean_avatar_b,
         )
-        file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file)
+        buf.seek(0)
+        map_file = discord.File(buf, filename="ocean_map.png")
+        embed = discord.Embed(title="🗺️ Ocean Map")
+        embed.set_image(url="attachment://ocean_map.png")
+        await interaction.edit_original_response(embed=embed, attachments=[map_file], view=_map_back_view)
         return
 
     other_players = await get_all_overworld_players(db, user_id)
@@ -12509,11 +12735,19 @@ async def handle_map(
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
-    # Send key first, then the player map — both as plain image files
+    # Edit the current message with the map embedded; key as thumbnail
+    key_buf.seek(0)
+    buf.seek(0)
     key_file = discord.File(key_buf, filename="world_map_key.png")
-    await interaction.followup.send(file=key_file)
     map_file = discord.File(buf, filename="world_map.png")
-    await interaction.followup.send(file=map_file)
+    embed = discord.Embed(title="🗺️ World Map")
+    embed.set_image(url="attachment://world_map.png")
+    embed.set_thumbnail(url="attachment://world_map_key.png")
+    await interaction.edit_original_response(
+        embed=embed,
+        attachments=[map_file, key_file],
+        view=_map_back_view,
+    )
 
 
 async def handle_help(
@@ -12886,6 +13120,67 @@ async def handle_npc_talk(
     import hashlib as _h_mod
     def _hash(s): return int(_h_mod.md5(s.encode()).hexdigest(), 16)
 
+    # ── Bandit camp context ──────────────────────────────────────────────────
+    if getattr(player, "in_bandit_camp", False):
+        from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_talk
+        _bc_row_talk = await db.fetch_one(
+            "SELECT world_x, world_y FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+        )
+        if _bc_row_talk:
+            bc_grid = _lbcv_talk(player.bc_x, player.bc_y, int(_bc_row_talk["world_x"]), int(_bc_row_talk["world_y"]))
+            vc = len(bc_grid) // 2
+            _bc_adj = False
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = vc + dr, vc + dc
+                if 0 <= nr < len(bc_grid) and 0 <= nc < len(bc_grid[nr]):
+                    _t = bc_grid[nr][nc]
+                    if _t and _t.terrain == "bc_bandit":
+                        _bc_adj = True
+                        break
+            if not _bc_adj:
+                await interaction.response.send_message("No one is close enough to talk to.", ephemeral=True)
+                return
+        import hashlib as _bh_mod
+        def _bh(s): return int(_bh_mod.md5(s.encode()).hexdigest(), 16)
+        _bh_seed = _bh(f"bandit{player.bandit_camp_id}{player.bc_x}{player.bc_y}")
+        _bandit_greets = [
+            "\"You've got some nerve walking in here. State your business — quickly.\"",
+            "\"Trespassing in our camp. That costs you, friend.\"",
+            "\"Easy now. Don't make any sudden moves and we can talk like civilised folk.\"",
+            "\"Well, well. Lost traveller, or brave fool? Hard to tell the difference.\"",
+            "\"My hands are on my knife. Just so you know. Now talk.\"",
+        ]
+        _bandit_lore = [
+            "\"We don't rob for sport. We rob because the roads are taxed to ruin and honest work pays nothing. Think about that.\"",
+            "\"Half my crew used to be farmers. The other half — soldiers. Both kinds end up in camps like this eventually.\"",
+            "\"You hear things on the road. Caravans talk. We listen. It's a living.\"",
+            "\"There's a code out here. Harm the old, harm children, harm healers — and you answer to us. Remember that.\"",
+            "\"Don't mistake us for murderers. We're businessmen. Expensive businessmen.\"",
+        ]
+        _greet = _bandit_greets[_bh_seed % len(_bandit_greets)]
+        _lore  = _bandit_lore[(_bh_seed >> 4) % len(_bandit_lore)]
+        _bc_options = [
+            {"label": "\"Who are you people?\"",        "action": "lore"},
+            {"label": "💰 Offer a bribe",               "action": "bribe"},
+            {"label": "\"I'll be leaving now.\"",       "action": "close"},
+        ]
+        _bc_state = {
+            "type":       "npc_dialogue",
+            "npc_type":   "bc_bandit",
+            "npc_name":   "Bandit",
+            "text":       _greet,
+            "options":    _bc_options,
+            "selected":   0,
+            "context":    "bandit_camp",
+            "lore_text":  _lore,
+            "source_label": "Bandit",
+        }
+        _ui_state[user_id] = _bc_state
+        _bc_content = _render_dialogue("Bandit", _greet, _bc_options, 0)
+        _bc_view = DialogueView(guild_id, user_id, _bc_options, 0)
+        await interaction.response.edit_message(embed=_embed(_bc_content), content=None, view=_bc_view)
+        return
+
     # ── Tree city context ────────────────────────────────────────────────────
     if getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_talk
@@ -12904,10 +13199,14 @@ async def handle_npc_talk(
         npc_name, lore_text, pool, context = "Tree Dweller", "...", [], "tree_city"
         if "tc_elder" in adj_npc:
             npc_name = "Tree Elder"
-            lore_text = (
-                "This great tree has stood for centuries. We who dwell within it are its memory — "
-                "and its will. You have climbed far, traveller. That is not nothing."
-            )
+            _elder_lore = [
+                "This great tree has stood for centuries. We who dwell within it are its memory — and its will. You have climbed far, traveller. That is not nothing.",
+                "There are those who come here seeking power. They rarely find what they expect. The tree gives what is needed, not what is wanted.",
+                "I have seen three generations of travellers pass through this city. Most are looking for something. Few know what it is.",
+                "The roots of this tree reach the bedrock. Some say they reach further. I do not contradict them.",
+            ]
+            _eh = _hash(f"tc_elder{player.tc_forest_id}{player.tc_floor}")
+            lore_text = _elder_lore[_eh % len(_elder_lore)]
             # Elder quest on floor 4
             if getattr(player, "tc_floor", 1) == 4:
                 from dwarf_explorer.game.quests import get_or_refresh_village_pool as _gvp_tc
@@ -12920,13 +13219,13 @@ async def handle_npc_talk(
             if has_crystal:
                 lore_text = (
                     "You already hold a Chronolite shard — I see its resonance in the air around you. "
-                    "Good. Guard it well. The Temporal Rifts grow unstable."
+                    "Good. Guard it well. The Temporal Rifts grow unstable. Each activation weakens the boundary."
                 )
             else:
                 lore_text = (
                     "I have catalogued every ring of this ancient tree. Did you know there is a grove "
                     "deep in the forest where time moves strangely? A stone idol stands at its heart. "
-                    "Those who touch it... change."
+                    "Those who touch it... change. A Chronolite shard, they call what emerges."
                 )
         elif "tc_villager" in adj_npc:
             npc_name = "Tree Dweller"
@@ -12936,6 +13235,10 @@ async def handle_npc_talk(
                 "We rarely go to the ground anymore. The forest floor is not safe at night.",
                 "The elder knows things about this tree that no scroll records.",
                 "I was born in this tree. Forty rings up. Never seen the ocean.",
+                "Visitors always look surprised that we have kitchens up here. Where did they think we cooked?",
+                "The view from the top platform at dawn is something you'll remember your whole life.",
+                "My grandmother planted a seedling on the eastern branch. It's a proper tree now, sixty years on.",
+                "We trade with the ground villages twice a year. It's always a shock to walk on flat earth again.",
             ]
             lore_text = tc_lore[_hv % len(tc_lore)]
 
@@ -13039,50 +13342,96 @@ async def handle_npc_talk(
     )
 
     # NPC-specific lore texts and quest pool resolution
+    _vh = _hash(f"vlt{player.village_id}{player.village_x}{player.village_y}")
     if "b_priest" in adj_npc:
         npc_name = "Village Priest"
-        lore_text = "The light of the gods watches over this village. May your journey be blessed."
+        _priest_lore = [
+            "The light of the gods watches over this village. May your journey be blessed.",
+            "We hold a harvest prayer every full moon. Even the bandits in the hills stay quiet that night.",
+            "Faith is the armour no blacksmith can forge. I have seen it turn back blades.",
+            "Many pass through seeking glory. Few return to give thanks. You seem like one of the ones who will.",
+            "The old shrines in the wilderness still carry power. Tread carefully near them.",
+        ]
+        lore_text = _priest_lore[_vh % len(_priest_lore)]
         pool = village_pool[:1]
     elif "b_tavern_npc" in adj_npc:
         nx, ny = adj_npc["b_tavern_npc"]
-        idx = (nx * 7 + ny * 13) % max(1, len(bounty_pool)) if bounty_pool else 0
+        _th = _hash(f"tvlt{player.village_id}{nx}{ny}")
+        idx = _th % max(1, len(bounty_pool)) if bounty_pool else 0
         npc_name = "Tavern Regular"
-        lore_text = "Heard some strange rumors from the road lately... adventurers keep disappearing in the wilds."
+        _tavern_lore = [
+            "Heard some strange rumors from the road lately... adventurers keep disappearing in the wilds.",
+            "A merchant passed through last week. Said the bandit camps to the east have gotten bolder.",
+            "My uncle used to say: never sleep near a sundial. Whatever that means.",
+            "You look like you've seen things. Buy me a drink and I'll tell you what I know.",
+            "There's gold in the caves, they say. There's also something else in the caves. They don't mention that part.",
+            "Three hunters went into the forest last month. Two came back. The third sends letters, apparently.",
+            "The river to the north runs fast this time of year. Good fishing if you know where to stand.",
+        ]
+        lore_text = _tavern_lore[_th % len(_tavern_lore)]
         pool = bounty_pool[idx:idx + 1]
     elif "b_farmer_npc" in adj_npc:
+        _fh = _hash(f"farm{player.village_id}{player.village_x}{player.village_y}")
         npc_name = "Farmer"
-        lore_text = "The soil has been good to us this season. But we can always use an extra pair of hands."
+        _farmer_lore = [
+            "The soil has been good to us this season. But we can always use an extra pair of hands.",
+            "Wheat doesn't water itself. I start before sunrise and finish after dark. Every day.",
+            "My grandfather cleared this land. His father before him. I'll give it to my children.",
+            "The crows have been bad this year. Lost half a row to them last week.",
+            "You want advice? Plant early, water often, and don't trust anyone who doesn't know soil.",
+        ]
+        lore_text = _farmer_lore[_fh % len(_farmer_lore)]
         pool = village_pool[:1]
     elif "b_blacksmith_npc" in adj_npc:
+        _bsh = _hash(f"bslt{player.village_id}{player.village_x}{player.village_y}")
         npc_name = "Blacksmith"
-        lore_text = "Steel and sweat — that's the honest life. Not everyone appreciates it, but the village would fall without us."
+        _smith_lore = [
+            "Steel and sweat — that's the honest life. Not everyone appreciates it, but the village would fall without us.",
+            "I can work iron, bronze, even some alloys from the deep caves. Bring me good ore and I'll make you something worth carrying.",
+            "A blade is only as good as the hand that holds it — but a poorly made blade is bad in any hand.",
+            "The wyvern scales they bring from the eastern caves... I've never worked anything harder. Beautiful edge though.",
+            "My apprentice quit last spring. Said he wanted adventure. Came back three months later, missing two fingers. Still won't tell me why.",
+        ]
+        lore_text = _smith_lore[_bsh % len(_smith_lore)]
         pool = bounty_pool[:1]
     elif "vil_villager" in adj_npc:
         npc_name = "Villager"
-        _h = _hash(f"vlt{player.village_id}{player.village_x}{player.village_y}")
-        lore_texts = [
+        _vill_lore = [
             "Life is quiet here, but I like it that way.",
             "Have you seen the market? Finest goods in the region.",
-            "They say there's something strange in the forest to the north...",
+            "They say there's something strange in the forest to the north. A city up in the branches. Mad, right?",
             "The children play near the well every evening. It's nice.",
+            "A traveller like you came through last season. Bought half our supplies and never came back. Curious.",
+            "Don't let the elder hear you complaining about the mud. She'll tell you about the flood of '87 again.",
+            "My sister moved to the coast. Says the salt air cures everything. I miss her.",
+            "We had a wolf problem three winters back. The hunters sorted it, but I still bar my door at night.",
         ]
-        lore_text = lore_texts[_h % len(lore_texts)]
-        pool = bounty_pool[:1] if _h % 2 == 0 else []
+        lore_text = _vill_lore[_vh % len(_vill_lore)]
+        pool = bounty_pool[:1] if _vh % 2 == 0 else []
     elif "vil_guard" in adj_npc:
         npc_name = "Village Guard"
-        _h = _hash(f"glt{player.village_id}{player.village_x}{player.village_y}")
-        lore_text = "Stay out of trouble and we won't have a problem. The village gates are watched at all hours."
-        pool = bounty_pool[:1] if _h % 2 == 0 else []
+        _gh = _hash(f"glt{player.village_id}{player.village_x}{player.village_y}")
+        _guard_lore = [
+            "Stay out of trouble and we won't have a problem. The village gates are watched at all hours.",
+            "Bandit activity has picked up to the east. I'd avoid that road at night if I were you.",
+            "We lost two good guards last winter. Wolves from the hills. We've set traps since then.",
+            "I've been posted here six years. Seen all kinds pass through. Most aren't worth the worry.",
+            "Move along, traveller. Unless you've got business here, in which case — what business?",
+        ]
+        lore_text = _guard_lore[_gh % len(_guard_lore)]
+        pool = bounty_pool[:1] if _gh % 2 == 0 else []
     elif "b_resident" in adj_npc:
         npc_name = "Resident"
-        _h = _hash(f"rlt{player.village_id}{player.house_x}{player.house_y}")
-        lore_texts = [
+        _rh = _hash(f"rlt{player.village_id}{player.house_x}{player.house_y}")
+        _res_lore = [
             "Nice place you've found here. Almost as nice as mine.",
             "I moved here three years ago. Haven't regretted it since.",
             "You're not from here, are you? I can always tell.",
+            "The nights here are remarkably quiet. After where I came from, that still surprises me.",
+            "My neighbour has chickens. I have opinions about those chickens.",
         ]
-        lore_text = lore_texts[_h % len(lore_texts)]
-        pool = bounty_pool[:1] if _h % 10 < 4 else []
+        lore_text = _res_lore[_rh % len(_res_lore)]
+        pool = bounty_pool[:1] if _rh % 10 < 4 else []
     else:
         npc_name = "Stranger"
         lore_text = "..."
@@ -13718,6 +14067,21 @@ async def _dialogue_return_to_view(
 ) -> None:
     """Return to the correct game view after closing a dialogue, based on context."""
     seed = await get_or_create_world(db, guild_id)
+    if ctx == "bandit_camp" and getattr(player, "in_bandit_camp", False):
+        from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_dlg
+        _bc_row_dlg = await db.fetch_one(
+            "SELECT world_x, world_y FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+        )
+        if _bc_row_dlg:
+            bc_grid = _lbcv_dlg(player.bc_x, player.bc_y, int(_bc_row_dlg["world_x"]), int(_bc_row_dlg["world_y"]))
+        else:
+            bc_grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(bc_grid, player, msg)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=bc_grid),
+        )
+        return
     if ctx == "tree_city" and getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_dlg
         grid = await _ltcv_dlg(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
@@ -13774,6 +14138,12 @@ async def handle_dialogue_confirm(
         content = _render_dialogue(state["npc_name"], lore_text, options, sel)
         view = DialogueView(guild_id, user_id, options, sel)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "bribe" and state.get("npc_type") == "bc_bandit":
+        # Open bribe modal — opens BribeModal but in camp context
+        _ui_state.pop(user_id, None)
+        await interaction.response.send_modal(_BandtCampBribeModal(guild_id, user_id))
         return
 
     if action == "quest_pool":

@@ -617,6 +617,37 @@ class Database:
                 except Exception as e:
                     _log.error("Equip migration error: %s", e)
 
+            # ── Fix player_quests: NULL is_main_quest → 0 (should be side quests) ──
+            try:
+                conn.execute(
+                    "UPDATE player_quests SET is_main_quest = 0 "
+                    "WHERE is_main_quest IS NULL AND status = 'active'"
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+            # ── Bandit camp interior state columns on players ─────────────────────
+            _bc_cols = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+            for _bcol, _bdef in [
+                ("in_bandit_camp",          "0"),
+                ("bandit_camp_id",          "NULL"),
+                ("bc_x",                    "0"),
+                ("bc_y",                    "0"),
+                ("bandit_bribe_remaining",  "0"),
+            ]:
+                if _bcol not in _bc_cols:
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE players ADD COLUMN {_bcol} INTEGER "
+                            f"NOT NULL DEFAULT {_bdef}"
+                            if _bdef != "NULL" else
+                            f"ALTER TABLE players ADD COLUMN {_bcol} INTEGER DEFAULT NULL"
+                        )
+                        conn.commit()
+                    except Exception as e:
+                        _log.warning("Bandit camp column migration warning (%s): %s", e, _bcol)
+
             # ── has_warp_crystal column on players ───────────────────────────────
             _pc2 = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
             if "has_warp_crystal" not in _pc2:

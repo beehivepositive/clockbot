@@ -701,6 +701,27 @@ GROVE_EMOJI: dict[str, str] = {
 
 GROVE_WALKABLE: frozenset[str] = frozenset({"grove_floor", "grove_exit"})
 
+# ── Bandit Camp Interior ──────────────────────────────────────────────────────
+BANDIT_CAMP_SIZE = 11  # 11×11 interior grid
+
+BANDIT_CAMP_EMOJI: dict[str, str] = {
+    "bc_void":      "⬛",            # ⬛ empty outside
+    "bc_dirt":      "\U0001F7EB",        # 🟫 walkable floor
+    "bc_fence":     "\U0001F9F1",        # 🧱 wooden fence/wall
+    "bc_tent":      "⛺",            # ⛺ tent (non-walkable)
+    "bc_campfire":  "\U0001F525",        # 🔥 campfire (non-walkable)
+    "bc_bandit":    "\U0001F9B9",        # 🦹 bandit NPC (walkable, proximity trigger)
+    "bc_exit":      "\U0001F6AA",        # 🚪 camp exit (step to leave)
+    "bc_crate":     "\U0001F4E6",        # 📦 loot crate (non-walkable)
+    "bc_log":       "\U0001FAB5",        # 🪵 log pile (non-walkable)
+}
+
+BANDIT_CAMP_WALKABLE: frozenset[str] = frozenset({
+    "bc_dirt",
+    "bc_bandit",   # walkable — proximity check triggers combat
+    "bc_exit",     # stepping on exit triggers leaving the camp
+})
+
 # ── Warp Crystal destinations ──────────────────────────────────────────────────
 # Unlocked progressively; all initial three unlock when the crystal is first obtained.
 WAYPOINTS: dict[str, dict] = {

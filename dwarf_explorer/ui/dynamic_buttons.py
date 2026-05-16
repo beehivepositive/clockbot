@@ -124,7 +124,7 @@ _OCEAN_MOVE_ACTIONS = {
     "ocean_upleft", "ocean_upright", "ocean_downleft", "ocean_downright",
 }
 # Actions that open a modal — must NOT defer first (send_modal IS the response)
-_MODAL_ACTIONS = {"inv_qty_modal", "bank_qty_modal", "shop_qty_modal", "c_bribe"}
+_MODAL_ACTIONS = {"inv_qty_modal", "bank_qty_modal", "shop_qty_modal"}
 
 _IGNORED_ACTIONS = {
     "ship_hp_sp",
@@ -148,6 +148,8 @@ _IGNORED_ACTIONS = {
     "dlg_sp1",
     # Puzzle board info labels (disabled counters)
     "pzsp0a", "pzsp0b",
+    # D-pad blank flanking buttons
+    "sp_ul", "sp_ur", "sp_dl", "sp_dr",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 

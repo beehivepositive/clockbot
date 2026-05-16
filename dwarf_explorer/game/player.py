@@ -9,6 +9,7 @@ from dwarf_explorer.config import (
     SHIPWRECK_WALKABLE, BREATH_MAX, SKY_WALKABLE, TEMPLE_WALKABLE,
     FOREST_WALKABLE, MAZE_WALKABLE,
     GROVE_WALKABLE,
+    BANDIT_CAMP_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -144,6 +145,12 @@ class Player:
     avatar_emoji: str | None = None
     # Warp crystal state
     has_warp_crystal: bool = False
+    # Bandit camp interior state
+    in_bandit_camp: bool = False
+    bandit_camp_id: int | None = None  # DB id from bandit_camps table
+    bc_x: int = 0
+    bc_y: int = 0
+    bandit_bribe_remaining: int = 0   # moves left before bandits attack again
 
 
 def can_move_ship(target_tile: TileData) -> tuple[bool, str]:
@@ -180,6 +187,15 @@ def can_move_sky(target_tile: TileData) -> tuple[bool, str]:
     return True, ""
 
 
+def can_move_bandit_camp(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a bandit camp interior."""
+    if target_tile.terrain == "bc_void":
+        return False, "There's nothing but open ground there."
+    if target_tile.terrain not in BANDIT_CAMP_WALKABLE:
+        return False, "That's in the way."
+    return True, ""
+
+
 def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[bool, str]:
     """Check if the player can move in the given direction."""
     if player.in_house:
@@ -200,6 +216,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_forest(target_tile)
     if getattr(player, "in_grove", False):
         return can_move_grove(target_tile)
+    if getattr(player, "in_bandit_camp", False):
+        return can_move_bandit_camp(target_tile)
 
     terrain = target_tile.structure or target_tile.terrain
 
