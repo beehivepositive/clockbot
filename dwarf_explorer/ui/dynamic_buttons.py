@@ -1,12 +1,37 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 import discord
 
 from dwarf_explorer.config import ADMIN_PLAYER_ID, ADMIN_DISCORD_ID
 from dwarf_explorer.database.connection import get_database
-from dwarf_explorer.database.repositories import get_or_create_player
+from dwarf_explorer.database.repositories import (
+    get_or_create_player,
+    get_avatar_cache,
+    store_avatar_cache,
+)
+
+
+# ── Avatar background refresh ─────────────────────────────────────────────────
+# One check per user per bot session; avoids a DB read on every button press.
+_AVATAR_SEEN: set[int] = set()
+
+
+async def _bg_avatar_refresh(guild: discord.Guild, user_id: int, db) -> None:
+    """Fetch and cache the player's Discord avatar if the cache is missing or stale."""
+    cached = await get_avatar_cache(db, user_id)
+    if cached is not None:
+        return  # still fresh — nothing to do
+    try:
+        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        asset = member.guild_avatar or member.avatar
+        if asset:
+            data = await asset.with_size(32).read()
+            await store_avatar_cache(db, user_id, data)
+    except Exception:
+        pass
 from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_sprint,
     handle_help, handle_help_back, handle_map,
@@ -194,6 +219,13 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             return
 
         gid, uid, act = self.guild_id, self.user_id, self.action
+
+        # Fire-and-forget avatar cache on first interaction per user per session.
+        # _AVATAR_SEEN prevents a DB read on every subsequent button press.
+        if uid not in _AVATAR_SEEN:
+            _AVATAR_SEEN.add(uid)
+            _db_av = await get_database(gid)
+            asyncio.create_task(_bg_avatar_refresh(interaction.guild, uid, _db_av))
 
         try:
             if act in _OCEAN_MOVE_ACTIONS:

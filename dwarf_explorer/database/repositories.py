@@ -266,11 +266,12 @@ async def get_nearby_players(
 async def get_all_overworld_players(
     db: Database, exclude_user_id: int
 ) -> list[tuple[int, int, str, int]]:
-    """Return [(world_x, world_y, display_name, user_id)] for all overworld players."""
+    """Return [(world_x, world_y, display_name, user_id)] for overworld players active within 24 h."""
     rows = await db.fetch_all(
         "SELECT world_x, world_y, display_name, user_id FROM players"
         " WHERE user_id != ? AND in_cave = 0 AND in_village = 0 AND in_house = 0"
-        " AND COALESCE(in_ocean, 0) = 0",
+        " AND COALESCE(in_ocean, 0) = 0"
+        " AND last_active >= datetime('now', '-24 hours')",
         (exclude_user_id,),
     )
     return [(r["world_x"], r["world_y"], r["display_name"], r["user_id"]) for r in rows]
