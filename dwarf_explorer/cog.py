@@ -572,7 +572,8 @@ class DwarfExplorer(commands.Cog):
 
         # Clamp to world bounds
         x = max(0, min(WORLD_SIZE - 1, x))
-        y = max(0, min(WORLD_SIZE - 1, y))
+        # Y=0 is displayed at the south (bottom); flip so user coords match the world map
+        y = WORLD_SIZE - 1 - max(0, min(WORLD_SIZE - 1, y))
 
         guild_id = interaction.guild.id
         db = await get_database(guild_id)

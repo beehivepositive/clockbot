@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import re as _re
 import random as _random
 from datetime import datetime, timedelta
@@ -313,6 +314,18 @@ async def _build_player_view(
 def _embed(content: str) -> discord.Embed:
     """Wrap game content in an embed to bypass Discord's 2000-char content limit."""
     return discord.Embed(description=content)
+
+
+def _pickup_desc(results: list[tuple[str, int]]) -> str:
+    """Build a human-readable pickup description, collapsing canoe halves into 'canoe'."""
+    canoe_count = sum(qty for iid, qty in results if iid in ("canoe_left", "canoe_right")) // 2
+    other = [(iid, qty) for iid, qty in results if iid not in ("canoe_left", "canoe_right")]
+    parts = []
+    if canoe_count:
+        parts.append(f"{canoe_count}× canoe")
+    for iid, qty in other:
+        parts.append(f"{qty}× {iid.replace('_', ' ')}")
+    return ", ".join(parts)
 
 
 def _custom_id(guild_id: int, user_id: int, action: str) -> str:
@@ -2578,6 +2591,14 @@ def _compute_context_labels(
             center_label, center_enabled = "⚙️ Saw", True
         elif t == "b_waterwheel":
             center_label, center_enabled = "⚙️ Wheel", True
+        elif t == "b_log_input":
+            center_label, center_enabled = "📥 Insert", True
+        elif t == "b_plank_output":
+            center_label, center_enabled = "📤 Take planks", True
+        elif t == "b_conveyor":
+            center_label, center_enabled = "🟫 Belt", False
+        elif t in ("b_gear_tl", "b_gear_tr", "b_gear_bl", "b_gear_br", "b_gear_small"):
+            center_label, center_enabled = "⚙️ Gear", False
         elif t == "b_farmer_npc":
             center_label, center_enabled = "🌾 Shop", True
         elif t == "b_pet":
@@ -6808,6 +6829,26 @@ async def handle_interact(
                 grid = await _load_house_grid()
                 content = render_grid(grid, player, "The waterwheel spins steadily, powered by the river current.")
 
+            elif htile.terrain == "b_conveyor":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "The conveyor belt hums. Insert a log at 📥 to get planks.")
+
+            elif htile.terrain in ("b_gear_tl", "b_gear_tr", "b_gear_bl", "b_gear_br"):
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "The large gear turns steadily, powered by the river current.")
+
+            elif htile.terrain == "b_gear_small":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "A small gear meshes with the large gear and drives the conveyor.")
+
+            elif htile.terrain == "b_plank_output":
+                grid = await _load_house_grid()
+                content = render_grid(grid, player, "📤 The output tray. Planks are delivered here after sawing.")
+
+            elif htile.terrain == "b_log_input":
+                # Delegate to the lumbermill insert handler
+                return await handle_lumbermill_insert(interaction, guild_id, user_id)
+
             elif htile.terrain == "b_farmer_npc":
                 return await _open_farmer_shop(interaction, guild_id, user_id, player)
                 return
@@ -7765,7 +7806,7 @@ async def handle_interact(
             picked = await pickup_cave_drop(db, player.cave_id, player.cave_x, player.cave_y, user_id)
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             if picked:
-                desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in picked)
+                desc = _pickup_desc(picked)
                 content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
             else:
                 content = render_grid(grid, player, "🤲 The box is empty.")
@@ -8378,12 +8419,12 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
-        elif terrain == "drop_box":
+        elif terrain in ("drop_box", "canoe_box"):
             # Pick up items from a drop box on the overworld
             results = await pickup_drop_box(db, wx, wy, user_id)
             grid = await load_viewport(wx, wy, seed, db)
             if results:
-                desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in results)
+                desc = _pickup_desc(results)
                 content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
             else:
                 content = render_grid(grid, player, "🤲 The box is empty.")
@@ -10862,7 +10903,9 @@ async def handle_inv_drop(
         await db.execute(
             "UPDATE players SET gold=gold-? WHERE user_id=?", (gold_to_drop, user_id)
         )
-    await create_drop_box(db, wx, wy, drop_pairs)
+    _is_canoe_drop = any(iid in ("canoe_left", "canoe_right") for iid, _ in drop_pairs)
+    _drop_tile_type = "canoe_box" if _is_canoe_drop else "drop_box"
+    await create_drop_box(db, wx, wy, drop_pairs, tile_type=_drop_tile_type)
     _invalidate_vp(user_id)  # tile changed without movement — bust cache
 
     _ui_state[user_id] = {**state, "selections": {}}
@@ -14899,6 +14942,53 @@ async def handle_lumber_craft_canoe(
         embed=_embed(content), content=None,
         view=_game_view(guild_id, user_id, player, grid=grid),
     )
+
+
+# ── Lumbermill conveyor insert handler ─────────────────────────────────────
+
+async def handle_lumbermill_insert(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player inserts a log into the lumbermill conveyor belt saw."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # Check the player has at least one log
+    inv_items = await get_inventory(db, user_id)
+    log_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "log")
+
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+    if log_count < 1:
+        content = render_grid(grid, player, "⚠️ You don't have any logs to insert!")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Remove 1 log from inventory
+    await remove_from_inventory(db, user_id, "log", 1)
+
+    # Defer so we can do a multi-frame animation
+    await interaction.response.defer()
+
+    # Frame 1: log inserted at input
+    content = render_grid(grid, player, "⚙️ *Inserting log...* 🪵 ▶ 📥")
+    await interaction.edit_original_response(embed=_embed(content))
+    await asyncio.sleep(0.8)
+
+    # Frame 2: log reaching the saw
+    content = render_grid(grid, player, "🔨 *Sawing...* 🟫🪵🔨")
+    await interaction.edit_original_response(embed=_embed(content))
+    await asyncio.sleep(0.8)
+
+    # Frame 3: done — add 3 planks to inventory
+    await add_to_inventory(db, user_id, "plank", 3)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player,
+        "✅ *Done!* Log sawn into **3 planks** — check your inventory!")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.edit_original_response(embed=_embed(content), view=view)
 
 
 # ── Farmer shop handlers ────────────────────────────────────────────────────

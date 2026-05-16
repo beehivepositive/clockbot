@@ -28,6 +28,7 @@ NOISE_BASE_SCALE = 16.0
 
 TERRAIN_EMOJI = {
     "drop_box":   "\U0001F4E6",      # 📦 dropped item box
+    "canoe_box":  "\U0001F6F6",      # 🛶 dropped canoe (overridden with :canoe_whole:)
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
     "river": "\U0001F30A",           # 🌊
@@ -253,6 +254,7 @@ WALKABLE_TILES = {
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
     "drop_box",      # item drop box — walkable, interact to pick up
+    "canoe_box",     # dropped canoe — walkable, interact to pick up
     "sundial",       # sundial ruins — walkable (interact with star_fragment to open rift)
     "sky_portal",    # sky portal on mountain — walkable (legacy; kept for any existing portals)
     "sky_temple_outer",  # outer puzzle temple — walkable overworld tile
@@ -968,6 +970,17 @@ BUILDING_EMOJI = {
     "b_lumber_npc":     "🧑",       # 🧑  lumber mill worker
     "b_farmer_npc":     "🧑",       # 🧑  farmer NPC
     "b_water":          "🌊",       # 🌊  water tile (lumber mill)
+    # Large gear (2×2) — sits in water columns
+    "b_gear_tl":        _ge("gear_top_left",    "⚙️"),   # large gear top-left
+    "b_gear_tr":        _ge("gear_top_right",   "⚙️"),   # large gear top-right
+    "b_gear_bl":        _ge("gear_bottom_left", "⚙️"),   # large gear bottom-left
+    "b_gear_br":        _ge("gear_bottom_right","⚙️"),   # large gear bottom-right
+    # Small gear — driven by large gear, drives conveyor
+    "b_gear_small":     _ge("gear_small",       "⚙️"),   # small gear
+    # Conveyor belt tiles
+    "b_conveyor":       "🟫",       # 🟫  conveyor belt segment
+    "b_log_input":      "📥",       # 📥  log insertion point (inbox)
+    "b_plank_output":   "📤",       # 📤  plank pickup point (outbox)
     # Player-house chests
     # Player-house chests
     "ph_chest_small":     "\U0001F4E6",       # 📦
@@ -1005,7 +1018,10 @@ BUILDING_WALKABLE = {
     "b_chest", "b_resident", "b_pet",
     "b_waterwheel", "b_saw", "b_lumber_npc", "b_farmer_npc",
     "b_crew_npc",   # harbour tavern recruit NPC — walkable
+    # Lumbermill conveyor tiles (player can walk on the conveyor line)
+    "b_conveyor", "b_log_input", "b_plank_output",
     # Note: b_water is NOT in BUILDING_WALKABLE (water is impassable inside)
+    # Note: b_gear_tl/tr/bl/br are NOT walkable (they sit in the water columns)
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
 
@@ -1475,6 +1491,17 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (STRUCTURE_EMOJI, "forest_entrance",  "forest_entrance"),
         # Hills custom emoji
         (TERRAIN_EMOJI,   "hills",            "hills"),
+        # Canoe drop box uses canoe_whole custom emoji
+        (TERRAIN_EMOJI,   "canoe_box",        "canoe_whole"),
+        # Village house chest uses custom chest emoji
+        (BUILDING_EMOJI,  "b_chest",          "chest"),
+        # Lumbermill large gear tiles
+        (BUILDING_EMOJI,  "b_gear_tl",        "gear_top_left"),
+        (BUILDING_EMOJI,  "b_gear_tr",        "gear_top_right"),
+        (BUILDING_EMOJI,  "b_gear_bl",        "gear_bottom_left"),
+        (BUILDING_EMOJI,  "b_gear_br",        "gear_bottom_right"),
+        # Lumbermill small gear tile
+        (BUILDING_EMOJI,  "b_gear_small",     "gear_small"),
     ]
 
     for d, tile_key, emoji_name in _replace:
@@ -1502,6 +1529,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("large_pouch",  "pouch"),
         # Watering can
         ("watering_can", "watering_can"),
+        # Plank (sawn lumber)
+        ("plank",        "planks"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:

@@ -965,33 +965,76 @@ def _hospital_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int
 
 
 def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
-    """Lumber mill: waterwheel on left wall, saw in centre, lumber NPC."""
+    """Lumber mill: 2-wide river on the left, large gear in the water, small gear
+    driving a conveyor belt with a saw, log input and plank output trays."""
     tiles: dict[tuple[int,int], str] = {}
+
+    # Base layer: walls everywhere, then carve out floor
     for y in range(H):
         for x in range(W):
-            tiles[(x, y)] = "b_wall" if (x == 0 or x == W-1 or y == 0 or y == H-1) else "b_floor"
-    tiles[(W//2, H-1)] = "b_door"
+            if x == 0 or x == W - 1 or y == 0 or y == H - 1:
+                tiles[(x, y)] = "b_wall"
+            else:
+                tiles[(x, y)] = "b_floor"
 
-    # Left wall becomes water (river-facing)
+    # Door at centre-bottom
+    tiles[(W // 2, H - 1)] = "b_door"
+
+    # ── Water: columns 0 and 1 are the river ─────────────────────────────────
     for y in range(H):
         tiles[(0, y)] = "b_water"
+        tiles[(1, y)] = "b_water"
 
-    # Waterwheel visible through left wall
-    tiles[(1, H//2)] = "b_waterwheel"
+    # ── Large gear (2×2) centred vertically in the water columns ─────────────
+    gear_top_y  = H // 2 - 1
+    gear_bot_y  = H // 2
+    tiles[(0, gear_top_y)] = "b_gear_tl"
+    tiles[(1, gear_top_y)] = "b_gear_tr"
+    tiles[(0, gear_bot_y)] = "b_gear_bl"
+    tiles[(1, gear_bot_y)] = "b_gear_br"
 
-    # Saw in centre
-    tiles[(W//2, H//2)] = "b_saw"
+    # ── Small gear at column 2, same row as large gear bottom ─────────────────
+    small_gear_y = gear_bot_y
+    if tiles.get((2, small_gear_y)) == "b_floor":
+        tiles[(2, small_gear_y)] = "b_gear_small"
 
-    # Lumber NPC near saw
-    npc_x = min(W//2 + 1, W-2)
-    tiles[(npc_x, H//2)] = "b_lumber_npc"
+    # ── Conveyor belt row ─────────────────────────────────────────────────────
+    # Place it 2 rows below the gear centre, but keep it away from the door row
+    conveyor_y = min(gear_bot_y + 2, H - 3)
 
-    # Log shelf on right side
-    for y in range(2, H-2):
-        if tiles.get((W-2, y)) == "b_floor":
-            tiles[(W-2, y)] = "b_shelf"
+    # Log input at column 2 (left end of conveyor)
+    conv_start = 2
+    conv_end   = W - 3   # right end (inclusive) — column W-3 is plank output
 
-    # Candle
+    # Make sure the whole row is floor first (in case wall clipped it)
+    for cx in range(conv_start, conv_end + 1):
+        if tiles.get((cx, conveyor_y)) not in ("b_wall",):
+            tiles[(cx, conveyor_y)] = "b_conveyor"
+
+    # Log input tray at left end
+    tiles[(conv_start, conveyor_y)] = "b_log_input"
+
+    # Saw in the middle of the conveyor
+    saw_x = (conv_start + conv_end) // 2
+    tiles[(saw_x, conveyor_y)] = "b_saw"
+
+    # Plank output tray at right end
+    tiles[(conv_end, conveyor_y)] = "b_plank_output"
+
+    # ── Lumber NPC stands one tile to the right of the saw ───────────────────
+    npc_x = min(saw_x + 1, W - 2)
+    npc_y = conveyor_y
+    # If the NPC spot would collide with the output tray, put them below the saw
+    if npc_x == conv_end:
+        npc_y = min(conveyor_y + 1, H - 2)
+        if tiles.get((saw_x, npc_y)) in ("b_floor", "b_conveyor"):
+            tiles[(saw_x, npc_y)] = "b_lumber_npc"
+        else:
+            tiles[(npc_x, conveyor_y)] = "b_lumber_npc"
+    else:
+        tiles[(npc_x, npc_y)] = "b_lumber_npc"
+
+    # ── Candle near the top-left interior corner ──────────────────────────────
     if tiles.get((2, 1)) == "b_floor":
         tiles[(2, 1)] = "b_candle"
 

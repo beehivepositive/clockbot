@@ -605,29 +605,32 @@ async def _find_free_tile_override_pos(db: Database, wx: int, wy: int) -> tuple[
 
 
 async def create_drop_box(
-    db: Database, world_x: int, world_y: int, items: list[tuple[str, int]]
+    db: Database, world_x: int, world_y: int, items: list[tuple[str, int]],
+    tile_type: str = "drop_box",
 ) -> None:
     """Create a drop box at (world_x, world_y) with the given items.
 
     Items dropped on an existing box are merged into it.
-    A tile_override of 'drop_box' is inserted (or left existing) so the renderer shows 📦.
+    A tile_override of tile_type is inserted (or left existing) so the renderer shows the box emoji.
+    Use tile_type='canoe_box' when dropping a canoe so it renders with :canoe_whole:.
 
     If the target tile is already occupied by a different structure (cave, village, etc.),
     the box is placed on the nearest free tile so it is always visible and reachable.
     """
-    # Check whether the target tile already has a non-drop_box override
+    _box_types = ("drop_box", "canoe_box")
+    # Check whether the target tile already has a non-box override
     existing_override = await db.fetch_one(
         "SELECT tile_type FROM tile_overrides WHERE world_x=? AND world_y=?",
         (world_x, world_y),
     )
-    if existing_override and existing_override["tile_type"] != "drop_box":
+    if existing_override and existing_override["tile_type"] not in _box_types:
         # Occupied by a cave/village/structure — find the nearest free tile instead
         world_x, world_y = await _find_free_tile_override_pos(db, world_x, world_y)
 
-    # Upsert the tile_override
+    # Upsert the tile_override (use INSERT OR IGNORE so existing box stays)
     await db.execute(
-        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, 'drop_box')",
-        (world_x, world_y),
+        "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
+        (world_x, world_y, tile_type),
     )
     # Merge items into ground_items (upsert by position + item_id for drop rows)
     for item_id, qty in items:
@@ -679,7 +682,7 @@ async def pickup_drop_box(
     )
     if remaining and remaining["cnt"] == 0:
         await db.execute(
-            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='drop_box'",
+            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type IN ('drop_box','canoe_box')",
             (world_x, world_y),
         )
     return picked
@@ -697,7 +700,7 @@ async def cleanup_expired_drop_boxes(db: Database) -> None:
             (pos["world_x"], pos["world_y"]),
         )
         await db.execute(
-            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type='drop_box'",
+            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type IN ('drop_box','canoe_box')",
             (pos["world_x"], pos["world_y"]),
         )
 
