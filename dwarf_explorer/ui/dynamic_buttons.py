@@ -706,6 +706,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_nav_open(interaction, gid, uid)
             elif act == "nav_close":
                 await handle_nav_close(interaction, gid, uid)
+            elif act == "map_close":
+                # Delete the standalone map message
+                try:
+                    await interaction.message.delete()
+                except Exception:
+                    await interaction.response.edit_message(
+                        content=None, embed=None, view=None, attachments=[]
+                    )
             # Warp crystal
             elif act == "warp_open":
                 await handle_warp_open(interaction, gid, uid)

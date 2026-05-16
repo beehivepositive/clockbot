@@ -3026,6 +3026,7 @@ async def _move_steps(
 
     elif player.in_house:
         _is_ph = (player.house_type == "player_house")
+        _house_nav = _ui_state.get(user_id, {}).get("nav_target")
         for _ in range(steps):
             nx, ny = player.house_x + dx, player.house_y + dy
             if _is_ph:
@@ -3048,14 +3049,14 @@ async def _move_steps(
                         player.ph_cave_id = None
                         await update_player_cave_state(db, user_id, True, cid, vx, vy)
                         grid = await load_cave_viewport(cid, vx, vy, db)
-                        return render_grid(grid, player, "You step outside."), \
+                        return render_grid(grid, player, "You step outside.", nav_target=_house_nav), \
                                await _cave_game_view(guild_id, user_id, player, db, grid=grid)
                     else:
                         # Return to overworld
                         player.world_x, player.world_y = vx, vy
                         await update_player_position(db, user_id, vx, vy)
                         grid = await load_viewport(vx, vy, seed, db)
-                        return render_grid(grid, player, "You step outside."), \
+                        return render_grid(grid, player, "You step outside.", nav_target=_house_nav), \
                                _game_view(guild_id, user_id, player, grid=grid)
                 else:
                     # Return to village
@@ -3065,7 +3066,7 @@ async def _move_steps(
                         vx, vy, player.village_wx, player.village_wy,
                     )
                     grid = await load_village_viewport(player.village_id, vx, vy, db, user_id=user_id)
-                    return render_grid(grid, player, "You step outside."), \
+                    return render_grid(grid, player, "You step outside.", nav_target=_house_nav), \
                            _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_building(target)
             if not allowed:
@@ -3073,7 +3074,7 @@ async def _move_steps(
                     grid = await load_player_house_viewport(player.house_id, player.house_x, player.house_y, db)
                 else:
                     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
+                return render_grid(grid, player, reason, nav_target=_house_nav), _game_view(guild_id, user_id, player, grid=grid)
             player.house_x, player.house_y = nx, ny
             await update_player_house_state(
                 db, user_id, True, player.house_id,
@@ -3085,10 +3086,11 @@ async def _move_steps(
             grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
         # If in edit mode, return edit view
         if _ui_state.get(user_id, {}).get("type") == "house_edit":
-            return render_grid(grid, player), PlayerHouseEditView(guild_id, user_id)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+            return render_grid(grid, player, nav_target=_house_nav), PlayerHouseEditView(guild_id, user_id)
+        return render_grid(grid, player, nav_target=_house_nav), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_village:
+        _vil_nav = _ui_state.get(user_id, {}).get("nav_target")
         for _ in range(steps):
             nx, ny = player.village_x + dx, player.village_y + dy
             target = await load_village_single_tile(player.village_id, nx, ny, db)
@@ -3100,11 +3102,11 @@ async def _move_steps(
                 await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
                 await update_player_position(db, user_id, wx, wy)
                 grid = await load_viewport(wx, wy, seed, db)
-                return render_grid(grid, player, "You leave the village."), _game_view(guild_id, user_id, player, grid=grid)
+                return render_grid(grid, player, "You leave the village.", nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
             allowed, reason = can_move_village(target)
             if not allowed:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-                return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
+                return render_grid(grid, player, reason, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
             player.village_x, player.village_y = nx, ny
             await update_player_village_state(
                 db, user_id, True, player.village_id,
@@ -3132,7 +3134,7 @@ async def _move_steps(
                     errand_msg = f"📜 Quest complete: **{q['title']}**! {reward_str}"
 
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-        return render_grid(grid, player, errand_msg), _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, errand_msg, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_island:
         from dwarf_explorer.config import ISLAND_WALKABLE
@@ -3156,6 +3158,7 @@ async def _move_steps(
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_shipwreck", False):
+        _sw_nav = _ui_state.get(user_id, {}).get("nav_target")
         sw_wx = getattr(player, "shipwreck_wx", 0)
         sw_wy = getattr(player, "shipwreck_wy", 0)
         nx, ny = player.shipwreck_x + dx, player.shipwreck_y + dy
@@ -3184,7 +3187,8 @@ async def _move_steps(
             grid = await load_viewport(SPAWN_X, SPAWN_Y, seed, db)
             return (render_grid(grid, player,
                                 "\U0001F4A7\U0001F480 You ran out of breath and drowned! "
-                                "You wake up gasping at the spawn point."),
+                                "You wake up gasping at the spawn point.",
+                                nav_target=_sw_nav),
                     _game_view(guild_id, user_id, player, grid=grid))
         # Exit check: sw_entrance tile at entry position exits the shipwreck
         if target.terrain == "sw_entrance":
@@ -3196,7 +3200,8 @@ async def _move_steps(
             player.breath = BREATH_MAX
             await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            return render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!"), \
+            return render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!",
+                               nav_target=_sw_nav), \
                    _game_view(guild_id, user_id, player, grid=grid)
         grid = load_shipwreck_viewport(sw_wx, sw_wy, nx, ny, seed)
         breath_warn = ""
@@ -3205,6 +3210,7 @@ async def _move_steps(
         return render_grid(grid, player, breath_warn), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_sky", False):
+        _sky_nav = _ui_state.get(user_id, {}).get("nav_target")
         for _ in range(steps):
             nx, ny = player.sky_x + dx, player.sky_y + dy
             target = await load_sky_single_tile(player.sky_id, nx, ny, db)
@@ -3228,7 +3234,8 @@ async def _move_steps(
                 grid = await load_viewport(wx, wy, seed, db)
                 return (
                     render_grid(grid, player,
-                        "🌀 The portal swirls shut beneath you. You're back on solid ground."),
+                        "🌀 The portal swirls shut beneath you. You're back on solid ground.",
+                        nav_target=_sky_nav),
                     _game_view(guild_id, user_id, player, grid=grid),
                 )
 
@@ -3271,6 +3278,7 @@ async def _move_steps(
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_temple", False):
+        _temple_nav = _ui_state.get(user_id, {}).get("nav_target")
         _temple_row = await db.fetch_one(
             "SELECT temple_type FROM sky_temples WHERE id=?", (player.temple_id,)
         )
@@ -3287,7 +3295,7 @@ async def _move_steps(
                 player.world_x, player.world_y = wx, wy
                 await update_player_position(db, user_id, wx, wy)
                 grid = await load_viewport(wx, wy, seed, db)
-                return render_grid(grid, player, "You exit the temple."), \
+                return render_grid(grid, player, "You exit the temple.", nav_target=_temple_nav), \
                        _game_view(guild_id, user_id, player, grid=grid)
             if target.terrain not in TEMPLE_WALKABLE:
                 grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(_is_main))
@@ -3371,6 +3379,7 @@ async def _move_steps(
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_bandit_camp", False):
+        _bc_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.bandit_camp import (
             load_camp_viewport as _lbcv_mv,
             generate_camp_grid as _bcgrid_mv,
@@ -3418,7 +3427,7 @@ async def _move_steps(
                 "bandit_bribe_remaining=0 WHERE user_id=?", (user_id,)
             )
             _exit_grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            content = render_grid(_exit_grid, player, "🚪 You leave the bandit camp.")
+            content = render_grid(_exit_grid, player, "🚪 You leave the bandit camp.", nav_target=_bc_nav)
             has_canoe_bc = await _player_has_canoe(db, user_id)
             return content, _game_view(guild_id, user_id, player, grid=_exit_grid, has_canoe=has_canoe_bc)
 
@@ -3518,6 +3527,7 @@ async def _move_steps(
         return content, _game_view(guild_id, user_id, player, grid=grove_grid3)
 
     elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
+        _for_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.forest import (
             load_forest_viewport, load_forest_single_tile,
             get_forest_exit_world, get_maze_for_forest,
@@ -3580,7 +3590,8 @@ async def _move_steps(
                 )
                 grid = await load_viewport(wx, wy, seed, db)
                 return render_grid(grid, player,
-                    "🌲 You push through the undergrowth and emerge back into the open world."), \
+                    "🌲 You push through the undergrowth and emerge back into the open world.",
+                    nav_target=_for_nav), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Enter maze
@@ -3738,6 +3749,7 @@ async def _move_steps(
             load_tree_city_single_tile as _ltcs,
             ensure_tree_city_built,
         )
+        _tc_nav = _ui_state.get(user_id, {}).get("nav_target")
         _tc_rebuilt = await ensure_tree_city_built(player.tc_forest_id, db)
         if _tc_rebuilt:
             player.tc_floor = 1
@@ -3757,7 +3769,7 @@ async def _move_steps(
                 elif target.terrain in ("tc_counter", "tc_table", "tc_lantern", "tc_plant",
                                         "tc_barrel", "tc_bookshelf", "tc_shrine"):
                     _tc_block_msg = "🌲 Something is in the way."
-                return render_grid(grid, player, _tc_block_msg), \
+                return render_grid(grid, player, _tc_block_msg, nav_target=_tc_nav), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Exit door (floor 1 only) → back to forest
@@ -3777,7 +3789,8 @@ async def _move_steps(
                 from dwarf_explorer.world.forest import load_forest_viewport as _lfv3
                 grid = await _lfv3(fid, fx, fy, db)
                 return render_grid(grid, player,
-                    "🚪 You step out of the Tree City back into the forest."), \
+                    "🚪 You step out of the Tree City back into the forest.",
+                    nav_target=_tc_nav), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Stairs up
@@ -3793,11 +3806,11 @@ async def _move_steps(
                     floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
                     fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
                     return render_grid(grid, player,
-                        f"🔼 You climb the stairs to the **{fname}**."), \
+                        f"🔼 You climb the stairs to the **{fname}**.", nav_target=_tc_nav), \
                            _game_view(guild_id, user_id, player, grid=grid)
                 else:
                     grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-                    return render_grid(grid, player, "🌲 This is the highest floor."), \
+                    return render_grid(grid, player, "🌲 This is the highest floor.", nav_target=_tc_nav), \
                            _game_view(guild_id, user_id, player, grid=grid)
 
             # Stairs down
@@ -3813,11 +3826,11 @@ async def _move_steps(
                     floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
                     fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
                     return render_grid(grid, player,
-                        f"🔽 You descend to the **{fname}**."), \
+                        f"🔽 You descend to the **{fname}**.", nav_target=_tc_nav), \
                            _game_view(guild_id, user_id, player, grid=grid)
                 else:
                     grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-                    return render_grid(grid, player, "🌲 This is the ground floor."), \
+                    return render_grid(grid, player, "🌲 This is the ground floor.", nav_target=_tc_nav), \
                            _game_view(guild_id, user_id, player, grid=grid)
 
             player.tc_x, player.tc_y = nx, ny
@@ -3826,9 +3839,10 @@ async def _move_steps(
             )
 
         grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-        return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, nav_target=_tc_nav), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_cave:
+        _cave_nav = _ui_state.get(user_id, {}).get("nav_target")
         # Determine cave metadata (level, type, boss defeated)
         cave_meta_row = await db.fetch_one(
             "SELECT cave_level, cave_type, boss_defeated FROM caves WHERE cave_id = ?",
@@ -3856,7 +3870,8 @@ async def _move_steps(
                 grid = await load_viewport(player.world_x, player.world_y, seed, db)
                 return (
                     render_grid(grid, player,
-                        "🌀 The portal swirls shut behind you. You're back at the sundial."),
+                        "🌀 The portal swirls shut behind you. You're back at the sundial.",
+                        nav_target=_cave_nav),
                     _game_view(guild_id, user_id, player, grid=grid),
                 )
 
@@ -4411,7 +4426,8 @@ async def _finish_combat(
         await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         sink_msg = f"{extra_msg} 🛳️💥 Your ship sinks! You wash ashore near the harbor. Hull at 1/{player.ship_max_hp} — repair with logs from the cargo chest."
-        return render_grid(grid, player, sink_msg), _game_view(guild_id, user_id, player, grid=grid)
+        _sink_nav = _ui_state.get(user_id, {}).get("nav_target")
+        return render_grid(grid, player, sink_msg, nav_target=_sink_nav), _game_view(guild_id, user_id, player, grid=grid)
 
     await update_player_stats(db, user_id, hp=player.hp, gold=player.gold, xp=player.xp)
     # Return to the appropriate location view.
@@ -4994,7 +5010,8 @@ async def handle_sprint(
     _invalidate_vp(user_id)
     grid = await _cached_grid(user_id, player, seed, db)
     view = await _build_player_view(guild_id, user_id, player, db, grid)
-    content = render_grid(grid, player, status)
+    _nav = _ui_state.get(user_id, {}).get("nav_target")
+    content = render_grid(grid, player, status, nav_target=_nav)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -6835,6 +6852,7 @@ async def handle_interact(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
     elif getattr(player, "in_shipwreck", False):
+        _int_sw_nav = _ui_state.get(user_id, {}).get("nav_target")
         sw_wx = player.shipwreck_wx
         sw_wy = player.shipwreck_wy
         sw_tile = get_shipwreck_tile(sw_wx, sw_wy, player.shipwreck_x, player.shipwreck_y, seed)
@@ -6849,7 +6867,8 @@ async def handle_interact(
             player.breath = BREATH_MAX
             await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            content = render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!")
+            content = render_grid(grid, player, "\U0001F300 You surface from the sunken ship, gasping for air!",
+                                  nav_target=_int_sw_nav)
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
@@ -7190,6 +7209,7 @@ async def handle_interact(
         return
 
     elif getattr(player, "in_forest", False):
+        _int_for_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_i, load_forest_single_tile as _lfst_i
         ftile = await _lfst_i(player.forest_id, player.forest_x, player.forest_y, db)
         grid = await _lfv_i(player.forest_id, player.forest_x, player.forest_y, db)
@@ -7207,7 +7227,8 @@ async def handle_interact(
             )
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player,
-                "🌲 You push through the undergrowth and emerge back into the open world.")
+                "🌲 You push through the undergrowth and emerge back into the open world.",
+                nav_target=_int_for_nav)
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
@@ -7486,6 +7507,7 @@ async def handle_interact(
             return
 
     elif player.in_cave:
+        _int_cave_nav = _ui_state.get(user_id, {}).get("nav_target")
         cave_tile = await load_cave_single_tile(player.cave_id, player.cave_x, player.cave_y, db)
 
         if cave_tile.terrain == "cave_entrance":
@@ -7536,7 +7558,7 @@ async def handle_interact(
                     await update_player_position(db, user_id, wx, wy)
                     await update_player_cave_state(db, user_id, False, None, 0, 0)
                     grid = await load_viewport(wx, wy, seed, db)
-                    content = render_grid(grid, player, "You exit the cave.")
+                    content = render_grid(grid, player, "You exit the cave.", nav_target=_int_cave_nav)
                 else:
                     grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
                     content = render_grid(grid, player, "Nothing to interact with here.")
@@ -11400,6 +11422,19 @@ class NavView(discord.ui.View):
         self.add_item(close_btn)
 
 
+class MapCloseView(discord.ui.View):
+    """Attached to the standalone map message so the player can close it."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="✖ Close Map",
+            custom_id=_custom_id(guild_id, user_id, "map_close"),
+            row=0,
+        ))
+
+
 async def _fetch_or_cache_avatar(
     db, guild, user_id: int, size: int = 32
 ) -> bytes | None:
@@ -11438,18 +11473,14 @@ async def handle_nav_open(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     has_crystal = getattr(player, "has_warp_crystal", False)
     view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
-
-    from dwarf_explorer.world.world_map import generate_world_map
-    buf = await generate_world_map(
-        seed, db, guild_id, player.world_x, player.world_y,
-        [], quest_markers=[], ocean_quest_markers=[],
-        player_avatar=None, other_avatars=[],
+    # Show the nav buttons overlaid on the current game viewport (no preview map needed —
+    # pressing "Map" will send the full map as a separate message)
+    grid = await _cached_grid(user_id, player, seed, db)
+    _nav = _ui_state.get(user_id, {}).get("nav_target")
+    content = render_grid(grid, player, nav_target=_nav)
+    await interaction.edit_original_response(
+        embed=_embed(content), attachments=[], view=view
     )
-    buf.seek(0)
-    map_file = discord.File(buf, filename="world_map.png")
-    embed = discord.Embed(title="🗺️ World Map")
-    embed.set_image(url="attachment://world_map.png")
-    await interaction.edit_original_response(embed=embed, attachments=[map_file], view=view)
 
 
 async def handle_nav_close(
@@ -11464,7 +11495,8 @@ async def handle_nav_close(
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     else:
         view = _game_view(guild_id, user_id, player, grid=grid)
-    content = render_grid(grid, player)
+    _nav = _ui_state.get(user_id, {}).get("nav_target")
+    content = render_grid(grid, player, nav_target=_nav)
     # attachments=[] clears the map image that was set by handle_nav_open / handle_map
     await interaction.response.edit_message(
         embed=_embed(content), content=None, attachments=[], view=view
@@ -12696,10 +12728,24 @@ async def handle_map(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     has_crystal = getattr(player, "has_warp_crystal", False)
 
-    # Back button — returns to nav overlay (Close goes back to game)
-    _map_back_view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
-
     from dwarf_explorer.database.repositories import get_player_ocean_quest_markers
+
+    async def _send_ocean_map(buf: "io.BytesIO", title: str) -> None:
+        """Send an ocean map as a separate channel message and restore the game view."""
+        grid = await _cached_grid(user_id, player, seed, db)
+        _nav = _ui_state.get(user_id, {}).get("nav_target")
+        game_content = render_grid(grid, player, nav_target=_nav)
+        game_v = _game_view(guild_id, user_id, player, grid=grid)
+        buf.seek(0)
+        map_file = discord.File(buf, filename="ocean_map.png")
+        embed = discord.Embed(title=title)
+        embed.set_image(url="attachment://ocean_map.png")
+        await interaction.edit_original_response(
+            embed=_embed(game_content), attachments=[], view=game_v
+        )
+        await interaction.followup.send(
+            embed=embed, file=map_file, view=MapCloseView(guild_id, user_id)
+        )
 
     if player.in_high_seas:
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
@@ -12713,11 +12759,7 @@ async def handle_map(
             has_wilderness_quests=bool(overworld_qmarks),
             player_avatar=ocean_avatar,
         )
-        buf.seek(0)
-        map_file = discord.File(buf, filename="ocean_map.png")
-        embed = discord.Embed(title="🗺️ Ocean Map")
-        embed.set_image(url="attachment://ocean_map.png")
-        await interaction.edit_original_response(embed=embed, attachments=[map_file], view=_map_back_view)
+        await _send_ocean_map(buf, "🗺️ Ocean Map")
         return
 
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
@@ -12732,11 +12774,7 @@ async def handle_map(
             has_wilderness_quests=bool(overworld_qmarks),
             player_avatar=ocean_avatar_b,
         )
-        buf.seek(0)
-        map_file = discord.File(buf, filename="ocean_map.png")
-        embed = discord.Embed(title="🗺️ Ocean Map")
-        embed.set_image(url="attachment://ocean_map.png")
-        await interaction.edit_original_response(embed=embed, attachments=[map_file], view=_map_back_view)
+        await _send_ocean_map(buf, "🗺️ Ocean Map")
         return
 
     other_players = await get_all_overworld_players(db, user_id)
@@ -12753,25 +12791,29 @@ async def handle_map(
             if _op_uid else None
         )
 
-    from dwarf_explorer.world.world_map import generate_world_map, generate_world_map_key
-    key_buf = await generate_world_map_key(guild_id, seed)
-    buf = await generate_world_map(
+    from dwarf_explorer.world.world_map import generate_world_map_with_key
+    combined_buf = await generate_world_map_with_key(
         seed, db, guild_id, player.world_x, player.world_y,
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
-    # Edit the current message with the map embedded; key as thumbnail
-    key_buf.seek(0)
-    buf.seek(0)
-    key_file = discord.File(key_buf, filename="world_map_key.png")
-    map_file = discord.File(buf, filename="world_map.png")
+    combined_buf.seek(0)
+    map_file = discord.File(combined_buf, filename="world_map.png")
     embed = discord.Embed(title="🗺️ World Map")
     embed.set_image(url="attachment://world_map.png")
-    embed.set_thumbnail(url="attachment://world_map_key.png")
+    # Return the original game message to normal viewport
+    grid = await _cached_grid(user_id, player, seed, db)
+    _nav = _ui_state.get(user_id, {}).get("nav_target")
+    game_content = render_grid(grid, player, nav_target=_nav)
+    game_v = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.edit_original_response(
+        embed=_embed(game_content), attachments=[], view=game_v
+    )
+    # Send map as a separate channel message with a close button
+    await interaction.followup.send(
         embed=embed,
-        attachments=[map_file, key_file],
-        view=_map_back_view,
+        file=map_file,
+        view=MapCloseView(guild_id, user_id),
     )
 
 
@@ -12865,13 +12907,15 @@ async def _render_quest_view(
     no_quests = len(quests) == 0
     idx = max(0, min(idx, len(quests) - 1)) if quests else 0
 
-    # Determine if the currently displayed quest has the nav_target set
+    # Determine if the currently displayed quest has the nav_target set, and if it's trackable
     has_target = False
-    if not no_quests and nav_target and quests:
+    trackable = False
+    if not no_quests and quests:
         q = quests[idx]
         tx = q.get("bounty_wx") or q.get("location_x")
         ty = q.get("bounty_wy") or q.get("location_y")
-        if tx is not None and ty is not None:
+        trackable = tx is not None and ty is not None
+        if trackable and nav_target:
             has_target = (nav_target == (int(tx), int(ty)))
 
     content = await render_unified_quest_list(
@@ -12888,6 +12932,7 @@ async def _render_quest_view(
         has_target=has_target,
         confirm_abandon=confirm_abandon,
         no_quests=no_quests,
+        trackable=trackable,
     )
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 

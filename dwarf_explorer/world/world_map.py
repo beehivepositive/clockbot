@@ -601,6 +601,55 @@ async def generate_world_map_key(guild_id: int, seed: int) -> io.BytesIO:
     return buf
 
 
+def _stitch_map_and_key_sync(map_png: bytes, key_png: bytes) -> io.BytesIO:
+    """Composite the key legend above the map image and return a combined BytesIO PNG."""
+    from PIL import Image
+
+    map_img = Image.open(io.BytesIO(map_png))
+    key_img = Image.open(io.BytesIO(key_png))
+    map_w, map_h = map_img.size
+    key_w, key_h = key_img.size
+
+    # Place key centred horizontally above the map on a dark background
+    combined = Image.new("RGB", (map_w, key_h + map_h), (30, 30, 30))
+    key_x = max(0, (map_w - key_w) // 2)
+    combined.paste(key_img, (key_x, 0))
+    combined.paste(map_img, (0, key_h))
+
+    buf = io.BytesIO()
+    combined.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+async def generate_world_map_with_key(
+    seed: int, db, guild_id: int,
+    player_x: int, player_y: int,
+    other_players: list | None = None,
+    quest_markers: list | None = None,
+    ocean_quest_markers: list | None = None,
+    player_avatar: bytes | None = None,
+    other_avatars: list[bytes | None] | None = None,
+) -> io.BytesIO:
+    """Generate world map with the legend key stitched above it as one combined PNG."""
+    # Ensure key bytes are cached
+    key_entry = _KEY_CACHE.get(guild_id)
+    if key_entry is not None and key_entry[0] == seed:
+        key_bytes = key_entry[1]
+    else:
+        all_legend_entries = _build_wilderness_legend_entries()
+        key_bytes = await asyncio.to_thread(_generate_key_sync, all_legend_entries)
+        _KEY_CACHE[guild_id] = (seed, key_bytes)
+
+    map_buf = await generate_world_map(
+        seed, db, guild_id, player_x, player_y,
+        other_players, quest_markers, ocean_quest_markers,
+        player_avatar, other_avatars,
+    )
+    map_bytes = map_buf.getvalue()
+    return await asyncio.to_thread(_stitch_map_and_key_sync, map_bytes, key_bytes)
+
+
 async def generate_world_map(
     seed: int, db, guild_id: int,
     player_x: int, player_y: int,

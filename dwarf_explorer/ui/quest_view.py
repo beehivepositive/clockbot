@@ -57,6 +57,7 @@ class QuestView(discord.ui.View):
         has_target: bool = False,
         confirm_abandon: bool = False,
         no_quests: bool = False,
+        trackable: bool = True,
     ):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
@@ -79,7 +80,16 @@ class QuestView(discord.ui.View):
             custom_id=_custom_id(gid, uid, "quest_tab_left"),
             row=1,
         ))
-        if has_target:
+        if not trackable or no_quests:
+            # Non-trackable quest or no quests: grey out the pin entirely
+            target_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                emoji="📍",
+                custom_id=_custom_id(gid, uid, "quest_set_target"),
+                disabled=True,
+                row=1,
+            )
+        elif has_target:
             target_btn = discord.ui.Button(
                 style=discord.ButtonStyle.danger,
                 emoji="📍",
@@ -91,7 +101,6 @@ class QuestView(discord.ui.View):
                 style=discord.ButtonStyle.success,
                 emoji="📍",
                 custom_id=_custom_id(gid, uid, "quest_set_target"),
-                disabled=no_quests,
                 row=1,
             )
         self.add_item(target_btn)
