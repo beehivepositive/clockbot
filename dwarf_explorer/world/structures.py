@@ -514,6 +514,27 @@ def _generate_structures_sync(
                 for tp in filter(None, [outer_1, outer_2, outer_3]):
                     overrides.append((tp[0], tp[1], 'sky_temple_outer'))
 
+    # --- Bandit camps: 8-12 on plains/grass/forest, spread from villages and each other ---
+    _bandit_camp_count = rng.randint(8, 12)
+    _bandit_camps: list[tuple[int, int]] = []
+    for _ in range(3000):
+        if len(_bandit_camps) >= _bandit_camp_count:
+            break
+        x = rng.randint(10, WORLD_SIZE - 11)
+        y = rng.randint(10, WORLD_SIZE - 11)
+        if _near_spawn(x, y):
+            continue
+        if get_biome(x, y, seed) not in ('plains', 'grass', 'forest', 'dense_forest'):
+            continue
+        # Keep away from villages
+        if any(abs(x - vx) + abs(y - vy) < 30 for vx, vy in village_centers):
+            continue
+        # Keep camps spread from each other
+        if any(abs(x - cx) + abs(y - cy) < 20 for cx, cy in _bandit_camps):
+            continue
+        overrides.append((x, y, 'bandit_camp'))
+        _bandit_camps.append((x, y))
+
     cave_groups = _group_caves(cave_positions, rng)
     return overrides, cave_groups
 
@@ -849,6 +870,14 @@ async def place_structures(seed: int, db) -> None:
         await db.executemany(
             "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type) VALUES (?, ?, ?)",
             overrides,
+        )
+
+    # Insert bandit_camps records for each camp override
+    camp_positions = [(x, y) for x, y, t in overrides if t == 'bandit_camp']
+    if camp_positions:
+        await db.executemany(
+            "INSERT OR IGNORE INTO bandit_camps (world_x, world_y) VALUES (?, ?)",
+            camp_positions,
         )
 
     # 2. Cave systems

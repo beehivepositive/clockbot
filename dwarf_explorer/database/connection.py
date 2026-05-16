@@ -716,6 +716,20 @@ class Database:
                 except Exception as e:
                     _log.error("ground_items rebuild error: %s", e)
 
+            # ── bandit_camps table ─────────────────────────────────────────────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bandit_camps (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    world_x      INTEGER NOT NULL,
+                    world_y      INTEGER NOT NULL,
+                    max_bandits  INTEGER NOT NULL DEFAULT 4,
+                    bandit_kills INTEGER NOT NULL DEFAULT 0,
+                    cleared_at   INTEGER,
+                    UNIQUE(world_x, world_y)
+                )
+            """)
+            conn.commit()
+
             # Clean up quest_board overrides from old worlds
             try:
                 conn.execute("DELETE FROM tile_overrides WHERE tile_type = 'quest_board'")

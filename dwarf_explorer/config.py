@@ -69,6 +69,7 @@ STRUCTURE_EMOJI = {
     "sky_temple_outer": "\U0001F3DB️",  # 🏛️ outer/puzzle temple (overworld)
     "sky_temple_main":  "\U0001F3F0",        # 🏰 main/portal temple (overworld)
     "forest_entrance":  "\U0001F332",        # 🌲 forest entrance (overridable with :forest_entrance:)
+    "bandit_camp":      "\U0001F3D5️", # 🏕️ bandit camp
 }
 
 ENTITY_EMOJI = {
@@ -254,6 +255,7 @@ WALKABLE_TILES = {
     "sky_temple_outer",  # outer puzzle temple — walkable overworld tile
     "sky_temple_main",   # main portal temple — walkable overworld tile
     "forest_entrance",   # forest entrance — walkable (triggers forest interior load)
+    "bandit_camp",       # bandit camp — walkable overworld tile (triggers combat when adjacent)
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
     # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
     "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
@@ -275,7 +277,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main", "forest_entrance"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main", "forest_entrance", "bandit_camp"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {

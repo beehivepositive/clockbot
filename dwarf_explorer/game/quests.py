@@ -818,8 +818,8 @@ def _build_bounty(
         "reward_gold": gold,
         "reward_xp": xp,
         "reward_item": None,
-        "location_x": lx,
-        "location_y": ly,
+        "location_x": None,   # kill quests have no specific nav target
+        "location_y": None,
         "source_type": "bounty",
         "quest_subtype": "kill",
         "location_type": loc_type,
@@ -846,6 +846,37 @@ def _build_merchant_delivery(rng: random.Random, tmpl: dict, dest_x: int, dest_y
     }
 
 
+def _build_bandit_camp_quest(
+    rng: random.Random, camp_wx: int, camp_wy: int, ref_x: int, ref_y: int
+) -> dict:
+    """Build a quest to clear a specific bandit camp."""
+    direction = _direction_from_point(camp_wx, camp_wy, ref_x, ref_y)
+    descriptions = [
+        f"A band of outlaws has fortified a camp to the {direction}. Drive them out for good.",
+        f"Raiders have established a permanent camp to the {direction}. Eradicate them.",
+        f"A bandit stronghold has been sighted to the {direction}. Clear it before they grow bolder.",
+        f"The {direction} road is no longer safe — a bandit camp blocks the way. Deal with them.",
+    ]
+    count = rng.randint(4, 6)
+    gold  = 60 + count * 10
+    xp    = 320 + count * 30
+    return {
+        "quest_type": "Clear Bandit Camp",
+        "title": "Clear the Bandit Camp",
+        "description": rng.choice(descriptions),
+        "target_id": "bandit",
+        "target_count": count,
+        "reward_gold": gold,
+        "reward_xp": xp,
+        "reward_item": None,
+        "location_x": camp_wx,
+        "location_y": camp_wy,
+        "source_type": "bounty",
+        "quest_subtype": "kill",
+        "location_type": "overworld",
+    }
+
+
 # ── DB insertion helper ────────────────────────────────────────────────────────
 
 async def _insert_quest(db, q: dict) -> int:
@@ -865,13 +896,20 @@ async def _insert_quest(db, q: dict) -> int:
 
 # ── Pool management ────────────────────────────────────────────────────────────
 
-async def get_or_refresh_village_pool(db, village_id: int, seed: int) -> list[dict]:
+async def get_or_refresh_village_pool(
+    db, village_id: int, seed: int,
+    village_wx: int | None = None,
+    village_wy: int | None = None,
+) -> list[dict]:
     """Return the current quest pool for a village, refreshing if expired.
 
     Returns a list of quest dicts (from the quests table) for up to 3 quests.
     If an existing active player_quest references a pool quest, that quest is
     excluded from the refreshed pool for the returning player — callers must
     filter by user.
+
+    village_wx/wy: if provided, investigation targets are limited to within
+    100 tiles of the village position.
     """
     source_key = str(village_id)
     pool = await _load_pool(db, "village_npc", source_key)
@@ -899,12 +937,19 @@ async def get_or_refresh_village_pool(db, village_id: int, seed: int) -> list[di
     inv_chance = rng.random()
 
     if inv_chance < 0.4:
-        # Investigation quest if a matching structure exists
+        # Investigation quest if a matching structure exists within 100 tiles
         inv_tmpl = _pick(rng, _VILLAGE_INVESTIGATION_TEMPLATES)
-        loc = await db.fetch_one(
-            "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = ? LIMIT 1",
-            (inv_tmpl["target_id"],),
-        )
+        if village_wx is not None and village_wy is not None:
+            loc = await db.fetch_one(
+                "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = ? "
+                "AND ABS(world_x - ?) <= 100 AND ABS(world_y - ?) <= 100 LIMIT 1",
+                (inv_tmpl["target_id"], village_wx, village_wy),
+            )
+        else:
+            loc = await db.fetch_one(
+                "SELECT world_x, world_y FROM tile_overrides WHERE tile_type = ? LIMIT 1",
+                (inv_tmpl["target_id"],),
+            )
         if loc:
             records.append(_build_village_investigation(rng, inv_tmpl, loc["world_x"], loc["world_y"]))
         else:
@@ -984,6 +1029,30 @@ async def get_or_refresh_bounty_pool(
             "INSERT INTO quest_pool (source_type, source_key, quest_id, expires_at) VALUES (?,?,?,?)",
             ("bounty", source_key, qid, expires),
         )
+
+    # Add a bandit camp quest if an active camp is within 100 tiles of the village
+    if village_wx is not None and village_wy is not None:
+        import time as _bt
+        camp_row = await db.fetch_one(
+            "SELECT world_x, world_y FROM bandit_camps "
+            "WHERE ABS(world_x - ?) <= 100 AND ABS(world_y - ?) <= 100 "
+            "AND (cleared_at IS NULL OR (? - cleared_at) > 86400) LIMIT 1",
+            (village_wx, village_wy, int(_bt.time())),
+        )
+        if camp_row:
+            q = _build_bandit_camp_quest(
+                rng, camp_row["world_x"], camp_row["world_y"],
+                village_wx, village_wy,
+            )
+            qid = await _insert_quest(db, q)
+            q["id"] = qid
+            quests_out.append(q)
+            await db.execute(
+                "INSERT INTO quest_pool (source_type, source_key, quest_id, expires_at)"
+                " VALUES (?,?,?,?)",
+                ("bounty", source_key, qid, expires),
+            )
+
     return quests_out
 
 

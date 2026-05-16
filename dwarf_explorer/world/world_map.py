@@ -31,6 +31,7 @@ _LEGEND_ICON_ENTRIES = [
     ("sky_temple_outer", "Outer Temple",  (  0, 220, 200), "filled_diamond"),
     ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
     ("forest_entrance",  "Forest",        ( 34, 139,  34), "filled_circle"),
+    ("bandit_camp",      "Bandit Camp",   (180,  60,  60), "filled_circle"),
 ]
 
 # Ocean-specific legend

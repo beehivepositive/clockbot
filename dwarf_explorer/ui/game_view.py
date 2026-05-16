@@ -3831,6 +3831,44 @@ async def _move_steps(
                         "or seek the 🌀 maze deep within."), \
                            _game_view(guild_id, user_id, player, grid=grid)
 
+            # ── Bandit camp aggro: guaranteed combat within 2 tiles of an active camp ──
+            import time as _btime
+            _camp = await db.fetch_one(
+                "SELECT world_x, world_y, id FROM bandit_camps "
+                "WHERE ABS(world_x - ?) <= 2 AND ABS(world_y - ?) <= 2 "
+                "AND (cleared_at IS NULL OR (? - cleared_at) > 86400) LIMIT 1",
+                (nx, ny, int(_btime.time())),
+            )
+            if _camp:
+                _ui_state[user_id] = {
+                    "type": "combat",
+                    "arena": None,
+                    "camp_wx": int(_camp["world_x"]),
+                    "camp_wy": int(_camp["world_y"]),
+                    "camp_id": int(_camp["id"]),
+                }
+                grid = await load_viewport(nx, ny, seed, db)
+                arena_rng = _random.Random(hash((user_id, nx, ny, "bandit_camp")))
+                arena, ex, ey = build_arena_from_viewport(grid, "bandit", arena_rng)
+                _ui_state[user_id]["arena"] = arena
+                player.in_combat = True
+                player.combat_enemy_type = "bandit"
+                player.combat_enemy_hp = ENEMY_STATS["bandit"][0]
+                player.combat_enemy_x = ex
+                player.combat_enemy_y = ey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                    1 if player.accessory == "ring_of_time" else 0
+                )
+                await save_combat_state(db, user_id, player)
+                content = render_arena(arena, player)
+                view = CombatView(guild_id, user_id,
+                                  trapped=arena["player_trapped"],
+                                  moves_left=player.combat_moves_left,
+                                  enemy_type="bandit")
+                return content, view
+
             # 0.2% travelling merchant encounter
             merch_rng = _random.Random(hash((user_id, nx, ny, player.xp // 20, "merchant")))
             if merch_rng.random() < 0.002 and not player.in_combat:
@@ -3906,6 +3944,9 @@ async def _finish_combat(
 ) -> tuple[str, discord.ui.View]:
     """Clean up after combat ends (win, flee, or death). Return (content, view)."""
     seed = await get_or_create_world(db, guild_id)
+    # Extract bandit camp info BEFORE clearing state
+    _pre_state  = _ui_state.get(user_id, {})
+    _camp_id    = _pre_state.get("camp_id")
     player.in_combat = False
     _ui_state.pop(user_id, None)
     await clear_combat_state(db, user_id)
@@ -3930,6 +3971,30 @@ async def _finish_combat(
         if drop_rng.random() < 0.25:
             await add_to_inventory(db, user_id, "dagger", 1)
             extra_msg += " 🗡️ The bandit dropped a **Dagger**!"
+
+    # Bandit camp kill tracking
+    if won and player.combat_enemy_type == "bandit" and _camp_id is not None:
+        try:
+            await db.execute(
+                "UPDATE bandit_camps SET bandit_kills = bandit_kills + 1 WHERE id = ?",
+                (_camp_id,),
+            )
+            camp_row = await db.fetch_one(
+                "SELECT bandit_kills, max_bandits FROM bandit_camps WHERE id = ?",
+                (_camp_id,),
+            )
+            if camp_row and camp_row["bandit_kills"] >= camp_row["max_bandits"]:
+                import time as _ct
+                await db.execute(
+                    "UPDATE bandit_camps SET cleared_at = ? WHERE id = ?",
+                    (int(_ct.time()), _camp_id),
+                )
+                extra_msg += (
+                    " 🏕️ **The bandit camp has been cleared!** "
+                    "The roads are safer now. The camp will respawn in 24 hours."
+                )
+        except Exception:
+            pass
 
     # Sky enemy drops on victory
     if won and player.combat_enemy_type == "wind_wisp":
@@ -12563,7 +12628,11 @@ async def handle_quest_set_target(
                 _ui_state[user_id] = {**state, "nav_target": this_target}
                 extra = "📍 **Target set!** A ♦️ diamond will appear at the edge of your viewport."
         else:
-            extra = "⚠️ This quest has no map location to target."
+            subtype = q.get("quest_subtype", "")
+            if subtype == "kill":
+                extra = "⚔️ This quest requires defeating enemies — no specific location to navigate to."
+            else:
+                extra = "⚠️ This quest has no map location to target."
     else:
         extra = ""
 
@@ -12783,12 +12852,15 @@ async def handle_npc_talk(
             if tile and tile.terrain in _QUEST_NPC_TILES:
                 adj_npc[tile.terrain] = (tile.world_x, tile.world_y)
 
-    village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
+    village_pool = await get_or_refresh_village_pool(
+        db, player.village_id, seed,
+        village_wx=player.village_wx, village_wy=player.village_wy,
+    )
     bounty_pool  = await get_or_refresh_bounty_pool(
         db, seed,
         village_id=player.village_id,
-        village_wx=player.world_x,
-        village_wy=player.world_y,
+        village_wx=player.village_wx,
+        village_wy=player.village_wy,
     )
 
     # NPC-specific lore texts and quest pool resolution
@@ -12896,12 +12968,15 @@ async def handle_npc_quest(
             if tile and tile.terrain in _QUEST_NPC_TILES:
                 adj_npc[tile.terrain] = (tile.world_x, tile.world_y)
 
-    village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
+    village_pool = await get_or_refresh_village_pool(
+        db, player.village_id, seed,
+        village_wx=player.village_wx, village_wy=player.village_wy,
+    )
     bounty_pool  = await get_or_refresh_bounty_pool(
         db, seed,
         village_id=player.village_id,
-        village_wx=player.world_x,
-        village_wy=player.world_y,
+        village_wx=player.village_wx,
+        village_wy=player.village_wy,
     )
 
     if "b_priest" in adj_npc:
