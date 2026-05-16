@@ -104,6 +104,8 @@ from dwarf_explorer.database.repositories import (
     grant_warp_crystal,
     get_player_waypoints,
     unlock_waypoint,
+    get_avatar_cache,
+    store_avatar_cache,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -11398,6 +11400,30 @@ class NavView(discord.ui.View):
         self.add_item(close_btn)
 
 
+async def _fetch_or_cache_avatar(
+    db, guild, user_id: int, size: int = 32
+) -> bytes | None:
+    """Return avatar PNG bytes for *user_id*, using DB cache (24 h TTL).
+
+    Checks the avatar_cache table first.  On a miss or a stale entry, fetches
+    from Discord, stores the fresh bytes, then returns them.  Never raises —
+    returns None on any failure.
+    """
+    cached = await get_avatar_cache(db, user_id)
+    if cached is not None:
+        return cached
+    try:
+        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        asset = member.guild_avatar or member.avatar
+        if asset:
+            data = await asset.with_size(size).read()
+            await store_avatar_cache(db, user_id, data)
+            return data
+    except Exception:
+        pass
+    return None
+
+
 async def handle_nav_open(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -12675,14 +12701,7 @@ async def handle_map(
     if player.in_high_seas:
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
-        ocean_avatar: bytes | None = None
-        try:
-            member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
-            asset = member.guild_avatar or member.avatar
-            if asset:
-                ocean_avatar = await asset.with_size(32).read()
-        except Exception:
-            pass
+        ocean_avatar = await _fetch_or_cache_avatar(db, interaction.guild, user_id)
         from dwarf_explorer.world.world_map import generate_ocean_map
         buf = await generate_ocean_map(
             seed, guild_id,
@@ -12701,14 +12720,7 @@ async def handle_map(
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
         ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
         overworld_qmarks = await get_player_quest_markers(db, user_id)
-        ocean_avatar_b: bytes | None = None
-        try:
-            member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
-            asset = member.guild_avatar or member.avatar
-            if asset:
-                ocean_avatar_b = await asset.with_size(32).read()
-        except Exception:
-            pass
+        ocean_avatar_b = await _fetch_or_cache_avatar(db, interaction.guild, user_id)
         from dwarf_explorer.world.world_map import generate_ocean_map
         buf = await generate_ocean_map(
             seed, guild_id,
@@ -12728,30 +12740,15 @@ async def handle_map(
     qmarks = await get_player_quest_markers(db, user_id)
     ocean_qmarks = await get_player_ocean_quest_markers(db, user_id)
 
-    # Fetch avatar bytes for current player
-    player_avatar: bytes | None = None
-    try:
-        member = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
-        asset = member.guild_avatar or member.avatar
-        if asset:
-            player_avatar = await asset.with_size(32).read()
-    except Exception:
-        pass
-
-    # Fetch avatar bytes for other players (parallel list to other_players)
+    # Fetch avatars — DB cache first (24 h TTL), Discord CDN only on miss/stale
+    player_avatar = await _fetch_or_cache_avatar(db, interaction.guild, user_id)
     other_avatars: list[bytes | None] = []
-    for op in other_players:
-        op_uid = op[3] if len(op) > 3 else None
-        av: bytes | None = None
-        if op_uid:
-            try:
-                op_member = interaction.guild.get_member(op_uid) or await interaction.guild.fetch_member(op_uid)
-                op_asset = op_member.guild_avatar or op_member.avatar
-                if op_asset:
-                    av = await op_asset.with_size(32).read()
-            except Exception:
-                pass
-        other_avatars.append(av)
+    for _op in other_players:
+        _op_uid = _op[3] if len(_op) > 3 else None
+        other_avatars.append(
+            await _fetch_or_cache_avatar(db, interaction.guild, _op_uid)
+            if _op_uid else None
+        )
 
     from dwarf_explorer.world.world_map import generate_world_map, generate_world_map_key
     key_buf = await generate_world_map_key(guild_id, seed)

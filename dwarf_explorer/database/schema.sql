@@ -417,3 +417,10 @@ CREATE TABLE IF NOT EXISTS bandit_camps (
     cleared_at   INTEGER,
     UNIQUE(world_x, world_y)
 );
+
+-- Cached Discord avatar images (refreshed at most once per 24 h)
+CREATE TABLE IF NOT EXISTS avatar_cache (
+    user_id     INTEGER PRIMARY KEY,
+    avatar_data BLOB    NOT NULL,
+    cached_at   INTEGER NOT NULL
+);

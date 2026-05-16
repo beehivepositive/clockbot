@@ -1574,3 +1574,34 @@ async def grant_warp_crystal(db: Database, user_id: int) -> None:
     )
     for wp_id in ("spawn", "forest", "grove"):
         await unlock_waypoint(db, user_id, wp_id)
+
+
+# ── Avatar cache ──────────────────────────────────────────────────────────────
+
+_AVATAR_TTL = 86_400   # 24 hours in seconds
+
+
+async def get_avatar_cache(db: Database, user_id: int) -> bytes | None:
+    """Return cached avatar PNG bytes if < 24 h old, else None."""
+    import time as _time
+    row = await db.fetch_one(
+        "SELECT avatar_data, cached_at FROM avatar_cache WHERE user_id = ?",
+        (user_id,),
+    )
+    if row is None:
+        return None
+    if _time.time() - int(row["cached_at"]) > _AVATAR_TTL:
+        return None
+    data = row["avatar_data"]
+    return bytes(data) if data else None
+
+
+async def store_avatar_cache(db: Database, user_id: int, avatar_data: bytes) -> None:
+    """Upsert avatar bytes with the current timestamp."""
+    import time as _time
+    await db.execute(
+        "INSERT INTO avatar_cache(user_id, avatar_data, cached_at) VALUES(?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "avatar_data = excluded.avatar_data, cached_at = excluded.cached_at",
+        (user_id, avatar_data, int(_time.time())),
+    )
