@@ -1436,6 +1436,7 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (SHIP_EMOJI,     "ship_chest_cargo",    "chest"),
         (BUILDING_EMOJI, "b_forge",           "forge"),
         (VILLAGE_EMOJI,  "vil_grass",         "grass"),
+        (VILLAGE_EMOJI,  "vil_pen_grass",     "grass"),
         (VILLAGE_EMOJI,  "vil_fence",         "fence"),
         (VILLAGE_EMOJI,  "vil_fence_gate",    "fence_gate"),
         (VILLAGE_EMOJI,  "vil_farmland",      "farmland"),

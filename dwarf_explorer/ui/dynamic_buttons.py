@@ -101,6 +101,9 @@ from dwarf_explorer.ui.game_view import (
     handle_warp_open,
     handle_warp_close,
     _execute_warp,
+    handle_nav_open,
+    handle_nav_close,
+    handle_npc_talk,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -522,7 +525,10 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_qpool_accept(interaction, gid, uid)
             elif act == "qpool_close":
                 await handle_qpool_close(interaction, gid, uid)
-            # NPC quest button (bottom-right)
+            # NPC talk button (bottom-right) — new dialogue system
+            elif act == "npc_talk":
+                await handle_npc_talk(interaction, gid, uid)
+            # NPC quest button (bottom-right) — legacy routing for old messages
             elif act == "npc_quest":
                 await handle_npc_quest(interaction, gid, uid)
             # Merchant quest offer
@@ -641,6 +647,11 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_tree_city_buy(interaction, gid, uid, item_id)
             elif act == "tree_city_close":
                 await handle_tree_city_close(interaction, gid, uid)
+            # Navigation overlay
+            elif act == "nav_open":
+                await handle_nav_open(interaction, gid, uid)
+            elif act == "nav_close":
+                await handle_nav_close(interaction, gid, uid)
             # Warp crystal
             elif act == "warp_open":
                 await handle_warp_open(interaction, gid, uid)

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re as _re
 import random as _random
@@ -296,8 +296,7 @@ class GameView(discord.ui.View):
                  npc_label: str = "", npc_enabled: bool = False,
                  embark_enabled: bool = False,
                  feed_enabled: bool = False,
-                 plant_enabled: bool = False,
-                 has_warp_crystal: bool = False):
+                 plant_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -305,8 +304,7 @@ class GameView(discord.ui.View):
                             center_label, center_enabled,
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
-                            embark_enabled, feed_enabled, plant_enabled,
-                            has_warp_crystal)
+                            embark_enabled, feed_enabled, plant_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -333,14 +331,14 @@ class GameView(discord.ui.View):
                        embark_enabled: bool = False,
                        feed_enabled: bool = False,
                        plant_enabled: bool = False,
-                       has_warp_crystal: bool = False) -> None:
+                       ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
-        # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
-        map_btn = discord.ui.Button(
+        # ── Row 0: Nav | Inventory | Edit ─────────────────────────────────────
+        nav_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="Map", emoji="\U0001F5FA\uFE0F",
-            custom_id=_custom_id(self.guild_id, self.user_id, "map"),
+            label="Nav", emoji="\U0001F9ED",
+            custom_id=_custom_id(self.guild_id, self.user_id, "nav_open"),
             row=0,
         )
         inventory_btn = discord.ui.Button(
@@ -349,22 +347,11 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "inventory"),
             row=0,
         )
-        quest_btn = discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="Quests", emoji="📋",
-            custom_id=_custom_id(self.guild_id, self.user_id, "quests"),
-            row=0,
-        )
         edit_btn = discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u26CF\uFE0F Edit",
+            style=discord.ButtonStyle.secondary, label="⛏️ Edit",
             custom_id=_custom_id(self.guild_id, self.user_id, "action"),
             row=0,
         ) if edit_enabled else None
-        warp_btn = discord.ui.Button(
-            style=discord.ButtonStyle.primary, emoji="\U0001F52E",
-            custom_id=_custom_id(self.guild_id, self.user_id, "warp_open"),
-            row=0,
-        ) if has_warp_crystal else None
 
         # ── Row 1: Sprint (or spacer) | ⬆️ | Action ─────────────────────────
         if boots_equipped:
@@ -459,7 +446,7 @@ class GameView(discord.ui.View):
             npc_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
                 emoji=npc_label,
-                custom_id=_custom_id(self.guild_id, self.user_id, "npc_quest"),
+                custom_id=_custom_id(self.guild_id, self.user_id, "npc_talk"),
                 row=3,
             )
         else:
@@ -470,9 +457,7 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
-        row0 = [map_btn, inventory_btn, quest_btn]
-        if warp_btn is not None:
-            row0.append(warp_btn)
+        row0 = [nav_btn, inventory_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
@@ -2540,7 +2525,7 @@ def _compute_context_labels(
     # ── NPC quest button: bottom-right, lights up when adjacent to a quest NPC ─
     npc_label, npc_enabled = "", False
     if adj_terrains & _QUEST_NPC_TILES:
-        npc_label, npc_enabled = "📋", True
+        npc_label, npc_enabled = "💬", True
 
     # ── Embark canoe: bottom-left button, only in overworld with canoe + adjacent water ──
     embark_enabled = False
@@ -2639,8 +2624,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     npc_enabled=npc_enabled,
                     embark_enabled=embark_enabled,
                     feed_enabled=feed_enabled,
-                    plant_enabled=plant_enabled,
-                    has_warp_crystal=getattr(player, "has_warp_crystal", False))
+                    plant_enabled=plant_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -10945,6 +10929,67 @@ async def handle_warp_close(
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
+class NavView(discord.ui.View):
+    """Navigation overlay: World Map | Warp (if crystal) | Close."""
+
+    def __init__(self, guild_id: int, user_id: int, has_warp_crystal: bool = False):
+        super().__init__(timeout=None)
+        map_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Map", emoji="\U0001F5FA️",
+            custom_id=_custom_id(guild_id, user_id, "map"),
+            row=0,
+        )
+        self.add_item(map_btn)
+        if has_warp_crystal:
+            warp_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="Warp", emoji="\U0001F52E",
+                custom_id=_custom_id(guild_id, user_id, "warp_open"),
+                row=0,
+            )
+            self.add_item(warp_btn)
+        close_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="✖ Close",
+            custom_id=_custom_id(guild_id, user_id, "nav_close"),
+            row=0,
+        )
+        self.add_item(close_btn)
+
+
+async def handle_nav_open(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Show navigation overlay (Map / Warp / Close)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    has_crystal = getattr(player, "has_warp_crystal", False)
+    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
+    options = ["🗺️ **World Map** — see the world around you"]
+    if has_crystal:
+        options.append("🔮 **Warp** — teleport to a known waypoint")
+    options_text = "\n".join(options)
+    embed = _embed(f"🧭 **Navigation**\n\n{options_text}")
+    await interaction.response.edit_message(embed=embed, content=None, view=view)
+
+
+async def handle_nav_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close navigation overlay and return to game view."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await _cached_grid(user_id, player, seed, db)
+    if player.in_cave:
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    else:
+        view = _game_view(guild_id, user_id, player, grid=grid)
+    content = render_grid(grid, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:
     """Return total navigable slots in current shop view."""
     view_mode = state.get("shop_view", "shop")
@@ -12488,6 +12533,127 @@ async def handle_mq_close(
 
 # ── NPC quest button ─────────────────────────────────────────────────────────
 
+async def handle_npc_talk(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Triggered when the player clicks the 💬 Talk button.
+
+    Detects which NPC is adjacent, then opens a DialogueView with:
+      - A lore/greeting option
+      - A quest option (if the NPC has quests to offer), marked with 📋
+      - A farewell option
+    """
+    from dwarf_explorer.game.quests import get_or_refresh_village_pool, get_or_refresh_bounty_pool
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # Load the correct grid based on context
+    if player.in_house:
+        context = "building"
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    elif player.in_village:
+        context = "village"
+        grid = await load_village_viewport(
+            player.village_id, player.village_x, player.village_y, db, user_id=user_id
+        )
+    else:
+        return
+
+    vc = len(grid) // 2
+    adj_npc: dict[str, tuple[int, int]] = {}
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nr, nc = vc + dr, vc + dc
+        if 0 <= nr < len(grid) and 0 <= nc < len(grid[nr]):
+            tile = grid[nr][nc]
+            if tile and tile.terrain in _QUEST_NPC_TILES:
+                adj_npc[tile.terrain] = (tile.world_x, tile.world_y)
+
+    village_pool = await get_or_refresh_village_pool(db, player.village_id, seed)
+    bounty_pool  = await get_or_refresh_bounty_pool(
+        db, seed,
+        village_id=player.village_id,
+        village_wx=player.world_x,
+        village_wy=player.world_y,
+    )
+
+    # NPC-specific lore texts and quest pool resolution
+    import hashlib as _h_mod
+    def _hash(s): return int(_h_mod.md5(s.encode()).hexdigest(), 16)
+
+    if "b_priest" in adj_npc:
+        npc_name = "Village Priest"
+        lore_text = "The light of the gods watches over this village. May your journey be blessed."
+        pool = village_pool[:1]
+    elif "b_tavern_npc" in adj_npc:
+        nx, ny = adj_npc["b_tavern_npc"]
+        idx = (nx * 7 + ny * 13) % max(1, len(bounty_pool)) if bounty_pool else 0
+        npc_name = "Tavern Regular"
+        lore_text = "Heard some strange rumors from the road lately... adventurers keep disappearing in the wilds."
+        pool = bounty_pool[idx:idx + 1]
+    elif "b_farmer_npc" in adj_npc:
+        npc_name = "Farmer"
+        lore_text = "The soil has been good to us this season. But we can always use an extra pair of hands."
+        pool = village_pool[:1]
+    elif "b_blacksmith_npc" in adj_npc:
+        npc_name = "Blacksmith"
+        lore_text = "Steel and sweat — that's the honest life. Not everyone appreciates it, but the village would fall without us."
+        pool = bounty_pool[:1]
+    elif "vil_villager" in adj_npc:
+        npc_name = "Villager"
+        _h = _hash(f"vlt{player.village_id}{player.village_x}{player.village_y}")
+        lore_texts = [
+            "Life is quiet here, but I like it that way.",
+            "Have you seen the market? Finest goods in the region.",
+            "They say there's something strange in the forest to the north...",
+            "The children play near the well every evening. It's nice.",
+        ]
+        lore_text = lore_texts[_h % len(lore_texts)]
+        pool = bounty_pool[:1] if _h % 2 == 0 else []
+    elif "vil_guard" in adj_npc:
+        npc_name = "Village Guard"
+        _h = _hash(f"glt{player.village_id}{player.village_x}{player.village_y}")
+        lore_text = "Stay out of trouble and we won't have a problem. The village gates are watched at all hours."
+        pool = bounty_pool[:1] if _h % 2 == 0 else []
+    elif "b_resident" in adj_npc:
+        npc_name = "Resident"
+        _h = _hash(f"rlt{player.village_id}{player.house_x}{player.house_y}")
+        lore_texts = [
+            "Nice place you've found here. Almost as nice as mine.",
+            "I moved here three years ago. Haven't regretted it since.",
+            "You're not from here, are you? I can always tell.",
+        ]
+        lore_text = lore_texts[_h % len(lore_texts)]
+        pool = bounty_pool[:1] if _h % 10 < 4 else []
+    else:
+        npc_name = "Stranger"
+        lore_text = "..."
+        pool = []
+
+    # Build dialogue options
+    options = [{"label": "Tell me about yourself", "action": "lore"}]
+    if pool:
+        options.append({"label": f"📋 I'm looking for work ({npc_name})", "action": "quest_pool"})
+    options.append({"label": "Farewell", "action": "close"})
+
+    state = {
+        "type": "npc_dialogue",
+        "npc_type": "village_npc",
+        "npc_name": npc_name,
+        "text": "What brings you to me, traveller?",
+        "options": options,
+        "selected": 0,
+        "context": context,
+        "quest_pool": pool,
+        "lore_text": lore_text,
+        "source_label": npc_name,
+    }
+    _ui_state[user_id] = state
+    content = _render_dialogue(npc_name, state["text"], options, 0)
+    view = DialogueView(guild_id, user_id, options, 0)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
 async def handle_npc_quest(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -13094,14 +13260,64 @@ async def handle_dialogue_confirm(
     state = _ui_state.get(user_id, {})
 
     if action == "close" or state.get("type") != "npc_dialogue":
-        # Return to building view
-        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-        content = render_grid(grid, player, "Farewell.")
         _ui_state.pop(user_id, None)
-        await interaction.response.edit_message(
-            embed=_embed(content), content=None,
-            view=_game_view(guild_id, user_id, player, grid=grid),
-        )
+        # Return to the correct view based on context
+        ctx = state.get("context", "building") if state else "building"
+        if ctx == "village" and player.in_village:
+            grid = await load_village_viewport(
+                player.village_id, player.village_x, player.village_y, db, user_id=user_id
+            )
+            content = render_grid(grid, player, "Farewell.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+        else:
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            content = render_grid(grid, player, "Farewell.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+        return
+
+    if action == "lore":
+        # Show lore text response; keep options available for further interaction
+        lore_text = state.get("lore_text", "I have nothing more to say.")
+        options = state.get("options", [])
+        sel = state.get("selected", 0)
+        state["text"] = lore_text
+        _ui_state[user_id] = state
+        content = _render_dialogue(state["npc_name"], lore_text, options, sel)
+        view = DialogueView(guild_id, user_id, options, sel)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "quest_pool":
+        pool = state.get("quest_pool", [])
+        source_label = state.get("source_label", "Villager")
+        _ui_state.pop(user_id, None)
+        if pool:
+            await handle_open_quest_pool(
+                interaction, guild_id, user_id,
+                pool=pool,
+                source_label=source_label,
+                source_type="village_npc",
+            )
+        else:
+            ctx = state.get("context", "building")
+            if ctx == "village" and player.in_village:
+                grid = await load_village_viewport(
+                    player.village_id, player.village_x, player.village_y, db, user_id=user_id
+                )
+                content = render_grid(grid, player, "I have no work for you right now.")
+            else:
+                grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+                content = render_grid(grid, player, "I have no work for you right now.")
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
         return
 
     if action == "hire_crew":
@@ -13152,16 +13368,27 @@ async def handle_dialogue_confirm(
 async def handle_dialogue_cancel(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Cancel NPC dialogue and return to building view."""
+    """Cancel NPC dialogue and return to the appropriate view."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    _ui_state.pop(user_id, None)
-    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(grid, player, "You end the conversation.")
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player, grid=grid),
-    )
+    state = _ui_state.pop(user_id, {})
+    ctx = state.get("context", "building")
+    if ctx == "village" and player.in_village:
+        grid = await load_village_viewport(
+            player.village_id, player.village_x, player.village_y, db, user_id=user_id
+        )
+        content = render_grid(grid, player, "You end the conversation.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+    else:
+        grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+        content = render_grid(grid, player, "You end the conversation.")
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
 
 
 # ── Ship crew management handlers ─────────────────────────────────────────────
