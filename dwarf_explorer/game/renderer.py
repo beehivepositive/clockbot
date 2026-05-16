@@ -362,7 +362,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell.
 
     Uses EN QUAD (\u2000) for padding so columns align in Discord embeds.
-    Cursor only (or cursor + selected):  emoji◀︎  (cursor takes priority)
+    Cursor only (or cursor + selected):  emoji»  (cursor takes priority)
     Selected only:                       emoji«
     Plain:                               emoji__  (2-char qty padding)
     """
@@ -376,7 +376,7 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     content = f"{emoji}{digits}"   # tight: emoji + digits only
     # cursor_on takes priority — never show « when cursor is on the item
     if cursor_on:
-        return f"{content}◀︎{_PAD * max(0, n_pad - 1)}"
+        return f"{content}»{_PAD * max(0, n_pad - 1)}"
     if is_selected:
         return f"{content}«{_PAD * max(0, n_pad - 1)}"
     return f"{content}{_PAD * n_pad}"
@@ -424,7 +424,7 @@ def render_inventory(
 
     # --- Gold row (above equipped) ---
     if cursor_mode == "gold":
-        gold_marker = " ◀︎"
+        gold_marker = " »"
     elif selections.get("gold_coin", 0) > 0:
         gold_marker = " «"
     else:
@@ -439,7 +439,7 @@ def render_inventory(
         cursor_here = cursor_mode == "equipped" and idx == equipped_cursor
         selected_here = item_id is not None and item_id in selections
         if cursor_here:
-            eq_line_parts.append(f"{emoji}◀︎")   # cursor takes priority
+            eq_line_parts.append(f"{emoji}»")   # cursor takes priority
         elif selected_here:
             eq_line_parts.append(f"{emoji}«")
         else:
@@ -476,7 +476,7 @@ def render_inventory(
                 )
                 # Centered: 1 pad on each side; cursor always shown on right piece
                 if cursor_on_pair:
-                    slots.append(f"{_PAD}{left_emoji}{right_emoji}◀︎")
+                    slots.append(f"{_PAD}{left_emoji}{right_emoji}»")
                 else:
                     slots.append(f"{_PAD}{left_emoji}{right_emoji}{_PAD}")
                 continue
@@ -486,7 +486,7 @@ def render_inventory(
             slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")  # cursor: ◀︎ displaces 1 pad
+                slots.append(f"{_EMPTY_SLOT}»{_PAD}")  # cursor: » displaces 1 pad
             else:
                 slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
 
@@ -567,7 +567,7 @@ def render_bank(
         # --- Gold row ---
         bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         if cursor_mode == "gold":
-            gold_marker = " ◀︎"
+            gold_marker = " »"
         else:
             gold_marker = ""
         lines.append(f"\U0001FA99 **{gold}** coins{gold_marker}  *(bank: {bank_gold}g)*")
@@ -578,7 +578,7 @@ def render_bank(
             item_id = equipped.get(slot)
             emoji = _item_emoji(item_id) if item_id else empty_emoji
             if cursor_mode == "equipped" and idx == equipped_cursor:
-                eq_parts.append(f"{emoji}◀︎")
+                eq_parts.append(f"{emoji}»")
             else:
                 eq_parts.append(emoji)
         lines.append("**Equipped:** " + " ".join(eq_parts))
@@ -597,7 +597,7 @@ def render_bank(
                                        is_selected=False))
             else:
                 if cursor_mode == "inventory" and i == selected:
-                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
+                    slots.append(f"{_EMPTY_SLOT}»{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(inv_rows):
@@ -629,7 +629,7 @@ def render_bank(
         vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
         bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         lines = [f"\U0001F3E6 **Bank Vault** ({BANK_COLS}×{BANK_ROWS})"]
-        gold_marker = " ◀︎" if cursor_mode == "gold" else ""
+        gold_marker = " »" if cursor_mode == "gold" else ""
         lines.append(f"\U0001FA99 Bank gold: **{bank_gold}**{gold_marker}")
         if cursor_mode == "gold":
             lines.append(f"Cursor: 🪙 **Bank Gold** ×{bank_gold}  |  📥 Withdraw qty: **{qty}**")
@@ -645,7 +645,7 @@ def render_bank(
                                        is_selected=False))
             else:
                 if i == selected and cursor_mode != "gold":
-                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
+                    slots.append(f"{_EMPTY_SLOT}»{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(BANK_ROWS):
@@ -770,7 +770,7 @@ def render_ship_chest(
     else:
         lines.append("Selected: *(empty slot)*")
 
-    lines.append(f"◀︎▶ navigate  |  {action_label}  |  🔄 Switch View  |  🔙 Back")
+    lines.append(f"← → navigate  |  {action_label}  |  🔄 Switch View  |  🔙 Back")
     return "\n".join(lines)
 
 
@@ -902,9 +902,9 @@ def render_chest(
         lines.append("Selected: *(empty slot)*")
 
     if view == "chest":
-        lines.append("◀︎▶ navigate  |  📤 Take  |  📦 Loot All  |  ❌ Close")
+        lines.append("← → navigate  |  📤 Take  |  📦 Loot All  |  ❌ Close")
     else:
-        lines.append("◀︎▶ navigate  |  📥 Give  |  🔄 Switch View  |  ❌ Close")
+        lines.append("← → navigate  |  📥 Give  |  🔄 Switch View  |  ❌ Close")
     return "\n".join(lines)
 
 
@@ -956,7 +956,7 @@ def render_shop(
                                        cursor_on=(i == selected), is_selected=False))
             else:
                 if i == selected:
-                    slots.append(f"{_EMPTY_SLOT}◀︎{_PAD}")
+                    slots.append(f"{_EMPTY_SLOT}»{_PAD}")
                 else:
                     slots.append(f"{_EMPTY_SLOT}{_PAD * 2}")
         for row in range(inv_rows):
@@ -986,7 +986,7 @@ def render_shop(
             cursor_on = (i == selected)
             # Pad to 3 chars wide (emoji + 2 trailing pads)
             if cursor_on:
-                slots.append(f"{emoji}◀︎{_PAD}")
+                slots.append(f"{emoji}»{_PAD}")
             else:
                 slots.append(f"{emoji}{_PAD * 2}")
         # Pad to full grid
