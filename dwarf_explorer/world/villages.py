@@ -965,8 +965,17 @@ def _hospital_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int
 
 
 def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,int], str]:
-    """Lumber mill: 2-wide river on the left, large gear in the water, small gear
-    driving a conveyor belt with a saw, log input and plank output trays."""
+    """Lumber mill: 2-wide river on the left, large gear in the water, small CCW
+    gear at column 2, and a VERTICAL conveyor column running top-to-bottom.
+
+    Conveyor column layout (x = conv_x, y = 1..H-2):
+      top   → b_log_input   (player inserts logs from adjacent floor tile)
+      mid   → b_saw         (aligned with small gear row)
+      bot   → b_plank_output (player picks up planks from adjacent floor tile)
+      rest  → b_conveyor segments
+
+    None of the conveyor tiles are walkable — player stands adjacent on b_floor.
+    """
     tiles: dict[tuple[int,int], str] = {}
 
     # Base layer: walls everywhere, then carve out floor
@@ -986,57 +995,43 @@ def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,
         tiles[(1, y)] = "b_water"
 
     # ── Large gear (2×2) centred vertically in the water columns ─────────────
-    gear_top_y  = H // 2 - 1
-    gear_bot_y  = H // 2
+    gear_top_y = H // 2 - 1
+    gear_bot_y = H // 2
     tiles[(0, gear_top_y)] = "b_gear_tl"
     tiles[(1, gear_top_y)] = "b_gear_tr"
     tiles[(0, gear_bot_y)] = "b_gear_bl"
     tiles[(1, gear_bot_y)] = "b_gear_br"
 
-    # ── Small gear at column 2, same row as large gear bottom ─────────────────
+    # ── Small CCW gear at column 2, level with large gear bottom ─────────────
     small_gear_y = gear_bot_y
-    if tiles.get((2, small_gear_y)) == "b_floor":
-        tiles[(2, small_gear_y)] = "b_gear_small"
+    tiles[(2, small_gear_y)] = "b_gear_small"
 
-    # ── Conveyor belt row ─────────────────────────────────────────────────────
-    # Place it 2 rows below the gear centre, but keep it away from the door row
-    conveyor_y = min(gear_bot_y + 2, H - 3)
+    # ── Vertical conveyor column ──────────────────────────────────────────────
+    # Place it two columns right of the small gear so there's a walkable
+    # floor column (conv_x - 1) between the gear and the conveyor line.
+    conv_x   = 4          # fixed column — player walks in columns 3, 5, 6, 7
+    top_y    = 1          # first interior row
+    bot_y    = H - 2      # last interior row
+    saw_y    = small_gear_y   # saw aligns with the small gear for visual continuity
 
-    # Log input at column 2 (left end of conveyor)
-    conv_start = 2
-    conv_end   = W - 3   # right end (inclusive) — column W-3 is plank output
-
-    # Make sure the whole row is floor first (in case wall clipped it)
-    for cx in range(conv_start, conv_end + 1):
-        if tiles.get((cx, conveyor_y)) not in ("b_wall",):
-            tiles[(cx, conveyor_y)] = "b_conveyor"
-
-    # Log input tray at left end
-    tiles[(conv_start, conveyor_y)] = "b_log_input"
-
-    # Saw in the middle of the conveyor
-    saw_x = (conv_start + conv_end) // 2
-    tiles[(saw_x, conveyor_y)] = "b_saw"
-
-    # Plank output tray at right end
-    tiles[(conv_end, conveyor_y)] = "b_plank_output"
-
-    # ── Lumber NPC stands one tile to the right of the saw ───────────────────
-    npc_x = min(saw_x + 1, W - 2)
-    npc_y = conveyor_y
-    # If the NPC spot would collide with the output tray, put them below the saw
-    if npc_x == conv_end:
-        npc_y = min(conveyor_y + 1, H - 2)
-        if tiles.get((saw_x, npc_y)) in ("b_floor", "b_conveyor"):
-            tiles[(saw_x, npc_y)] = "b_lumber_npc"
+    for cy in range(top_y, bot_y + 1):
+        if cy == top_y:
+            tiles[(conv_x, cy)] = "b_log_input"
+        elif cy == saw_y:
+            tiles[(conv_x, cy)] = "b_saw"
+        elif cy == bot_y:
+            tiles[(conv_x, cy)] = "b_plank_output"
         else:
-            tiles[(npc_x, conveyor_y)] = "b_lumber_npc"
-    else:
-        tiles[(npc_x, npc_y)] = "b_lumber_npc"
+            tiles[(conv_x, cy)] = "b_conveyor"
 
-    # ── Candle near the top-left interior corner ──────────────────────────────
-    if tiles.get((2, 1)) == "b_floor":
-        tiles[(2, 1)] = "b_candle"
+    # ── Lumber NPC stands to the right of the saw ────────────────────────────
+    npc_x = min(conv_x + 1, W - 2)
+    tiles[(npc_x, saw_y)] = "b_lumber_npc"
+
+    # ── Candle near top-right interior corner ─────────────────────────────────
+    candle_x = min(conv_x + 2, W - 2)
+    if tiles.get((candle_x, top_y)) == "b_floor":
+        tiles[(candle_x, top_y)] = "b_candle"
 
     return tiles
 

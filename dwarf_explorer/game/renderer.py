@@ -361,26 +361,37 @@ _CUR = "◄"  # ◄ U+25C4 BLACK LEFT-POINTING SMALL TRIANGLE — matches EN QUA
 _SEL = "«"  # « Left double angle quotation — text-only punctuation, ~0.5em
 
 def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str:
-    """Format a single inventory slot cell.
+    """Format a single inventory slot cell — always exactly 4 units wide.
 
-    Layout: [prefix][emoji][qty_2char][trail]  — always 4 units wide.
-      qty_2char: "NN" for qty>=10 | "N " (digit+pad) for qty 2-9 | "  " (2×pad) for qty 1
-      trail: ◄ (cursor on right) | EN QUAD (normal/selected)
-      prefix: EN QUAD (normal/cursor) | « (selected)
-    Cursor is always the trailing character so it never pushes items left.
+    Unit layout:
+      qty >= 10 : [prefix][emoji][digit1][digit2]   cursor replaces prefix (left)
+      qty 2–9   : [prefix][emoji][digit ][pad    ]   cursor replaces trailing pad (right)
+      qty 1     : [prefix][emoji][pad   ][pad    ]   cursor replaces second pad (right)
+
+    prefix: ◄ (cursor) | « (selected) | EN QUAD (normal)
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
-        qty_str = str(qty)          # exactly 2 chars for 10–81
+        # 2-digit qty fills units 3+4; cursor/selection live in unit 1
+        if cursor_on:
+            return f"{_CUR}{emoji}{qty}"
+        if is_selected:
+            return f"{_SEL}{emoji}{qty}"
+        return f"{_PAD}{emoji}{qty}"
     elif qty > 1:
-        qty_str = f"{qty}{_PAD}"    # digit + EN QUAD
+        # 1-digit qty in unit 3; unit 4 is a pad that cursor can replace
+        if cursor_on:
+            return f"{_PAD}{emoji}{qty}{_CUR}"
+        if is_selected:
+            return f"{_SEL}{emoji}{qty}{_PAD}"
+        return f"{_PAD}{emoji}{qty}{_PAD}"
     else:
-        qty_str = f"{_PAD}{_PAD}"   # two EN QUADs (qty=1)
-    if cursor_on:
-        return f"{_PAD}{emoji}{qty_str}{_CUR}"   # ◄ as trailing indicator
-    if is_selected:
-        return f"{_SEL}{emoji}{qty_str}{_PAD}"   # « as prefix, pad trail
-    return f"{_PAD}{emoji}{qty_str}{_PAD}"       # pad prefix, pad trail
+        # qty=1: units 3+4 are both pads; cursor replaces unit 4
+        if cursor_on:
+            return f"{_PAD}{emoji}{_PAD}{_CUR}"
+        if is_selected:
+            return f"{_SEL}{emoji}{_PAD}{_PAD}"
+        return f"{_PAD}{emoji}{_PAD}{_PAD}"
 
 
 def _build_slot_map(visible_items: list[dict], total_slots: int) -> dict[int, dict]:

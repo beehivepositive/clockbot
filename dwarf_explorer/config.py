@@ -895,7 +895,7 @@ VILLAGE_EMOJI = {
     "vil_elder":        "\U0001F9D3",        # 🧓  village elder NPC (quest giver)
     "vil_villager":     "\U0001F9D1",        # 🧑  walking villager NPC
     "vil_guard":        "\U0001F482",        # 💂  guard NPC
-    "vil_lumber_mill":  "⚙️",      # ⚙️  waterwheel lumber mill
+    "vil_lumber_mill":  "\U0001FA9A",  # 🪚  waterwheel lumber mill
     "vil_farmhouse":    "🏡",        # 🏡  farmhouse
     "vil_fence":        "🟫",        # 🟫  fence post (overridable with :fence:)
     "vil_fence_gate":   "🚪",        # 🚪  fence gate — walkable (overridable with :fence_gate:)
@@ -966,7 +966,7 @@ BUILDING_EMOJI = {
     "b_pet":            "\U0001F431",        # 🐱  house cat
     # Lumber mill unique
     "b_waterwheel":     "⚙️",    # ⚙️  water-powered wheel
-    "b_saw":            "🔨",       # 🔨  saw
+    "b_saw":            "\U0001FA9A",  # 🪚  saw
     "b_lumber_npc":     "🧑",       # 🧑  lumber mill worker
     "b_farmer_npc":     "🧑",       # 🧑  farmer NPC
     "b_water":          "🌊",       # 🌊  water tile (lumber mill)
@@ -976,7 +976,7 @@ BUILDING_EMOJI = {
     "b_gear_bl":        _ge("gear_bottom_left", "⚙️"),   # large gear bottom-left
     "b_gear_br":        _ge("gear_bottom_right","⚙️"),   # large gear bottom-right
     # Small gear — driven by large gear, drives conveyor
-    "b_gear_small":     _ge("gear_small",       "⚙️"),   # small gear
+    "b_gear_small":     _ge("gear_small_reverse", "⚙️"),  # small gear (CCW)
     # Conveyor belt tiles
     "b_conveyor":       "🟫",       # 🟫  conveyor belt segment
     "b_log_input":      "📥",       # 📥  log insertion point (inbox)
@@ -1016,11 +1016,10 @@ BUILDING_WALKABLE = {
     "b_barkeep", "b_tavern_npc", "b_healer", "b_barrel", "b_bar_counter", "b_medicine_shelf",
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "b_chest", "b_resident", "b_pet",
-    "b_waterwheel", "b_saw", "b_lumber_npc", "b_farmer_npc",
+    "b_waterwheel", "b_lumber_npc", "b_farmer_npc",
     "b_crew_npc",   # harbour tavern recruit NPC — walkable
-    # Lumbermill conveyor tiles (player can walk on the conveyor line)
-    "b_conveyor", "b_log_input", "b_plank_output",
-    # Note: b_water is NOT in BUILDING_WALKABLE (water is impassable inside)
+    # Note: b_water, b_saw, b_conveyor, b_log_input, b_plank_output are NOT walkable
+    # (player interacts with conveyor line by standing adjacent to input/output boxes)
     # Note: b_gear_tl/tr/bl/br are NOT walkable (they sit in the water columns)
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
 }
@@ -1500,8 +1499,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI,  "b_gear_tr",        "gear_top_right"),
         (BUILDING_EMOJI,  "b_gear_bl",        "gear_bottom_left"),
         (BUILDING_EMOJI,  "b_gear_br",        "gear_bottom_right"),
-        # Lumbermill small gear tile
-        (BUILDING_EMOJI,  "b_gear_small",     "gear_small"),
+        # Lumbermill small gear tile (CCW)
+        (BUILDING_EMOJI,  "b_gear_small",     "gear_small_reverse"),
     ]
 
     for d, tile_key, emoji_name in _replace:

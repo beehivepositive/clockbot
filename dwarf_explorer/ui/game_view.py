@@ -2586,18 +2586,22 @@ def _compute_context_labels(
             center_label, center_enabled = "💬 Talk", True
         elif t == "b_lumber_npc":
             center_label, center_enabled = "🪵 Convert", True
-        elif t == "b_saw":
-            center_label, center_enabled = "⚙️ Saw", True
-        elif t == "b_waterwheel":
-            center_label, center_enabled = "⚙️ Wheel", True
-        elif t == "b_log_input":
-            center_label, center_enabled = "📥 Insert", True
-        elif t == "b_plank_output":
-            center_label, center_enabled = "📤 Take planks", True
-        elif t == "b_conveyor":
-            center_label, center_enabled = "🟫 Belt", False
-        elif t in ("b_gear_tl", "b_gear_tr", "b_gear_bl", "b_gear_br", "b_gear_small"):
-            center_label, center_enabled = "⚙️ Gear", False
+        # Lumbermill conveyor: player interacts while standing ADJACENT to input/output
+        # (those tiles are not walkable, so we check neighbours)
+        if getattr(player, "house_type", None) == "lumber_mill" and not center_enabled:
+            for _dy_lm, _dx_lm in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _r_lm, _c_lm = vc + _dy_lm, vc + _dx_lm
+                if 0 <= _r_lm < len(grid) and 0 <= _c_lm < len(grid[_r_lm]):
+                    _adj_lm = grid[_r_lm][_c_lm].terrain
+                    if _adj_lm == "b_log_input":
+                        center_label, center_enabled = "📥 Insert", True
+                        break
+                    elif _adj_lm == "b_plank_output":
+                        # Only show pickup if planks are waiting (key uses player.user_id)
+                        _lm_planks = _ui_state.get(f"lm_planks_{player.user_id}", 0)
+                        if _lm_planks > 0:
+                            center_label, center_enabled = "📤 Take planks", True
+                        break
         elif t == "b_chest":
             center_label, center_enabled = "🔒 Open", True
         elif t == "b_farmer_npc":
@@ -6822,33 +6826,27 @@ async def handle_interact(
                 else:
                     content = render_grid(grid, player, "\"Bring me logs and I'll turn them into planks.\"")
 
-            elif htile.terrain == "b_saw":
+            # ── Lumbermill adjacent-tile interactions ─────────────────────────
+            # Conveyor tiles are non-walkable; player stands on adjacent b_floor.
+            elif player.house_type == "lumber_mill":
                 grid = await _load_house_grid()
-                content = render_grid(grid, player, "A massive saw blade, driven by the waterwheel.")
-
-            elif htile.terrain == "b_waterwheel":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "The waterwheel spins steadily, powered by the river current.")
-
-            elif htile.terrain == "b_conveyor":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "The conveyor belt hums. Insert a log at 📥 to get planks.")
-
-            elif htile.terrain in ("b_gear_tl", "b_gear_tr", "b_gear_bl", "b_gear_br"):
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "The large gear turns steadily, powered by the river current.")
-
-            elif htile.terrain == "b_gear_small":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "A small gear meshes with the large gear and drives the conveyor.")
-
-            elif htile.terrain == "b_plank_output":
-                grid = await _load_house_grid()
-                content = render_grid(grid, player, "📤 The output tray. Planks are delivered here after sawing.")
-
-            elif htile.terrain == "b_log_input":
-                # Delegate to the lumbermill insert handler
-                return await handle_lumbermill_insert(interaction, guild_id, user_id)
+                _adj_lm_tile = None
+                _vc_lm = len(grid) // 2
+                for _dy_lm2, _dx_lm2 in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    _gr_lm2 = _vc_lm + _dy_lm2
+                    _gc_lm2 = _vc_lm + _dx_lm2
+                    if 0 <= _gr_lm2 < len(grid) and 0 <= _gc_lm2 < len(grid[_gr_lm2]):
+                        _t_lm2 = grid[_gr_lm2][_gc_lm2].terrain
+                        if _t_lm2 in ("b_log_input", "b_plank_output"):
+                            _adj_lm_tile = _t_lm2
+                            break
+                if _adj_lm_tile == "b_log_input":
+                    return await handle_lumbermill_insert(interaction, guild_id, user_id)
+                elif _adj_lm_tile == "b_plank_output":
+                    return await handle_lumbermill_pickup(interaction, guild_id, user_id)
+                else:
+                    content = render_grid(grid, player,
+                        "The mill hums with activity. Stand next to 📥 to insert logs, 📤 to collect planks.")
 
             elif htile.terrain == "b_farmer_npc":
                 return await _open_farmer_shop(interaction, guild_id, user_id, player)
@@ -15058,11 +15056,43 @@ async def handle_lumber_craft_canoe(
 
 
 # ── Lumbermill conveyor insert handler ─────────────────────────────────────
+#
+# Conveyor line tiles (vertical, top→bottom):
+#   📥  b_log_input   (top)
+#   🟫  b_conveyor
+#   🟫  b_conveyor
+#   🪚  b_saw         (middle, aligned with small gear)
+#   🟫  b_conveyor
+#   🟫  b_conveyor
+#   📤  b_plank_output (bottom)
+#
+# Log travels 1 tile/second; at the saw it becomes planks.
+# Planks are NOT auto-deposited — player must walk to 📤 and interact.
+
+_LM_LINE = ["📥", "🟫", "🟫", "🪚", "🟫", "🟫", "📤"]
+_LM_LINE_LEN = len(_LM_LINE)   # 7
+
+
+def _lm_status(step: int) -> str:
+    """Build the conveyor-line status string for animation step `step` (0-based).
+
+    Before saw (steps 0-2): item is a log 🪵.
+    At and after saw (steps 3-5): item is planks 🪵 (same emoji, different item).
+    Step 6: item arrived at output; no moving marker.
+    """
+    if step >= _LM_LINE_LEN:
+        # Done — item at output box
+        return "⚙️ `" + "".join(_LM_LINE) + "` ✅ Planks ready at 📤"
+    item_emoji = "🪵"   # log before saw, plank after (identical emoji)
+    line = list(_LM_LINE)
+    line[step] = item_emoji
+    return "⚙️ `" + "".join(line) + "`"
+
 
 async def handle_lumbermill_insert(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Player inserts a log into the lumbermill conveyor belt saw."""
+    """Player inserts a log into the vertical lumbermill conveyor belt saw."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
@@ -15078,30 +15108,70 @@ async def handle_lumbermill_insert(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Remove 1 log from inventory
-    await remove_from_inventory(db, user_id, "log", 1)
+    # Check nothing is already being processed
+    _lm_key = f"lm_planks_{user_id}"
+    _lm_busy_key = f"lm_busy_{user_id}"
+    if _ui_state.get(_lm_busy_key):
+        content = render_grid(grid, player, "⚠️ The conveyor is still running — wait for it to finish!")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
 
-    # Defer so we can do a multi-frame animation
+    # Remove 1 log from inventory and start animation
+    await remove_from_inventory(db, user_id, "log", 1)
+    _ui_state[_lm_busy_key] = True
+
+    # Defer so we can send multiple edits
     await interaction.response.defer()
 
-    # Frame 1: log inserted at input
-    content = render_grid(grid, player, "⚙️ *Inserting log...* 🪵 ▶ 📥")
-    await interaction.edit_original_response(embed=_embed(content))
-    await asyncio.sleep(0.8)
+    try:
+        for step in range(_LM_LINE_LEN + 1):   # steps 0..7 (7 = final "done" state)
+            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+            status = _lm_status(step)
+            content = render_grid(grid, player, status)
+            await interaction.edit_original_response(embed=_embed(content))
+            if step < _LM_LINE_LEN:
+                await asyncio.sleep(1.0)
 
-    # Frame 2: log reaching the saw
-    content = render_grid(grid, player, "🔨 *Sawing...* 🟫🪵🔨")
-    await interaction.edit_original_response(embed=_embed(content))
-    await asyncio.sleep(0.8)
+        # Log fully processed — store 3 planks in output box (player must pick up)
+        _ui_state[_lm_key] = _ui_state.get(_lm_key, 0) + 3
+    finally:
+        _ui_state[_lm_busy_key] = False
 
-    # Frame 3: done — add 3 planks to inventory
-    await add_to_inventory(db, user_id, "plank", 3)
+    # Show final frame with updated view (pickup button will appear via context labels)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(grid, player,
-        "✅ *Done!* Log sawn into **3 planks** — check your inventory!")
+    content = render_grid(grid, player, "✅ **3 planks** are waiting at 📤 — walk to the output and interact to collect them.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.edit_original_response(embed=_embed(content), view=view)
+
+
+async def handle_lumbermill_pickup(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Player collects processed planks from the output box."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+
+    _lm_key = f"lm_planks_{user_id}"
+    planks_ready = _ui_state.get(_lm_key, 0)
+
+    if planks_ready <= 0:
+        content = render_grid(grid, player, "📤 The output tray is empty. Insert a log at 📥 first.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Give planks to player
+    await add_to_inventory(db, user_id, "plank", planks_ready)
+    _ui_state[_lm_key] = 0
+
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, f"🤲 Collected **{planks_ready} planks** from the output tray.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Farmer shop handlers ────────────────────────────────────────────────────
