@@ -1109,8 +1109,10 @@ async def _load_pool(db, source_type: str, source_key: str) -> list[dict] | None
 # ── Player quest operations ────────────────────────────────────────────────────
 
 async def get_active_quest_count(db, user_id: int) -> int:
+    """Count active side quests only (main quests don't count toward the cap)."""
     row = await db.fetch_one(
-        "SELECT COUNT(*) AS cnt FROM player_quests WHERE user_id = ? AND status = 'active'",
+        "SELECT COUNT(*) AS cnt FROM player_quests "
+        "WHERE user_id = ? AND status = 'active' AND is_main_quest = 0",
         (user_id,),
     )
     return row["cnt"] if row else 0

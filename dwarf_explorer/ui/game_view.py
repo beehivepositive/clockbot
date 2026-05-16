@@ -13267,9 +13267,29 @@ async def handle_npc_talk(
             ]
             lore_text = tc_lore[_hv % len(tc_lore)]
 
+        _tc_quest_phrases = [
+            "Got any work for me?",
+            "Any jobs you need done?",
+            "I'm looking for work.",
+            "Need any errands run?",
+            "What work do you have?",
+        ]
+        _tc_qp_label = _tc_quest_phrases[_hv % len(_tc_quest_phrases)]
+        _tc_rumors = [
+            "Deep in the forest, there are ruins from before the first tree cities were built.",
+            "A merchant spoke of a great sea creature near the western isles — sailors won't go there alone.",
+            "The elders whisper about something stirring in the old caves beneath the roots.",
+            "Word is the lowland bounty boards are paying well for rare herbs this season.",
+            "I heard there's an archivist who knows how to open the old rifts. Haven't seen them myself.",
+            "There are paths in the canopy that lead nowhere, they say — doors that only open at dawn.",
+            "A traveller left an old map fragment at the trading post. No one's claimed it yet.",
+            "They say on clear nights you can see the lights of three villages from the highest platform.",
+        ]
+        tc_rumors_text = _tc_rumors[_hv % len(_tc_rumors)]
         options = [{"label": "Tell me about yourself", "action": "lore"}]
         if pool:
-            options.append({"label": "📋 \"(Quest)\"", "action": "quest_pool"})
+            options.append({"label": f"📋 {_tc_qp_label} (Quest)", "action": "quest_pool"})
+        options.append({"label": "Heard any rumors?", "action": "rumors"})
         options.append({"label": "Farewell", "action": "close"})
         state = {
             "type": "npc_dialogue", "npc_type": "tc_npc",
@@ -13277,7 +13297,7 @@ async def handle_npc_talk(
             "text": "Greetings, wanderer. What brings you to the great tree?",
             "options": options, "selected": 0,
             "context": context, "quest_pool": pool,
-            "lore_text": lore_text, "source_label": npc_name,
+            "lore_text": lore_text, "rumors_text": tc_rumors_text, "source_label": npc_name,
         }
         _ui_state[user_id] = state
         content = _render_dialogue(npc_name, state["text"], options, 0)
@@ -13463,9 +13483,30 @@ async def handle_npc_talk(
         pool = []
 
     # Build dialogue options
+    _vil_quest_phrases = [
+        "Got any work for me?",
+        "Any jobs you need done?",
+        "I'm looking for work.",
+        "Need any errands run?",
+        "What work do you have?",
+    ]
+    _vil_rumors_pool = [
+        "Traders from the east coast say there are creatures in the deep ocean no one has named yet.",
+        "A hunter saw lights in the forest canopy at night. Others say it's just the tree city folk.",
+        "The price of iron has gone up. Someone's been buying it in bulk and nobody knows who.",
+        "Word is a merchant guild is forming in the southern villages. Prices might change soon.",
+        "A traveller found a map fragment in some ruins last month. Wouldn't show anyone though.",
+        "The wells have been running lower than usual. Nobody's talking about it, but everyone's noticed.",
+        "Three caravans took the northern pass this season. Only two came back the usual way.",
+        "There's a bounty board in the market square. Pays decent coin if you've got the stomach for it.",
+    ]
+    _qph = _hash(f"qph{player.village_id}{player.world_x}{player.world_y}")
+    _vil_qp_label = _vil_quest_phrases[_qph % len(_vil_quest_phrases)]
+    vil_rumors_text = _vil_rumors_pool[_qph % len(_vil_rumors_pool)]
     options = [{"label": "Tell me about yourself", "action": "lore"}]
     if pool:
-        options.append({"label": "📋 \"(Quest)\"", "action": "quest_pool"})
+        options.append({"label": f"📋 {_vil_qp_label} (Quest)", "action": "quest_pool"})
+    options.append({"label": "Heard any rumors?", "action": "rumors"})
     options.append({"label": "Farewell", "action": "close"})
 
     state = {
@@ -13478,6 +13519,7 @@ async def handle_npc_talk(
         "context": context,
         "quest_pool": pool,
         "lore_text": lore_text,
+        "rumors_text": vil_rumors_text,
         "source_label": npc_name,
     }
     _ui_state[user_id] = state
@@ -13681,9 +13723,11 @@ async def handle_qpool_accept(
     if ok:
         if q.get("quest_subtype") == "delivery":
             await add_to_inventory(db, user_id, "merchant_parcel", 1)
-        _ui_state[user_id] = {"type": "quest_log", "quest_index": 0}
+        _updated_quests = await get_active_quests(db, user_id)
+        _new_idx = max(0, len(_updated_quests) - 1)
+        _ui_state[user_id] = {"type": "quest_log", "quest_index": _new_idx}
         content = f"✅ Quest accepted: **{q['title']}**\n\n"
-        content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
+        content += await render_quest_list(db, user_id, _new_idx, in_village=player.in_village)
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=QuestView(guild_id, user_id))
     else:
@@ -13866,11 +13910,20 @@ async def handle_quest_offer_accept(
         seed = await get_or_create_world(db, guild_id)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         if accepted:
-            from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
-            content = "✅ Quest accepted!\n\n" + await render_quest_list(db, user_id, 0)
+            from dwarf_explorer.ui.quest_view import QuestView, render_unified_quest_list
+            from dwarf_explorer.game.quests import get_main_quests
+            if _is_main:
+                _upd = await get_main_quests(db, user_id)
+                _tab = "main"
+            else:
+                _upd = await get_active_quests(db, user_id)
+                _tab = "side"
+            _new_idx = max(0, len(_upd) - 1)
+            _ui_state[user_id] = {"type": "quest_log", "quest_index": _new_idx, "tab": _tab}
+            content = "✅ Quest accepted!\n\n" + await render_unified_quest_list(db, user_id, _tab, _new_idx)
             await interaction.response.edit_message(
                 embed=_embed(content), content=None,
-                view=QuestView(guild_id, user_id),
+                view=QuestView(guild_id, user_id, tab=_tab, quest_index=_new_idx),
             )
         else:
             content = render_grid(grid, player, "⚠️ Could not accept quest (already accepted or log full).")
@@ -14161,6 +14214,17 @@ async def handle_dialogue_confirm(
         state["text"] = lore_text
         _ui_state[user_id] = state
         content = _render_dialogue(state["npc_name"], lore_text, options, sel)
+        view = DialogueView(guild_id, user_id, options, sel)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "rumors":
+        rumors_text = state.get("rumors_text", "I haven't heard anything worth mentioning lately.")
+        options = state.get("options", [])
+        sel = state.get("selected", 0)
+        state["text"] = rumors_text
+        _ui_state[user_id] = state
+        content = _render_dialogue(state["npc_name"], rumors_text, options, sel)
         view = DialogueView(guild_id, user_id, options, sel)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
