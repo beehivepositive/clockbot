@@ -193,7 +193,9 @@ def _world_to_pixel_y(wy: int) -> int:
 def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
     """Draw tick marks + labels along the left (Y) and bottom (X) edges of the map.
 
-    Y-axis: y=0 at TOP (north), increasing downward (south).
+    Y-axis labels: 0 at BOTTOM (south), increasing upward (north).
+      Terrain is rendered with internal y=0 at pixel-top; we flip only the labels
+      so the displayed coordinate matches the game's north=high convention.
     X-axis: x=0 at left (west), increasing rightward (east).
     Minor ticks every 50 tiles; major ticks every 100 tiles.
     """
@@ -210,10 +212,11 @@ def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
         tick = major_len if is_major else minor_len
         lw   = 2      if is_major else 1
         label = str(display_coord)
-        show_label = display_coord != 0
+        show_label = True   # show all labels including 0
 
-        # ── Y-axis ruler (left edge): y=0 at top ─────────────────────────────
-        py = display_coord * scale
+        # ── Y-axis ruler (left edge): label 0 at BOTTOM (south) ──────────────
+        # Flip: coordinate 0 → pixel bottom, coordinate WORLD_SIZE → pixel top
+        py = (WORLD_SIZE - display_coord) * scale
         py = max(0, min(py, map_h - 1))
         draw.line([(0, py), (tick, py)], fill=white, width=lw)
         if show_label:
@@ -233,14 +236,15 @@ def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
             else:
                 draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
 
-    # ── Diagonal origin marker at (0,0) — top-left corner (north-west) ───────
-    ox, oy = 2, 2
+    # ── Diagonal origin marker at (0,0) — bottom-left corner (south-west) ────
+    ox = 2
+    oy = map_h - 4   # start near very bottom edge, diagonal goes upward
     marker_color = (255, 220, 50)
     for d in range(8):
-        draw.point((ox + d, oy + d), fill=marker_color)
-        draw.point((ox + d + 1, oy + d), fill=marker_color)
-    draw.text((ox + 2, oy + 4), "0,0", fill=shadow, font=font)
-    draw.text((ox + 1, oy + 3), "0,0", fill=marker_color, font=font)
+        draw.point((ox + d, oy - d), fill=marker_color)
+        draw.point((ox + d + 1, oy - d), fill=marker_color)
+    draw.text((ox + 2, oy - 14), "0,0", fill=shadow, font=font)
+    draw.text((ox + 1, oy - 15), "0,0", fill=marker_color, font=font)
 
 
 # ── Wilderness base-map renderer ──────────────────────────────────────────────

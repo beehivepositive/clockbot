@@ -1383,8 +1383,6 @@ class CanoeView(discord.ui.View):
         self.add_item(_dir_btn("upleft",  "↖", 1))
         self.add_item(_dir_btn("up",      "⬆️", 1))
         self.add_item(_dir_btn("upright", "↗", 1))
-        self.add_item(_spacer("csp_r1a", 1))
-        self.add_item(_spacer("csp_r1b", 1))
 
         # Row 2: ⬅️ [action] ➡️
         self.add_item(_dir_btn("left",  "⬅️", 2))
@@ -1396,15 +1394,11 @@ class CanoeView(discord.ui.View):
         else:
             self.add_item(_spacer("csp_mid", 2))
         self.add_item(_dir_btn("right", "➡️", 2))
-        self.add_item(_spacer("csp_r2a", 2))
-        self.add_item(_spacer("csp_r2b", 2))
 
         # Row 3: ↙ ⬇️ ↘
         self.add_item(_dir_btn("downleft",  "↙", 3))
         self.add_item(_dir_btn("down",      "⬇️", 3))
         self.add_item(_dir_btn("downright", "↘", 3))
-        self.add_item(_spacer("csp_r3a", 3))
-        self.add_item(_spacer("csp_r3b", 3))
 
 class CanoeDestView(discord.ui.View):
     """Shows up to 5 reachable landing destinations per page."""
@@ -2638,7 +2632,7 @@ def _compute_context_labels(
     embark_enabled = False
     if (not player.in_village and not player.in_house and not player.in_cave
             and not player.in_ocean and not player.in_canoe):
-        _CANOE_WATER = {"river", "bridge", "shallow_water"}
+        _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
         # Accept inventory presence (has_canoe), equipped hand slot, or legacy item
         _has_canoe = has_canoe or "canoe" in hand_items or "canoe_left" in hand_items
         if _has_canoe:
@@ -4104,6 +4098,18 @@ async def _move_steps(
                     "FROM bandit_camps WHERE world_x=? AND world_y=?",
                     (nx, ny),
                 )
+                if not _bc_row:
+                    # Lazy-init the DB row on first visit
+                    await db.execute(
+                        "INSERT OR IGNORE INTO bandit_camps (world_x, world_y) VALUES (?, ?)",
+                        (nx, ny),
+                    )
+                    await db.commit()
+                    _bc_row = await db.fetch_one(
+                        "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
+                        "FROM bandit_camps WHERE world_x=? AND world_y=?",
+                        (nx, ny),
+                    )
                 if _bc_row:
                     from dwarf_explorer.world.bandit_camp import BC_ENTRY_X, BC_ENTRY_Y
                     player.in_bandit_camp = True
@@ -4119,7 +4125,7 @@ async def _move_steps(
                     from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv
                     bc_grid = _lbcv(player.bc_x, player.bc_y, int(_bc_row["world_x"]), int(_bc_row["world_y"]))
                     content = render_grid(bc_grid, player,
-                        "🏕️ You enter the **Bandit Camp**. Stay sharp — they attack on sight.")
+                        "⛺ You enter the **Bandit Camp**. Stay sharp — they attack on sight.")
                     return content, _game_view(guild_id, user_id, player, grid=bc_grid)
 
             # 0.2% travelling merchant encounter
@@ -5086,9 +5092,9 @@ async def handle_embark(
     if player.in_canoe:
         return
 
-    # Find adjacent river/water tile — reject ocean/sea tiles (deep_water/harbor)
-    _CANOE_WATER = {"river", "bridge", "shallow_water"}
-    _ROUGH_WATER = {"deep_water", "harbor"}
+    # Find adjacent river/water tile — only harbor is truly too rough for a canoe
+    _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
+    _ROUGH_WATER = {"harbor"}
     water_pos: tuple[int, int] | None = None
     rough_adjacent = False
     for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
@@ -5118,7 +5124,8 @@ async def handle_embark(
     await update_player_stats(db, user_id, world_x=wx, world_y=wy, in_canoe=1)
     grid = await load_viewport(wx, wy, seed, db)
     content = render_grid(grid, player, "🛶 You push off from the bank and onto the water.")
-    view = CanoeView(guild_id, user_id, dock_available=False)
+    dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+    view = CanoeView(guild_id, user_id, dock_dirs=dock_dirs)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -5286,10 +5293,10 @@ async def handle_canoe_sail(
         seed = await get_or_create_world(db, guild_id)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
         content = render_grid(grid, player, "No reachable landings found on this waterway.")
-        landing = await _adjacent_landing(player, seed, db)
+        dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
-            view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
+            view=CanoeView(guild_id, user_id, dock_dirs=dock_dirs),
         )
         return
 
@@ -5356,9 +5363,10 @@ async def handle_canoe_dest(
     _ui_state.pop(user_id, None)
     grid = await load_viewport(wx, wy, seed, db)
     content = render_grid(grid, player, f"You sail to the landing at ({lx},{ly}). Dock to go ashore.")
+    dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
-        view=CanoeView(guild_id, user_id, dock_available=True),
+        view=CanoeView(guild_id, user_id, dock_dirs=dock_dirs),
     )
 
 
@@ -5397,11 +5405,11 @@ async def handle_canoe_dest_cancel(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     _ui_state.pop(user_id, None)
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    landing = await _adjacent_landing(player, seed, db)
     content = render_grid(grid, player)
+    dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
-        view=CanoeView(guild_id, user_id, dock_available=(landing is not None)),
+        view=CanoeView(guild_id, user_id, dock_dirs=dock_dirs),
     )
 
 
@@ -7890,7 +7898,8 @@ async def handle_interact(
                                           in_canoe=1)
                 grid = await load_viewport(water_pos[0], water_pos[1], seed, db)
                 content = render_grid(grid, player, "You launch the canoe! Dock at a 🏝️ landing to go ashore.")
-                view: discord.ui.View = CanoeView(guild_id, user_id, dock_available=True)
+                dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+                view: discord.ui.View = CanoeView(guild_id, user_id, dock_dirs=dock_dirs)
             else:
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "There's no water here to launch a canoe.")
@@ -8120,6 +8129,42 @@ async def handle_interact(
             view = _game_view(guild_id, user_id, player, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
+
+        elif tile.structure == "bandit_camp":
+            # ── Bandit Camp: interact to enter the interior ───────────────────────
+            _bc_row_i = await db.fetch_one(
+                "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
+                "FROM bandit_camps WHERE world_x=? AND world_y=?",
+                (wx, wy),
+            )
+            if not _bc_row_i:
+                await db.execute(
+                    "INSERT OR IGNORE INTO bandit_camps (world_x, world_y) VALUES (?, ?)",
+                    (wx, wy),
+                )
+                await db.commit()
+                _bc_row_i = await db.fetch_one(
+                    "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
+                    "FROM bandit_camps WHERE world_x=? AND world_y=?",
+                    (wx, wy),
+                )
+            if _bc_row_i:
+                from dwarf_explorer.world.bandit_camp import BC_ENTRY_X, BC_ENTRY_Y, load_camp_viewport as _lbcv_i
+                player.in_bandit_camp = True
+                player.bandit_camp_id = int(_bc_row_i["id"])
+                player.bc_x = BC_ENTRY_X
+                player.bc_y = BC_ENTRY_Y
+                await db.execute(
+                    "UPDATE players SET in_bandit_camp=1, bandit_camp_id=?, bc_x=?, bc_y=?, "
+                    "world_x=?, world_y=? WHERE user_id=?",
+                    (_bc_row_i["id"], BC_ENTRY_X, BC_ENTRY_Y, wx, wy, user_id),
+                )
+                bc_grid = _lbcv_i(player.bc_x, player.bc_y, wx, wy)
+                content = render_grid(bc_grid, player,
+                    "⛺ You enter the **Bandit Camp**. Stay sharp — they attack on sight.")
+                view = _game_view(guild_id, user_id, player, grid=bc_grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
         elif tile.structure == "shrine":
             # ── Shrine: imbue a held gem with a sacrifice to create enchanted gems ──
@@ -10605,6 +10650,19 @@ async def handle_inv_drop(
                                   gold=player.gold)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
+
+    # Canoe is a 2-piece item — dropping either half drops both and clears equip slots
+    _canoe_half_in_drop = any(iid in ("canoe_left", "canoe_right") for iid, _ in drop_pairs)
+    if _canoe_half_in_drop:
+        for _half in ("canoe_left", "canoe_right"):
+            if not any(iid == _half for iid, _ in drop_pairs):
+                _have = sum(it["quantity"] for it in items if it["item_id"] == _half)
+                if _have > 0:
+                    drop_pairs.append((_half, _have))
+        await unequip_item(db, user_id, "hand_1")
+        await unequip_item(db, user_id, "hand_2")
+        player.hand_1 = None
+        player.hand_2 = None
 
     for item_id, qty in drop_pairs:
         await remove_from_inventory(db, user_id, item_id, qty)

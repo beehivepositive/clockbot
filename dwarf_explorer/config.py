@@ -69,7 +69,7 @@ STRUCTURE_EMOJI = {
     "sky_temple_outer": "\U0001F3DB️",  # 🏛️ outer/puzzle temple (overworld)
     "sky_temple_main":  "\U0001F3F0",        # 🏰 main/portal temple (overworld)
     "forest_entrance":  "\U0001F332",        # 🌲 forest entrance (overridable with :forest_entrance:)
-    "bandit_camp":      "\U0001F3D5️", # 🏕️ bandit camp
+    "bandit_camp":      "⛺", # ⛺ tent — bandit camp
 }
 
 ENTITY_EMOJI = {
@@ -491,9 +491,9 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
 ARENA_IMPASSABLE = {
     "mountain", "snow", "dense_forest",
     "stone_wall", "b_wall", "void", "cave_rock",
-    "river",
+    "river", "deep_water", "shallow_water",
     "fst_tree",   # forest tree-walls block movement in forest arenas
-    # Note: deep_water and shallow_water are passable for ocean combat
+    # Note: ocean combat (high seas) spawns on water — separate arena type
 }
 
 # Ocean world size
@@ -1472,6 +1472,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (VILLAGE_EMOJI,  "vil_seeds_potato",  "farmland_seeds"),
         # Forest entrance custom emoji
         (STRUCTURE_EMOJI, "forest_entrance",  "forest_entrance"),
+        # Hills custom emoji
+        (TERRAIN_EMOJI,   "hills",            "hills"),
     ]
 
     for d, tile_key, emoji_name in _replace:

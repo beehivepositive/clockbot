@@ -357,7 +357,7 @@ def _item_emoji(item_id: str) -> str:
 
 
 _PAD = "\u2000"  # EN QUAD — wider than a regular space, won't collapse in Discord
-_CUR = "‹"  # ‹ Single left-pointing angle quotation — text-only punctuation, ~0.5em
+_CUR = "◄"  # ◄ U+25C4 BLACK LEFT-POINTING SMALL TRIANGLE — matches EN QUAD width in Discord
 _SEL = "«"  # « Left double angle quotation — text-only punctuation, ~0.5em
 
 def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str:

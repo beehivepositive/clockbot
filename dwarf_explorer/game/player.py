@@ -261,8 +261,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
             "mountain": "A mountain blocks your path.",
             "snow": "The snowy peaks are impassable.",
             "dense_forest": "The forest is too thick to pass through.",
-            "shallow_water": "The water is too deep to cross.",
-            "deep_water": "The ocean stretches endlessly before you.",
+            "shallow_water": "The water is too deep to wade — use a canoe to cross.",
+            "deep_water": "You'd need a canoe to cross this lake.",
         }
         return False, messages.get(terrain, f"You can't walk through {terrain}.")
 
