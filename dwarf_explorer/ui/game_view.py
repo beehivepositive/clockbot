@@ -2222,7 +2222,10 @@ def _inv_action_btn(
     ci = _cursor_item(visible, selected)
     if ci is not None:
         item_id = ci["item_id"]
-        if item_id in FOOD_HP_RESTORE or item_id == "breath_of_the_sea":
+        _hp_food = item_id in FOOD_HP_RESTORE or (
+            item_id in CONSUMABLE_ITEMS and CONSUMABLE_ITEMS[item_id].get("hp", 0) > 0
+        )
+        if _hp_food or item_id == "breath_of_the_sea":
             return ("\U0001F357", "inv_eat")            # 🍗 eat / use
         if item_id in ITEM_EQUIP_SLOTS:
             if item_id in equipped.values():
@@ -2411,15 +2414,11 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌲 Enter", True
             elif t == "fst_maze_door":
                 center_label, center_enabled = "🌀 Enter", True
-            elif t in ("fst_chest", "fst_mimic"):
-                # fst_mimic looks identical to fst_chest intentionally
+            elif t in ("fst_chest", "fst_mimic", "fst_map_chest"):
+                # fst_mimic and fst_map_chest look identical to fst_chest
                 from dwarf_explorer.config import FOREST_EMOJI as _FE
                 _ce = _FE.get("fst_chest", "📦")
                 center_label, center_enabled = f"{_ce} Open", True
-            elif t == "fst_map_chest":
-                from dwarf_explorer.config import FOREST_EMOJI as _FE3
-                _mce = _FE3.get("fst_map_chest", "🗺️")
-                center_label, center_enabled = _mce, True
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
 
         # Tree City tile context
@@ -2599,6 +2598,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🟫 Belt", False
         elif t in ("b_gear_tl", "b_gear_tr", "b_gear_bl", "b_gear_br", "b_gear_small"):
             center_label, center_enabled = "⚙️ Gear", False
+        elif t == "b_chest":
+            center_label, center_enabled = "🔒 Open", True
         elif t == "b_farmer_npc":
             center_label, center_enabled = "🌾 Shop", True
         elif t == "b_pet":
@@ -6885,7 +6886,7 @@ async def handle_interact(
 
             elif htile.terrain == "b_chest":
                 grid = await _load_house_grid()
-                content = render_grid(grid, player, "A small wooden chest. It's locked tight.")
+                content = render_grid(grid, player, "🔒 *This chest is locked.* You shouldn't go through other people's things.")
 
             else:
                 grid = await _load_house_grid()
@@ -7424,26 +7425,6 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
-        elif ftile.terrain == "fst_map_chest":
-            # Check if already collected
-            _fmap_check = await db.fetch_one(
-                "SELECT 1 FROM player_map_collection WHERE user_id=? AND map_type='forest' AND ref_id=?",
-                (user_id, player.forest_id)
-            )
-            if _fmap_check:
-                content = render_grid(grid, player,
-                    "🗺️ You already have this forest's map in your navigation menu.")
-            else:
-                await db.execute(
-                    "INSERT OR IGNORE INTO player_map_collection(user_id, map_type, ref_id) VALUES(?,?,?)",
-                    (user_id, "forest", player.forest_id)
-                )
-                content = render_grid(grid, player,
-                    "🗺️ You found the **Forest Map**! It has been added to your 🧭 navigation menu.")
-            await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                    view=_game_view(guild_id, user_id, player, grid=grid))
-            return
-
         elif ftile.terrain == "fst_ancient_tree":
             has_can = player.hand_1 == "watering_can" or player.hand_2 == "watering_can"
             if not has_can:
@@ -7490,7 +7471,21 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
-        elif ftile.terrain == "fst_chest":
+        elif ftile.terrain in ("fst_chest", "fst_map_chest"):
+            _is_map_chest = ftile.terrain == "fst_map_chest"
+            # If this is the special map chest, award the forest map on first open
+            _map_bonus_msg = ""
+            if _is_map_chest:
+                _fmap_have = await db.fetch_one(
+                    "SELECT 1 FROM player_map_collection WHERE user_id=? AND map_type='forest' AND ref_id=?",
+                    (user_id, player.forest_id),
+                )
+                if not _fmap_have:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO player_map_collection(user_id, map_type, ref_id) VALUES(?,?,?)",
+                        (user_id, "forest", player.forest_id),
+                    )
+                    _map_bonus_msg = "\n🗺️ **Forest Map** discovered — added to your 🧭 navigation!"
             import datetime as _dt_fst
             _today_ord = _dt_fst.date.today().toordinal()
             fx, fy = player.forest_x, player.forest_y
@@ -7500,9 +7495,9 @@ async def handle_interact(
                 "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
                 (user_id, player.forest_id, fx, fy, _today_ord),
             )
-            # Determine if this position is a mimic today (daily hash)
+            # Determine if this position is a mimic today (daily hash) — map chest is never a mimic
             _mimic_rng = _random.Random(hash((player.forest_id, fx, fy, _today_ord, "mimic")))
-            _is_mimic_today = _mimic_rng.random() < 0.33
+            _is_mimic_today = (not _is_map_chest) and _mimic_rng.random() < 0.33
             # Re-open existing partially-looted chest from state if available
             existing_fst = _ui_state.get(user_id, {})
             if (already and existing_fst.get("type") == "fst_chest"
@@ -7575,6 +7570,8 @@ async def handle_interact(
             }
             from dwarf_explorer.game.renderer import render_chest as _rc_fst
             content = _rc_fst(items, [], 0, "chest", "fst_chest")
+            if _map_bonus_msg:
+                content = _map_bonus_msg.lstrip("\n") + "\n\n" + content
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=FstChestView(guild_id, user_id))
             return
@@ -10184,7 +10181,10 @@ async def handle_inv_equip(
     item_id = cur_item["item_id"]
 
     # Food items are handled by handle_inv_eat — redirect
-    if item_id in FOOD_HP_RESTORE:
+    _is_hp_food = item_id in FOOD_HP_RESTORE or (
+        item_id in CONSUMABLE_ITEMS and CONSUMABLE_ITEMS[item_id].get("hp", 0) > 0
+    )
+    if _is_hp_food:
         await handle_inv_eat(interaction, guild_id, user_id)
         return
 
@@ -10381,6 +10381,8 @@ async def handle_inv_eat(
 
     restore = FOOD_HP_RESTORE.get(item_id)
     if restore is None:
+        restore = CONSUMABLE_ITEMS.get(item_id, {}).get("hp")
+    if restore is None or restore <= 0:
         content, view = _inv_view(guild_id, user_id, items, sel, equipped,
                                   inv_rows, inv_cols, state,
                                   f"\n*{item_id.replace('_', ' ').title()} is not food.*",
@@ -11781,7 +11783,7 @@ async def handle_nav_open(
 async def handle_forest_map(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Render the current forest interior as a PIL image."""
+    """Render the current forest interior as a PIL image with key, avatars, and icons."""
     await interaction.response.defer()
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
@@ -11799,34 +11801,145 @@ async def handle_forest_map(
             content="🗺️ Forest map data not available.", embed=None, attachments=[], view=None
         )
         return
+
     import io
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     from dwarf_explorer.world.forest import FOREST_W, FOREST_H
+    from dwarf_explorer.world.world_map import _draw_icon, _paste_avatar
+
     SCALE = 4
-    img = Image.new("RGB", (FOREST_W * SCALE, FOREST_H * SCALE), (34, 80, 34))
+    MAP_W = FOREST_W * SCALE   # 480 px
+    MAP_H = FOREST_H * SCALE   # 480 px
+
+    # ── Legend / key layout ───────────────────────────────────────────────────
+    # Legend is placed ABOVE the map. Each entry is a swatch + label.
+    _TREE_COL   = (10, 80, 20)       # same as dense_forest in TILE_COLORS
+    _FLOOR_COL  = (80, 160, 60)      # lighter green for walkable paths
+    _CHEST_COL  = (200, 170, 50)
+    _NUT_COL    = (60, 130, 40)
+    _ANC_COL    = (20, 200, 120)
+    _CITY_COL   = (220, 140, 30)
+    _EXIT_COL   = (50, 200, 80)
+    _MAZE_COL   = (150, 50, 200)
+    _SELF_COL   = (255, 50, 50)
+    _OTHER_COL  = (60, 120, 255)
+
+    # (label, color, style)  — style "square" = filled rect; others match _draw_icon
+    _LEGEND = [
+        ("Tree Wall",    _TREE_COL,  "square"),
+        ("Forest Path",  _FLOOR_COL, "square"),
+        ("Chest",        _CHEST_COL, "filled_diamond"),
+        ("Nut Tree",     _NUT_COL,   "filled_circle"),
+        ("Ancient Tree", _ANC_COL,   "filled_circle"),
+        ("Tree City",    _CITY_COL,  "filled_diamond"),
+        ("Exit",         _EXIT_COL,  "filled_triangle"),
+        ("Maze Door",    _MAZE_COL,  "filled_diamond"),
+        ("You",          _SELF_COL,  "dot_red"),
+        ("Other Player", _OTHER_COL, "dot_blue"),
+    ]
+    _SW   = 14   # swatch width/height px
+    _ROW_H = 18  # px per legend row
+    _COL_W = 110 # px per legend column
+    _COLS  = 5   # legend columns
+    _MARGIN = 6
+    _LEGEND_H = _MARGIN * 2 + (_ROW_H * ((len(_LEGEND) + _COLS - 1) // _COLS))
+    TOTAL_H = _LEGEND_H + MAP_H
+
+    img = Image.new("RGB", (MAP_W, TOTAL_H), (20, 20, 20))  # dark bg for legend area
     draw = ImageDraw.Draw(img)
-    COLOR_MAP = {
-        "fst_floor":        (139, 115, 85),
-        "fst_chest":        (200, 170, 50),
-        "fst_map_chest":    (200, 170, 50),
-        "fst_nut_tree":     (100, 160, 60),
-        "fst_ancient_tree": (60,  200, 60),
-        "fst_tree_city":    (180, 100, 20),
-        "fst_exit":         (220, 220, 220),
+
+    # Draw legend header
+    try:
+        font = ImageFont.truetype("arial.ttf", 10)
+    except Exception:
+        font = ImageFont.load_default()
+
+    for i, (label, color, style) in enumerate(_LEGEND):
+        col = i % _COLS
+        row = i // _COLS
+        x0 = _MARGIN + col * _COL_W
+        y0 = _MARGIN + row * _ROW_H
+        cx = x0 + _SW // 2
+        cy = y0 + _SW // 2
+        if style == "square":
+            draw.rectangle([x0, y0, x0 + _SW - 1, y0 + _SW - 1], fill=color, outline=(180, 180, 180))
+        elif style in ("dot_red", "dot_blue"):
+            draw.ellipse([x0 + 1, y0 + 1, x0 + _SW - 2, y0 + _SW - 2], fill=color, outline=(255, 255, 255))
+        else:
+            draw.rectangle([x0, y0, x0 + _SW - 1, y0 + _SW - 1], fill=(30, 30, 30))
+            _draw_icon(draw, cx, cy, style, color, r=5)
+        draw.text((x0 + _SW + 3, y0 + (_SW - 10) // 2), label, fill=(210, 210, 210), font=font)
+
+    # ── Render map tiles (offset below legend) ────────────────────────────────
+    OFFSET_Y = _LEGEND_H   # map starts after legend
+
+    # Background = tree wall color
+    draw.rectangle([0, OFFSET_Y, MAP_W - 1, TOTAL_H - 1], fill=_TREE_COL)
+
+    # Special tile types that draw as plain filled rectangles
+    RECT_TILES = {
+        "fst_floor": _FLOOR_COL,
     }
+    # Icon tiles — drawn as icons on top of the floor/tree base
+    ICON_TILES = {
+        "fst_chest":        (_CHEST_COL, "filled_diamond"),
+        "fst_map_chest":    (_CHEST_COL, "filled_diamond"),
+        "fst_nut_tree":     (_NUT_COL,   "filled_circle"),
+        "fst_ancient_tree": (_ANC_COL,   "filled_circle"),
+        "fst_tree_city":    (_CITY_COL,  "filled_diamond"),
+        "fst_exit":         (_EXIT_COL,  "filled_triangle"),
+        "fst_maze_door":    (_MAZE_COL,  "filled_diamond"),
+    }
+
     for tile in tiles:
         tx, ty, tt = tile["local_x"], tile["local_y"], tile["tile_type"]
-        color = COLOR_MAP.get(tt)
-        if color:
-            draw.rectangle(
-                [tx * SCALE, ty * SCALE, (tx + 1) * SCALE - 1, (ty + 1) * SCALE - 1],
-                fill=color,
-            )
-    # Player dot
-    px_center = player.forest_x * SCALE + SCALE // 2
-    py_center = player.forest_y * SCALE + SCALE // 2
-    r = max(2, SCALE)
-    draw.ellipse([px_center - r, py_center - r, px_center + r, py_center + r], fill=(255, 50, 50))
+        px0 = tx * SCALE
+        py0 = ty * SCALE + OFFSET_Y
+        px1 = px0 + SCALE - 1
+        py1 = py0 + SCALE - 1
+        if tt in RECT_TILES:
+            draw.rectangle([px0, py0, px1, py1], fill=RECT_TILES[tt])
+        elif tt in ICON_TILES:
+            # Draw floor background under icon
+            draw.rectangle([px0, py0, px1, py1], fill=_FLOOR_COL)
+            ic, ist = ICON_TILES[tt]
+            cx = tx * SCALE + SCALE // 2
+            cy = ty * SCALE + SCALE // 2 + OFFSET_Y
+            _draw_icon(draw, cx, cy, ist, ic, r=SCALE)
+
+    # ── Fetch other forest players ────────────────────────────────────────────
+    other_rows = await db.fetch_all(
+        "SELECT user_id, forest_x, forest_y FROM players "
+        "WHERE in_forest=1 AND forest_id=? AND user_id!=?",
+        (player.forest_id, user_id),
+    )
+
+    # ── Fetch avatars ─────────────────────────────────────────────────────────
+    player_avatar = await _fetch_or_cache_avatar(db, interaction.guild, user_id)
+    other_avatars: list[bytes | None] = [
+        await _fetch_or_cache_avatar(db, interaction.guild, r["user_id"]) for r in other_rows
+    ]
+
+    # ── Draw other players (blue) ─────────────────────────────────────────────
+    for i, row in enumerate(other_rows):
+        cx = row["forest_x"] * SCALE + SCALE // 2
+        cy = row["forest_y"] * SCALE + SCALE // 2 + OFFSET_Y
+        av = other_avatars[i] if i < len(other_avatars) else None
+        if av:
+            img = _paste_avatar(img, av, cx, cy, 16, _OTHER_COL)
+            draw = ImageDraw.Draw(img)
+        else:
+            draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=_OTHER_COL, outline=(255, 255, 255))
+
+    # ── Draw current player (red) ─────────────────────────────────────────────
+    cx_p = player.forest_x * SCALE + SCALE // 2
+    cy_p = player.forest_y * SCALE + SCALE // 2 + OFFSET_Y
+    if player_avatar:
+        img = _paste_avatar(img, player_avatar, cx_p, cy_p, 20, _SELF_COL)
+        draw = ImageDraw.Draw(img)
+    else:
+        draw.ellipse([cx_p - 5, cy_p - 5, cx_p + 5, cy_p + 5], fill=_SELF_COL, outline=(255, 255, 255))
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)

@@ -640,7 +640,7 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_maze_door":    "\U0001F300",   # 🌀 entrance to maze branch
     "fst_nut_tree":     "\U0001F330",   # 🌰 nut tree (interact to gather forest nuts)
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
-    "fst_map_chest":    "\U0001F5FA️",  # 🗺️ map chest (contains forest map)
+    "fst_map_chest":    "\U0001F4E6",   # 📦 map chest — looks like a regular chest
     "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
     # Maze tiles
     "maze_wall":        "\U0001F333",   # 🌳 dense forest wall (impassable)
@@ -1599,8 +1599,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     if "chest" in cache:
         FOREST_EMOJI["fst_chest"] = cache["chest"]
         FOREST_EMOJI["maze_chest"] = cache["chest"]
-        FOREST_EMOJI["fst_mimic"] = cache["chest"]  # same look as fst_chest by design
-        # fst_map_chest keeps its map emoji (🗺️) — no override needed
+        FOREST_EMOJI["fst_mimic"] = cache["chest"]     # same look as fst_chest by design
+        FOREST_EMOJI["fst_map_chest"] = cache["chest"] # map chest looks identical to regular chest
     if "fst_floor" in cache:
         FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
     # Tree city staircase custom emoji
