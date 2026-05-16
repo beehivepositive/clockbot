@@ -11465,7 +11465,10 @@ async def handle_nav_close(
     else:
         view = _game_view(guild_id, user_id, player, grid=grid)
     content = render_grid(grid, player)
-    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+    # attachments=[] clears the map image that was set by handle_nav_open / handle_map
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None, attachments=[], view=view
+    )
 
 
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:

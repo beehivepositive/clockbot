@@ -200,7 +200,7 @@ async def render_unified_quest_list(
     # ⚠️ warning for non-trackable quests (no world coordinates to pin)
     trackable = bool(q.get("bounty_wx") or q.get("location_x"))
     if not trackable:
-        header = "⚠️ " + header
+        body = "⚠️ *This quest has no trackable location — 📍 pin is unavailable.*\n\n" + body
 
     return header + body
 
