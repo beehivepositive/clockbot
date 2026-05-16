@@ -32,6 +32,7 @@ _LEGEND_ICON_ENTRIES = [
     ("sky_temple_main",  "Main Temple",   (255, 215,   0), "filled_diamond"),
     ("forest_entrance",  "Forest",        ( 34, 139,  34), "filled_circle"),
     ("bandit_camp",      "Bandit Camp",   (180,  60,  60), "filled_circle"),
+    ("player_house",     "Player House",  (255, 160,  50), "outline_square"),
 ]
 
 # Ocean-specific legend
@@ -65,6 +66,8 @@ _ICON_R: dict[str, int] = {
     "shrine":            5,  # red cross
     "sundial":           5,  # yellow cross
     "forest_entrance":   5,  # green circle
+    "bandit_camp":       4,  # red circle
+    "player_house":      4,  # orange outline square
 }
 _DEFAULT_ICON_R = 5   # fallback for any unlisted icon type
 
@@ -73,6 +76,8 @@ _DEFAULT_ICON_R = 5   # fallback for any unlisted icon type
 _BASE_CACHE: dict[int, tuple[int, int, float, bytes]] = {}
 # Ocean map: keyed by guild_id → (seed, timestamp, png_bytes)
 _OCEAN_BASE_CACHE: dict[int, tuple[int, float, bytes]] = {}
+# Key/legend image: keyed by guild_id → (seed, png_bytes)
+_KEY_CACHE: dict[int, tuple[int, bytes]] = {}
 
 _CACHE_TTL = 3600.0   # 1 hour
 
@@ -202,26 +207,30 @@ def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
         tick = major_len if is_major else minor_len
         lw   = 2      if is_major else 1
         label = str(display_coord)
+        # Skip the "0" text label — the golden diagonal origin marker covers (0,0)
+        show_label = display_coord != 0
 
         # ── Y-axis ruler (left edge): display y=0 at bottom ─────────────────
         # pixel_y = map_h - display_coord * scale  (0 display = bottom = map_h)
         py = map_h - display_coord * scale
         py = max(0, min(py, map_h - 1))
         draw.line([(0, py), (tick, py)], fill=white, width=lw)
-        if is_major:
-            draw.text((tick + 3, py - 5), label, fill=shadow, font=font)
-            draw.text((tick + 2, py - 6), label, fill=white,  font=font)
-        else:
-            draw.text((tick + 2, py - 5), label, fill=(180, 180, 180), font=font)
+        if show_label:
+            if is_major:
+                draw.text((tick + 3, py - 5), label, fill=shadow, font=font)
+                draw.text((tick + 2, py - 6), label, fill=white,  font=font)
+            else:
+                draw.text((tick + 2, py - 5), label, fill=(180, 180, 180), font=font)
 
         # ── X-axis ruler (bottom edge): x=0 at left ─────────────────────────
         px2 = min(display_coord * scale, map_w - 1)
         draw.line([(px2, map_h - tick), (px2, map_h - 1)], fill=white, width=lw)
-        if is_major:
-            draw.text((px2 + 2, map_h - tick - 12), label, fill=shadow, font=font)
-            draw.text((px2 + 1, map_h - tick - 13), label, fill=white,  font=font)
-        else:
-            draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
+        if show_label:
+            if is_major:
+                draw.text((px2 + 2, map_h - tick - 12), label, fill=shadow, font=font)
+                draw.text((px2 + 1, map_h - tick - 13), label, fill=white,  font=font)
+            else:
+                draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
 
     # ── Diagonal origin marker at (0,0) -- bottom-left corner ────────────────
     # (0,0) is the south-west corner in display coordinates
@@ -237,30 +246,14 @@ def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
 # ── Wilderness base-map renderer ──────────────────────────────────────────────
 
 def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
-    """Render terrain + overrides + legend.  Returns raw PNG bytes (no players)."""
+    """Render terrain + overrides + rulers.  Returns raw PNG bytes (no legend, no players)."""
     from PIL import Image, ImageDraw, ImageFont
 
     scale = MAP_PIXEL_SCALE
     map_w = WORLD_SIZE * scale
     map_h = WORLD_SIZE * scale
 
-    all_legend_entries = (
-        [(k, label, TILE_COLORS.get(k, (80, 80, 80)), "square") for k, label in _LEGEND_ENTRIES]
-        + [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]
-        + [
-            ("__player__", "You",           (255,  40,  40), "dot_red"),
-            ("__other__",  "Other Player",  (60,  120, 255), "dot_blue"),
-            ("__quest__",  "Quest Target",  (220,  30,  30), "filled_diamond"),
-            ("__ocean__",  "Ocean Quest ▸", (255, 140,   0), "arrow_right"),
-        ]
-    )
-
-    rows_per_col = (len(all_legend_entries) + _LEGEND_COLS - 1) // _LEGEND_COLS
-    legend_h = rows_per_col * _LEGEND_ROW_H + _LEGEND_MARGIN * 2
-    legend_w = _LEGEND_COLS * _LEGEND_COL_W + _LEGEND_MARGIN * 2
-    panel_h  = max(map_h, legend_h)
-
-    img = Image.new("RGB", (map_w + legend_w, panel_h), (30, 30, 30))
+    img = Image.new("RGB", (map_w, map_h), (30, 30, 30))
     draw = ImageDraw.Draw(img)
 
     # ── Base terrain (y=0 internal = north = top of image rendered at bottom) ─
@@ -293,7 +286,7 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
             icon_r = _ICON_R.get(tile_type, _DEFAULT_ICON_R)
             _draw_icon(draw, cx, cy, style, color, r=icon_r)
 
-    # ── Legend ────────────────────────────────────────────────────────────────
+    # ── Coordinate rulers ─────────────────────────────────────────────────────
     try:
         font = ImageFont.truetype("arial.ttf", 11)
     except Exception:
@@ -303,7 +296,33 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
             font = ImageFont.load_default()
 
     _draw_coord_rulers(draw, map_w, map_h, font)
-    _legend_block(draw, all_legend_entries, map_w, font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _generate_key_sync(all_legend_entries: list) -> bytes:
+    """Render map legend as a standalone PNG (no terrain). Returns raw PNG bytes."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    rows_per_col = (len(all_legend_entries) + _LEGEND_COLS - 1) // _LEGEND_COLS
+    legend_h = rows_per_col * _LEGEND_ROW_H + _LEGEND_MARGIN * 2
+    legend_w = _LEGEND_COLS * _LEGEND_COL_W + _LEGEND_MARGIN * 2
+
+    img = Image.new("RGB", (legend_w, legend_h), (30, 30, 30))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 11)
+    except Exception:
+        try:
+            font = ImageFont.load_default(size=11)
+        except Exception:
+            font = ImageFont.load_default()
+
+    # Pass map_w=0 so items render starting at x=_LEGEND_MARGIN
+    _legend_block(draw, all_legend_entries, 0, font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -449,8 +468,8 @@ def _composite_players_sync(
 # ── Ocean base-map renderer ───────────────────────────────────────────────────
 
 def _generate_ocean_base_map_sync(seed: int) -> bytes:
-    """Render 200×200 ocean terrain + structures + legend. Returns raw PNG bytes."""
-    from PIL import Image, ImageDraw, ImageFont
+    """Render 200×200 ocean terrain + structures (no legend). Returns raw PNG bytes."""
+    from PIL import Image, ImageDraw
     from dwarf_explorer.config import OCEAN_SIZE
     from dwarf_explorer.world.ocean import get_ocean_tile, get_ocean_structure
 
@@ -458,22 +477,7 @@ def _generate_ocean_base_map_sync(seed: int) -> bytes:
     map_w = OCEAN_SIZE * scale
     map_h = OCEAN_SIZE * scale
 
-    all_legend_entries = (
-        [(k, label, TILE_COLORS.get(k, (0, 40, 100)), "square") for k, label in _OCEAN_LEGEND_ENTRIES]
-        + [(e[0], e[1], e[2], e[3]) for e in _OCEAN_LEGEND_ICON_ENTRIES]
-        + [
-            ("__player__", "You",              (255, 0,   0),   "dot_red"),
-            ("__quest__",  "Quest Target",     (255, 140, 0),   "filled_diamond"),
-            ("__exit__",   "Wilderness Quest", (200, 255, 100), "arrow_up"),
-        ]
-    )
-
-    rows_per_col = (len(all_legend_entries) + _LEGEND_COLS - 1) // _LEGEND_COLS
-    legend_h = rows_per_col * _LEGEND_ROW_H + _LEGEND_MARGIN * 2
-    legend_w = _LEGEND_COLS * _LEGEND_COL_W + _LEGEND_MARGIN * 2
-    panel_h  = max(map_h, legend_h)
-
-    img = Image.new("RGB", (map_w + legend_w, panel_h), (30, 30, 30))
+    img = Image.new("RGB", (map_w, map_h), (30, 30, 30))
     draw = ImageDraw.Draw(img)
 
     # ── Base terrain ──────────────────────────────────────────────────────────
@@ -494,17 +498,6 @@ def _generate_ocean_base_map_sync(seed: int) -> bytes:
                 cx = ox * scale + scale // 2
                 cy = oy * scale + scale // 2
                 _draw_icon(draw, cx, cy, style, color)
-
-    # ── Legend ────────────────────────────────────────────────────────────────
-    try:
-        font = ImageFont.truetype("arial.ttf", 11)
-    except Exception:
-        try:
-            font = ImageFont.load_default(size=11)
-        except Exception:
-            font = ImageFont.load_default()
-
-    _legend_block(draw, all_legend_entries, map_w, font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -579,6 +572,35 @@ def _composite_ocean_sync(
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+def _build_wilderness_legend_entries() -> list:
+    """Return the full list of (key, label, color, style) tuples for the wilderness legend."""
+    return (
+        [(k, label, TILE_COLORS.get(k, (80, 80, 80)), "square") for k, label in _LEGEND_ENTRIES]
+        + [(e[0], e[1], e[2], e[3]) for e in _LEGEND_ICON_ENTRIES]
+        + [
+            ("__player__", "You",           (255,  40,  40), "dot_red"),
+            ("__other__",  "Other Player",  ( 60, 120, 255), "dot_blue"),
+            ("__quest__",  "Quest Target",  (220,  30,  30), "filled_diamond"),
+            ("__ocean__",  "Ocean Quest ▸", (255, 140,   0), "arrow_right"),
+        ]
+    )
+
+
+async def generate_world_map_key(guild_id: int, seed: int) -> io.BytesIO:
+    """Return a BytesIO PNG of the wilderness map legend (terrain key + icon key, no map)."""
+    entry = _KEY_CACHE.get(guild_id)
+    if entry is not None and entry[0] == seed:
+        _, png_bytes = entry
+    else:
+        all_legend_entries = _build_wilderness_legend_entries()
+        png_bytes = await asyncio.to_thread(_generate_key_sync, all_legend_entries)
+        _KEY_CACHE[guild_id] = (seed, png_bytes)
+
+    buf = io.BytesIO(png_bytes)
+    buf.seek(0)
+    return buf
+
 
 async def generate_world_map(
     seed: int, db, guild_id: int,

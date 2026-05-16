@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID, WORLD_SIZE
 from dwarf_explorer.database.connection import get_database
@@ -59,7 +59,7 @@ async def _player_grid(player, seed: int, db):
 
 
 async def _ensure_admin_resources(db, player_id: int) -> None:
-    """Top up admin gold to 999999 and ensure at least 81 cooked fish."""
+    """Top up admin gold to 999999, ensure 81 cooked fish, and give a canoe if missing."""
     await db.execute("UPDATE players SET gold=999999 WHERE user_id=?", (player_id,))
     existing = await db.fetch_one(
         "SELECT id, quantity FROM inventory WHERE user_id=? AND item_id='cooked_fish' ORDER BY slot_index LIMIT 1",
@@ -75,6 +75,15 @@ async def _ensure_admin_resources(db, player_id: int) -> None:
             "UPDATE inventory SET quantity=81 WHERE id=?",
             (existing["id"],)
         )
+    # Give admin a 2-piece canoe for testing if they don't have one
+    canoe_row = await db.fetch_one(
+        "SELECT COUNT(*) as cnt FROM inventory "
+        "WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right')",
+        (player_id,)
+    )
+    if not canoe_row or canoe_row["cnt"] == 0:
+        from dwarf_explorer.ui.game_view import _add_canoe_to_inventory
+        await _add_canoe_to_inventory(db, player_id)
 
 
 class DwarfExplorer(commands.Cog):
@@ -82,30 +91,82 @@ class DwarfExplorer(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._pregen_done = False  # guard: only pre-generate once per process
 
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(GameButton)
+        self._hourly_map_regen.start()
+
+    async def cog_unload(self) -> None:
+        self._hourly_map_regen.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         from dwarf_explorer.config import apply_custom_emojis
         apply_custom_emojis(self.bot.emojis)
-        # Pre-generate world maps for all initialized guilds so the first /map is instant
-        asyncio.ensure_future(self._pregen_maps_for_all_guilds())
+        # Pre-generate world maps once per process startup (not on every reconnect).
+        # Delay 30 s so the bot is fully connected before doing CPU-heavy PIL work.
+        if not self._pregen_done:
+            self._pregen_done = True
+            asyncio.ensure_future(self._pregen_maps_for_all_guilds())
 
     async def _pregen_maps_for_all_guilds(self) -> None:
-        """Background task: warm the world-map image cache for every initialized guild."""
-        from dwarf_explorer.world.world_map import generate_world_map, generate_ocean_map
+        """Background task: warm the world-map image cache for every initialized guild.
+
+        Runs sequentially with a pause between guilds to avoid saturating the
+        thread pool and causing event-loop lag.
+        """
+        await asyncio.sleep(30)  # wait for the bot to be fully online first
+        from dwarf_explorer.world.world_map import (
+            generate_world_map, generate_ocean_map, generate_world_map_key,
+            invalidate_map_cache,
+        )
         for guild in self.bot.guilds:
             try:
                 db = await get_database(guild.id)
                 if not await is_world_initialized(db, guild.id):
                     continue
                 seed = await get_or_create_world(db, guild.id)
-                asyncio.ensure_future(generate_world_map(seed, db, guild.id, 0, 0))
-                asyncio.ensure_future(generate_ocean_map(seed, guild.id, 0, 0))
+                # Sequential (not fire-and-forget) so only one heavy PIL task at a time
+                await generate_world_map(seed, db, guild.id, 0, 0)
+                await generate_world_map_key(guild.id, seed)
+                await generate_ocean_map(seed, guild.id, 0, 0)
+                await asyncio.sleep(1)  # breathe between guilds
             except Exception:
                 pass  # Non-fatal: map will generate on first /map call
+
+    @tasks.loop(hours=1)
+    async def _hourly_map_regen(self) -> None:
+        """Hourly background task: invalidate and regenerate world-map image caches.
+
+        This ensures that terrain changes (new structures, cleared bandit camps,
+        player houses, etc.) appear on the map within one hour without needing
+        a player to trigger /map first.
+        """
+        from dwarf_explorer.world.world_map import (
+            generate_world_map, generate_ocean_map, generate_world_map_key,
+            invalidate_map_cache, invalidate_ocean_map_cache,
+        )
+        for guild in self.bot.guilds:
+            try:
+                db = await get_database(guild.id)
+                if not await is_world_initialized(db, guild.id):
+                    continue
+                seed = await get_or_create_world(db, guild.id)
+                invalidate_map_cache(guild.id)
+                invalidate_ocean_map_cache(guild.id)
+                await generate_world_map(seed, db, guild.id, 0, 0)
+                await generate_world_map_key(guild.id, seed)
+                await generate_ocean_map(seed, guild.id, 0, 0)
+                await asyncio.sleep(1)
+            except Exception:
+                pass
+
+    @_hourly_map_regen.before_loop
+    async def _before_hourly_regen(self) -> None:
+        """Wait until the bot is ready and the initial pregen is done."""
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(3600)  # first run at T+1h (startup pregen covers T+0)
 
     @app_commands.command(name="explore", description="Start or resume your Dwarf Explorer adventure!")
     async def explore(self, interaction: discord.Interaction) -> None:

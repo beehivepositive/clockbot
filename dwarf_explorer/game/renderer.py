@@ -191,6 +191,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 if is_center:
                     if (player.in_ocean or player.in_high_seas) and not player.in_ship:
                         row_emojis.append(ENTITY_EMOJI["player_boat"])
+                    elif getattr(player, "in_canoe", False):
+                        row_emojis.append(_ITEM_SLOT_EMOJI.get("canoe_whole", _player_emoji))
                     else:
                         row_emojis.append(_player_emoji)
                 elif (col_x, row_y) in _other_pos:
@@ -320,6 +322,10 @@ _ITEM_SLOT_EMOJI = {
     "large_coin_purse":  "\U0001F4B0",       # 💰
     "cannonball":        "\U0001F4A3",       # 💣
     "drop_box":          "\U0001F4E6",       # 📦
+    # Canoe 2-piece (overridden by custom emoji via apply_custom_emojis)
+    "canoe_left":        "\U0001F6F6",       # 🛶 left half (fallback)
+    "canoe_right":       "\U0001F6F6",       # 🛶 right half (fallback)
+    "canoe_whole":       "\U0001F6F6",       # 🛶 whole canoe / player-on-water icon (fallback)
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
@@ -445,10 +451,36 @@ def render_inventory(
     visible_items = [it for it in items if it["item_id"] != "gold_coin"]
     slot_map = _build_slot_map(visible_items, total_slots)
     slots: list[str] = []
+    _canoe_right_skip: set[int] = set()
+    # Pre-pass: identify canoe pair right-halves so we can skip them in main loop
+    for i in range(total_slots - 1):
+        left = slot_map.get(i)
+        right = slot_map.get(i + 1)
+        if (left is not None and left["item_id"] == "canoe_left"
+                and right is not None and right["item_id"] == "canoe_right"
+                and i // inv_cols == (i + 1) // inv_cols):   # same row
+            _canoe_right_skip.add(i + 1)
     for i in range(total_slots):
+        if i in _canoe_right_skip:
+            slots.append("")  # placeholder — canoe_left already rendered both halves
+            continue
         item = slot_map.get(i)
         if item is not None:
             item_id = item["item_id"]
+            # Check if this is the left half of a seamless canoe pair
+            if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
+                left_emoji  = _item_emoji("canoe_left")
+                right_emoji = _item_emoji("canoe_right")
+                cursor_left  = (i == selected) and cursor_mode == "inventory"
+                cursor_right = (i + 1 == selected) and cursor_mode == "inventory"
+                # Seamless: left_emoji + right_emoji flush together, total padding = 2 chars
+                if cursor_left:
+                    slots.append(f"{left_emoji}◀︎{right_emoji}{_PAD}")
+                elif cursor_right:
+                    slots.append(f"{left_emoji}{right_emoji}◀︎{_PAD}")
+                else:
+                    slots.append(f"{left_emoji}{right_emoji}{_PAD * 2}")
+                continue
             qty = item["quantity"]
             is_selected = item_id in selections
             cursor_on = (i == selected) and cursor_mode == "inventory"

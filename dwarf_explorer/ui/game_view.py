@@ -434,9 +434,11 @@ class GameView(discord.ui.View):
                 row=3,
             )
         elif embark_enabled:
+            from dwarf_explorer.config import ITEM_EMOJI as _IE
+            _canoe_emoji = _IE.get("canoe_left") or _IE.get("canoe") or "🛶"
             sp5_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
-                emoji="🛶",
+                emoji=_canoe_emoji,
                 custom_id=_custom_id(self.guild_id, self.user_id, "embark"),
                 row=3,
             )
@@ -2531,7 +2533,8 @@ def _compute_context_labels(
     if (not player.in_village and not player.in_house and not player.in_cave
             and not player.in_ocean and not player.in_canoe):
         _CANOE_WATER = {"river", "bridge", "shallow_water"}
-        _has_canoe = "canoe" in hand_items
+        # Accept both legacy "canoe" (single item) and new "canoe_left" (2-piece)
+        _has_canoe = "canoe" in hand_items or "canoe_left" in hand_items
         if _has_canoe:
             for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
                 r, c = vc + ro, vc + co
@@ -4767,9 +4770,11 @@ async def handle_embark(
     if player.in_canoe:
         return
 
-    # Find adjacent river/water tile
+    # Find adjacent river/water tile — reject ocean/sea tiles (deep_water/harbor)
     _CANOE_WATER = {"river", "bridge", "shallow_water"}
+    _ROUGH_WATER = {"deep_water", "harbor"}
     water_pos: tuple[int, int] | None = None
+    rough_adjacent = False
     for ddx, ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
         ax, ay = player.world_x + ddx, player.world_y + ddy
         if 0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE:
@@ -4777,10 +4782,16 @@ async def handle_embark(
             if t.terrain in _CANOE_WATER:
                 water_pos = (ax, ay)
                 break
+            elif t.terrain in _ROUGH_WATER:
+                rough_adjacent = True
 
     if not water_pos:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        content = render_grid(grid, player, "No water to launch from nearby.")
+        if rough_adjacent:
+            msg = "🌊 These waters are too rough for a canoe — your little vessel would be swamped instantly."
+        else:
+            msg = "No water to launch from nearby."
+        content = render_grid(grid, player, msg)
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
@@ -12247,7 +12258,7 @@ async def handle_map(
 ) -> None:
     # Defer immediately — map generation fetches avatar images and renders a PNG,
     # which routinely exceeds Discord's 3-second interaction window.
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
@@ -12275,7 +12286,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file, ephemeral=True)
+        await interaction.followup.send(file=file)
         return
 
     if player.in_island or (player.in_cave and getattr(player, "cave_lit", False)):
@@ -12299,7 +12310,7 @@ async def handle_map(
             player_avatar=ocean_avatar,
         )
         file = discord.File(buf, filename="ocean_map.png")
-        await interaction.followup.send(file=file, ephemeral=True)
+        await interaction.followup.send(file=file)
         return
 
     other_players = await get_all_overworld_players(db, user_id)
@@ -12331,14 +12342,16 @@ async def handle_map(
                 pass
         other_avatars.append(av)
 
-    from dwarf_explorer.world.world_map import generate_world_map
+    from dwarf_explorer.world.world_map import generate_world_map, generate_world_map_key
+    key_buf = await generate_world_map_key(guild_id, seed)
     buf = await generate_world_map(
         seed, db, guild_id, player.world_x, player.world_y,
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
-    file = discord.File(buf, filename="world_map.png")
-    await interaction.followup.send(file=file, ephemeral=True)
+    key_file = discord.File(key_buf, filename="world_map_key.png")
+    map_file = discord.File(buf, filename="world_map.png")
+    await interaction.followup.send(files=[key_file, map_file])
 
 
 async def handle_help(
@@ -13841,6 +13854,36 @@ async def handle_lumber_convert_cancel(
     )
 
 
+async def _add_canoe_to_inventory(db, user_id: int) -> None:
+    """Add a 2-piece canoe (canoe_left + canoe_right) to adjacent inventory slots.
+
+    The two pieces are placed in consecutive slot_indices on the same row (assuming
+    inv_cols=7). If the natural next slot would wrap to a new row, we bump both
+    pieces to the start of the following row so they stay side-by-side.
+    """
+    INV_COLS = 7
+    # Find the next free slot index
+    row_obj = await db.fetch_one(
+        "SELECT COALESCE(MAX(slot_index)+1, 0) AS nxt FROM inventory WHERE user_id=?",
+        (user_id,)
+    )
+    nxt = row_obj["nxt"] if row_obj else 0
+    # Ensure both pieces land on the same row (no wrap across row boundary)
+    left_col = nxt % INV_COLS
+    if left_col == INV_COLS - 1:
+        # Left piece would be at the last column; bump to start of next row
+        nxt = (nxt // INV_COLS + 1) * INV_COLS
+    await db.execute(
+        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+        (user_id, "canoe_left", nxt),
+    )
+    await db.execute(
+        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+        (user_id, "canoe_right", nxt + 1),
+    )
+    await db.commit()
+
+
 async def handle_lumber_craft_canoe(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -13855,9 +13898,10 @@ async def handle_lumber_craft_canoe(
         view = LumberConvertView(guild_id, user_id, log_count)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
-    # Check if player already has a canoe
+    # Check if player already has a canoe (either old single-piece or new 2-piece)
     canoe_rows = await db.fetch_all(
-        "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='canoe'",
+        "SELECT COALESCE(SUM(quantity),0) as total FROM inventory "
+        "WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right')",
         (user_id,)
     )
     canoe_total = canoe_rows[0]["total"] if canoe_rows else 0
@@ -13867,10 +13911,11 @@ async def handle_lumber_craft_canoe(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     await remove_from_inventory(db, user_id, "log", 10)
-    await add_to_inventory(db, user_id, "canoe", 1)
+    # Add canoe as 2-piece: canoe_left in next slot, canoe_right in the slot after
+    await _add_canoe_to_inventory(db, user_id)
     content = render_grid(grid, player,
         "🛶 The mill worker shapes the logs into a **canoe**! "
-        "Equip it and stand next to a river to embark.")
+        "Equip the left piece and stand next to a river to embark.")
     _ui_state.pop(user_id, None)
     await interaction.response.edit_message(
         embed=_embed(content), content=None,

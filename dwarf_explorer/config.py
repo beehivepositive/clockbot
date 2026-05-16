@@ -209,7 +209,10 @@ ITEM_EMOJI = {
     # Hospital quest ingredient
     "healing_herb":         "\U0001F33F",           # 🌿
     "plank":            "🪵",       # 🪵  wooden plank
-    "canoe":            "🛶",       # 🛶  canoe
+    "canoe":            "🛶",       # 🛶  canoe (legacy single-item)
+    "canoe_left":       "🛶",       # left half of 2-piece canoe (overridden by custom emoji)
+    "canoe_right":      "🛶",       # right half of 2-piece canoe (overridden by custom emoji)
+    "canoe_whole":      "🛶",       # player-on-water display (overridden by custom emoji)
     "hammer":           "🔨",       # 🔨  hammer (ship repair)
     "nail":             "📌",       # 📌  nail (ship repair)
     "breath_of_the_sea": "🫧",     # 🫧  breath of the sea (restores breath underwater)
@@ -1547,6 +1550,12 @@ def apply_custom_emojis(guild_emojis: list) -> None:
     if "staircase" in cache:
         TC_EMOJI["tc_stair_up"]   = cache["staircase"]
         TC_EMOJI["tc_stair_down"] = cache["staircase"]
+
+    # Canoe 2-piece custom emojis — left half, right half, and whole (on-water player icon)
+    for canoe_key in ("canoe_left", "canoe_right", "canoe_whole"):
+        if canoe_key in cache:
+            ITEM_EMOJI[canoe_key] = cache[canoe_key]
+            _renderer._ITEM_SLOT_EMOJI[canoe_key] = cache[canoe_key]
 
     # Empty gear socket custom emoji
     if "gear_socket" in cache:
