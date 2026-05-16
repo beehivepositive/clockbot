@@ -71,6 +71,9 @@ from dwarf_explorer.ui.game_view import (
     handle_quests, handle_quest_nav, handle_quest_cancel,
     handle_quest_cancel_confirm, handle_quest_cancel_back, handle_quest_close,
     handle_quest_set_target,
+    handle_quest_up, handle_quest_down,
+    handle_quest_tab_left, handle_quest_tab_right,
+    handle_quest_abandon, handle_quest_abandon_confirm, handle_quest_abandon_back,
     handle_open_quest_pool, handle_qpool_nav, handle_qpool_accept, handle_qpool_close,
     handle_merchant_quest_offer, handle_quest_offer_accept, handle_quest_offer_decline,
     handle_qswap, handle_qswap_pass,
@@ -506,6 +509,21 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_quest_close(interaction, gid, uid)
             elif act == "quest_set_target":
                 await handle_quest_set_target(interaction, gid, uid)
+            # New D-pad quest navigation
+            elif act == "quest_up":
+                await handle_quest_up(interaction, gid, uid)
+            elif act == "quest_down":
+                await handle_quest_down(interaction, gid, uid)
+            elif act == "quest_tab_left":
+                await handle_quest_tab_left(interaction, gid, uid)
+            elif act == "quest_tab_right":
+                await handle_quest_tab_right(interaction, gid, uid)
+            elif act == "quest_abandon":
+                await handle_quest_abandon(interaction, gid, uid)
+            elif act == "quest_abandon_confirm":
+                await handle_quest_abandon_confirm(interaction, gid, uid)
+            elif act == "quest_abandon_back":
+                await handle_quest_abandon_back(interaction, gid, uid)
             elif act == "quest_main":
                 await handle_quest_main(interaction, gid, uid)
             elif act == "mq_prev":

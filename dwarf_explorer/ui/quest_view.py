@@ -1,6 +1,6 @@
 """Quest UI views.
 
-QuestView        — active-quest list with navigation and cancel.
+QuestView        — unified D-pad quest log (side quests + main quests via tab switching).
 QuestOfferView   — offer a single quest (accept / decline).
 QuestOfferList   — paginated list of available quests from a pool (village / bounty board).
 QuestSwapView    — when player is at max quests and a merchant offers one; lets them
@@ -37,99 +37,146 @@ def _sp(guild_id: int, user_id: int, tag: str, row: int) -> discord.ui.Button:
     )
 
 
-# ── Active Quest List ──────────────────────────────────────────────────────────
+# ── Active Quest Log (unified D-pad view) ─────────────────────────────────────
 
 class QuestView(discord.ui.View):
-    """Shows active quests with prev/next navigation, cancel, and close."""
+    """D-pad quest log.
 
-    def __init__(self, guild_id: int, user_id: int, quest_index: int = 0,
-                 confirm_cancel: bool = False):
+    Row 0: ← tab  |  ↑ quest up  |  tab →
+    Row 1: spacer  |  📍 Set/Unset Target  |  spacer
+    Row 2: spacer  |  ↓ quest down  |  spacer
+    Row 3: ✖ Abandon (or Confirm/Keep)  |  spacer  |  ✖ Close
+    """
+
+    def __init__(
+        self,
+        guild_id: int,
+        user_id: int,
+        tab: str = "side",
+        quest_index: int = 0,
+        has_target: bool = False,
+        confirm_abandon: bool = False,
+        no_quests: bool = False,
+    ):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
-        # Row 0: Prev | Cancel / Confirm-cancel | Next
+        other_tab_label = "⚔️ Main" if tab == "side" else "📋 Side"
+
+        # ── Row 0: ← tab | ↑ up | tab → ──────────────────────────────────────
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="◀ Prev",
-            custom_id=_custom_id(gid, uid, "quest_prev"),
+            style=discord.ButtonStyle.secondary,
+            label=f"◀ {other_tab_label}",
+            custom_id=_custom_id(gid, uid, "quest_tab_left"),
             row=0,
         ))
-        if confirm_cancel:
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="↑",
+            custom_id=_custom_id(gid, uid, "quest_up"),
+            disabled=no_quests,
+            row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label=f"{other_tab_label} ▶",
+            custom_id=_custom_id(gid, uid, "quest_tab_right"),
+            row=0,
+        ))
+
+        # ── Row 1: spacer | Set/Unset Target | spacer ─────────────────────────
+        self.add_item(_sp(gid, uid, "r1l", 1))
+        if has_target:
+            target_btn = discord.ui.Button(
+                style=discord.ButtonStyle.danger,
+                label="📍 Unset Target",
+                custom_id=_custom_id(gid, uid, "quest_set_target"),
+                row=1,
+            )
+        else:
+            target_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="📍 Set Target",
+                custom_id=_custom_id(gid, uid, "quest_set_target"),
+                disabled=no_quests,
+                row=1,
+            )
+        self.add_item(target_btn)
+        self.add_item(_sp(gid, uid, "r1r", 1))
+
+        # ── Row 2: spacer | ↓ down | spacer ──────────────────────────────────
+        self.add_item(_sp(gid, uid, "r2l", 2))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="↓",
+            custom_id=_custom_id(gid, uid, "quest_down"),
+            disabled=no_quests,
+            row=2,
+        ))
+        self.add_item(_sp(gid, uid, "r2r", 2))
+
+        # ── Row 3: Abandon / Confirm / Keep | spacer | Close ──────────────────
+        if confirm_abandon:
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.danger, label="✖ Confirm Cancel",
-                custom_id=_custom_id(gid, uid, "quest_cancel_confirm"),
-                row=0,
+                style=discord.ButtonStyle.danger,
+                label="✖ Confirm Abandon",
+                custom_id=_custom_id(gid, uid, "quest_abandon_confirm"),
+                row=3,
             ))
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary, label="↩ Keep",
-                custom_id=_custom_id(gid, uid, "quest_cancel_back"),
-                row=0,
+                style=discord.ButtonStyle.secondary,
+                label="↩ Keep",
+                custom_id=_custom_id(gid, uid, "quest_abandon_back"),
+                row=3,
             ))
         else:
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.danger, label="✖ Abandon",
-                custom_id=_custom_id(gid, uid, "quest_cancel"),
-                row=0,
+                style=discord.ButtonStyle.danger,
+                label="✖ Abandon",
+                custom_id=_custom_id(gid, uid, "quest_abandon"),
+                disabled=no_quests,
+                row=3,
             ))
+            self.add_item(_sp(gid, uid, "r3m", 3))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="Next ▶",
-            custom_id=_custom_id(gid, uid, "quest_next"),
-            row=0,
-        ))
-
-        # Row 1: Set Target | Main | Close
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.primary, label="📍 Set Target",
-            custom_id=_custom_id(gid, uid, "quest_set_target"),
-            row=1,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.danger, label="⚔️ Main",
-            custom_id=_custom_id(gid, uid, "quest_main"),
-            row=1,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="✖ Close",
+            style=discord.ButtonStyle.secondary,
+            label="✖ Close",
             custom_id=_custom_id(gid, uid, "quest_close"),
-            row=1,
+            row=3,
         ))
 
 
-class MainQuestView(discord.ui.View):
-    """Shows main quests with prev/next navigation and close."""
+async def render_unified_quest_list(
+    db, user_id: int, tab: str, index: int, in_village: bool = False,
+    nav_target: tuple | None = None,
+) -> str:
+    """Render the quest log for the given tab ('side' or 'main')."""
+    from dwarf_explorer.game.quests import get_main_quests
 
-    def __init__(self, guild_id: int, user_id: int):
-        super().__init__(timeout=None)
-        gid, uid = guild_id, user_id
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="◀ Prev",
-            custom_id=_custom_id(gid, uid, "mq_prev"), row=0,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.danger, label="⚔️ Main Quests",
-            custom_id=_custom_id(gid, uid, "mq_header"),
-            disabled=True, row=0,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="Next ▶",
-            custom_id=_custom_id(gid, uid, "mq_next"), row=0,
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="✖ Close",
-            custom_id=_custom_id(gid, uid, "mq_close"), row=1,
-        ))
+    if tab == "main":
+        quests = await get_main_quests(db, user_id)
+        tab_label = "⚔️ **Main Quests**"
+    else:
+        quests = await get_active_quests(db, user_id)
+        tab_label = "📋 **Side Quests**"
 
-
-async def render_quest_list(db, user_id: int, index: int, in_village: bool = False) -> str:
-    quests = await get_active_quests(db, user_id)
     if not quests:
-        return "📋 **Quests** — You have no active quests.\n\n*Visit a village to find work, or look for a bounty board.*"
+        if tab == "main":
+            return (
+                f"{tab_label} — No active main quests.\n\n"
+                "*Seek out legendary NPCs to begin a main quest.*"
+            )
+        return (
+            f"{tab_label} — You have no active quests.\n\n"
+            "*Visit a village to find work, or look for a bounty board.*"
+        )
 
     index = max(0, min(index, len(quests) - 1))
     q = quests[index]
     total = len(quests)
 
-    header = f"📋 **Quests** ({total}/{MAX_PLAYER_QUESTS})  —  Quest {index + 1} of {total}\n\n"
-    body   = render_quest_summary(q)
+    header = f"{tab_label} ({total}/{MAX_PLAYER_QUESTS})  —  Quest {index + 1} of {total}\n\n"
+    body = render_quest_summary(q)
 
     # Show completable hint when in village for fetch/delivery
     subtype = q.get("quest_subtype", "")
@@ -142,22 +189,26 @@ async def render_quest_list(db, user_id: int, index: int, in_village: bool = Fal
         marker_x = q.get("bounty_wx") or q.get("location_x")
         marker_y = q.get("bounty_wy") or q.get("location_y")
         if subtype == "kill":
-            body += f"\n\n*⚔️ Target area marked on map near ({marker_x}, {_flip_y(marker_y, _loc_type)})*"
+            body += f"\n\n*⚔️ Target area near ({marker_x}, {_flip_y(marker_y, _loc_type)})*"
+
+    # Target indicator
+    if nav_target:
+        tx, ty = nav_target
+        body += f"\n\n*🎯 Nav target active → ({tx}, {_flip_y(ty)})*"
 
     return header + body
+
+
+# ── Legacy render helpers (kept for compatibility) ────────────────────────────
+
+async def render_quest_list(db, user_id: int, index: int, in_village: bool = False) -> str:
+    """Back-compat wrapper — renders side quests tab."""
+    return await render_unified_quest_list(db, user_id, "side", index, in_village)
 
 
 async def render_main_quest_list(db, user_id: int, index: int) -> str:
-    from dwarf_explorer.game.quests import get_main_quests
-    quests = await get_main_quests(db, user_id)
-    if not quests:
-        return "⚔️ **Main Quests** — You have no active main quests.\n\n*Seek out legendary NPCs to begin a main quest.*"
-    index = max(0, min(index, len(quests) - 1))
-    q = quests[index]
-    total = len(quests)
-    header = f"⚔️ **Main Quests** ({total} active)  —  Quest {index + 1} of {total}\n\n"
-    body = render_quest_summary(q)
-    return header + body
+    """Back-compat wrapper — renders main quests tab."""
+    return await render_unified_quest_list(db, user_id, "main", index)
 
 
 # ── Quest Offer ───────────────────────────────────────────────────────────────
@@ -303,3 +354,30 @@ async def render_quest_swap(active_quests: list[dict], merchant_quest: dict) -> 
         lines.append(f"**#{i + 1}** {q['title']} ({q.get('quest_subtype','')}) "
                      f"— {q['progress']}/{q['target_count']} done")
     return "\n".join(lines)
+
+
+# ── Legacy compatibility shims ────────────────────────────────────────────────
+
+class MainQuestView(discord.ui.View):
+    """Legacy shim — old messages may still have mq_* buttons."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="◀ Prev",
+            custom_id=_custom_id(gid, uid, "mq_prev"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="⚔️ Main Quests",
+            custom_id=_custom_id(gid, uid, "mq_header"),
+            disabled=True, row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="Next ▶",
+            custom_id=_custom_id(gid, uid, "mq_next"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="✖ Close",
+            custom_id=_custom_id(gid, uid, "mq_close"), row=1,
+        ))

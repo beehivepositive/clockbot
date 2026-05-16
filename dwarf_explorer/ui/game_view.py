@@ -12327,118 +12327,248 @@ async def handle_help_back(
 async def handle_quests(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Open the quest log."""
+    """Open the quest log (unified D-pad view)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
-    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
-    _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
-    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=QuestView(guild_id, user_id))
+    # Preserve tab + index if already in quest_log state
+    if state.get("type") == "quest_log":
+        tab = state.get("tab", "side")
+        idx = state.get("quest_index", 0)
+        nav_target = state.get("nav_target")
+    else:
+        tab, idx, nav_target = "side", 0, state.get("nav_target")
+    _ui_state[user_id] = {"type": "quest_log", "tab": tab, "quest_index": idx,
+                          "nav_target": nav_target}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, idx)
+
+
+async def _render_quest_view(
+    interaction: discord.Interaction,
+    guild_id: int, user_id: int,
+    db, player,
+    tab: str, idx: int,
+    extra_msg: str = "",
+    confirm_abandon: bool = False,
+) -> None:
+    """Common renderer for the unified quest D-pad view."""
+    from dwarf_explorer.game.quests import get_active_quests, get_main_quests
+    from dwarf_explorer.ui.quest_view import QuestView, render_unified_quest_list
+
+    state = _ui_state.get(user_id, {})
+    nav_target = state.get("nav_target")
+
+    if tab == "main":
+        quests = await get_main_quests(db, user_id)
+    else:
+        quests = await get_active_quests(db, user_id)
+
+    no_quests = len(quests) == 0
+    idx = max(0, min(idx, len(quests) - 1)) if quests else 0
+
+    # Determine if the currently displayed quest has the nav_target set
+    has_target = False
+    if not no_quests and nav_target and quests:
+        q = quests[idx]
+        tx = q.get("bounty_wx") or q.get("location_x")
+        ty = q.get("bounty_wy") or q.get("location_y")
+        if tx is not None and ty is not None:
+            has_target = (nav_target == (int(tx), int(ty)))
+
+    content = await render_unified_quest_list(
+        db, user_id, tab, idx,
+        in_village=player.in_village,
+        nav_target=nav_target if has_target else None,
+    )
+    if extra_msg:
+        content = extra_msg + "\n\n" + content
+
+    view = QuestView(
+        guild_id, user_id,
+        tab=tab, quest_index=idx,
+        has_target=has_target,
+        confirm_abandon=confirm_abandon,
+        no_quests=no_quests,
+    )
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_quest_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
 ) -> None:
+    """Legacy handler (prev/next buttons on old messages)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
     from dwarf_explorer.game.quests import get_active_quests
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
     quests = await get_active_quests(db, user_id)
-    current = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    current = state.get("quest_index", 0)
     new_idx = (current + delta) % max(1, len(quests))
-    _ui_state[user_id] = {"type": "quest_log", "quest_index": new_idx}
-    content = await render_quest_list(db, user_id, new_idx, in_village=player.in_village)
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=QuestView(guild_id, user_id))
+    tab = state.get("tab", "side")
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": tab, "quest_index": new_idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, new_idx)
+
+
+async def handle_quest_up(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Navigate to previous quest in the current tab."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    from dwarf_explorer.game.quests import get_active_quests, get_main_quests
+    tab = state.get("tab", "side")
+    quests = await get_main_quests(db, user_id) if tab == "main" else await get_active_quests(db, user_id)
+    current = state.get("quest_index", 0)
+    new_idx = (current - 1) % max(1, len(quests))
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": tab, "quest_index": new_idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, new_idx)
+
+
+async def handle_quest_down(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Navigate to next quest in the current tab."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    from dwarf_explorer.game.quests import get_active_quests, get_main_quests
+    tab = state.get("tab", "side")
+    quests = await get_main_quests(db, user_id) if tab == "main" else await get_active_quests(db, user_id)
+    current = state.get("quest_index", 0)
+    new_idx = (current + 1) % max(1, len(quests))
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": tab, "quest_index": new_idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, new_idx)
+
+
+async def handle_quest_tab_left(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch quest tab (left arrow)."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    tab = state.get("tab", "side")
+    new_tab = "main" if tab == "side" else "side"
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": new_tab, "quest_index": 0}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, new_tab, 0)
+
+
+async def handle_quest_tab_right(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Switch quest tab (right arrow)."""
+    await handle_quest_tab_left(interaction, guild_id, user_id)
 
 
 async def handle_quest_cancel(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Show confirmation prompt before cancelling."""
+    """Legacy cancel → redirect to new abandon flow."""
+    await handle_quest_abandon(interaction, guild_id, user_id)
+
+
+async def handle_quest_abandon(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Show confirmation prompt before abandoning."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
-    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
-    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    content += "\n\n⚠️ *Abandon this quest? All progress will be lost.*"
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=QuestView(guild_id, user_id, quest_index=idx,
-                                                           confirm_cancel=True))
+    tab = state.get("tab", "side")
+    idx = state.get("quest_index", 0)
+    _ui_state[user_id] = {**state, "type": "quest_log"}
+    await _render_quest_view(
+        interaction, guild_id, user_id, db, player, tab, idx,
+        extra_msg="⚠️ *Abandon this quest? All progress will be lost.*",
+        confirm_abandon=True,
+    )
 
 
 async def handle_quest_cancel_confirm(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
+    """Legacy alias."""
+    await handle_quest_abandon_confirm(interaction, guild_id, user_id)
+
+
+async def handle_quest_abandon_confirm(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
-    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
+    tab = state.get("tab", "side")
+    idx = state.get("quest_index", 0)
     from dwarf_explorer.game.quests import get_active_quests, cancel_quest
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
     quests = await get_active_quests(db, user_id)
     if quests and idx < len(quests):
         pq = quests[idx]
         await cancel_quest(db, user_id, pq["pq_id"])
         if pq.get("quest_subtype") == "delivery":
             await remove_from_inventory(db, user_id, "merchant_parcel", 1)
-        _ui_state[user_id] = {"type": "quest_log", "quest_index": 0}
-        content = "✖ Quest abandoned.\n\n"
-        content += await render_quest_list(db, user_id, 0, in_village=player.in_village)
+        new_idx = 0
+        extra = "✖ Quest abandoned."
     else:
-        content = "No quest to cancel."
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=QuestView(guild_id, user_id))
+        new_idx = 0
+        extra = "No quest to abandon."
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": tab, "quest_index": new_idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, new_idx,
+                             extra_msg=extra)
 
 
 async def handle_quest_cancel_back(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
+    """Legacy alias."""
+    await handle_quest_abandon_back(interaction, guild_id, user_id)
+
+
+async def handle_quest_abandon_back(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
-    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
-    content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.response.edit_message(embed=_embed(content), content=None,
-                                            view=QuestView(guild_id, user_id, quest_index=idx))
+    tab = state.get("tab", "side")
+    idx = state.get("quest_index", 0)
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, idx)
 
 
 async def handle_quest_set_target(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Store the currently displayed quest's location as the nav target."""
+    """Toggle nav target for the currently displayed quest."""
     db = await get_database(guild_id)
-    state = _ui_state.get(user_id, {})
-    idx = state.get("quest_index", 0) if state.get("type") == "quest_log" else 0
-    from dwarf_explorer.game.quests import get_active_quests
-    from dwarf_explorer.ui.quest_view import QuestView, render_quest_list
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    quests = await get_active_quests(db, user_id)
+    state = _ui_state.get(user_id, {})
+    tab = state.get("tab", "side")
+    idx = state.get("quest_index", 0)
+    current_target = state.get("nav_target")
+
+    from dwarf_explorer.game.quests import get_active_quests, get_main_quests
+    quests = await get_main_quests(db, user_id) if tab == "main" else await get_active_quests(db, user_id)
     if quests and idx < len(quests):
         q = quests[idx]
         tx = q.get("bounty_wx") or q.get("location_x")
         ty = q.get("bounty_wy") or q.get("location_y")
         if tx is not None and ty is not None:
-            _ui_state[user_id] = {"type": "quest_log", "quest_index": idx,
-                                  "nav_target": (int(tx), int(ty))}
-            content = "📍 **Target set!** A ♦️ diamond will appear at the edge of your viewport pointing toward the quest target.\n\n"
-            content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
+            this_target = (int(tx), int(ty))
+            if current_target == this_target:
+                # Unset target
+                _ui_state[user_id] = {**state, "nav_target": None}
+                extra = "📍 **Target cleared.**"
+            else:
+                # Set (or switch to) this target
+                _ui_state[user_id] = {**state, "nav_target": this_target}
+                extra = "📍 **Target set!** A ♦️ diamond will appear at the edge of your viewport."
         else:
-            _ui_state[user_id] = {"type": "quest_log", "quest_index": idx}
-            content = "⚠️ This quest has no map location to target.\n\n"
-            content += await render_quest_list(db, user_id, idx, in_village=player.in_village)
+            extra = "⚠️ This quest has no map location to target."
     else:
-        content = await render_quest_list(db, user_id, idx, in_village=player.in_village)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=QuestView(guild_id, user_id, quest_index=idx),
-    )
+        extra = ""
+
+    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, idx,
+                             extra_msg=extra)
 
 
 async def handle_quest_close(
@@ -12462,46 +12592,34 @@ async def handle_quest_close(
 async def handle_quest_main(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Open the main quest list view."""
-    from dwarf_explorer.ui.quest_view import MainQuestView, render_main_quest_list
+    """Legacy: open main quest tab via old button."""
     db = await get_database(guild_id)
-    _ui_state[user_id] = {"type": "main_quest_view", "index": 0}
-    content = await render_main_quest_list(db, user_id, 0)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=MainQuestView(guild_id, user_id),
-    )
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    state = _ui_state.get(user_id, {})
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": "main", "quest_index": 0}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, "main", 0)
 
 
 async def handle_mq_nav(
     interaction: discord.Interaction, guild_id: int, user_id: int, delta: int
 ) -> None:
-    """Navigate main quest list."""
-    from dwarf_explorer.ui.quest_view import MainQuestView, render_main_quest_list
+    """Legacy handler for old mq_prev/mq_next buttons."""
     db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
-    idx = state.get("index", 0) + delta
-    _ui_state[user_id] = {"type": "main_quest_view", "index": idx}
-    content = await render_main_quest_list(db, user_id, idx)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=MainQuestView(guild_id, user_id),
-    )
+    from dwarf_explorer.game.quests import get_main_quests
+    quests = await get_main_quests(db, user_id)
+    idx = state.get("quest_index", state.get("index", 0)) + delta
+    idx = max(0, min(idx, len(quests) - 1)) if quests else 0
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": "main", "quest_index": idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, "main", idx)
 
 
 async def handle_mq_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Close main quest view and return to game."""
-    db = await get_database(guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    seed = await get_or_create_world(db, guild_id)
-    grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    content = render_grid(grid, player)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player, grid=grid),
-    )
+    """Legacy: close main quest view → same as quest_close."""
+    await handle_quest_close(interaction, guild_id, user_id)
 
 
 # ── NPC quest button ─────────────────────────────────────────────────────────

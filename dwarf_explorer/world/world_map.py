@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import io
@@ -169,12 +169,24 @@ def _legend_block(draw, all_legend: list, map_w: int, font) -> None:
         draw.text((x0 + _LEGEND_SWATCH + 4, text_y), label, fill=(220, 220, 220), font=font)
 
 
-# ── Coordinate ruler ─────────────────────────────────────────────────────────
+# ── Coordinate helpers ────────────────────────────────────────────────────────
+
+def _world_to_pixel_y(wy: int) -> int:
+    """Convert internal world y (0=north) to pixel y.
+
+    Display convention: y=0 at SOUTH (bottom of image), increasing northward.
+    Internal storage:   y=0 at NORTH (top of image).
+    So display_y = WORLD_SIZE - 1 - wy, and pixel_y = (WORLD_SIZE - 1 - wy) * scale.
+    """
+    return (WORLD_SIZE - 1 - wy) * MAP_PIXEL_SCALE
+
 
 def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
     """Draw tick marks + labels along the left (Y) and bottom (X) edges of the map.
 
-    Minor ticks every 50 tiles; major ticks every 100 tiles (longer, wider line).
+    Y-axis: display y=0 at bottom (south), increasing upward (north).
+    X-axis: x=0 at left (west), increasing rightward (east).
+    Minor ticks every 50 tiles; major ticks every 100 tiles.
     """
     white  = (255, 255, 255)
     shadow = (0, 0, 0)
@@ -183,38 +195,42 @@ def _draw_coord_rulers(draw, map_w: int, map_h: int, font) -> None:
     minor_len = 5    # pixels the tick extends inward from the edge
     major_len = 11   # pixels for a major tick
 
-    for coord in range(0, WORLD_SIZE + 1, 50):
-        coord = min(coord, WORLD_SIZE)
-        # Pixel position of this tile boundary
-        px = coord * scale
-        # Clamp to image bounds
-        px = max(0, min(px, map_w - 1))
-
-        is_major = (coord % 100 == 0)
+    for display_coord in range(0, WORLD_SIZE + 1, 50):
+        display_coord = min(display_coord, WORLD_SIZE)
+        is_major = (display_coord % 100 == 0)
         tick = major_len if is_major else minor_len
         lw   = 2      if is_major else 1
-        label = str(coord)
+        label = str(display_coord)
 
-        # ── Y-axis ruler (left edge, horizontal ticks extending right) ──────
-        if coord <= WORLD_SIZE:
-            py = min(coord * scale, map_h - 1)
-            draw.line([(0, py), (tick, py)], fill=white, width=lw)
-            if is_major:
-                # Text with 1-pixel black shadow for readability
-                draw.text((tick + 3, py - 5), label, fill=shadow, font=font)
-                draw.text((tick + 2, py - 6), label, fill=white,  font=font)
-            else:
-                draw.text((tick + 2, py - 5), label, fill=(180, 180, 180), font=font)
+        # ── Y-axis ruler (left edge): display y=0 at bottom ─────────────────
+        # pixel_y = map_h - display_coord * scale  (0 display = bottom = map_h)
+        py = map_h - display_coord * scale
+        py = max(0, min(py, map_h - 1))
+        draw.line([(0, py), (tick, py)], fill=white, width=lw)
+        if is_major:
+            draw.text((tick + 3, py - 5), label, fill=shadow, font=font)
+            draw.text((tick + 2, py - 6), label, fill=white,  font=font)
+        else:
+            draw.text((tick + 2, py - 5), label, fill=(180, 180, 180), font=font)
 
-        # ── X-axis ruler (bottom edge, vertical ticks extending up) ─────────
-        if coord <= WORLD_SIZE:
-            px2 = min(coord * scale, map_w - 1)
-            draw.line([(px2, map_h - tick), (px2, map_h - 1)], fill=white, width=lw)
-            if is_major:
-                draw.text((px2 + 2, map_h - tick - 12), label, fill=shadow, font=font)
-                draw.text((px2 + 1, map_h - tick - 13), label, fill=white,  font=font)
-            else:
-                draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
+        # ── X-axis ruler (bottom edge): x=0 at left ─────────────────────────
+        px2 = min(display_coord * scale, map_w - 1)
+        draw.line([(px2, map_h - tick), (px2, map_h - 1)], fill=white, width=lw)
+        if is_major:
+            draw.text((px2 + 2, map_h - tick - 12), label, fill=shadow, font=font)
+            draw.text((px2 + 1, map_h - tick - 13), label, fill=white,  font=font)
+        else:
+            draw.text((px2 + 1, map_h - tick - 11), label, fill=(180, 180, 180), font=font)
+
+    # ── Diagonal origin marker at (0,0) -- bottom-left corner ────────────────
+    # (0,0) is the south-west corner in display coordinates
+    ox, oy = 2, map_h - 2
+    marker_color = (255, 220, 50)
+    for d in range(8):
+        draw.point((ox + d, oy - d), fill=marker_color)
+        draw.point((ox + d + 1, oy - d), fill=marker_color)
+    draw.text((ox + 2, oy - 22), "0,0", fill=shadow, font=font)
+    draw.text((ox + 1, oy - 23), "0,0", fill=marker_color, font=font)
 
 
 # ── Wilderness base-map renderer ──────────────────────────────────────────────
@@ -246,12 +262,14 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
     img = Image.new("RGB", (map_w + legend_w, panel_h), (30, 30, 30))
     draw = ImageDraw.Draw(img)
 
-    # ── Base terrain ──────────────────────────────────────────────────────────
+    # ── Base terrain (y=0 internal = north = top of image rendered at bottom) ─
+    # Display convention: y=0 is SOUTH (bottom), increasing northward.
     for wy in range(WORLD_SIZE):
         for wx in range(WORLD_SIZE):
             biome = get_biome(wx, wy, seed)
             color = TILE_COLORS.get(biome, (0, 0, 0))
-            x0, y0 = wx * scale, wy * scale
+            x0 = wx * scale
+            y0 = _world_to_pixel_y(wy)
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
     # ── Tile overrides: normal tiles first, then icons on top ─────────────────
@@ -262,14 +280,15 @@ def _generate_base_map_sync(seed: int, overrides: list) -> bytes:
     for wx, wy, tile_type in normal_rows:
         color = TILE_COLORS.get(tile_type)
         if color:
-            x0, y0 = wx * scale, wy * scale
+            x0 = wx * scale
+            y0 = _world_to_pixel_y(wy)
             draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=color)
 
     for wx, wy, tile_type in icon_rows:
         if tile_type in _icon_style:
             color, style = _icon_style[tile_type]
             cx = wx * scale + scale // 2
-            cy = wy * scale + scale // 2
+            cy = _world_to_pixel_y(wy) + scale // 2
             icon_r = _ICON_R.get(tile_type, _DEFAULT_ICON_R)
             _draw_icon(draw, cx, cy, style, color, r=icon_r)
 
@@ -358,11 +377,11 @@ def _composite_players_sync(
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
 
-    # Overworld quest markers — red diamonds
+    # Overworld quest markers — red diamonds (use _world_to_pixel_y for flipped coords)
     if quest_markers:
         for qx, qy, _ in quest_markers:
             cx_q = qx * scale + scale // 2
-            cy_q = qy * scale + scale // 2
+            cy_q = _world_to_pixel_y(qy) + scale // 2
             _draw_icon(draw, cx_q, cy_q, "filled_diamond", (220, 30, 30), r=6)
 
     # Ocean quest edge markers — arrow + diamond at the ocean-facing edge
@@ -371,20 +390,15 @@ def _composite_players_sync(
         # Arrow style points toward the ocean edge
         _astyle = {0: "arrow_down", 1: "arrow_up", 2: "arrow_left", 3: "arrow_right"}
         astyle = _astyle.get(coast_edge, "arrow_down")
-        # Candidate positions: use one harbor tile (the middle one) to place the
-        # single edge indicator — we only want ONE marker regardless of how many
-        # harbors exist.
         candidates = harbor_positions or []
         if not candidates:
-            # synthetic centre candidate
             if coast_edge in (0, 1):
                 candidates = [(WORLD_SIZE // 2, 0)]
             else:
                 candidates = [(0, WORLD_SIZE // 2)]
-        # Pick the middle harbour so the arrow sits near the centre of the coastline
         single = [candidates[len(candidates) // 2]]
         for hx, hy in single:
-            if coast_edge == 0:          # south edge
+            if coast_edge == 0:          # south edge (internal y=WORLD_SIZE-1 = pixel y top)
                 px = hx * scale + scale // 2
                 _draw_icon(draw, px, map_h - 14, "filled_diamond", _ac)
                 _draw_icon(draw, px, map_h - 5,  astyle, _ac)
@@ -393,11 +407,11 @@ def _composite_players_sync(
                 _draw_icon(draw, px, 14, "filled_diamond", _ac)
                 _draw_icon(draw, px, 5,  astyle, _ac)
             elif coast_edge == 2:        # west edge
-                py = hy * scale + scale // 2
+                py = _world_to_pixel_y(hy) + scale // 2
                 _draw_icon(draw, 14, py, "filled_diamond", _ac)
                 _draw_icon(draw, 5,  py, astyle, _ac)
             elif coast_edge == 3:        # east edge
-                py = hy * scale + scale // 2
+                py = _world_to_pixel_y(hy) + scale // 2
                 _draw_icon(draw, map_w - 14, py, "filled_diamond", _ac)
                 _draw_icon(draw, map_w - 5,  py, astyle, _ac)
 
@@ -406,7 +420,7 @@ def _composite_players_sync(
     for i, player_entry in enumerate(other_players):
         ox, oy = player_entry[0], player_entry[1]
         cx_o = ox * scale + scale // 2
-        cy_o = oy * scale + scale // 2
+        cy_o = _world_to_pixel_y(oy) + scale // 2
         av_bytes = _other_avs[i] if i < len(_other_avs) else None
         if av_bytes:
             img = _paste_avatar(img, av_bytes, cx_o, cy_o, 16, (60, 120, 255))
@@ -417,7 +431,7 @@ def _composite_players_sync(
 
     # Current player — avatar (20 px) or red dot fallback
     cx_p = player_x * scale + scale // 2
-    cy_p = player_y * scale + scale // 2
+    cy_p = _world_to_pixel_y(player_y) + scale // 2
     if player_avatar:
         img = _paste_avatar(img, player_avatar, cx_p, cy_p, 20, (255, 50, 50))
         draw = ImageDraw.Draw(img)
