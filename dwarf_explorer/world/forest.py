@@ -831,8 +831,9 @@ def _gen_tc_floor(floor_num: int) -> list[list[str]]:
         _tc_set(grid, 19, 8,  "tc_lantern")
         _tc_set(grid, 9,  16, "tc_lantern")
         _tc_set(grid, 19, 16, "tc_lantern")
-        _tc_set(grid, 9,  12, "tc_plant")
-        _tc_set(grid, 19, 12, "tc_plant")
+        # Plants in upper corners of main hall (clear of doorways at y=12)
+        _tc_set(grid, 10,  9, "tc_plant")
+        _tc_set(grid, 18,  9, "tc_plant")
         # Quest villager in south-west area of the main hall
         _tc_set(grid, 10, 15, "tc_villager")
         # Restore stair (rug runner may have overwritten)

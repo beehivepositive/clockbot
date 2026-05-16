@@ -90,6 +90,22 @@ class DwarfExplorer(commands.Cog):
     async def on_ready(self) -> None:
         from dwarf_explorer.config import apply_custom_emojis
         apply_custom_emojis(self.bot.emojis)
+        # Pre-generate world maps for all initialized guilds so the first /map is instant
+        asyncio.ensure_future(self._pregen_maps_for_all_guilds())
+
+    async def _pregen_maps_for_all_guilds(self) -> None:
+        """Background task: warm the world-map image cache for every initialized guild."""
+        from dwarf_explorer.world.world_map import generate_world_map, generate_ocean_map
+        for guild in self.bot.guilds:
+            try:
+                db = await get_database(guild.id)
+                if not await is_world_initialized(db, guild.id):
+                    continue
+                seed = await get_or_create_world(db, guild.id)
+                asyncio.ensure_future(generate_world_map(seed, db, guild.id, 0, 0))
+                asyncio.ensure_future(generate_ocean_map(seed, guild.id, 0, 0))
+            except Exception:
+                pass  # Non-fatal: map will generate on first /map call
 
     @app_commands.command(name="explore", description="Start or resume your Dwarf Explorer adventure!")
     async def explore(self, interaction: discord.Interaction) -> None:

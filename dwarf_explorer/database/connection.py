@@ -653,6 +653,25 @@ class Database:
             except Exception as e:
                 _log.warning("tc_archivist rebuild migration warning: %s", e)
 
+            # ── tree_city_tiles: force rebuild if blocking tc_plant at (9,12) ─────
+            # Old layout had decorative plants in doorway corridors; move them clear.
+            try:
+                _plant_block = conn.execute(
+                    "SELECT COUNT(*) FROM tree_city_tiles"
+                    " WHERE floor=1 AND local_x=9 AND local_y=12 AND tile_type='tc_plant'"
+                ).fetchone()[0]
+                if _plant_block > 0:
+                    _tc_forests2 = conn.execute(
+                        "SELECT DISTINCT forest_id FROM tree_city_tiles"
+                    ).fetchall()
+                    for _tcf2 in _tc_forests2:
+                        conn.execute("DELETE FROM tree_city_tiles WHERE forest_id=?",
+                                     (_tcf2[0],))
+                    conn.commit()
+                    _log.info("Cleared %d tree city(ies) for plant-path rebuild", len(_tc_forests2))
+            except Exception as e:
+                _log.warning("tc_plant path rebuild migration warning: %s", e)
+
             # ── ground_items: create if missing, then ensure is_drop column ────────
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ground_items (

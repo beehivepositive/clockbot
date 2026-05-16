@@ -89,6 +89,50 @@ _VILLAGE_KILL_TEMPLATES = [
         "reward_gold_base": 25,
         "reward_xp_base": 150,
     },
+    {
+        "target_id": "bandit",
+        "count_range": (3, 6),
+        "title": "Bandit Trouble",
+        "descriptions": [
+            "Bandits have been robbing travellers on the road. Drive them off.",
+            "A gang of outlaws is camped near the village. Deal with them before they grow bolder.",
+        ],
+        "reward_gold_base": 40,
+        "reward_xp_base": 220,
+    },
+    {
+        "target_id": "cave_bat",
+        "count_range": (6, 12),
+        "title": "Bat Swarm",
+        "descriptions": [
+            "A swarm of cave bats has been harassing miners. Clear them out of the tunnels.",
+            "Bats from the nearby cave have been raiding the food stores at night. Deal with them.",
+        ],
+        "reward_gold_base": 15,
+        "reward_xp_base": 80,
+    },
+    {
+        "target_id": "cave_spider",
+        "count_range": (4, 8),
+        "title": "Cave Spider Nest",
+        "descriptions": [
+            "Something's been dragging livestock into the old mine. Cave spiders. Deal with the nest.",
+            "A mine worker reported webs blocking the lower tunnels. Clear out the spiders.",
+        ],
+        "reward_gold_base": 35,
+        "reward_xp_base": 190,
+    },
+    {
+        "target_id": "forest_sprite",
+        "count_range": (4, 7),
+        "title": "Sprite Harassment",
+        "descriptions": [
+            "Forest sprites have been tormenting the woodcutters — throwing rocks, snapping tools. Deal with them.",
+            "Something in the forest edge has been making the animals nervous. Sprites. Scatter them.",
+        ],
+        "reward_gold_base": 28,
+        "reward_xp_base": 160,
+    },
 ]
 
 _VILLAGE_FETCH_TEMPLATES = [
@@ -152,6 +196,42 @@ _VILLAGE_FETCH_TEMPLATES = [
         "reward_xp_base": 35,
         "reward_item": None,
     },
+    {
+        "target_id": "wood_plank",
+        "count_range": (8, 16),
+        "title": "Rebuild the Fence",
+        "descriptions": [
+            "The village livestock enclosure was damaged in last week's storm. Bring planks to fix it.",
+            "The carpenter is short on planks. Help out by bringing some processed wood.",
+        ],
+        "reward_gold_base": 5,
+        "reward_xp_base": 22,
+        "reward_item": None,
+    },
+    {
+        "target_id": "gem",
+        "count_range": (2, 4),
+        "title": "Gemstone Collection",
+        "descriptions": [
+            "A jeweller passing through needs raw gems. Mine some from the deep caves.",
+            "The village treasury wants gemstones for trade. Dig them out and bring them back.",
+        ],
+        "reward_gold_base": 25,
+        "reward_xp_base": 100,
+        "reward_item": None,
+    },
+    {
+        "target_id": "cave_mushroom",
+        "count_range": (5, 10),
+        "title": "Mushroom Harvest",
+        "descriptions": [
+            "The healer needs cave mushrooms for a new remedy. Gather them from deep tunnels.",
+            "A batch of cave mushrooms is needed for the village's winter medicine stores.",
+        ],
+        "reward_gold_base": 7,
+        "reward_xp_base": 28,
+        "reward_item": "healing_potion",
+    },
 ]
 
 _VILLAGE_INVESTIGATION_TEMPLATES = [
@@ -176,6 +256,38 @@ _VILLAGE_INVESTIGATION_TEMPLATES = [
         "reward_gold": 60,
         "reward_xp": 300,
         "reward_item": "enchanted_gem_luck",
+    },
+    {
+        "target_id": "cave",
+        "title": "Into the Dark",
+        "descriptions": [
+            "We've heard strange sounds from a cave to the north. Venture inside and report back.",
+            "A miner claims something lives in that cave. We need someone brave enough to investigate.",
+        ],
+        "reward_gold": 50,
+        "reward_xp": 250,
+        "reward_item": "torch",
+    },
+    {
+        "target_id": "forest_entrance",
+        "title": "Forest Survey",
+        "descriptions": [
+            "The foresters need someone to enter the deep forest and note what creatures are about.",
+            "Strange lights have been seen near the forest entrance. Investigate.",
+        ],
+        "reward_gold": 45,
+        "reward_xp": 220,
+    },
+    {
+        "target_id": "sundial",
+        "title": "The Sundial's Secret",
+        "descriptions": [
+            "A local sage claims the sundial near the village pulses with temporal energy. See for yourself.",
+            "Someone carved new runes on the old sundial overnight. Go and examine it.",
+        ],
+        "reward_gold": 55,
+        "reward_xp": 270,
+        "reward_item": "map_fragment",
     },
 ]
 
@@ -237,6 +349,78 @@ _BOUNTY_TEMPLATES = [
         "reward_xp_base": 450,
         "location_type": "ocean",
     },
+    {
+        "target_id": "bandit",
+        "count_range": (5, 9),
+        "title_fmt": "Bounty: Outlaw Band",
+        "descriptions": [
+            "A bandit crew has been ambushing supply caravans on the eastern road. Hunt them down.",
+            "Wanted dead or driven off: a roving band of outlaws in the northern wilds.",
+        ],
+        "reward_gold_base": 45,
+        "reward_xp_base": 240,
+        "location_type": "overworld",
+    },
+    {
+        "target_id": "cave_troll",
+        "count_range": (2, 4),
+        "title_fmt": "Bounty: Cave Troll",
+        "descriptions": [
+            "A cave troll has been blocking a major trade route through the hills. Clear it out.",
+            "Trolls from a nearby cave have been terrorising the hillside farms. The guild is paying.",
+        ],
+        "reward_gold_base": 75,
+        "reward_xp_base": 380,
+        "location_type": "overworld",
+    },
+    {
+        "target_id": "forest_troll",
+        "count_range": (2, 3),
+        "title_fmt": "Bounty: Forest Troll",
+        "descriptions": [
+            "A massive forest troll has claimed the northern road as its territory. Evict it permanently.",
+            "Lumberjacks won't enter the dense forest while a troll lurks near the treeline.",
+        ],
+        "reward_gold_base": 80,
+        "reward_xp_base": 400,
+        "location_type": "overworld",
+    },
+    {
+        "target_id": "cave_golem",
+        "count_range": (1, 2),
+        "title_fmt": "Bounty: Stone Golem",
+        "descriptions": [
+            "A stone golem has been disturbed deep in the old mines. The guild needs it destroyed.",
+            "An ancient golem walks again in the cave system near the village. The reward is high.",
+        ],
+        "reward_gold_base": 100,
+        "reward_xp_base": 480,
+        "location_type": "overworld",
+    },
+    {
+        "target_id": "cave_spider",
+        "count_range": (5, 10),
+        "title_fmt": "Bounty: Cave Spider Nest",
+        "descriptions": [
+            "A massive cave spider nest has been reported below the hills. The guild wants it cleared.",
+            "Miners won't descend until the spider infestation below is dealt with.",
+        ],
+        "reward_gold_base": 55,
+        "reward_xp_base": 280,
+        "location_type": "overworld",
+    },
+    {
+        "target_id": "wind_wisp",
+        "count_range": (4, 7),
+        "title_fmt": "Bounty: Wind Wisps",
+        "descriptions": [
+            "A cluster of wind wisps has been disrupting navigation on the high roads. Disperse them.",
+            "Wind wisps are interfering with message-bird routes. The guild will pay for each one dealt with.",
+        ],
+        "reward_gold_base": 35,
+        "reward_xp_base": 180,
+        "location_type": "overworld",
+    },
 ]
 
 # ── Village errand templates (no tools required; complete by visiting a tile) ──
@@ -290,6 +474,66 @@ _VILLAGE_ERRAND_TEMPLATES = [
         ],
         "reward_gold": 7,
         "reward_xp": 25,
+    },
+    {
+        "target_id": "vil_church",
+        "title": "Morning Prayer",
+        "descriptions": [
+            "The priest has requested a show of faith from the villagers. Visit the church on their behalf.",
+            "A quick blessing is needed before the harvest begins. Stop by the church.",
+        ],
+        "reward_gold": 9,
+        "reward_xp": 30,
+    },
+    {
+        "target_id": "vil_blacksmith",
+        "title": "Tool Order",
+        "descriptions": [
+            "The blacksmith has a new tool order ready. Swing by the forge and confirm it's collected.",
+            "A resident placed an order at the smithy last week. Head over and check if it's finished.",
+        ],
+        "reward_gold": 10,
+        "reward_xp": 35,
+    },
+    {
+        "target_id": "vil_hospital",
+        "title": "Check on the Healer",
+        "descriptions": [
+            "The village healer hasn't been seen today. Stop by the hospital and make sure all is well.",
+            "A patient at the hospital needs a visitor to boost morale. It won't take long.",
+        ],
+        "reward_gold": 9,
+        "reward_xp": 32,
+    },
+    {
+        "target_id": "vil_shop",
+        "title": "Merchant's Message",
+        "descriptions": [
+            "A travelling merchant left word at the shop. Head over and find out what they needed.",
+            "The village elder wants to know if the shop has any unusual goods in stock. Take a look.",
+        ],
+        "reward_gold": 7,
+        "reward_xp": 25,
+    },
+    {
+        "target_id": "vil_bank",
+        "title": "Coin Count",
+        "descriptions": [
+            "The village treasury is doing a quarterly count. An outside witness is needed at the bank.",
+            "Something feels off with the village accounts. Head to the bank and see what's going on.",
+        ],
+        "reward_gold": 12,
+        "reward_xp": 40,
+    },
+    {
+        "target_id": "vil_lumber_mill",
+        "title": "Mill Maintenance",
+        "descriptions": [
+            "The lumber mill reported a strange noise last night. Check that everything is still in order.",
+            "The miller needs a second set of eyes on a cracked gear. Head to the mill.",
+        ],
+        "reward_gold": 8,
+        "reward_xp": 28,
     },
 ]
 

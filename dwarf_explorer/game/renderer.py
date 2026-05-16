@@ -245,8 +245,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         pos = f"\U0001F4CD Shipwreck ({getattr(player, 'shipwreck_x', 0)},{getattr(player, 'shipwreck_y', 0)})  \U0001FAB7 {_sw_breath}"
     elif getattr(player, "in_tree_city", False):
         floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
-        fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
-        pos = f"🌲 Tree City — {fname} ({player.tc_x},{player.tc_y})"
+        fname = floor_names.get(player.tc_floor, f"Upper Hall")
+        pos = f"🌲 Tree City — {fname} (Fl. {player.tc_floor})  ({player.tc_x},{player.tc_y})"
     elif getattr(player, "in_sky", False):
         pos = f"☁️ Sky ({getattr(player, 'sky_x', 0)},{getattr(player, 'sky_y', 0)})"
     elif getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):
