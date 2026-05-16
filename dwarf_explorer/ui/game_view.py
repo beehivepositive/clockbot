@@ -137,7 +137,7 @@ from dwarf_explorer.game.player import Player, can_move, can_move_village, can_m
 from dwarf_explorer.world.shipwrecks import load_shipwreck_viewport, get_tile_at as get_shipwreck_tile
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
-    render_ship_room, render_ship_chest, render_island,
+    render_ship_room, render_ship_chest, render_island, _build_slot_map,
 )
 
 _CUSTOM_EMOJI_RE = _re.compile(r"^<a?:(\w+):(\d+)>$")
@@ -509,25 +509,14 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
-        # Blank flanking buttons so up/down sit centred above left/center/right
-        _sp = discord.ButtonStyle.secondary
-        blank_ul = discord.ui.Button(style=_sp, label="​", disabled=True,
-                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_ul"), row=1)
-        blank_ur = discord.ui.Button(style=_sp, label="​", disabled=True,
-                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_ur"), row=1)
-        blank_dl = discord.ui.Button(style=_sp, label="​", disabled=True,
-                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_dl"), row=3)
-        blank_dr = discord.ui.Button(style=_sp, label="​", disabled=True,
-                                     custom_id=_custom_id(self.guild_id, self.user_id, "sp_dr"), row=3)
-
         row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
-            *row0,                                                      # row 0
-            blank_ul, up_btn, blank_ur, sp1_btn, action_btn,           # row 1: [_][⬆][_][sprint][action]
-            left_btn, center_btn, right_btn,                            # row 2
-            blank_dl, down_btn, blank_dr, sp5_btn, npc_btn,            # row 3: [_][⬇][_][embark/feed][npc]
+            *row0,                              # row 0
+            sp1_btn, up_btn, action_btn,        # row 1: [sprint/spacer][⬆][action]
+            left_btn, center_btn, right_btn,    # row 2
+            sp5_btn, down_btn, npc_btn,         # row 3: [embark/feed/spacer][⬇][npc]
         ]:
             self.add_item(btn)
 
@@ -691,7 +680,7 @@ class InventoryView(discord.ui.View):
         # ── Row 3: 📒?/spacer | ⬇️ | 🫳? ───────────────────────────────────
         if show_notepad:
             self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.secondary, emoji="\U0001F4CB",  # 📋
+                style=discord.ButtonStyle.secondary, emoji="✏️",  # ✏️
                 custom_id=_custom_id(guild_id, user_id, "inv_qty_modal"), row=3,
             ))
         else:
@@ -2180,18 +2169,20 @@ def _inv_action_btn(
         if item_id in ITEM_EQUIP_SLOTS:
             if item_id in equipped.values():
                 return ("🫴", "inv_equip")      # 🫴 = unequip/give back
+            # Use the same emojis as the empty equipped-row slots so the button
+            # always shows the slot destination, not the item's own icon.
             _SLOT_EMOJI = {
-                "hand":       "✋",   # ✋
-                "boots":      "🥾",  # 🥾
-                "head":       "⛑️",  # ⛑️
-                "chest":      "🛡️",  # 🛡️
-                "legs":       "🦵",  # 🦵
-                "accessory":  "💍",  # 💍
-                "pouch":      "👜",  # 👜
-                "coin_purse": "👛",  # 👛
+                "hand":       "✋",          # ✋  empty hand
+                "boots":      "\U0001F9B6",      # 🦶  empty boot slot
+                "head":       "\U0001F9D4",      # 🧔  empty head slot
+                "chest":      "\U0001F455",      # 👕  empty chest slot
+                "legs":       "\U0001F456",      # 👖  empty legs slot
+                "accessory":  "\U0001F48D",      # 💍  empty accessory
+                "pouch":      "\U0001F45C",      # 👜  empty pouch
+                "coin_purse": "\U0001F4B0",      # 💰  empty coin purse
             }
             slot = ITEM_EQUIP_SLOTS.get(item_id, "hand")
-            equip_emoji = _SLOT_EMOJI.get(slot, "🖐️")
+            equip_emoji = _SLOT_EMOJI.get(slot, "\U0001F91A")  # 🤚 fallback
             return (equip_emoji, "inv_equip")
     return ("", "")
 
@@ -9685,8 +9676,30 @@ async def handle_inv_nav(
         _ui_state[user_id] = {**state, "equipped_cursor": new_eq}
     elif cursor_mode == "inventory":
         visible = [it for it in items if it["item_id"] != "gold_coin"]
-        max_slots = max(1, min(total_slots, len(visible) + 1))
-        new_sel = (state.get("selected", 0) + delta) % max(1, total_slots)
+        current_sel = state.get("selected", 0)
+        new_sel = (current_sel + delta) % max(1, total_slots)
+
+        # Canoe-aware horizontal navigation: treat the canoe pair as ONE logical slot.
+        # Build canoe pair positions
+        _slot_map_nav = _build_slot_map(visible, total_slots)
+        _canoe_left_pos: set[int] = set()
+        _canoe_right_pos: set[int] = set()
+        for _ci in range(total_slots - 1):
+            _l = _slot_map_nav.get(_ci)
+            _r = _slot_map_nav.get(_ci + 1)
+            if (_l and _l["item_id"] == "canoe_left"
+                    and _r and _r["item_id"] == "canoe_right"
+                    and _ci // inv_cols == (_ci + 1) // inv_cols):
+                _canoe_left_pos.add(_ci)
+                _canoe_right_pos.add(_ci + 1)
+
+        if delta == 1 and current_sel in _canoe_left_pos:
+            # Leaving canoe to the right: skip over canoe_right half
+            new_sel = (current_sel + 2) % max(1, total_slots)
+        elif delta == -1 and current_sel in _canoe_right_pos:
+            # Leaving canoe to the left: skip over canoe_left half
+            new_sel = (current_sel - 2) % max(1, total_slots)
+
         _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     else:
         _ui_state[user_id] = {**state}
@@ -10584,7 +10597,13 @@ async def handle_inv_drop(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
-    drop_desc = ", ".join(f"{qty}× {iid.replace('_', ' ')}" for iid, qty in drop_pairs)
+    def _drop_name(iid: str) -> str:
+        if iid in ("canoe_left", "canoe_right"):
+            return "Canoe"
+        if iid == "gold_coin":
+            return "Gold Coin"
+        return iid.replace("_", " ").title()
+    drop_desc = ", ".join(f"{qty}× {_drop_name(iid)}" for iid, qty in drop_pairs)
     content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*🫳 Dropped: {drop_desc}.*",
@@ -10656,19 +10675,13 @@ async def handle_inv_move_confirm(
         right_item = _cursor_item(visible, origin + 1) if origin_item["item_id"] == "canoe_left" else origin_item
         if left_item and right_item and left_item["item_id"] == "canoe_left" and right_item["item_id"] == "canoe_right":
             # Destination slot: where left piece goes. Right piece goes to dest+1.
-            # Ensure both dest slots are on the same row and neither wraps
+            # Ensure both dest slots are on the same row and neither wraps.
             dest_left  = sel if origin_item["item_id"] == "canoe_left" else sel - 1
             dest_right = dest_left + 1
             if dest_left >= 0 and dest_right < inv_rows * inv_cols and dest_left // inv_cols == dest_right // inv_cols:
-                # Displace any items already at dest slots
-                displaced_left  = _cursor_item(visible, dest_left)
-                displaced_right = _cursor_item(visible, dest_right)
-                # Only displace if they're not the canoe pieces themselves
-                if displaced_left and displaced_left["slot_index"] not in (left_item["slot_index"], right_item["slot_index"]):
-                    await swap_inventory_slots(db, user_id, left_item["slot_index"], displaced_left["slot_index"])
-                if displaced_right and displaced_right["slot_index"] not in (left_item["slot_index"], right_item["slot_index"]):
-                    await swap_inventory_slots(db, user_id, right_item["slot_index"], displaced_right["slot_index"])
-                # Now move both canoe pieces to their destination slots
+                # Swap both pieces into their destination slots.
+                # Any items already at dest_left/dest_right naturally move to where
+                # the canoe currently sits — a clean two-swap approach.
                 await swap_inventory_slots(db, user_id, left_item["slot_index"], dest_left)
                 await swap_inventory_slots(db, user_id, right_item["slot_index"], dest_right)
                 msg = "\n*🛶 Canoe moved.*"
@@ -11388,17 +11401,29 @@ class NavView(discord.ui.View):
 async def handle_nav_open(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Show navigation overlay (Map / Warp / Close)."""
+    """Show the base world map immediately (no player overlays for speed).
+
+    The full map with all player positions + key is generated when the player
+    presses the 🗺️ Map button.
+    """
+    await interaction.response.defer()
     db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     has_crystal = getattr(player, "has_warp_crystal", False)
     view = NavView(guild_id, user_id, has_warp_crystal=has_crystal)
-    options = ["🗺️ **World Map** — see the world around you"]
-    if has_crystal:
-        options.append("🔮 **Warp** — teleport to a known waypoint")
-    options_text = "\n".join(options)
-    embed = _embed(f"🧭 **Navigation**\n\n{options_text}")
-    await interaction.response.edit_message(embed=embed, content=None, view=view)
+
+    from dwarf_explorer.world.world_map import generate_world_map
+    buf = await generate_world_map(
+        seed, db, guild_id, player.world_x, player.world_y,
+        [], quest_markers=[], ocean_quest_markers=[],
+        player_avatar=None, other_avatars=[],
+    )
+    buf.seek(0)
+    map_file = discord.File(buf, filename="world_map.png")
+    embed = discord.Embed(title="🗺️ World Map")
+    embed.set_image(url="attachment://world_map.png")
+    await interaction.edit_original_response(embed=embed, attachments=[map_file], view=view)
 
 
 async def handle_nav_close(

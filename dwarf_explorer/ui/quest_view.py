@@ -61,7 +61,8 @@ class QuestView(discord.ui.View):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
-        # ── Row 0: ⬆️ up (single button) ──────────────────────────────────────
+        # ── Row 0: [spacer] ⬆️ [spacer] — centred over the middle action button ─
+        self.add_item(_sp(gid, uid, "up_l", 0))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             emoji="⬆️",
@@ -70,6 +71,7 @@ class QuestView(discord.ui.View):
             disabled=no_quests,
             row=0,
         ))
+        self.add_item(_sp(gid, uid, "up_r", 0))
 
         # ── Row 1: ⬅️ tab left | 📍 target | ➡️ tab right ────────────────────
         self.add_item(discord.ui.Button(
@@ -105,7 +107,8 @@ class QuestView(discord.ui.View):
             row=1,
         ))
 
-        # ── Row 2: ⬇️ down (single button) ───────────────────────────────────
+        # ── Row 2: [spacer] ⬇️ [spacer] — centred over the middle action button ─
+        self.add_item(_sp(gid, uid, "dn_l", 2))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             emoji="⬇️",
@@ -114,6 +117,7 @@ class QuestView(discord.ui.View):
             disabled=no_quests,
             row=2,
         ))
+        self.add_item(_sp(gid, uid, "dn_r", 2))
 
         # ── Row 3: Abandon / Confirm / Keep | Close (no spacer) ───────────────
         if confirm_abandon:

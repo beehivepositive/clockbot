@@ -258,8 +258,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         if terrain in ("mountain", "snow") and has_climbing_boots:
             return True, ""
         messages = {
-            "mountain": "A mountain blocks your path. (Tip: 🪖 Climbing Boots from the shop let you scale mountains.)",
-            "snow": "The snowy peaks are impassable. (Tip: 🪖 Climbing Boots let you cross.)",
+            "mountain": "A mountain blocks your path.",
+            "snow": "The snowy peaks are impassable.",
             "dense_forest": "The forest is too thick to pass through.",
             "shallow_water": "The water is too deep to cross.",
             "deep_water": "The ocean stretches endlessly before you.",

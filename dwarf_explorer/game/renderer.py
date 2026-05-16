@@ -512,11 +512,18 @@ def render_inventory(
             lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}{stat_str}")
         else:
             lines.append(f"Cursor: **{label}** — *(empty)*")
-    elif slot_map.get(selected):
-        item = slot_map[selected]
-        sel_qty = selections.get(item["item_id"], 0)
+    elif slot_map.get(selected) or (selected in _canoe_right_skip and slot_map.get(selected - 1)):
+        # For canoe_right slots, look up the canoe_left counterpart for display
+        item = slot_map.get(selected) or slot_map.get(selected - 1)
+        item_id = item["item_id"]
+        # Friendly display name — canoe halves shown as "Canoe"
+        if item_id in ("canoe_left", "canoe_right"):
+            display_name = "Canoe"
+        else:
+            display_name = item_id.replace("_", " ").title()
+        sel_qty = selections.get(item_id, 0)
         sel_marker = f" ✚ {sel_qty} selected" if sel_qty else ""
-        stats = EQUIP_BONUSES.get(item["item_id"], {})
+        stats = EQUIP_BONUSES.get(item_id, {})
         stat_parts: list[str] = []
         if "defense" in stats:
             stat_parts.append(f"+{stats['defense']} def")
@@ -524,7 +531,7 @@ def render_inventory(
             stat_parts.append(f"+{stats['attack']} atk")
         stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
         lines.append(
-            f"Cursor: **{item['item_id'].replace('_',' ').title()}** ×{item['quantity']}{stat_str}{sel_marker}"
+            f"Cursor: **{display_name}** ×{item['quantity']}{stat_str}{sel_marker}"
         )
     else:
         lines.append("Cursor: *(empty slot)*")

@@ -150,6 +150,8 @@ _IGNORED_ACTIONS = {
     "pzsp0a", "pzsp0b",
     # D-pad blank flanking buttons
     "sp_ul", "sp_ur", "sp_dl", "sp_dr",
+    # Quest view up/down flanking spacers
+    "qsp_up_l", "qsp_up_r", "qsp_dn_l", "qsp_dn_r",
 }
 _HEDIT_MOVE_ACTIONS = {"hedit_up", "hedit_down", "hedit_left", "hedit_right"}
 

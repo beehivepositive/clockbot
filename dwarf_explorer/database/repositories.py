@@ -652,6 +652,7 @@ async def pickup_drop_box(
     """Pick up all items in a drop box at (world_x, world_y) into user's inventory.
 
     Returns list of (item_id, qty) actually picked up.
+    Gold coins go directly to players.gold rather than inventory.
     """
     items = await db.fetch_all(
         "SELECT id, item_id, quantity FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
@@ -659,7 +660,14 @@ async def pickup_drop_box(
     )
     picked = []
     for row in items:
-        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+        if row["item_id"] == "gold_coin":
+            # Gold goes directly to the player's gold total, not inventory
+            await db.execute(
+                "UPDATE players SET gold=gold+? WHERE user_id=?",
+                (row["quantity"], user_id),
+            )
+        else:
+            await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
         await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
         picked.append((row["item_id"], row["quantity"]))
     # Remove tile_override if no drop items remain
