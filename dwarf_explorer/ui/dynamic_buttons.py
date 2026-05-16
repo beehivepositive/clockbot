@@ -237,7 +237,7 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             elif act in _CANOE_MOVE_ACTIONS:
                 direction = act[6:]  # strip "canoe_" prefix
                 await handle_canoe_move(interaction, gid, uid, direction)
-            elif act == "canoe_dock":
+            elif act == "canoe_dock" or act.startswith("canoe_dock_"):
                 await handle_canoe_dock(interaction, gid, uid)
             elif act == "canoe_sail":
                 await handle_canoe_sail(interaction, gid, uid)

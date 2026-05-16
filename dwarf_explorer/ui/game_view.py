@@ -288,6 +288,10 @@ async def _build_player_view(
     if player.in_ship:
         return _ship_game_view(guild_id, user_id, player)
     has_canoe = await _player_has_canoe(db, user_id)
+    if player.in_canoe:
+        seed = await get_or_create_world(db, guild_id)
+        dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+        return _game_view(guild_id, user_id, player, grid=grid, has_canoe=has_canoe, dock_dirs=dock_dirs)
     return _game_view(guild_id, user_id, player, grid=grid, has_canoe=has_canoe)
 
 
@@ -462,7 +466,7 @@ class GameView(discord.ui.View):
             )
         elif embark_enabled:
             from dwarf_explorer.config import ITEM_EMOJI as _IE
-            _canoe_emoji = _IE.get("canoe_left") or _IE.get("canoe") or "🛶"
+            _canoe_emoji = _IE.get("canoe_whole") or _IE.get("canoe_left") or _IE.get("canoe") or "🛶"
             sp5_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
                 emoji=_canoe_emoji,
@@ -1307,56 +1311,74 @@ class ConsumablesView(discord.ui.View):
 # ── Canoe views ──────────────────────────────────────────────────────────────
 
 class CanoeView(discord.ui.View):
-    """8-directional canoe movement + Dock + Sail-to-destination."""
+    """8-directional canoe movement. Dock buttons replace arrows toward land."""
 
-    def __init__(self, guild_id: int, user_id: int, dock_available: bool = False):
+    def __init__(self, guild_id: int, user_id: int,
+                 dock_dirs: frozenset[str] = frozenset(),
+                 has_fishing_rod: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
-        def _btn(label: str, action: str, row: int,
-                 style=discord.ButtonStyle.primary, disabled: bool = False):
+        def _spacer(key: str, row: int):
             return discord.ui.Button(
-                style=style, label=label, disabled=disabled,
-                custom_id=_custom_id(gid, uid, action), row=row,
+                style=discord.ButtonStyle.secondary, label="​", disabled=True,
+                custom_id=_custom_id(gid, uid, key), row=row,
             )
 
-        # Row 0: ↖ ↑ ↗ | 🏝️ Dock
-        self.add_item(_btn("↖", "canoe_upleft",   0))
-        self.add_item(_btn("⬆️", "canoe_up",       0))
-        self.add_item(_btn("↗", "canoe_upright",  0))
-        self.add_item(_btn("🏝️ Dock", "canoe_dock", 0,
-                           style=discord.ButtonStyle.success,
-                           disabled=not dock_available))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp_a"), row=0,
-        ))
+        def _dir_btn(direction: str, arrow: str, row: int):
+            """Movement button — replaced with dock emoji if that direction leads to land."""
+            if direction in dock_dirs:
+                return discord.ui.Button(
+                    style=discord.ButtonStyle.success, emoji="🏝️",
+                    custom_id=_custom_id(gid, uid, f"canoe_dock_{direction}"), row=row,
+                )
+            return discord.ui.Button(
+                style=discord.ButtonStyle.primary, label=arrow,
+                custom_id=_custom_id(gid, uid, f"canoe_{direction}"), row=row,
+            )
 
-        # Row 1: ← ⛵ → | 🗺️ Sail
-        self.add_item(_btn("⬅️", "canoe_left",   1))
+        # Row 0: Inv | Nav | Quests
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="⛵", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp_b"), row=1,
+            style=discord.ButtonStyle.secondary, label="Inv", emoji="🎒",
+            custom_id=_custom_id(gid, uid, "inventory"), row=0,
         ))
-        self.add_item(_btn("➡️", "canoe_right",  1))
-        self.add_item(_btn("🗺️ Sail", "canoe_sail", 1,
-                           style=discord.ButtonStyle.secondary))
         self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp_c"), row=1,
+            style=discord.ButtonStyle.secondary, label="Nav", emoji="🧭",
+            custom_id=_custom_id(gid, uid, "nav_open"), row=0,
         ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="Quests", emoji="📋",
+            custom_id=_custom_id(gid, uid, "quests"), row=0,
+        ))
+        self.add_item(_spacer("csp_r0a", 0))
+        self.add_item(_spacer("csp_r0b", 0))
 
-        # Row 2: ↙ ↓ ↘ | 🎒 Inventory
-        self.add_item(_btn("↙", "canoe_downleft",  2))
-        self.add_item(_btn("⬇️", "canoe_down",      2))
-        self.add_item(_btn("↘", "canoe_downright", 2))
-        self.add_item(_btn("🎒", "inventory", 2,
-                           style=discord.ButtonStyle.secondary))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp_d"), row=2,
-        ))
+        # Row 1: ↖ ⬆️ ↗
+        self.add_item(_dir_btn("upleft",  "↖", 1))
+        self.add_item(_dir_btn("up",      "⬆️", 1))
+        self.add_item(_dir_btn("upright", "↗", 1))
+        self.add_item(_spacer("csp_r1a", 1))
+        self.add_item(_spacer("csp_r1b", 1))
 
+        # Row 2: ⬅️ [action] ➡️
+        self.add_item(_dir_btn("left",  "⬅️", 2))
+        if has_fishing_rod:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success, emoji="🎣",
+                custom_id=_custom_id(gid, uid, "fish"), row=2,
+            ))
+        else:
+            self.add_item(_spacer("csp_mid", 2))
+        self.add_item(_dir_btn("right", "➡️", 2))
+        self.add_item(_spacer("csp_r2a", 2))
+        self.add_item(_spacer("csp_r2b", 2))
+
+        # Row 3: ↙ ⬇️ ↘
+        self.add_item(_dir_btn("downleft",  "↙", 3))
+        self.add_item(_dir_btn("down",      "⬇️", 3))
+        self.add_item(_dir_btn("downright", "↘", 3))
+        self.add_item(_spacer("csp_r3a", 3))
+        self.add_item(_spacer("csp_r3b", 3))
 
 class CanoeDestView(discord.ui.View):
     """Shows up to 5 reachable landing destinations per page."""
@@ -2122,8 +2144,20 @@ def _inv_action_btn(
             return ("\U0001F357", "inv_eat")            # 🍗 eat / use
         if item_id in ITEM_EQUIP_SLOTS:
             if item_id in equipped.values():
-                return ("\U0001FAF4", "inv_equip")      # 🫴 palm up = give back
-            return ("\U0001F590\uFE0F", "inv_equip")    # 🖐️ hand splayed = equip
+                return ("🫴", "inv_equip")      # 🫴 = unequip/give back
+            _SLOT_EMOJI = {
+                "hand":       "✋",   # ✋
+                "boots":      "🥾",  # 🥾
+                "head":       "⛑️",  # ⛑️
+                "chest":      "🛡️",  # 🛡️
+                "legs":       "🦵",  # 🦵
+                "accessory":  "💍",  # 💍
+                "pouch":      "👜",  # 👜
+                "coin_purse": "👛",  # 👛
+            }
+            slot = ITEM_EQUIP_SLOTS.get(item_id, "hand")
+            equip_emoji = _SLOT_EMOJI.get(slot, "🖐️")
+            return (equip_emoji, "inv_equip")
     return ("", "")
 
 
@@ -2603,7 +2637,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                grid: list[list] | None = None,
                dock_available: bool = False,
                embark_enabled: bool = False,
-               has_canoe: bool = False) -> discord.ui.View:
+               has_canoe: bool = False,
+               dock_dirs: frozenset[str] = frozenset()) -> discord.ui.View:
     """Build the appropriate game view, computing context labels if grid is provided."""
     has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
 
@@ -2624,7 +2659,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
         return BoatView(guild_id, user_id, dock_available=dock_available,
                         has_fishing_rod=has_fishing_rod)
     elif player.in_canoe:
-        return CanoeView(guild_id, user_id, dock_available=False)
+        has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+        return CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
 
     center_label, center_enabled = "", False
     action_label, action_enabled = "", False
@@ -2688,6 +2724,20 @@ _CANOE_DIRS: dict[str, tuple[int, int]] = {
     "downleft":  (-1, 1),
     "downright": (1, 1),
 }
+
+
+async def _compute_canoe_dock_dirs(player, seed: int, db) -> frozenset[str]:
+    """Return the set of directions where the adjacent tile is not canoe-passable (land to dock on)."""
+    result: set[str] = set()
+    for dir_name, (dx, dy) in _CANOE_DIRS.items():
+        ax, ay = player.world_x + dx, player.world_y + dy
+        if not (0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE):
+            result.add(dir_name)  # world edge acts as land
+            continue
+        t = await load_single_tile(ax, ay, seed, db)
+        if (t.structure or t.terrain) not in CANOE_PASSABLE:
+            result.add(dir_name)
+    return frozenset(result)
 
 
 async def _adjacent_landing(player, seed: int, db) -> tuple[int, int] | None:
@@ -2881,18 +2931,24 @@ async def _move_steps(
         nx, ny = player.world_x + dx, player.world_y + dy
         if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+            has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
             return render_grid(grid, player, "You've reached the edge of the world!"), \
-                   CanoeView(guild_id, user_id, dock_available=False)
+                   CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
         target = await load_single_tile(nx, ny, seed, db)
         t = target.structure or target.terrain
         if t not in CANOE_PASSABLE:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-            return render_grid(grid, player, "You can't paddle onto land. Use 🏞️ Dock to go ashore."), \
-                   CanoeView(guild_id, user_id, dock_available=True)
+            dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+            has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+            return render_grid(grid, player, "You can't paddle in that direction. Press 🏝️ to go ashore."), \
+                   CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
         player.world_x, player.world_y = nx, ny
         await update_player_position(db, user_id, nx, ny)
         grid = await load_viewport(nx, ny, seed, db)
-        return render_grid(grid, player), CanoeView(guild_id, user_id, dock_available=True)
+        dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+        has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+        return render_grid(grid, player), CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
 
     if player.in_ship:
         nx, ny = player.ship_x + dx, player.ship_y + dy
@@ -4774,8 +4830,10 @@ async def handle_canoe_dock(
 
     if not landing:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
-        content = render_grid(grid, player, "No land nearby to dock at.")
-        view = CanoeView(guild_id, user_id, dock_available=False)
+        dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+        has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+        content = render_grid(grid, player, "No walkable land nearby to dock at.")
+        view = CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
@@ -9373,11 +9431,13 @@ async def handle_inventory(
     # Not in combat → normal inventory regardless of location (ship chest is a separate interaction)
     prev_selections = prev_state.get("selections", {})
     prev_mode = prev_state.get("sel_mode", "add")
+    prev_nav_target = prev_state.get("nav_target")
     _ui_state[user_id] = {
         "type": "inventory", "selected": 0, "prev_arena": prev_arena,
         "selections": prev_selections, "sel_mode": prev_mode,
         "cursor_mode": "inventory", "equipped_cursor": 0,
         "move_mode": False, "move_origin": None,
+        "nav_target": prev_nav_target,
     }
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
@@ -9552,6 +9612,22 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
     return content, view
 
 
+async def _recalculate_attack_stat(db, user_id: int, just_equipped: str,
+                                    slot_type: str,
+                                    old_hand_1: str | None,
+                                    old_hand_2: str | None) -> None:
+    """Recalculate player attack using only main-hand weapon bonus."""
+    from dwarf_explorer.config import PLAYER_START_ATTACK, EQUIP_BONUSES, ITEM_EQUIP_SLOTS
+    # Determine what will be in hand_1 after this equip
+    if slot_type == "hand":
+        # Just equipped to hand_1 (first free hand) or hand_2
+        new_hand_1 = just_equipped if not old_hand_1 else old_hand_1
+    else:
+        new_hand_1 = old_hand_1
+    atk_bonus = EQUIP_BONUSES.get(new_hand_1 or "", {}).get("attack", 0)
+    await update_player_stats(db, user_id, attack=PLAYER_START_ATTACK + atk_bonus)
+
+
 async def handle_inv_equip(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
@@ -9629,7 +9705,13 @@ async def handle_inv_equip(
 
     bonuses = EQUIP_BONUSES.get(item_id, {})
     if bonuses:
-        await update_player_stats(db, user_id, **bonuses)
+        non_attack_bonuses = {k: v for k, v in bonuses.items() if k != "attack"}
+        if non_attack_bonuses:
+            await update_player_stats(db, user_id, **non_attack_bonuses)
+    # Recalculate attack from main hand only
+    await _recalculate_attack_stat(db, user_id, item_id, slot_type,
+                                   getattr(player, "hand_1", None),
+                                   getattr(player, "hand_2", None))
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
@@ -9698,6 +9780,14 @@ async def handle_inv_unequip(
         await unequip_item(db, user_id, slot)
 
     await add_to_inventory(db, user_id, item_id, 1)
+    # Recalculate attack: if main hand was unequipped, reset to base
+    if slot in ("hand_1",) or item_id in TWO_HANDED_ITEMS:
+        from dwarf_explorer.config import PLAYER_START_ATTACK
+        hand_2_item = equipped.get("hand_2")
+        if item_id in TWO_HANDED_ITEMS:
+            hand_2_item = None
+        # After unequipping hand_1, hand_2 may have a weapon but main hand is empty = base attack
+        await update_player_stats(db, user_id, attack=PLAYER_START_ATTACK)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
@@ -10088,9 +10178,14 @@ async def handle_inv_close(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    prev_arena = _ui_state.get(user_id, {}).get("prev_arena")
-    is_house_owner = _ui_state.get(user_id, {}).get("is_house_owner", False)
+    prev_state = _ui_state.get(user_id, {})
+    prev_arena = prev_state.get("prev_arena")
+    is_house_owner = prev_state.get("is_house_owner", False)
+    saved_nav_target = prev_state.get("nav_target")
     _ui_state.pop(user_id, None)
+    # Restore nav_target so quest marker stays on the viewport
+    if saved_nav_target:
+        _ui_state[user_id] = {"nav_target": saved_nav_target}
     # Restore player-house owner flag so Edit button re-appears after close
     if player.in_house and player.house_type == "player_house" and is_house_owner:
         _ui_state.setdefault(user_id, {})["is_house_owner"] = True
@@ -10105,8 +10200,10 @@ async def handle_inv_close(
     if player.in_cave:
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     else:
-        view = _game_view(guild_id, user_id, player, grid=grid)
-    content = render_grid(grid, player)
+        has_canoe = await _player_has_canoe(db, user_id)
+        view = _game_view(guild_id, user_id, player, grid=grid, has_canoe=has_canoe)
+    nav = _ui_state.get(user_id, {}).get("nav_target")
+    content = render_grid(grid, player, nav_target=nav)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
@@ -12412,13 +12509,11 @@ async def handle_map(
         other_players, quest_markers=qmarks, ocean_quest_markers=ocean_qmarks,
         player_avatar=player_avatar, other_avatars=other_avatars,
     )
-    # Send key first (horizontal legend), then the player map in an embed image
+    # Send key first, then the player map — both as plain image files
     key_file = discord.File(key_buf, filename="world_map_key.png")
     await interaction.followup.send(file=key_file)
     map_file = discord.File(buf, filename="world_map.png")
-    map_embed = discord.Embed()
-    map_embed.set_image(url="attachment://world_map.png")
-    await interaction.followup.send(embed=map_embed, file=map_file)
+    await interaction.followup.send(file=map_file)
 
 
 async def handle_help(
@@ -12846,7 +12941,7 @@ async def handle_npc_talk(
 
         options = [{"label": "Tell me about yourself", "action": "lore"}]
         if pool:
-            options.append({"label": f"📋 I'm looking for work ({npc_name})", "action": "quest_pool"})
+            options.append({"label": "📋 \"(Quest)\"", "action": "quest_pool"})
         options.append({"label": "Farewell", "action": "close"})
         state = {
             "type": "npc_dialogue", "npc_type": "tc_npc",
@@ -12996,7 +13091,7 @@ async def handle_npc_talk(
     # Build dialogue options
     options = [{"label": "Tell me about yourself", "action": "lore"}]
     if pool:
-        options.append({"label": f"📋 I'm looking for work ({npc_name})", "action": "quest_pool"})
+        options.append({"label": "📋 \"(Quest)\"", "action": "quest_pool"})
     options.append({"label": "Farewell", "action": "close"})
 
     state = {

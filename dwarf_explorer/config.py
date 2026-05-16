@@ -967,9 +967,10 @@ VILLAGE_WALKABLE = {
     "vil_farmland",
     "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
     "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
-    "vil_pen_grass",       # pen interior ground (walkable, but protected from paths)
+    "vil_pen_grass",       # pen interior ground (walkable)
+    "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",  # animals are walkable
     "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
-    # Note: vil_fence/animals are solid obstacles (not walkable)
+    # Note: vil_fence is a solid obstacle (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
 

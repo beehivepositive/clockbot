@@ -232,7 +232,8 @@ def _generate_village_interior(
                 _gx, _gy = rng.choice(_gate_cands)
                 grid[_gy][_gx] = "vil_fence_gate"
 
-            # Animals inside pen (3-6 mixed); remaining interior = vil_pen_grass
+            # Animals inside pen — one consistent species per village
+            _village_animal = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS) - 1)]
             _pen_interior = [
                 (_px0 + _dx, _py0 + _dy)
                 for _dx in range(1, PEN_W - 1)
@@ -241,7 +242,7 @@ def _generate_village_interior(
             rng.shuffle(_pen_interior)
             _animal_count = rng.randint(3, 6)
             for _apos in _pen_interior[:_animal_count]:
-                grid[_apos[1]][_apos[0]] = FARM_ANIMALS[rng.randint(0, len(FARM_ANIMALS) - 1)]
+                grid[_apos[1]][_apos[0]] = _village_animal
             # Fill remaining interior tiles so paths can't cut through the pen
             for _apos in _pen_interior[_animal_count:]:
                 grid[_apos[1]][_apos[0]] = "vil_pen_grass"
