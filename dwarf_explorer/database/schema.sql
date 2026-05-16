@@ -399,3 +399,10 @@ CREATE TABLE IF NOT EXISTS grove_tiles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_grove_tiles ON grove_tiles(grove_id, local_x, local_y);
+
+-- Warp crystal waypoints unlocked per player
+CREATE TABLE IF NOT EXISTS player_waypoints (
+    user_id     INTEGER NOT NULL,
+    waypoint_id TEXT    NOT NULL,
+    PRIMARY KEY (user_id, waypoint_id)
+);

@@ -133,7 +133,8 @@ ITEM_EMOJI = {
     "sword": "\U0001F5E1\uFE0F",    # 🗡️
     "shield": "\U0001F6E1\uFE0F",   # 🛡️
     "key": "\U0001F511",             # 🔑
-    "cave_key": "\U0001F5DD️", # 🗝️ dungeon key (boss chamber)
+    "cave_key":    "\U0001F5DD️",  # 🗝️ dungeon key (boss chamber)
+    "warp_crystal": "\U0001F52E",        # 🔮 crystal of passage (warp item)
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F52A",    # 🗡️
@@ -670,6 +671,7 @@ TC_EMOJI: dict[str, str] = {
     "tc_shop":       "\U0001F9D1",          # 🧑 merchant NPC (approach from adjacent)
     "tc_villager":   "\U0001F9D4",          # 🧔 quest villager (approach from adjacent)
     "tc_elder":      "\U0001F9D9",          # 🧙 elder NPC (approach from adjacent)
+    "tc_archivist":  "\U0001F4DC",          # 📜 The Archivist — recurring antagonist NPC
     "tc_bed":        "\U0001F6CF️",    # 🛏️ bed (walkable, rest/heal)
     "tc_counter":    "\U0001F9F1",          # 🧱 shop counter
     "tc_rug":        "\U0001F7E5",          # 🟥 decorative rug (walkable)
@@ -693,6 +695,17 @@ GROVE_EMOJI: dict[str, str] = {
 }
 
 GROVE_WALKABLE: frozenset[str] = frozenset({"grove_floor", "grove_exit"})
+
+# ── Warp Crystal destinations ──────────────────────────────────────────────────
+# Unlocked progressively; all initial three unlock when the crystal is first obtained.
+WAYPOINTS: dict[str, dict] = {
+    "spawn":  {"name": "The World's Navel",  "emoji": "🌍",
+               "desc": "Where all journeys begin — the heart of the overworld."},
+    "forest": {"name": "The Elder Bough",    "emoji": "🌲",
+               "desc": "Gateway to the ancient forest, where the wayerwood grows."},
+    "grove":  {"name": "The Still Grove",    "emoji": "✨",
+               "desc": "The sacred clearing where the wayerwood rests."},
+}
 
 TC_WALKABLE: frozenset[str] = frozenset({
     "tc_floor", "tc_rug", "tc_door", "tc_stair_up", "tc_stair_down", "tc_bed",
@@ -777,6 +790,8 @@ CAVE_EMOJI = {
     "cinder_imp":         "👺",                    # red goblin demon
     "lava_salamander":    "🦎",                    # lizard
     "obsidian_golem":     "\U0001F5FF",            # 🗿 stone/obsidian golem (same as cave_golem)
+    # Rift archivist NPC (approached from adjacent, not walkable)
+    "rift_archivist":     "\U0001F4DC",            # 📜 The Archivist in the past
     # Boss room tiles
     "cave_boss_door":     "\U0001F512",            # 🔒 sealed stone door (requires cave key)
     "cave_boss_floor":    "\U0001F7E5",            # 🟥 red — boss chamber floor

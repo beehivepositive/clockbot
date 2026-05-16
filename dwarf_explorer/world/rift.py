@@ -52,6 +52,9 @@ def _build_tile_map() -> dict[tuple[int, int], str]:
         for x in (9, 10, 11):
             tiles[(x, y)] = "rift_floor"
 
+    # Archivist NPC — left wall of corridor, mid-point
+    tiles[(9, 5)] = "rift_archivist"
+
     # Widened arch at y=11 (corridor→boss room transition)
     for x in range(7, 14):
         tiles[(x, 11)] = "rift_floor"

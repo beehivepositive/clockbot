@@ -934,6 +934,8 @@ def _gen_tc_floor(floor_num: int) -> list[list[str]]:
         # Restore stairs
         _tc_set(grid, 14, 2,  "tc_stair_up")
         _tc_set(grid, 14, 21, "tc_stair_down")
+        # Archivist NPC — stands at the north end of the main hall rug
+        _tc_set(grid, 14, 9, "tc_archivist")
 
     # ══════════════════════════════════════════════════════════════════════
     # ── Floor 4: Elder's Chamber ──────────────────────────────────────────

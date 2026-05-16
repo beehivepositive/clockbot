@@ -206,6 +206,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             grove_x=row["grove_x"] if "grove_x" in cols else 0,
             grove_y=row["grove_y"] if "grove_y" in cols else 0,
             grove_forest_id=row["grove_forest_id"] if "grove_forest_id" in cols else None,
+            has_warp_crystal=bool(row["has_warp_crystal"]) if "has_warp_crystal" in cols else False,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "
@@ -1538,3 +1539,30 @@ async def set_player_village_override(
         "(user_id, village_id, tile_x, tile_y, tile_type) VALUES (?, ?, ?, ?, ?)",
         (user_id, village_id, x, y, tile_type),
     )
+
+
+# --- Warp Crystal / Waypoints ---
+
+async def unlock_waypoint(db: Database, user_id: int, waypoint_id: str) -> None:
+    """Unlock a warp waypoint for a player (idempotent)."""
+    await db.execute(
+        "INSERT OR IGNORE INTO player_waypoints (user_id, waypoint_id) VALUES (?, ?)",
+        (user_id, waypoint_id),
+    )
+
+
+async def get_player_waypoints(db: Database, user_id: int) -> set[str]:
+    """Return set of waypoint_ids unlocked by this player."""
+    rows = await db.fetch_all(
+        "SELECT waypoint_id FROM player_waypoints WHERE user_id = ?", (user_id,)
+    )
+    return {r["waypoint_id"] for r in rows}
+
+
+async def grant_warp_crystal(db: Database, user_id: int) -> None:
+    """Give the player a warp crystal and unlock the three starter waypoints."""
+    await db.execute(
+        "UPDATE players SET has_warp_crystal = 1 WHERE user_id = ?", (user_id,)
+    )
+    for wp_id in ("spawn", "forest", "grove"):
+        await unlock_waypoint(db, user_id, wp_id)

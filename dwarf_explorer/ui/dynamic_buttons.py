@@ -98,6 +98,9 @@ from dwarf_explorer.ui.game_view import (
     handle_gear_machine_close,
     handle_tree_city_buy,
     handle_tree_city_close,
+    handle_warp_open,
+    handle_warp_close,
+    _execute_warp,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -638,6 +641,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_tree_city_buy(interaction, gid, uid, item_id)
             elif act == "tree_city_close":
                 await handle_tree_city_close(interaction, gid, uid)
+            # Warp crystal
+            elif act == "warp_open":
+                await handle_warp_open(interaction, gid, uid)
+            elif act == "warp_close":
+                await handle_warp_close(interaction, gid, uid)
+            elif act.startswith("warp_"):
+                wp_id = act[len("warp_"):]
+                await _execute_warp(interaction, gid, uid, wp_id)
             elif act.startswith("gear_slot_"):
                 try:
                     slot_idx = int(act[len("gear_slot_"):])

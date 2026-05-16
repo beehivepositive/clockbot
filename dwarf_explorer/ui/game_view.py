@@ -20,6 +20,7 @@ from dwarf_explorer.config import (
     MAX_CREW_SIZE, CREW_HIRE_COST, CREW_NAMES, CREW_TASKS,
     SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, SHIPWRECK_SIZE, BREATH_MAX, BREATH_PER_STEP,
     SPAWN_X, SPAWN_Y,
+    WAYPOINTS,
     SKY_ENCOUNTER_RATES,
     TEMPLE_WALKABLE, TEMPLE_EMOJI, SKY_LORE,
     TC_WALKABLE,
@@ -100,6 +101,9 @@ from dwarf_explorer.database.repositories import (
     is_sky_chest_looted,
     mark_sky_chest_looted,
     update_player_temple_state,
+    grant_warp_crystal,
+    get_player_waypoints,
+    unlock_waypoint,
 )
 from dwarf_explorer.game.combat import (
     build_arena_from_viewport,
@@ -292,7 +296,8 @@ class GameView(discord.ui.View):
                  npc_label: str = "", npc_enabled: bool = False,
                  embark_enabled: bool = False,
                  feed_enabled: bool = False,
-                 plant_enabled: bool = False):
+                 plant_enabled: bool = False,
+                 has_warp_crystal: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -300,7 +305,8 @@ class GameView(discord.ui.View):
                             center_label, center_enabled,
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
-                            embark_enabled, feed_enabled, plant_enabled)
+                            embark_enabled, feed_enabled, plant_enabled,
+                            has_warp_crystal)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -326,7 +332,8 @@ class GameView(discord.ui.View):
                        npc_label: str = "", npc_enabled: bool = False,
                        embark_enabled: bool = False,
                        feed_enabled: bool = False,
-                       plant_enabled: bool = False) -> None:
+                       plant_enabled: bool = False,
+                       has_warp_crystal: bool = False) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
         # ── Row 0: Map | Inventory | Help | Sprint | Edit ─────────────────────
@@ -353,6 +360,11 @@ class GameView(discord.ui.View):
             custom_id=_custom_id(self.guild_id, self.user_id, "action"),
             row=0,
         ) if edit_enabled else None
+        warp_btn = discord.ui.Button(
+            style=discord.ButtonStyle.primary, emoji="\U0001F52E",
+            custom_id=_custom_id(self.guild_id, self.user_id, "warp_open"),
+            row=0,
+        ) if has_warp_crystal else None
 
         # ── Row 1: Sprint (or spacer) | ⬆️ | Action ─────────────────────────
         if boots_equipped:
@@ -459,6 +471,8 @@ class GameView(discord.ui.View):
             )
 
         row0 = [map_btn, inventory_btn, quest_btn]
+        if warp_btn is not None:
+            row0.append(warp_btn)
         if edit_btn is not None:
             row0.append(edit_btn)
         for btn in [
@@ -2286,6 +2300,9 @@ def _compute_context_labels(
                     elif _adj_t == "tc_villager":
                         action_label, action_enabled = "💬 Talk", True
                         break
+                    elif _adj_t == "tc_archivist":
+                        action_label, action_enabled = "📜 Speak", True
+                        break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Maze tile context
@@ -2295,6 +2312,19 @@ def _compute_context_labels(
             elif t in ("maze_chest", "maze_mimic"):
                 # maze_mimic looks identical to maze_chest intentionally
                 center_label, center_enabled = "💰 Open", True
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
+
+        # Grove tile context
+        if getattr(player, "in_grove", False):
+            if t == "grove_exit":
+                center_label, center_enabled = "🚪 Exit", True
+            # Adjacency: grove_statue gives warp crystal
+            for _dy_g, _dx_g in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_g, _ac_g = vc + _dy_g, vc + _dx_g
+                if 0 <= _ar_g < len(grid) and 0 <= _ac_g < len(grid[_ar_g]):
+                    if grid[_ar_g][_ac_g].terrain == "grove_statue":
+                        action_label, action_enabled = "🗿 Touch", True
+                        break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False
 
         # Island tile context
@@ -2487,6 +2517,8 @@ def _compute_context_labels(
         action_label, action_enabled = "💬 Talk", True
     elif "vil_guard" in adj_terrains and not action_enabled:
         action_label, action_enabled = "💬 Talk", True
+    elif "rift_archivist" in adj_terrains and not action_enabled:
+        action_label, action_enabled = "📜 Speak", True
     elif "fishing_rod" in hand_items and adj_terrains & {"river", "bridge", "shallow_water", "deep_water"}:
         action_label, action_enabled = "🎣 Fish", True
     elif not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
@@ -2607,7 +2639,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     npc_enabled=npc_enabled,
                     embark_enabled=embark_enabled,
                     feed_enabled=feed_enabled,
-                    plant_enabled=plant_enabled)
+                    plant_enabled=plant_enabled,
+                    has_warp_crystal=getattr(player, "has_warp_crystal", False))
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -7984,6 +8017,9 @@ async def handle_action(
                 elif _adj_terrain_act == "tc_villager":
                     await _open_tree_city_villager(interaction, guild_id, user_id, player)
                     return
+                elif _adj_terrain_act == "tc_archivist":
+                    await _open_tc_archivist(interaction, guild_id, user_id, player)
+                    return
         _tc_grid_act2 = await _ltcv_act(player.tc_forest_id, player.tc_floor,
                                         player.tc_x, player.tc_y, db)
         content = render_grid(_tc_grid_act2, player, "🌲 Nothing to use here.")
@@ -7991,6 +8027,38 @@ async def handle_action(
                                                 view=_game_view(guild_id, user_id, player,
                                                                 grid=_tc_grid_act2))
         return
+
+    # ── Grove: adjacent statue ───────────────────────────────────────────────
+    if getattr(player, "in_grove", False):
+        from dwarf_explorer.world.forest import load_grove_viewport as _lgv_act, load_grove_single_tile as _lgst_act
+        vc = 4
+        grove_grid_act = await _lgv_act(player.grove_id, player.grove_x, player.grove_y, db)
+        statue_adjacent = any(
+            grove_grid_act[vc + dy][vc + dx].terrain == "grove_statue"
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
+            if 0 <= vc + dy < len(grove_grid_act) and 0 <= vc + dx < len(grove_grid_act[vc + dy])
+        )
+        if statue_adjacent:
+            await _open_grove_statue(interaction, guild_id, user_id, player, db)
+            return
+        content = render_grid(grove_grid_act, player, "🌿 Nothing to use here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grove_grid_act))
+        return
+
+    # ── Cave/Rift: adjacent archivist ────────────────────────────────────────
+    if player.in_cave and not getattr(player, "in_tree_city", False):
+        from dwarf_explorer.world.caves import load_cave_viewport as _lcv_act
+        _cave_grid_act = await _lcv_act(player.cave_id, player.cave_x, player.cave_y, db)
+        vc = 4
+        _archivist_adj = any(
+            _cave_grid_act[vc + dy][vc + dx].terrain == "rift_archivist"
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
+            if 0 <= vc + dy < len(_cave_grid_act) and 0 <= vc + dx < len(_cave_grid_act[vc + dy])
+        )
+        if _archivist_adj:
+            await _open_rift_archivist(interaction, guild_id, user_id, player)
+            return
 
     # ── Player house: enter edit mode ────────────────────────────────────────
     if player.in_house and player.house_type == "player_house":
@@ -10600,6 +10668,281 @@ async def _open_tree_city_shop(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           tree_city_mode=True))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── Archivist / Warp Crystal handlers ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _open_tc_archivist(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player,
+) -> None:
+    """The Archivist in the Tree City (present day) — cryptic keeper of lore."""
+    from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_arch
+    grid = await _ltcv_arch(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y,
+                            await get_database(guild_id))
+    has_crystal = getattr(player, "has_warp_crystal", False)
+    if has_crystal:
+        dialogue = (
+            "📜 **The Archivist** sets down a hefty tome and peers at you over half-moon spectacles.\n\n"
+            "*\"Ah — you've been to the grove. You carry its light now. The resonance is faint... "
+            "but growing.\"*\n\n"
+            "*\"Guard that crystal well. The seals are not as permanent as the Founders believed. "
+            "Something stirs in the deep strata.\"*\n\n"
+            "*\"If you must ask what I know — I know less than I did yesterday, "
+            "and far less than I will tomorrow. Such is the price of honest scholarship.\"*"
+        )
+    else:
+        dialogue = (
+            "📜 **The Archivist** barely looks up from an enormous, ink-stained ledger.\n\n"
+            "*\"Hm? A traveller. Rare, these days.\"*\n\n"
+            "*\"The grove lies deeper in the forest — if the forest deigns to let you reach it. "
+            "I wouldn't attempt it without knowing the paths.\"*\n\n"
+            "*\"Come back when you've found something worth discussing.\"*"
+        )
+    content = render_grid(grid, player, dialogue)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def _open_rift_archivist(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player,
+) -> None:
+    """The Archivist in the Time Rift (the past) — panicked, warning of dimensional collapse."""
+    db = await get_database(guild_id)
+    from dwarf_explorer.world.caves import load_cave_viewport as _lcv_rift_arch
+    grid = await _lcv_rift_arch(player.cave_id, player.cave_x, player.cave_y, db)
+    has_crystal = getattr(player, "has_warp_crystal", False)
+    if has_crystal:
+        dialogue = (
+            "📜 **A Frantic Scholar** clutches a stack of papers, eyes wide with recognition.\n\n"
+            "*\"You — you have one! A warp crystal from the grove! But that's impossible "
+            "unless... unless you already traversed the rift from a point further along "
+            "the timeline—\"*\n\n"
+            "*\"Don't try to explain it. Paradoxes only resolve if you stop pulling at the threads.\"*\n\n"
+            "*\"Listen: the Temporal Echo you'll face — it is what remains of a Founder "
+            "who tried to stop the collapse himself. He failed. That's why we're all here "
+            "in this conversation.\"*\n\n"
+            "*\"The crystal will help you find your way back. Don't lose it.\"*"
+        )
+    else:
+        dialogue = (
+            "📜 **A Frantic Scholar** spins around at your approach, scattering papers everywhere.\n\n"
+            "*\"Stop — don't go further! The resonance field beyond that arch is unstable. "
+            "The Echo has been active for— I don't even know how long.\"*\n\n"
+            "*\"I'm recording everything I can before the rift collapses this section "
+            "of the timeline. The Founders built this place as a failsafe, but something "
+            "went wrong in the grove. Something is always going wrong in the grove.\"*\n\n"
+            "*\"You need more than courage to face what lies ahead. Have you found "
+            "the grove yet? The statue there holds a key.\"*"
+        )
+    content = render_grid(grid, player, dialogue)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=await _cave_game_view(guild_id, user_id, player, db, grid=grid))
+
+
+async def _open_grove_statue(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player, db,
+) -> None:
+    """Touch the grove statue — grants the warp crystal on first contact."""
+    from dwarf_explorer.world.forest import load_grove_viewport as _lgv_stat
+    grid = await _lgv_stat(player.grove_id, player.grove_x, player.grove_y, db)
+    has_crystal = getattr(player, "has_warp_crystal", False)
+    if has_crystal:
+        waypoints = await get_player_waypoints(db, user_id)
+        wp_lines = "\n".join(
+            f"  {WAYPOINTS[wp_id]['emoji']} **{WAYPOINTS[wp_id]['name']}** — {WAYPOINTS[wp_id]['desc']}"
+            for wp_id in ("spawn", "forest", "grove") if wp_id in waypoints
+        )
+        msg = (
+            "🗿 **The Wayerwood Statue**\n\n"
+            "The crystal in your pack pulses warmly as you touch the ancient stone.\n\n"
+            "Your known waypoints:\n" + wp_lines + "\n\n"
+            "*Use the 🔮 Warp button in the main view to teleport between them.*"
+        )
+    else:
+        # First time — grant the crystal
+        await grant_warp_crystal(db, user_id)
+        player.has_warp_crystal = True
+        wp_lines = "\n".join(
+            f"  {WAYPOINTS[wp_id]['emoji']} **{WAYPOINTS[wp_id]['name']}**"
+            for wp_id in ("spawn", "forest", "grove")
+        )
+        msg = (
+            "🗿 **The Wayerwood Statue**\n\n"
+            "You place your hand on the moss-covered stone. A pulse of warm light "
+            "travels up your arm — and in your palm appears a small, faceted crystal "
+            "that hums with distant harmonics.\n\n"
+            "✨ **You received a Warp Crystal!**\n\n"
+            "Three waypoints have been unlocked:\n" + wp_lines + "\n\n"
+            "*The 🔮 Warp button now appears in your main view.*"
+        )
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+# ── WarpView ──────────────────────────────────────────────────────────────────
+
+class WarpView(discord.ui.View):
+    """Warp crystal destination selector."""
+
+    def __init__(self, guild_id: int, user_id: int, waypoints: set[str]):
+        super().__init__(timeout=None)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        for wp_id in ("spawn", "forest", "grove"):
+            if wp_id in waypoints and wp_id in WAYPOINTS:
+                wp = WAYPOINTS[wp_id]
+                self.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    emoji=wp["emoji"],
+                    label=wp["name"],
+                    custom_id=_custom_id(guild_id, user_id, f"warp_{wp_id}"),
+                    row=0,
+                ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="✖ Close",
+            custom_id=_custom_id(guild_id, user_id, "warp_close"),
+            row=1,
+        ))
+
+
+async def handle_warp_open(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Open the warp crystal destination list."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not getattr(player, "has_warp_crystal", False):
+        await interaction.response.defer()
+        return
+    waypoints = await get_player_waypoints(db, user_id)
+    wp_lines = "\n".join(
+        f"{WAYPOINTS[wp_id]['emoji']} **{WAYPOINTS[wp_id]['name']}** — {WAYPOINTS[wp_id]['desc']}"
+        for wp_id in ("spawn", "forest", "grove") if wp_id in waypoints
+    ) or "*No waypoints unlocked yet.*"
+    content = f"🔮 **Warp Crystal**\n\nChoose a destination:\n\n{wp_lines}"
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=WarpView(guild_id, user_id, waypoints))
+
+
+async def _execute_warp(
+    interaction: discord.Interaction, guild_id: int, user_id: int, waypoint_id: str
+) -> None:
+    """Teleport the player to a named waypoint and return to game view."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if waypoint_id == "spawn":
+        # Clear all interiors, return to overworld spawn
+        await db.execute(
+            "UPDATE players SET in_cave=0, cave_id=NULL, cave_x=0, cave_y=0, "
+            "in_village=0, village_id=NULL, in_house=0, house_id=NULL, "
+            "in_forest=0, forest_id=NULL, forest_x=0, forest_y=0, "
+            "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, "
+            "in_maze=0, maze_id=NULL, in_tree_city=0, tc_floor=1, tc_x=0, tc_y=0, "
+            "in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+            "world_x=?, world_y=? WHERE user_id=?",
+            (SPAWN_X, SPAWN_Y, user_id)
+        )
+        player.in_cave = player.in_village = player.in_house = False
+        player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
+        player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+        player.world_x, player.world_y = SPAWN_X, SPAWN_Y
+        grid = await load_viewport(SPAWN_X, SPAWN_Y, seed, db)
+        msg = f"🌍 **Warp: {WAYPOINTS['spawn']['name']}**\nYou dissolve into a shimmer of light and reappear at the World's Navel."
+
+    elif waypoint_id == "forest":
+        # Warp to overworld forest entrance tile (first known entrance)
+        ent = await db.fetch_one("SELECT world_x, world_y FROM forest_entrances LIMIT 1")
+        if not ent:
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            msg = "🔮 The crystal flickers — no forest entrance is known yet."
+        else:
+            wx, wy = ent["world_x"], ent["world_y"]
+            await db.execute(
+                "UPDATE players SET in_cave=0, cave_id=NULL, in_village=0, village_id=NULL, "
+                "in_house=0, house_id=NULL, in_forest=0, forest_id=NULL, "
+                "in_grove=0, grove_id=NULL, in_maze=0, maze_id=NULL, "
+                "in_tree_city=0, in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+                "world_x=?, world_y=? WHERE user_id=?",
+                (wx, wy, user_id)
+            )
+            player.in_cave = player.in_village = player.in_house = False
+            player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
+            player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.world_x, player.world_y = wx, wy
+            grid = await load_viewport(wx, wy, seed, db)
+            msg = f"🌲 **Warp: {WAYPOINTS['forest']['name']}**\nYou step through a curtain of light and arrive at the forest's edge."
+
+    elif waypoint_id == "grove":
+        # Warp directly into the grove interior (near statue)
+        grove_forest_id = player.grove_forest_id
+        grove_id = player.grove_id
+        if not grove_id:
+            # Try to look it up from DB
+            g_row = await db.fetch_one(
+                "SELECT grove_id, forest_id FROM grove_areas LIMIT 1"
+            )
+            if g_row:
+                grove_id = g_row["grove_id"]
+                grove_forest_id = g_row["forest_id"]
+        if not grove_id:
+            grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            msg = "🔮 The crystal flickers — no grove has been discovered yet."
+        else:
+            gx, gy = 9, 10   # just south of centre statue
+            # Preserve forest_x/y so exit-grove returns to the right forest tile
+            fx = player.forest_x or 0
+            fy = player.forest_y or 0
+            await db.execute(
+                "UPDATE players SET in_cave=0, cave_id=NULL, in_village=0, village_id=NULL, "
+                "in_house=0, house_id=NULL, in_forest=1, forest_id=?, forest_x=?, forest_y=?, "
+                "in_grove=1, grove_id=?, grove_x=?, grove_y=?, grove_forest_id=?, "
+                "in_maze=0, maze_id=NULL, in_tree_city=0, in_sky=0, sky_id=NULL, "
+                "in_ship=0, in_ocean=0, in_high_seas=0 WHERE user_id=?",
+                (grove_forest_id, fx, fy, grove_id, gx, gy, grove_forest_id, user_id)
+            )
+            player.in_cave = player.in_village = player.in_house = False
+            player.in_forest = True
+            player.forest_id = grove_forest_id
+            player.forest_x = fx
+            player.forest_y = fy
+            player.in_grove = True
+            player.grove_id = grove_id
+            player.grove_x, player.grove_y = gx, gy
+            player.grove_forest_id = grove_forest_id
+            player.in_maze = player.in_tree_city = False
+            player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            from dwarf_explorer.world.forest import load_grove_viewport as _lgv_warp
+            grid = await _lgv_warp(grove_id, gx, gy, db)
+            msg = f"✨ **Warp: {WAYPOINTS['grove']['name']}**\nThe crystal sings and the grove unfolds around you."
+    else:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        msg = "🔮 Unknown destination."
+
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_warp_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Close the warp view and return to game."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await _cached_grid(user_id, player, seed, db)
+    if player.in_cave:
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    else:
+        view = _game_view(guild_id, user_id, player, grid=grid)
+    content = render_grid(grid, player)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_cols: int = 7) -> int:

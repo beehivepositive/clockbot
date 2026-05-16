@@ -617,6 +617,42 @@ class Database:
                 except Exception as e:
                     _log.error("Equip migration error: %s", e)
 
+            # ── has_warp_crystal column on players ───────────────────────────────
+            _pc2 = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+            if "has_warp_crystal" not in _pc2:
+                try:
+                    conn.execute("ALTER TABLE players ADD COLUMN has_warp_crystal INTEGER NOT NULL DEFAULT 0")
+                    conn.commit()
+                except Exception as e:
+                    _log.warning("has_warp_crystal migration warning: %s", e)
+
+            # ── player_waypoints table ────────────────────────────────────────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS player_waypoints (
+                    user_id     INTEGER NOT NULL,
+                    waypoint_id TEXT    NOT NULL,
+                    PRIMARY KEY (user_id, waypoint_id)
+                )
+            """)
+            conn.commit()
+
+            # ── tree_city_tiles: force rebuild if tc_archivist NPC not yet present ─
+            try:
+                _arch_count = conn.execute(
+                    "SELECT COUNT(*) FROM tree_city_tiles WHERE tile_type='tc_archivist'"
+                ).fetchone()[0]
+                if _arch_count == 0:
+                    _tc_forests = conn.execute(
+                        "SELECT DISTINCT forest_id FROM tree_city_tiles"
+                    ).fetchall()
+                    for _tcf in _tc_forests:
+                        conn.execute("DELETE FROM tree_city_tiles WHERE forest_id=?",
+                                     (_tcf[0],))
+                    conn.commit()
+                    _log.info("Cleared %d tree city(ies) for tc_archivist rebuild", len(_tc_forests))
+            except Exception as e:
+                _log.warning("tc_archivist rebuild migration warning: %s", e)
+
             # ── ground_items: create if missing, then ensure is_drop column ────────
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ground_items (

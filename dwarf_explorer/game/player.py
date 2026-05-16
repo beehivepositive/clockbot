@@ -142,6 +142,8 @@ class Player:
     pouch: str | None = None
     coin_purse: str | None = None
     avatar_emoji: str | None = None
+    # Warp crystal state
+    has_warp_crystal: bool = False
 
 
 def can_move_ship(target_tile: TileData) -> tuple[bool, str]:
