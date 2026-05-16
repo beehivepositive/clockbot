@@ -133,6 +133,7 @@ ITEM_EMOJI = {
     "sword": "\U0001F5E1\uFE0F",    # 🗡️
     "shield": "\U0001F6E1\uFE0F",   # 🛡️
     "key": "\U0001F511",             # 🔑
+    "cave_key": "\U0001F5DD️", # 🗝️ dungeon key (boss chamber)
     "fish": "\U0001F41F",            # 🐟
     "map_fragment": "\U0001F5FA\uFE0F",  # 🗺️
     "knife": "\U0001F52A",    # 🗡️
@@ -293,6 +294,8 @@ ENEMY_STATS = {
     "cave_golem":  (70, 22,  8, 50, 25),
     "cave_troll":  (50, 18,  5, 35, 20),
     "cave_wyvern": (80, 28,  6, 75, 40),
+    # Cave dungeon boss (level-3 boss room)
+    "stone_guardian": (150, 22, 12, 200, 100),  # high HP/DEF, slam+roar
     # Lava cave enemies
     "cinder_imp":      (22, 13,  0, 20, 10),
     "lava_salamander": (18, 11,  1, 15,  8),
@@ -356,6 +359,8 @@ ENEMY_ABILITIES = {
     "forest_troll":    {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
     # Maze mimic
     "chest_mimic":     {"cobweb": False, "poison": False, "hit_run": False, "roar": False, "slam": True,  "ranged": False},
+    # Cave dungeon boss
+    "stone_guardian":  {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
 }
 
 ARENA_EMOJI = {
@@ -772,12 +777,18 @@ CAVE_EMOJI = {
     "cinder_imp":         "👺",                    # red goblin demon
     "lava_salamander":    "🦎",                    # lizard
     "obsidian_golem":     "\U0001F5FF",            # 🗿 stone/obsidian golem (same as cave_golem)
+    # Boss room tiles
+    "cave_boss_door":     "\U0001F512",            # 🔒 sealed stone door (requires cave key)
+    "cave_boss_floor":    "\U0001F7E5",            # 🟥 red — boss chamber floor
+    "cave_boss_chest":    "\U0001F4B0",            # 💰 boss treasure (gold bag)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
                  "rift_floor", "rift_entrance", "rift_deposit",
                  # Lava cave tiles
-                 "lava_floor", "lava_bridge"}
+                 "lava_floor", "lava_bridge",
+                 # Boss room tiles (door is walkable so key-check logic runs inside the movement loop)
+                 "cave_boss_door", "cave_boss_floor", "cave_boss_chest"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 # --- Shipwreck System ---
@@ -797,7 +808,7 @@ SHIPWRECK_ENTRY_Y = 5   # row 5 (one above the bottom wall)
 BREATH_MAX = 100
 BREATH_PER_STEP = 20
 
-CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large"}
+CAVE_CHEST_TYPES = {"cave_chest", "cave_chest_medium", "cave_chest_large", "cave_boss_chest"}
 
 CAVE_ENEMY_TYPES = {"cave_bat", "cave_spider", "cave_golem", "cave_troll", "cave_wyvern"}
 
@@ -807,6 +818,14 @@ CHEST_LOOT = [
     (30, 30,  80,  15, 40, "cooked_fish"),
     (15, 60,  130, 30, 60, "gem"),
     (5,  100, 250, 50, 100, "sword"),
+]
+
+# Boss chest loot: (weight, item_or_none) — always 150-350 gold + one of these items
+BOSS_CHEST_LOOT = [
+    (40, "gem"),
+    (30, "sword"),
+    (15, "iron_helmet"),
+    (15, "iron_chestplate"),
 ]
 
 CAVE_MIN_SIZE = 60

@@ -7,7 +7,7 @@ import random
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
     CAVE_WALKABLE, CAVE_CHEST_TYPES, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
-    WALKABLE_TILES, CHEST_LOOT, CAVE_ORE_RATES, CAVE_GOLD_ORE_RATES,
+    WALKABLE_TILES, CHEST_LOOT, BOSS_CHEST_LOOT, CAVE_ORE_RATES, CAVE_GOLD_ORE_RATES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
@@ -120,6 +120,74 @@ def _inward_step(ex: int, ey: int, edge: str, width: int, height: int) -> tuple[
     if edge == "bottom": return ex, height - 2
     if edge == "left":   return 1, ey
     return width - 2, ey   # right
+
+
+def _carve_boss_room(
+    rng: random.Random,
+    carved: set[tuple[int, int]],
+    floor_tiles: list[tuple[int, int]],
+    width: int,
+    height: int,
+) -> tuple[tuple[int, int] | None, set[tuple[int, int]], tuple[int, int] | None]:
+    """Carve a 7×5 boss room in a corner of the cave.
+
+    Returns (door_pos, boss_floor_tiles, chest_pos).
+    door_pos is the entry tile (cave_boss_door).
+    boss_floor_tiles is every room tile except the door.
+    chest_pos is the centre of the room.
+    All room tiles (including door) are added to *carved*.
+    Returns (None, set(), None) if no valid placement found.
+    """
+    BW, BH = 7, 5
+    corners = [
+        (width - BW - 3, height - BH - 3),
+        (3, height - BH - 3),
+        (width - BW - 3, 3),
+        (3, 3),
+    ]
+    rng.shuffle(corners)
+
+    for brx, bry in corners:
+        if brx < 2 or bry < 2 or brx + BW > width - 2 or bry + BH > height - 2:
+            continue
+
+        # Door is the centre tile of the left edge of the room
+        door_x = brx
+        door_y = bry + BH // 2
+        # The corridor connects to one tile left of the door
+        corr_ex, corr_ey = door_x - 1, door_y
+        if corr_ex < 1:
+            continue
+
+        # Find the nearest main-cave floor tile to the corridor endpoint
+        if not floor_tiles:
+            break
+        nearest = min(floor_tiles, key=lambda p: abs(p[0] - corr_ex) + abs(p[1] - corr_ey))
+
+        # Carve a 1-wide L-shaped corridor (horizontal then vertical)
+        cx, cy = nearest
+        while cx != corr_ex:
+            cx += 1 if cx < corr_ex else -1
+            if 1 <= cx < width - 1 and 1 <= cy < height - 1:
+                carved.add((cx, cy))
+        while cy != corr_ey:
+            cy += 1 if cy < corr_ey else -1
+            if 1 <= cx < width - 1 and 1 <= cy < height - 1:
+                carved.add((cx, cy))
+
+        # Carve the room itself (all tiles including door)
+        room_tiles: set[tuple[int, int]] = set()
+        for dy in range(BH):
+            for dx in range(BW):
+                pos = (brx + dx, bry + dy)
+                room_tiles.add(pos)
+                carved.add(pos)
+
+        boss_floor = room_tiles - {(door_x, door_y)}
+        chest_pos = (brx + BW // 2, bry + BH // 2)
+        return (door_x, door_y), boss_floor, chest_pos
+
+    return None, set(), None
 
 
 def _generate_cave_interior(
@@ -284,6 +352,15 @@ def _generate_cave_interior(
         if center_tiles:
             stairup_position = center_tiles[0]
 
+    # --- Boss room (level-3 caves only) ---
+    boss_door_pos: tuple[int, int] | None = None
+    boss_floor_tiles: set[tuple[int, int]] = set()
+    boss_chest_pos: tuple[int, int] | None = None
+    if cave_level == 3 and floor_tiles:
+        boss_door_pos, boss_floor_tiles, boss_chest_pos = _carve_boss_room(
+            rng, carved, floor_tiles, width, height
+        )
+
     # --- Build tile list (enemies no longer placed as tiles — random encounters instead) ---
     tiles: list[tuple[int, int, str]] = []
     for y in range(height):
@@ -294,6 +371,13 @@ def _generate_cave_interior(
                 tiles.append((x, y, "cave_stairup"))
             elif (x, y) in stairdown_positions:
                 tiles.append((x, y, "cave_stairdown"))
+            # Boss room tiles (checked before generic chest/floor so they take priority)
+            elif (x, y) == boss_door_pos:
+                tiles.append((x, y, "cave_boss_door"))
+            elif boss_chest_pos and (x, y) == boss_chest_pos:
+                tiles.append((x, y, "cave_boss_chest"))
+            elif (x, y) in boss_floor_tiles:
+                tiles.append((x, y, "cave_boss_floor"))
             elif (x, y) in chest_positions:
                 tiles.append((x, y, chest_types[(x, y)]))
             elif (x, y) in ore_positions:
@@ -632,9 +716,20 @@ async def populate_chest_loot(chest_id: int, chest_type: str, db, lava_mode: boo
 
     lava_mode=True: use sea-themed bonus loot in addition to standard loot
     (cannonballs, seaweed, extra gold — for lava cave chests on volcano islands).
+    chest_type='cave_boss_chest': guaranteed high-value loot (150-350g + rare item).
     """
     from dwarf_explorer.database.repositories import add_to_chest
     rng = random.Random(chest_id * 7331)
+
+    # Boss chest: always generous gold + a guaranteed rare item
+    if chest_type == "cave_boss_chest":
+        gold = rng.randint(150, 350)
+        await add_to_chest(db, chest_id, "gold_coin", gold)
+        weights = [t[0] for t in BOSS_CHEST_LOOT]
+        _, item = rng.choices(BOSS_CHEST_LOOT, weights=weights, k=1)[0]
+        await add_to_chest(db, chest_id, item, 1)
+        return
+
     weights = [t[0] for t in CHEST_LOOT]
 
     # All chests are small (1 loot tier)
