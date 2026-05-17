@@ -2094,22 +2094,20 @@ class DialogueView(discord.ui.View):
                 custom_id=_custom_id(gid, uid, action), row=row,
             )
 
-        # Row 0: ⬆ scroll | ⬇ scroll | spacer | Cancel
-        self.add_item(_btn("⬆️", "dlg_up",   0, disabled=(selected == 0)))
-        self.add_item(_btn("⬇️", "dlg_down", 0, disabled=(selected >= len(options) - 1)))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary, label="​", disabled=True,
-            custom_id=_custom_id(gid, uid, "dlg_sp1"), row=0,
-        ))
-        self.add_item(_btn("❌ Cancel", "dlg_cancel", 0, discord.ButtonStyle.danger))
-
-        # Row 1: Confirm selected option
+        # Row 0: ✅ Confirm currently-highlighted option
         if options and selected < len(options):
             opt = options[selected]
             self.add_item(_btn(
                 f"✅ {opt['label']}", f"dlg_confirm_{opt['action']}",
-                1, discord.ButtonStyle.success
+                0, discord.ButtonStyle.success
             ))
+
+        # Row 1: ⬅️ prev option | ➡️ next option (same arrow emojis as the D-pad)
+        self.add_item(_btn("⬅️", "dlg_up",   1, disabled=(selected == 0)))
+        self.add_item(_btn("➡️", "dlg_down", 1, disabled=(selected >= len(options) - 1)))
+
+        # Row 2: ❌ Cancel
+        self.add_item(_btn("❌ Cancel", "dlg_cancel", 2, discord.ButtonStyle.danger))
 
 
 # ── Crew management view ───────────────────────────────────────────────────────

@@ -1540,6 +1540,11 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("sword",        "sword_iron"),
         ("cannonball",   "cannonball"),
         ("nail",         "nails_iron"),
+        # Wyvern armor pieces
+        ("wyvern_helmet",     "helmet_wyvern"),
+        ("wyvern_chestplate", "chestpiece_wyvern"),
+        ("wyvern_leggings",   "leggings_wyvern"),
+        ("wyvern_boots",      "boots_wyvern"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:
