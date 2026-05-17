@@ -2646,7 +2646,7 @@ def _compute_context_labels(
         elif t in ("grass", "plains") and "hoe" in hand_items:
             center_label, center_enabled = "🟤 Till", True
         # Item-based interactions (lower priority)
-        elif t == "drop_box":
+        elif t in ("drop_box", "canoe_box"):
             center_label, center_enabled = "🤲", True
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             center_label, center_enabled = "🍗", True
@@ -9034,14 +9034,13 @@ async def handle_action(
 
         # ── Drop-box pickup ──────────────────────────────────────────────────
         cur_tile = await load_single_tile(wx, wy, seed, db)
-        if cur_tile.structure == "drop_box" or (
-            cur_tile.terrain == "drop_box"
+        if cur_tile.structure in ("drop_box", "canoe_box") or (
+            cur_tile.terrain in ("drop_box", "canoe_box")
         ):
             picked = await pickup_drop_box(db, wx, wy, user_id)
             grid = await load_viewport(wx, wy, seed, db)
             if picked:
-                names = ", ".join(f"{q}× {iid}" for iid, q in picked)
-                msg = f"📦 Picked up: {names}"
+                msg = f"📦 Picked up: {_pickup_desc(picked)}"
             else:
                 msg = "📦 The box is empty."
             content = render_grid(grid, player, msg)
@@ -10922,12 +10921,17 @@ async def handle_inv_drop(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     def _drop_name(iid: str) -> str:
-        if iid in ("canoe_left", "canoe_right"):
-            return "Canoe"
         if iid == "gold_coin":
             return "Gold Coin"
         return iid.replace("_", " ").title()
-    drop_desc = ", ".join(f"{qty}× {_drop_name(iid)}" for iid, qty in drop_pairs)
+    # Collapse canoe halves into a single "1× Canoe" entry (halves are paired).
+    canoe_halves = sum(qty for iid, qty in drop_pairs if iid in ("canoe_left", "canoe_right"))
+    other_pairs = [(iid, qty) for iid, qty in drop_pairs if iid not in ("canoe_left", "canoe_right")]
+    desc_parts: list[str] = []
+    if canoe_halves:
+        desc_parts.append(f"{canoe_halves // 2}× Canoe")
+    desc_parts.extend(f"{qty}× {_drop_name(iid)}" for iid, qty in other_pairs)
+    drop_desc = ", ".join(desc_parts)
     content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*🫳 Dropped: {drop_desc}.*",
