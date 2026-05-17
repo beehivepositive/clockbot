@@ -883,11 +883,8 @@ class Database:
                 conn.execute(
                     "DELETE FROM equipment WHERE item_id='canoe_right'"
                 )
-                # players.hand_1 / hand_2: rename canoe_left→canoe; clear canoe_right
-                conn.execute("UPDATE players SET hand_1='canoe' WHERE hand_1='canoe_left'")
-                conn.execute("UPDATE players SET hand_2='canoe' WHERE hand_2='canoe_left'")
-                conn.execute("UPDATE players SET hand_1=NULL WHERE hand_1='canoe_right'")
-                conn.execute("UPDATE players SET hand_2=NULL WHERE hand_2='canoe_right'")
+                # Note: players.hand_1/hand_2 are loaded from the equipment table
+                # (slot='hand_1'/'hand_2'), already handled by the equipment UPDATE above.
                 conn.commit()
             except Exception as e:
                 _log.warning("Canoe consolidation migration warning: %s", e)
