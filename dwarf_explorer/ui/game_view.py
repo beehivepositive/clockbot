@@ -1753,6 +1753,7 @@ _ANVIL_RECIPES: list[dict] = [
     {"category": "Wyvern Upgrades", "item_id": "wyvern_chestplate","emoji": "🐉",  "name": "Wyvern Chestplate","cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_chestplate","stat": "+8 def"},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_leggings",  "emoji": "🐉",  "name": "Wyvern Leggings",  "cost_item": "wyvern_scale",  "cost_qty": 3, "base_item": "iron_leggings", "stat": "+6 def"},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_shield",    "emoji": "🐉",  "name": "Wyvern Shield",    "cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_shield",   "stat": "+7 def"},
+    {"category": "Wyvern Upgrades", "item_id": "wyvern_boots",     "emoji": "🐉",  "name": "Wyvern Boots",     "cost_item": "wyvern_scale",  "cost_qty": 2, "base_item": "iron_boots",    "stat": "+3 def"},
     {"category": "Gold",            "item_id": "gold_ring",        "emoji": "💍",  "name": "Gold Ring",        "cost_item": "gold_ingot",    "cost_qty": 2, "base_item": None,            "stat": "combine w/ gem"},
 ]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 
 from dwarf_explorer.config import (
@@ -255,50 +256,60 @@ def _generate_village_interior(
         if _farm_cluster_placed:
             break
 
-    # ── Cardinal spoke inner endpoints ────────────────────────────────────────
-    # Each spoke wanders from the well toward a point near (but not at) its
-    # respective edge, then is optionally extended straight to the border.
+    # ── Cardinal edge-exit inner endpoints ───────────────────────────────────
+    # These are the targets for the border spurs (extend_to_edge).  Give them
+    # generous random offsets so no two villages exit at the same spot.
     off = lambda lo, hi: rng.randint(lo, hi)  # noqa: E731
-    n_inner = (cx + off(-5, 5), 4)
-    e_inner = (W - 5, cy + off(-5, 5))
-    s_inner = (cx + off(-5, 5), H - 5)
-    w_inner = (4, cy + off(-5, 5))
+    n_inner = (cx + off(-6, 6), off(4, 8))
+    e_inner = (off(W - 8, W - 4), cy + off(-6, 6))
+    s_inner = (cx + off(-6, 6), off(H - 8, H - 4))
+    w_inner = (off(4, 8), cy + off(-6, 6))
 
-    # Draw the four cardinal spokes (meandering)
-    for tx, ty in (n_inner, e_inner, s_inner, w_inner):
-        _draw_path(grid, cx, cy, tx, ty, W, H, rng, meander_chance=0.20)
+    # ── Organic path anchors ──────────────────────────────────────────────────
+    # Scatter random waypoints through the interior, include the well and the
+    # four inner spoke endpoints.  Connecting them in sequence (rather than
+    # all radiating from the well) creates a wandering road network.
+    def _mid(a: tuple[int, int], b: tuple[int, int], spread: int = 5) -> tuple[int, int]:
+        """Return a jittered midpoint between a and b."""
+        mx = (a[0] + b[0]) // 2 + rng.randint(-spread, spread)
+        my = (a[1] + b[1]) // 2 + rng.randint(-spread, spread)
+        return max(3, min(W - 4, mx)), max(3, min(H - 4, my))
 
-    # ── Diagonal / intermediate spokes ───────────────────────────────────────
-    diagonals = []
-    if rng.random() < 0.70:
-        t = (W - 6, 4 + off(0, 3))        # NE
-        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
-        diagonals.append(t)
-    if rng.random() < 0.50:
-        t = (4 + off(0, 3), H - 6)        # SW
-        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
-        diagonals.append(t)
-    if rng.random() < 0.40:
-        t = (4 + off(0, 3), 4 + off(0, 3))  # NW
-        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
-        diagonals.append(t)
-    if rng.random() < 0.40:
-        t = (W - 6, H - 6)                # SE
-        _draw_path(grid, cx, cy, t[0], t[1], W, H, rng, 0.20)
-        diagonals.append(t)
+    # Random interior waypoints (not crowding the well)
+    _target_extras = rng.randint(3, 5)
+    extra_pts: list[tuple[int, int]] = []
+    for _ in range(60):
+        if len(extra_pts) >= _target_extras:
+            break
+        px2 = rng.randint(6, W - 7)
+        py2 = rng.randint(6, H - 7)
+        if abs(px2 - cx) + abs(py2 - cy) >= 5:
+            extra_pts.append((px2, py2))
 
-    # ── Cross-connectors between adjacent spoke tips (creates triangular loops)
-    candidates = [
-        (n_inner, e_inner, 0.80),
-        (s_inner, w_inner, 0.80),
-        (n_inner, w_inner, 0.60),
-        (e_inner, s_inner, 0.60),
-        (n_inner, s_inner, 0.40),   # north-south direct connector
-        (e_inner, w_inner, 0.40),   # east-west direct connector
-    ]
-    for (ax, ay), (bx2, by2), prob in candidates:
-        if rng.random() < prob:
-            _draw_path(grid, ax, ay, bx2, by2, W, H, rng, meander_chance=0.30)
+    # Build the anchor list: well + inner endpoints + random extras
+    all_anchors: list[tuple[int, int]] = [n_inner, e_inner, s_inner, w_inner] + extra_pts
+    # Sort loosely by angle around well so the chain sweeps organically
+    all_anchors.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx) + rng.uniform(-0.4, 0.4))
+
+    # ── Connect anchors in a chain, routing through jittered midpoints ────────
+    # Start from the well and walk the sorted ring.
+    prev = (cx, cy)
+    for apt in all_anchors:
+        mid = _mid(prev, apt, spread=4)
+        _draw_path(grid, prev[0], prev[1], mid[0], mid[1], W, H, rng, meander_chance=0.45)
+        _draw_path(grid, mid[0], mid[1], apt[0], apt[1], W, H, rng, meander_chance=0.45)
+        prev = apt
+    # Close the loop back toward the well
+    mid = _mid(prev, (cx, cy), spread=4)
+    _draw_path(grid, prev[0], prev[1], mid[0], mid[1], W, H, rng, meander_chance=0.40)
+    _draw_path(grid, mid[0], mid[1], cx, cy, W, H, rng, meander_chance=0.40)
+
+    # ── A few random cross-stitches to create loops / dead-end branches ───────
+    rng.shuffle(all_anchors)
+    for i in range(min(rng.randint(2, 4), len(all_anchors) - 1)):
+        a1, a2 = all_anchors[i], all_anchors[i + 1]
+        if abs(a1[0] - a2[0]) + abs(a1[1] - a2[1]) > 5:
+            _draw_path(grid, a1[0], a1[1], a2[0], a2[1], W, H, rng, meander_chance=0.38)
 
     # ── Extend spokes to the map border ──────────────────────────────────────
     # South spoke ALWAYS exits the bottom edge (this becomes the player entry).
@@ -439,7 +450,7 @@ def _generate_village_interior(
         def _water_depth(idx: int, base_seed: int) -> int:
             h = (base_seed ^ (idx * 2654435761)) & 0xFFFFFFFF
             h = ((h >> 16) ^ h) & 0xFFFFFFFF
-            return 1 + (h % 4)   # 1-4
+            return 1 + (h % 2)   # 1-2 (gentle ripple, not jagged spikes)
 
         ws = rng.randint(0, 0xFFFFFF)
         if river_side == "S":
