@@ -612,7 +612,8 @@ class GameView(discord.ui.View):
         else:
             h1_btn = discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
-                label="​", disabled=True,
+                emoji="✋",  # ✋ empty main hand
+                disabled=True,
                 custom_id=_custom_id(self.guild_id, self.user_id, "hand1_empty"),
                 row=1,
             )
@@ -658,7 +659,8 @@ class GameView(discord.ui.View):
         else:
             h2_btn = discord.ui.Button(
                 style=discord.ButtonStyle.secondary,
-                label="​", disabled=True,
+                emoji="🤚",  # 🤚 empty off hand
+                disabled=True,
                 custom_id=_custom_id(self.guild_id, self.user_id, "hand2_empty"),
                 row=1,
             )

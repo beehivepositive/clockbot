@@ -235,6 +235,14 @@ CREATE TABLE IF NOT EXISTS farm_watered_at (
     PRIMARY KEY (world_x, world_y)
 );
 
+-- Sequoia/large-tree chop progress (10 chops to fell)
+CREATE TABLE IF NOT EXISTS tree_chop_progress (
+    world_x   INTEGER NOT NULL,
+    world_y   INTEGER NOT NULL,
+    chops     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (world_x, world_y)
+);
+
 -- Treasure map locations (one active treasure per player)
 CREATE TABLE IF NOT EXISTS treasure_maps (
     user_id     INTEGER PRIMARY KEY REFERENCES players(user_id),

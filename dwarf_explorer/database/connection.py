@@ -677,6 +677,17 @@ class Database:
             """)
             conn.commit()
 
+            # ── tree_chop_progress table ──────────────────────────────────────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tree_chop_progress (
+                    world_x   INTEGER NOT NULL,
+                    world_y   INTEGER NOT NULL,
+                    chops     INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (world_x, world_y)
+                )
+            """)
+            conn.commit()
+
             # ── tree_city_tiles: force rebuild if tc_archivist NPC not yet present ─
             try:
                 _arch_count = conn.execute(
