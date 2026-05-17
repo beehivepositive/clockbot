@@ -499,9 +499,9 @@ def render_inventory(
                 right_e = _item_emoji("canoe_right")
                 cursor_on = cursor_mode == "inventory" and i == selected
                 if cursor_on:
-                    # Canoe is double-wide; add ~2 chars of pad after cursor so
+                    # Canoe is double-wide; add 1 char of pad after cursor so
                     # the next row's items don't crowd it.
-                    slots.append(f"{right_e}{_CUR}{_PAD}{_PAD}")
+                    slots.append(f"{right_e}{_CUR}{_PAD}")
                 else:
                     slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
 
