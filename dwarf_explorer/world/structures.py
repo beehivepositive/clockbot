@@ -297,6 +297,7 @@ def _group_caves(
 def _generate_structures_sync(
     seed: int,
     forced_river_villages: list[tuple[int, int]] | None = None,
+    river_tiles: set[tuple[int, int]] | None = None,
 ) -> tuple[list[tuple[int, int, str]], list[list[tuple[int, int]]]]:
     rng = random.Random(seed + _STRUCTURE_SEED_OFFSET)
     overrides: list[tuple[int, int, str]] = []
@@ -312,9 +313,11 @@ def _generate_structures_sync(
                     overrides.append((rx, ry, 'path'))
 
     # --- Villages (14-20): plains/grass, single tile, minimum 40 tiles apart ---
+    # Must be within 4 tiles of a river (villages settle near water sources).
     village_count = rng.randint(14, 20)
     found = len(village_centers)  # river villages count toward the total
-    for _ in range(800):
+    _rtiles = river_tiles or set()
+    for _ in range(3000):   # more attempts because river-adjacency is restrictive
         if found >= village_count:
             break
         x = rng.randint(5, WORLD_SIZE - 6)
@@ -324,6 +327,13 @@ def _generate_structures_sync(
         if get_biome(x, y, seed) not in ('plains', 'grass'):
             continue
         if any(abs(x - vx) + abs(y - vy) < 40 for vx, vy in village_centers):
+            continue
+        # Require at least one river tile within 4 tiles (Manhattan distance)
+        if _rtiles and not any(
+            abs(x - rx) + abs(y - ry) <= 4
+            for rx, ry in _rtiles
+            if abs(x - rx) <= 4 and abs(y - ry) <= 4
+        ):
             continue
         village_centers.append((x, y))
         overrides.append((x, y, 'village'))
@@ -700,7 +710,9 @@ def _generate_village_paths_sync(
         math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in edges
     )
     _median_mst = mst_dists[len(mst_dists) // 2] if mst_dists else 80.0
-    _TRIANGLE_MAX_DIST = max(120.0, _median_mst * 2.2)
+    # Keep threshold tight so triangle closure only fires for very close triplets.
+    # Wide thresholds create excessive cross-connections in dense village clusters.
+    _TRIANGLE_MAX_DIST = max(55.0, _median_mst * 0.9)
 
     mst_adj: dict[tuple, list] = {}
     for a, b in list(edges):  # snapshot — don't iterate while appending
@@ -718,8 +730,10 @@ def _generate_village_paths_sync(
                         edges.append((a, b))
                         used_pairs.add(pair)
 
-    # ── 2b. Bonus short-range cross-connections (extra variety) ──────────────
-    bonus_budget = max(3, len(nodes) // 3)
+    # ── 2b. Bonus short-range cross-connections (very limited) ───────────────
+    # Keep this small — dense clusters of villages already have many MST edges
+    # and triangle-closure roads.  Too many bonuses create parallel road spaghetti.
+    bonus_budget = max(1, len(nodes) // 8)
     candidates = sorted(
         [
             (_river_cross_weight(a, b), a, b)
@@ -733,9 +747,9 @@ def _generate_village_paths_sync(
     for dist_ab, a, b in candidates:
         if bonus_added >= bonus_budget:
             break
-        if dist_ab > 80:
+        if dist_ab > 45:   # only very-close pairs get a bonus link
             break
-        if rng.random() < 0.5:
+        if rng.random() < 0.35:
             edges.append((a, b))
             used_pairs.add(frozenset([a, b]))
             bonus_added += 1
@@ -863,8 +877,9 @@ async def place_structures(seed: int, db) -> None:
 
     # 1. Base structures — river villages are injected first so all subsequent
     #    random villages respect the 40-tile separation from them.
+    #    Pass river_tiles_pre so regular villages also require river adjacency.
     overrides, cave_groups = await asyncio.to_thread(
-        _generate_structures_sync, seed, forced_river_villages
+        _generate_structures_sync, seed, forced_river_villages, river_tiles_pre
     )
     if overrides:
         await db.executemany(

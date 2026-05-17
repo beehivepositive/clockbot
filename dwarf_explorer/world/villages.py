@@ -1007,9 +1007,10 @@ def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,
     tiles[(2, small_gear_y)] = "b_gear_small"
 
     # ── Vertical conveyor column ──────────────────────────────────────────────
-    # Place it two columns right of the small gear so there's a walkable
-    # floor column (conv_x - 1) between the gear and the conveyor line.
-    conv_x   = 4          # fixed column — player walks in columns 3, 5, 6, 7
+    # Saw column is immediately right of the small gear (conv_x = gear_col + 1)
+    # so the saw tile is directly adjacent to the small CCW gear.
+    # Player walks in columns 4, 5, 6, 7 to the right of the conveyor.
+    conv_x   = 3          # fixed column — adjacent to small gear at x=2
     top_y    = 1          # first interior row
     bot_y    = H - 2      # last interior row
     saw_y    = small_gear_y   # saw aligns with the small gear for visual continuity

@@ -431,8 +431,12 @@ def _generate_rivers_sync(
         trunk_seed = (seed ^ (0xFEED_0000 + ti)) & 0xFFFF_FFFF
         trunk = _trunk_path(seed, trunk_seed, rng, start_cross=sc)
         before = set(river_tiles)
-        _paint(trunk, hw=1, tiles=river_tiles)
-        _paint(trunk[len(trunk)//4: 3*len(trunk)//4], hw=2, tiles=river_tiles)
+        # Trunk widens as it approaches the sea (last tile = sea end).
+        # Paint narrow inland, wider in the lower half, widest near the coast.
+        _n = len(trunk)
+        _paint(trunk, hw=1, tiles=river_tiles)                    # base: 1 tile everywhere
+        _paint(trunk[_n // 2:], hw=2, tiles=river_tiles)          # lower half: 2 tiles wide
+        _paint(trunk[3 * _n // 4:], hw=3, tiles=river_tiles)      # last quarter: 3 tiles wide
         trunk_painted.update(river_tiles - before)
         paths_orders.append((trunk, 4))
         trunks.append(trunk)

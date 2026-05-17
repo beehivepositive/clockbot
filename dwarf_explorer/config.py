@@ -967,6 +967,7 @@ BUILDING_EMOJI = {
     # Lumber mill unique
     "b_waterwheel":     "⚙️",    # ⚙️  water-powered wheel
     "b_saw":            "\U0001FA9A",  # 🪚  saw
+    "b_log_moving":     "\U0001FAB5",  # 🪵  log/plank in transit through conveyor
     "b_lumber_npc":     "🧑",       # 🧑  lumber mill worker
     "b_farmer_npc":     "🧑",       # 🧑  farmer NPC
     "b_water":          "🌊",       # 🌊  water tile (lumber mill)

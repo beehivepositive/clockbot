@@ -4214,7 +4214,7 @@ async def _move_steps(
                         "INSERT OR IGNORE INTO bandit_camps (world_x, world_y) VALUES (?, ?)",
                         (nx, ny),
                     )
-                    await db.commit()
+                    # db auto-commits on execute(); no explicit commit needed
                     _bc_row = await db.fetch_one(
                         "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
                         "FROM bandit_camps WHERE world_x=? AND world_y=?",
@@ -8318,7 +8318,7 @@ async def handle_interact(
                     "INSERT OR IGNORE INTO bandit_camps (world_x, world_y) VALUES (?, ?)",
                     (wx, wy),
                 )
-                await db.commit()
+                # db auto-commits on execute(); no explicit commit needed
                 _bc_row_i = await db.fetch_one(
                     "SELECT id, world_x, world_y, max_bandits, bandit_kills, cleared_at "
                     "FROM bandit_camps WHERE world_x=? AND world_y=?",
@@ -15021,7 +15021,7 @@ async def _add_canoe_to_inventory(db, user_id: int) -> None:
         "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
         (user_id, "canoe_right", nxt + 1),
     )
-    await db.commit()
+    # db auto-commits on execute(); no explicit commit needed
 
 
 async def handle_lumber_craft_canoe(
@@ -15066,42 +15066,28 @@ async def handle_lumber_craft_canoe(
 
 # ── Lumbermill conveyor insert handler ─────────────────────────────────────
 #
-# Conveyor line tiles (vertical, top→bottom):
-#   📥  b_log_input   (top)
-#   🟫  b_conveyor
-#   🟫  b_conveyor
-#   🪚  b_saw         (middle, aligned with small gear)
-#   🟫  b_conveyor
-#   🟫  b_conveyor
-#   📤  b_plank_output (bottom)
+# Conveyor column is at building x=3 (conv_x), running y=1..H-2 (top_y..bot_y).
+# Log enters at (3, 1), travels one tile per second, gets sawed at (3, saw_y),
+# and arrives as planks at (3, H-2).
 #
-# Log travels 1 tile/second; at the saw it becomes planks.
-# Planks are NOT auto-deposited — player must walk to 📤 and interact.
+# The animation runs INSIDE the viewport: each frame we load a fresh grid and
+# replace the current log/plank tile with "b_log_moving" (renders as 🪵) before
+# calling render_grid.  Everything else in the mill renders normally.
+#
+# Planks are NOT auto-deposited — player walks to 📤 and interacts to collect.
 
-_LM_LINE = ["📥", "🟫", "🟫", "🪚", "🟫", "🟫", "📤"]
-_LM_LINE_LEN = len(_LM_LINE)   # 7
-
-
-def _lm_status(step: int) -> str:
-    """Build the conveyor-line status string for animation step `step` (0-based).
-
-    Before saw (steps 0-2): item is a log 🪵.
-    At and after saw (steps 3-5): item is planks 🪵 (same emoji, different item).
-    Step 6: item arrived at output; no moving marker.
-    """
-    if step >= _LM_LINE_LEN:
-        # Done — item at output box
-        return "⚙️ `" + "".join(_LM_LINE) + "` ✅ Planks ready at 📤"
-    item_emoji = "🪵"   # log before saw, plank after (identical emoji)
-    line = list(_LM_LINE)
-    line[step] = item_emoji
-    return "⚙️ `" + "".join(line) + "`"
+_LM_CONV_X   = 3   # building X of conveyor column (must match villages.py conv_x)
+_LM_TOP_Y    = 1   # first interior row (log input)
+_LM_BOT_Y    = 7   # last interior row (plank output)  — assumes 9-tall building
+_LM_SAW_Y    = 4   # saw row (aligns with small gear; middle of 9-tall interior)
 
 
 async def handle_lumbermill_insert(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Player inserts a log into the vertical lumbermill conveyor belt saw."""
+    """Player inserts a log — animate it moving through the viewport in real time."""
+    import dataclasses
+
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
@@ -15117,40 +15103,63 @@ async def handle_lumbermill_insert(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Check nothing is already being processed
-    _lm_key = f"lm_planks_{user_id}"
+    # Prevent concurrent runs
+    _lm_key      = f"lm_planks_{user_id}"
     _lm_busy_key = f"lm_busy_{user_id}"
     if _ui_state.get(_lm_busy_key):
-        content = render_grid(grid, player, "⚠️ The conveyor is still running — wait for it to finish!")
+        content = render_grid(grid, player, "⚠️ The conveyor is still running!")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Remove 1 log from inventory and start animation
     await remove_from_inventory(db, user_id, "log", 1)
     _ui_state[_lm_busy_key] = True
 
-    # Defer so we can send multiple edits
+    # Defer — we'll send multiple edits for each frame
     await interaction.response.defer()
 
+    vc = 4  # viewport centre index (9×9 grid, index 4)
+
     try:
-        for step in range(_LM_LINE_LEN + 1):   # steps 0..7 (7 = final "done" state)
-            grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-            status = _lm_status(step)
+        for step in range(_LM_TOP_Y, _LM_BOT_Y + 1):   # y = 1..7
+            grid = await load_building_viewport(
+                player.house_id, player.house_x, player.house_y, db
+            )
+
+            # Calculate where this building tile appears in the 9×9 viewport
+            g_row = vc + (step            - player.house_y)
+            g_col = vc + (_LM_CONV_X     - player.house_x)
+
+            # Overlay the moving item onto the grid if it's on screen
+            if 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
+                grid[g_row][g_col] = dataclasses.replace(
+                    grid[g_row][g_col], terrain="b_log_moving"
+                )
+
+            # Status message varies by phase
+            if step < _LM_SAW_Y:
+                status = "⚙️ Log moving through the mill..."
+            elif step == _LM_SAW_Y:
+                status = "🪚 Sawing..."
+            else:
+                status = "🪵 Planks moving to output..."
+
             content = render_grid(grid, player, status)
             await interaction.edit_original_response(embed=_embed(content))
-            if step < _LM_LINE_LEN:
-                await asyncio.sleep(1.0)
+            await asyncio.sleep(1.0)
 
-        # Log fully processed — store 3 planks in output box (player must pick up)
+        # All done — store planks for manual pickup
         _ui_state[_lm_key] = _ui_state.get(_lm_key, 0) + 3
     finally:
         _ui_state[_lm_busy_key] = False
 
-    # Show final frame with updated view (pickup button will appear via context labels)
+    # Final frame: clean grid with done message
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(grid, player, "✅ **3 planks** are waiting at 📤 — walk to the output and interact to collect them.")
+    content = render_grid(
+        grid, player,
+        "✅ **3 planks** are waiting at 📤 — walk to the output and interact to collect."
+    )
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.edit_original_response(embed=_embed(content), view=view)
 
