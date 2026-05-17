@@ -236,14 +236,17 @@ FARM_CROPS: dict[str, dict] = {
     "wheat_seed":  {
         "planted": "vil_seeds_wheat",  "mature": "vil_crop_wheat",
         "yield": "wheat",  "yield_qty": 2,  "emoji": "🌾",
+        "seed_drop": "wheat_seed",  "seed_drop_max": 2,   # harvest drops 1-2 extra seeds
     },
     "carrot_seed": {
         "planted": "vil_seeds_carrot", "mature": "vil_crop_carrot",
         "yield": "carrot", "yield_qty": 2,  "emoji": "🥕",
+        "seed_drop": "carrot_seed",  "seed_drop_max": 2,   # harvest drops 1-2 extra seeds
     },
-    "potato_seed": {
+    # Potatoes are their own seed — plant a potato, harvest potatoes.
+    "potato": {
         "planted": "vil_seeds_potato", "mature": "vil_crop_potato",
-        "yield": "potato", "yield_qty": 2,  "emoji": "🥔",
+        "yield": "potato", "yield_qty": 3,  "emoji": "🥔",
     },
 }
 
@@ -404,7 +407,7 @@ FARM_ANIMALS = ["vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep"]
 FARMER_SHOP = [
     {"id": "wheat_seed",   "name": "Wheat Seeds",  "price": 3},
     {"id": "carrot_seed",  "name": "Carrot Seeds", "price": 3},
-    {"id": "potato_seed",  "name": "Potato Seeds", "price": 3},
+    {"id": "potato",       "name": "Potato (seed)", "price": 3},
     {"id": "hoe",          "name": "Hoe",          "price": 20},
     {"id": "watering_can", "name": "Watering Can", "price": 35},
     {"id": "dry_grass",    "name": "Hay",          "price": 1},
@@ -1383,7 +1386,6 @@ ITEM_SELL_PRICES = {
     "healing_herb":      8,
     "wheat_seed":        1,
     "carrot_seed":       1,
-    "potato_seed":       1,
     "wheat":             3,
     "carrot":            3,
     "potato":            3,

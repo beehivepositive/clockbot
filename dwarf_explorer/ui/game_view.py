@@ -7095,8 +7095,15 @@ async def handle_interact(
                 await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
                 qty = _random.randint(1, crop_info["yield_qty"] + 1)
                 await add_to_inventory(db, user_id, crop_info["yield"], qty)
+                # Wheat and carrot also drop 1-2 seeds back; potatoes are their own seed
+                seed_item = crop_info.get("seed_drop")
+                seed_qty = 0
+                if seed_item:
+                    seed_qty = _random.randint(1, crop_info.get("seed_drop_max", 2))
+                    await add_to_inventory(db, user_id, seed_item, seed_qty)
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}.")
+                seed_suffix = f" + {seed_qty}× 🌰 seed" if seed_qty else ""
+                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}{seed_suffix}.")
             else:
                 content = render_grid(grid, player, "🌾 You harvest the crop.")
 
@@ -8981,8 +8988,14 @@ async def handle_action(
                 await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
                 qty = _random.randint(1, crop_info["yield_qty"] + 1)
                 await add_to_inventory(db, user_id, crop_info["yield"], qty)
+                seed_item = crop_info.get("seed_drop")
+                seed_qty = 0
+                if seed_item:
+                    seed_qty = _random.randint(1, crop_info.get("seed_drop_max", 2))
+                    await add_to_inventory(db, user_id, seed_item, seed_qty)
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}.")
+                seed_suffix = f" + {seed_qty}× 🌰 seed" if seed_qty else ""
+                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}{seed_suffix}.")
             else:
                 content = render_grid(grid, player, "You harvest the crop.")
             view = _game_view(guild_id, user_id, player, grid=grid)
