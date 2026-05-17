@@ -465,31 +465,6 @@ def render_inventory(
     visible_items = [it for it in items if it["item_id"] != "gold_coin"]
     slot_map = _build_slot_map(visible_items, total_slots)
 
-    # Canoe row-lock: if canoe_left sits in the LAST column of a row it can't pair with
-    # canoe_right (which would be on the next row).  Shift it to the next row's first slot.
-    # We also shift canoe_right if it is in the first column without a preceding canoe_left.
-    _shifted = True
-    while _shifted:
-        _shifted = False
-        for i in range(total_slots - 1):
-            left_item = slot_map.get(i)
-            right_item = slot_map.get(i + 1)
-            # canoe_left at last column of its row → bump it to next slot
-            if (left_item is not None and left_item["item_id"] == "canoe_left"
-                    and i % inv_cols == inv_cols - 1):
-                # Find first free slot after i
-                new_i = i + 1
-                while new_i in slot_map and new_i < total_slots:
-                    new_i += 1
-                if new_i < total_slots:
-                    # Shift anything in new_i forward to make room
-                    for j in range(total_slots - 1, new_i, -1):
-                        if (j - 1) in slot_map:
-                            slot_map[j] = slot_map.pop(j - 1)
-                    slot_map[new_i] = slot_map.pop(i)
-                    _shifted = True
-                    break
-
     slots: list[str] = []
     _canoe_right_skip: set[int] = set()
     # Pre-pass: identify canoe pair right-halves — used ONLY for the detail line
