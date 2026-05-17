@@ -364,35 +364,37 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell — always exactly 4 units wide.
 
     Unit layout (all qty):
-      [CUR/SEL/PAD][emoji][qty_or_pad][pad]
+      [qty_or_pad][emoji][CUR/SEL/PAD][pad]
 
-    Cursor and selection markers live at unit 0 (the leading pad) for ALL
-    quantity values so the ◄ always appears immediately left of the emoji.
-    This keeps cursor visually anchored to the emoji it represents, not to
-    an abstract column position, preventing the apparent "jump" that occurs
-    when navigating between items of different stack sizes.
+    Quantity (or a placeholder pad for qty=1) sits at unit 0, immediately left
+    of the emoji. Cursor and selection markers live at unit 2, immediately
+    right of the emoji, so the ◄ is always anchored to its emoji regardless
+    of stack size. 2-digit quantities (≥10) use both units 0 and 3 for the
+    digits, with the cursor still at unit 2.
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
-        # 2-digit qty fills units 3+4; prefix in unit 1
+        # 2-digit qty straddles emoji: tens digit unit 0, ones digit unit 3.
+        # Cursor/selection at unit 2 (immediately right of emoji).
+        tens, ones = divmod(qty, 10)
         if cursor_on:
-            return f"{_CUR}{emoji}{qty}"
+            return f"{tens}{emoji}{_CUR}{ones}"
         if is_selected:
-            return f"{_SEL}{emoji}{qty}"
-        return f"{_PAD}{emoji}{qty}"
+            return f"{tens}{emoji}{_SEL}{ones}"
+        return f"{tens}{emoji}{_PAD}{ones}"
     elif qty > 1:
-        # 1-digit qty in unit 3; trailing pad in unit 4
+        # qty at unit 0, cursor/selection at unit 2, trailing pad at unit 3
         if cursor_on:
-            return f"{_CUR}{emoji}{qty}{_PAD}"
+            return f"{qty}{emoji}{_CUR}{_PAD}"
         if is_selected:
-            return f"{_SEL}{emoji}{qty}{_PAD}"
-        return f"{_PAD}{emoji}{qty}{_PAD}"
+            return f"{qty}{emoji}{_SEL}{_PAD}"
+        return f"{qty}{emoji}{_PAD}{_PAD}"
     else:
-        # qty=1: cursor at unit 1 (before emoji), consistent with all other cases
+        # qty=1: placeholder pad at unit 0, cursor/selection at unit 2
         if cursor_on:
-            return f"{_CUR}{emoji}{_PAD}{_PAD}"
+            return f"{_PAD}{emoji}{_CUR}{_PAD}"
         if is_selected:
-            return f"{_SEL}{emoji}{_PAD}{_PAD}"
+            return f"{_PAD}{emoji}{_SEL}{_PAD}"
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
 
 
@@ -506,7 +508,7 @@ def render_inventory(
                 slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_CUR}{_EMPTY_SLOT}{_PAD}{_PAD}")  # cursor leading ◄
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}{_PAD}")  # cursor right of emoji
             else:
                 slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_PAD}")
 
