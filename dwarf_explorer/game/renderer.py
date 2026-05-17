@@ -501,7 +501,9 @@ def render_inventory(
             _canoe_right_skip.add(i + 1)
     for i in range(total_slots):
         if i in _canoe_right_skip:
-            slots.append("")  # placeholder — canoe_left already rendered both halves
+            # Canoe-right placeholder: emit _PAD×2 so the combined cell + placeholder
+            # together equal exactly 2 normal slot widths (8 chars total).
+            slots.append(f"{_PAD}{_PAD}")
             continue
         item = slot_map.get(i)
         if item is not None:
@@ -513,11 +515,13 @@ def render_inventory(
                 cursor_on_pair = (
                     (i == selected or i + 1 == selected) and cursor_mode == "inventory"
                 )
-                # Cursor on the right of the pair (trailing ◄ after right emoji)
+                # Padded to 6 chars so combined with 2-char placeholder = 8 chars
+                # (same as two regular qty=1 slots).  Extra _PAD on each end centres
+                # the pair and stops the row above from appearing to skip 2 columns.
                 if cursor_on_pair:
-                    slots.append(f"{_PAD}{left_emoji}{right_emoji}{_CUR}")
+                    slots.append(f"{_PAD}{_PAD}{left_emoji}{right_emoji}{_PAD}{_CUR}")
                 else:
-                    slots.append(f"{_PAD}{left_emoji}{right_emoji}{_PAD}")
+                    slots.append(f"{_PAD}{_PAD}{left_emoji}{right_emoji}{_PAD}{_PAD}")
                 continue
             qty = item["quantity"]
             is_selected = item_id in selections
