@@ -7064,6 +7064,53 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        elif vtile.terrain in _VIL_SEEDS_TILES:
+            # Water seeded farmland
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            hand_items_v = {h for h in (player.hand_1, player.hand_2) if h}
+            if "watering_can" not in hand_items_v:
+                content = render_grid(grid, player, "🌱 Equip your watering can to water these seeds.")
+            elif player.watering_can_uses <= 0:
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+            else:
+                crop_info = next(
+                    (c for c in FARM_CROPS.values() if c["planted"] == vtile.terrain), None
+                )
+                if crop_info:
+                    await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop_info["mature"])
+                    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                    content = render_grid(grid, player, f"💧 You water the seeds. A {crop_info['emoji']} crop sprouts!")
+                else:
+                    content = render_grid(grid, player, "💧 You water the soil.")
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+
+        elif vtile.terrain in _VIL_CROP_TILES:
+            # Harvest ripe crop
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            crop_info = next(
+                (c for c in FARM_CROPS.values() if c["mature"] == vtile.terrain), None
+            )
+            if crop_info:
+                await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
+                qty = _random.randint(1, crop_info["yield_qty"] + 1)
+                await add_to_inventory(db, user_id, crop_info["yield"], qty)
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}.")
+            else:
+                content = render_grid(grid, player, "🌾 You harvest the crop.")
+
+        elif vtile.terrain == "vil_grass":
+            # Till grass into farmland (requires hoe)
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            hand_items_v = {h for h in (player.hand_1, player.hand_2) if h}
+            if "hoe" in hand_items_v:
+                await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
+                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                content = render_grid(grid, player, "🟤 You till the soil into farmland.")
+            else:
+                content = render_grid(grid, player, "Nothing to interact with here.")
+
         else:
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             content = render_grid(grid, player, "Nothing to interact with here.")
