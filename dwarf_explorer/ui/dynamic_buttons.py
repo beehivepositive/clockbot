@@ -33,7 +33,7 @@ async def _bg_avatar_refresh(guild: discord.Guild, user_id: int, db) -> None:
     except Exception:
         pass
 from dwarf_explorer.ui.game_view import (
-    handle_move, handle_interact, handle_interact2, handle_use_hand1, handle_swap_hands, handle_sprint,
+    handle_move, handle_interact, handle_interact2, handle_use_hand1, handle_use_hand2, handle_swap_hands, handle_sprint,
     handle_fill_watering_can, handle_fish_secondary, handle_forest_map,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
@@ -175,7 +175,7 @@ _IGNORED_ACTIONS = {
     # NPC button spacer
     "sp_npc",
     # Hand display spacers (disabled H1/H2 when no action or empty)
-    "hand1_show", "hand1_empty", "hand2_empty",
+    "hand1_show", "hand1_empty", "hand2_show", "hand2_empty",
     # Action2 spacer (when no second action available)
     "sp_action2",
     # Dialogue spacer
@@ -403,6 +403,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_interact2(interaction, gid, uid)
             elif act == "use_hand1":
                 await handle_use_hand1(interaction, gid, uid)
+            elif act == "use_hand2":
+                await handle_use_hand2(interaction, gid, uid)
             elif act == "swap_hands":
                 await handle_swap_hands(interaction, gid, uid)
             elif act == "sprint":

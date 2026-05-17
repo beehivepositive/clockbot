@@ -437,7 +437,8 @@ class GameView(discord.ui.View):
                  interact2_label: str = "", interact2_enabled: bool = False,
                  h1_item: str | None = None,
                  h2_item: str | None = None,
-                 h1_action_enabled: bool = False):
+                 h1_action_enabled: bool = False,
+                 h2_action_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -448,7 +449,7 @@ class GameView(discord.ui.View):
                             embark_enabled, feed_enabled, plant_enabled,
                             action2_label, action2_enabled, action2_id,
                             interact2_label, interact2_enabled,
-                            h1_item, h2_item, h1_action_enabled)
+                            h1_item, h2_item, h1_action_enabled, h2_action_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -481,6 +482,7 @@ class GameView(discord.ui.View):
                        h1_item: str | None = None,
                        h2_item: str | None = None,
                        h1_action_enabled: bool = False,
+                       h2_action_enabled: bool = False,
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -548,25 +550,98 @@ class GameView(discord.ui.View):
                 row=1,
             )
 
-        # Optional second action button (fishing + watering can fill when both equipped)
-        if action2_enabled and action2_label:
-            _a2_parsed = _parse_emoji(action2_label)
-            if _a2_parsed:
-                action2_btn: discord.ui.Button | None = discord.ui.Button(
-                    style=discord.ButtonStyle.success,
-                    emoji=_a2_parsed,
-                    custom_id=_custom_id(self.guild_id, self.user_id, action2_id),
-                    row=1,
-                )
+        # ── H1: main hand tool action button (row 1 col 3) ──────────────────
+        if h1_item:
+            from dwarf_explorer.config import ITEM_EMOJI as _IE_h
+            _h1_emoji_str = _IE_h.get(h1_item, "")
+            _h1_parsed = _parse_emoji(_h1_emoji_str) if _h1_emoji_str else None
+            _h1_display = _h1_parsed or (_h1_emoji_str.split()[0] if _h1_emoji_str else None)
+            if h1_action_enabled:
+                if _h1_display:
+                    h1_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        emoji=_h1_display,
+                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand1"),
+                        row=1,
+                    )
+                else:
+                    h1_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        label=h1_item[:8],
+                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand1"),
+                        row=1,
+                    )
             else:
-                action2_btn = discord.ui.Button(
-                    style=discord.ButtonStyle.success,
-                    label=action2_label,
-                    custom_id=_custom_id(self.guild_id, self.user_id, action2_id),
-                    row=1,
-                )
+                if _h1_display:
+                    h1_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        emoji=_h1_display,
+                        custom_id=_custom_id(self.guild_id, self.user_id, "hand1_show"),
+                        disabled=True,
+                        row=1,
+                    )
+                else:
+                    h1_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        label=h1_item[:8],
+                        custom_id=_custom_id(self.guild_id, self.user_id, "hand1_show"),
+                        disabled=True,
+                        row=1,
+                    )
         else:
-            action2_btn = None
+            h1_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="​", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "hand1_empty"),
+                row=1,
+            )
+
+        # ── H2: off-hand action button (row 1 col 4) ─────────────────────────
+        if h2_item:
+            from dwarf_explorer.config import ITEM_EMOJI as _IE_h2
+            _h2_emoji_str = _IE_h2.get(h2_item, "")
+            _h2_parsed = _parse_emoji(_h2_emoji_str) if _h2_emoji_str else None
+            _h2_display = _h2_parsed or (_h2_emoji_str.split()[0] if _h2_emoji_str else None)
+            if h2_action_enabled:
+                if _h2_display:
+                    h2_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        emoji=_h2_display,
+                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand2"),
+                        row=1,
+                    )
+                else:
+                    h2_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        label=h2_item[:8],
+                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand2"),
+                        row=1,
+                    )
+            else:
+                if _h2_display:
+                    h2_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        emoji=_h2_display,
+                        custom_id=_custom_id(self.guild_id, self.user_id, "hand2_show"),
+                        disabled=True,
+                        row=1,
+                    )
+                else:
+                    h2_btn = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        label=h2_item[:8],
+                        custom_id=_custom_id(self.guild_id, self.user_id, "hand2_show"),
+                        disabled=True,
+                        row=1,
+                    )
+        else:
+            h2_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="​", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "hand2_empty"),
+                row=1,
+            )
+
         # ── Row 2: ⬅️ | Center | ➡️ ──────────────────────────────────────────
         left_btn  = self._dir_btn("left",  "\u2B05\uFE0F", 2, "left"  in mine_dirs)
         right_btn = self._dir_btn("right", "\u27A1\uFE0F", 2, "right" in mine_dirs)
@@ -593,80 +668,6 @@ class GameView(discord.ui.View):
                 style=discord.ButtonStyle.secondary,
                 label="\u200b", disabled=True,
                 custom_id=_custom_id(self.guild_id, self.user_id, "interact"),
-                row=2,
-            )
-
-        # ── H1: main hand tool action button ─────────────────────────────────
-        if h1_item:
-            from dwarf_explorer.config import ITEM_EMOJI as _IE_h
-            _h1_emoji_str = _IE_h.get(h1_item, "")
-            _h1_parsed = _parse_emoji(_h1_emoji_str) if _h1_emoji_str else None
-            _h1_display = _h1_parsed or (_h1_emoji_str.split()[0] if _h1_emoji_str else None)
-            if h1_action_enabled:
-                if _h1_display:
-                    h1_btn = discord.ui.Button(
-                        style=discord.ButtonStyle.success,
-                        emoji=_h1_display,
-                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand1"),
-                        row=2,
-                    )
-                else:
-                    h1_btn = discord.ui.Button(
-                        style=discord.ButtonStyle.success,
-                        label=h1_item[:8],
-                        custom_id=_custom_id(self.guild_id, self.user_id, "use_hand1"),
-                        row=2,
-                    )
-            else:
-                if _h1_display:
-                    h1_btn = discord.ui.Button(
-                        style=discord.ButtonStyle.secondary,
-                        emoji=_h1_display,
-                        custom_id=_custom_id(self.guild_id, self.user_id, "hand1_show"),
-                        disabled=True,
-                        row=2,
-                    )
-                else:
-                    h1_btn = discord.ui.Button(
-                        style=discord.ButtonStyle.secondary,
-                        label=h1_item[:8],
-                        custom_id=_custom_id(self.guild_id, self.user_id, "hand1_show"),
-                        disabled=True,
-                        row=2,
-                    )
-        else:
-            h1_btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label="​", disabled=True,
-                custom_id=_custom_id(self.guild_id, self.user_id, "hand1_empty"),
-                row=2,
-            )
-
-        # ── H2: off-hand display + swap ───────────────────────────────────────
-        if h2_item:
-            from dwarf_explorer.config import ITEM_EMOJI as _IE_h2
-            _h2_emoji_str = _IE_h2.get(h2_item, "")
-            _h2_parsed = _parse_emoji(_h2_emoji_str) if _h2_emoji_str else None
-            _h2_display = _h2_parsed or (_h2_emoji_str.split()[0] if _h2_emoji_str else None)
-            if _h2_display:
-                h2_btn = discord.ui.Button(
-                    style=discord.ButtonStyle.secondary,
-                    emoji=_h2_display,
-                    custom_id=_custom_id(self.guild_id, self.user_id, "swap_hands"),
-                    row=2,
-                )
-            else:
-                h2_btn = discord.ui.Button(
-                    style=discord.ButtonStyle.secondary,
-                    label=h2_item[:8],
-                    custom_id=_custom_id(self.guild_id, self.user_id, "swap_hands"),
-                    row=2,
-                )
-        else:
-            h2_btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label="​", disabled=True,
-                custom_id=_custom_id(self.guild_id, self.user_id, "hand2_empty"),
                 row=2,
             )
 
@@ -739,8 +740,8 @@ class GameView(discord.ui.View):
             row0.append(edit_btn)
         for btn in [
             *row0,                              # row 0
-            *([sp1_btn, up_btn, action_btn] + ([action2_btn] if action2_btn is not None else [])),  # row 1
-            left_btn, center_btn, right_btn, h1_btn, h2_btn,    # row 2
+            sp1_btn, up_btn, action_btn, h1_btn, h2_btn,  # row 1
+            left_btn, center_btn, right_btn,    # row 2
             sp5_btn, down_btn, npc_btn,         # row 3: [embark/feed/spacer][⬇][npc]
         ]:
             self.add_item(btn)
@@ -3125,6 +3126,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
     h1_item = player.hand_1
     h2_item = player.hand_2
     h1_action_enabled = False
+    h2_action_enabled = False
     if grid is not None:
         hand_items: set[str] = set()
         if player.hand_1:
@@ -3137,24 +3139,31 @@ def _game_view(guild_id: int, user_id: int, player: Player,
          interact2_label, interact2_enabled) = \
             _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
-        # ── H1 tool-on-tile action ─────────────────────────────────────────
-        if h1_item and not player.in_cave and not player.in_ship:
+        # ── H1 / H2 tool-on-tile action ───────────────────────────────────
+        if not player.in_cave and not player.in_ship:
             _ct = grid[4][4] if len(grid) > 4 and len(grid[4]) > 4 else None
             if _ct:
                 _t = _ct.terrain
                 _WATER_TILES = {"sapling", "ancient_sapling", "short_grass", "seedling",
                                 "crop_planted", "crop_sprout"}
                 _SHOVEL_TILES = {"sapling", "dirt", "grass", "plains", "sand", "short_grass"}
-                h1_action_enabled = bool(
-                    (h1_item == "watering_can" and _t in _WATER_TILES)
-                    or (h1_item == "shovel" and _t in _SHOVEL_TILES)
-                    or (h1_item == "hoe" and _t in ("grass", "plains", "dirt"))
-                    or (h1_item == "axe" and _t in ("forest", "dense_forest"))
-                    or (h1_item == "knife" and _t in ("grass", "plains"))
-                    or (h1_item in ("cooked_fish", "fish"))
-                    or (h1_item == "map_fragment")
-                    or (h1_item == "shovel")  # always enabled for treasure dig fallback
-                )
+
+                def _tool_action_enabled(item: str | None) -> bool:
+                    if not item:
+                        return False
+                    return bool(
+                        (item == "watering_can" and _t in _WATER_TILES)
+                        or (item == "shovel" and _t in _SHOVEL_TILES)
+                        or (item == "hoe" and _t in ("grass", "plains", "dirt"))
+                        or (item == "axe" and _t in ("forest", "dense_forest"))
+                        or (item == "knife" and _t in ("grass", "plains"))
+                        or item in ("cooked_fish", "fish")
+                        or item == "map_fragment"
+                        or item == "shovel"  # treasure dig fallback
+                    )
+
+                h1_action_enabled = _tool_action_enabled(h1_item)
+                h2_action_enabled = _tool_action_enabled(h2_item)
 
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
@@ -3177,7 +3186,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     interact2_enabled=interact2_enabled,
                     h1_item=h1_item,
                     h2_item=h2_item,
-                    h1_action_enabled=h1_action_enabled)
+                    h1_action_enabled=h1_action_enabled,
+                    h2_action_enabled=h2_action_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -8954,6 +8964,14 @@ async def handle_use_hand1(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
+    await _execute_tool_action(interaction, guild_id, user_id, tool, player, db, seed)
+
+
+async def _execute_tool_action(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    tool: str, player: "Player", db, seed: int
+) -> None:
+    """Shared tool-on-tile logic for both hand slots."""
     wx, wy = player.world_x, player.world_y
     tile = await load_single_tile(wx, wy, seed, db)
     terrain = tile.terrain
@@ -9167,6 +9185,25 @@ async def handle_use_hand1(
 
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_use_hand2(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Use the off-hand (hand_2) item/tool on the current tile."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    tool = player.hand_2
+    if not tool:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "Nothing in your off-hand.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    await _execute_tool_action(interaction, guild_id, user_id, tool, player, db, seed)
 
 
 async def handle_swap_hands(
