@@ -13,6 +13,7 @@ from dwarf_explorer.config import (
     TWO_HANDED_ITEMS, ITEM_SELL_PRICES, CAVE_ENEMY_TYPES, CAVE_CHEST_TYPES,
     CAVE_ENCOUNTER_RATES, CAVE_LEVEL_ENCOUNTER_RATES, LAVA_CAVE_ENCOUNTER_RATES, ENEMY_STATS, COMBAT_MOVES_DEFAULT,
     POUCH_SIZES, SURFACE_ENCOUNTER_MOBS, CANOE_PASSABLE, WORLD_SIZE, FOOD_HP_RESTORE,
+    ITEM_EMOJI as _ITEM_EMOJI,
     CAVE_EMOJI, BUILDING_EMOJI, CRAFT_RECIPES,
     HOUSE_DECORATION_CATALOG, PLAYER_HOUSE_DECO_TILES, PH_CHEST_TYPES,
     OCEAN_SIZE, OCEAN_ENCOUNTER_RATES, OCEAN_WALKABLE, SHIP_WALKABLE,
@@ -2817,21 +2818,21 @@ def _compute_context_labels(
             center_label, center_enabled = "🌻", True
         elif t in ("crop_planted", "crop_sprout") and "watering_can" in hand_items:
             center_label, center_enabled = "💧", True
-        elif t in ("sapling", "short_grass", "seedling") and "watering_can" in hand_items:
+        elif t in ("sapling", "ancient_sapling", "short_grass", "seedling") and "watering_can" in hand_items:
             center_label, center_enabled = "💧", True
         elif t == "farmland" and "seed" in hand_items:
             center_label, center_enabled = "🌱", True
-        elif t in ("path", "farmland") and "sapling" in hand_items:
-            center_label, center_enabled = "🌱", True
         elif t == "path" and "seed" in hand_items:
             center_label, center_enabled = "🌱", True
-        elif t == "sapling" and "shovel" in hand_items:
-            center_label, center_enabled = "⛏️", True
-        elif t in ("grass", "plains", "sand") and "shovel" in hand_items:
-            center_label, center_enabled = "⛏️", True
+        elif t in ("sapling", "dirt") and "shovel" in hand_items:
+            _shovel_e = _ITEM_EMOJI.get("shovel", "⛏️")
+            center_label, center_enabled = _shovel_e, True
+        elif t in ("grass", "plains", "sand", "short_grass") and "shovel" in hand_items:
+            _shovel_e = _ITEM_EMOJI.get("shovel", "⛏️")
+            center_label, center_enabled = _shovel_e, True
         elif t in ("grass", "plains") and "knife" in hand_items:
             center_label, center_enabled = "✂️", True
-        elif t in ("grass", "plains") and "hoe" in hand_items:
+        elif t in ("grass", "plains", "dirt") and "hoe" in hand_items:
             center_label, center_enabled = "🟤 Till", True
         # Item-based interactions (lower priority)
         elif t in ("drop_box", "canoe_box"):
@@ -2842,7 +2843,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🗺️", True
         elif "shovel" in hand_items:
             # Could be digging a treasure; handler checks coordinates
-            center_label, center_enabled = "⛏️", True
+            _shovel_e = _ITEM_EMOJI.get("shovel", "⛏️")
+            center_label, center_enabled = _shovel_e, True
 
     # ── Action label: adjacent-tile interactions ──────────────────────────────
     adj_terrains: set[str] = set()
@@ -2947,10 +2949,14 @@ def _compute_context_labels(
                     feed_enabled = True
                     break
 
-    # ── Plant seeds: bottom-left button when standing on vil_farmland in village ─
+    # ── Plant seeds/saplings: bottom-left button ─────────────────────────────
     plant_enabled = False
     if player.in_village and not player.in_house:
         if center_tile and center_tile.terrain == "vil_farmland":
+            plant_enabled = True
+    elif not player.in_village and not player.in_house:
+        # Overworld: show plant button on dirt tiles (sapling / ancient_seed)
+        if center_tile and center_tile.terrain == "dirt":
             plant_enabled = True
 
     return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
@@ -5495,6 +5501,31 @@ async def handle_feed_cat(
 
 # ── Plant seeds view (choose seed type) ───────────────────────────────────────
 
+class PlantOverworldView(discord.ui.View):
+    """Choose what to plant on an overworld dirt tile (sapling or ancient_seed)."""
+
+    _LABELS = {
+        "sapling":      ("🌱", "Sapling"),
+        "ancient_seed": ("🌱", "Ancient Seed"),
+    }
+
+    def __init__(self, guild_id: int, user_id: int, choices: list[str]):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        for item_id in choices:
+            emoji, name = self._LABELS.get(item_id, ("🌱", item_id.replace("_", " ").title()))
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"{emoji} {name}",
+                custom_id=_custom_id(gid, uid, f"plant_ow_{item_id}"),
+                row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "plant_cancel"), row=1,
+        ))
+
+
 class PlantSeedView(discord.ui.View):
     """Choose which seed type to plant on vil_farmland."""
 
@@ -5520,9 +5551,36 @@ class PlantSeedView(discord.ui.View):
 async def handle_plant(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Bottom-left plant button: plant seeds on vil_farmland."""
+    """Bottom-left plant button: plant seeds on vil_farmland OR saplings/ancient seeds on overworld dirt."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # ── Overworld: plant sapling / ancient_seed on dirt ──────────────────────
+    if not player.in_village and not player.in_house and not player.in_cave:
+        seed_w = await get_or_create_world(db, guild_id)
+        wx, wy = player.world_x, player.world_y
+        grid = await load_viewport(wx, wy, seed_w, db)
+        vc_ = 4
+        center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
+        if center_t != "dirt":
+            content = render_grid(grid, player, "🌱 You need to be standing on a dirt patch to plant here.")
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+        inv = await get_inventory(db, user_id)
+        has_sapling = any(it["item_id"] == "sapling" and it["quantity"] > 0 for it in inv)
+        has_ancient = any(it["item_id"] == "ancient_seed" and it["quantity"] > 0 for it in inv)
+        choices = ([item for item, flag in [("sapling", has_sapling), ("ancient_seed", has_ancient)] if flag])
+        if not choices:
+            content = render_grid(grid, player, "🌱 You have no saplings or ancient seeds to plant.")
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+        if len(choices) == 1:
+            await _plant_overworld_item(interaction, guild_id, user_id, player, db, choices[0])
+            return
+        # Multiple choices — show picker
+        content = render_grid(grid, player, "🌱 What would you like to plant?")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=PlantOverworldView(guild_id, user_id, choices))
+        return
 
     if not player.in_village or player.in_house:
         return
@@ -5604,9 +5662,56 @@ async def handle_plant_cancel(
     """Cancel seed selection."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    if player.in_village and not player.in_house:
+        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    else:
+        seed_w = await get_or_create_world(db, guild_id)
+        grid = await load_viewport(player.world_x, player.world_y, seed_w, db)
     content = render_grid(grid, player, "Planting cancelled.")
     await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def _plant_overworld_item(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    player, db, item_id: str
+) -> None:
+    """Plant a sapling or ancient_seed on the player's current dirt tile."""
+    seed_w = await get_or_create_world(db, guild_id)
+    wx, wy = player.world_x, player.world_y
+    tile_type = "ancient_sapling" if item_id == "ancient_seed" else "sapling"
+    await set_tile_override(db, wx, wy, tile_type)
+    await remove_from_inventory(db, user_id, item_id, 1)
+    grid = await load_viewport(wx, wy, seed_w, db)
+    if item_id == "ancient_seed":
+        msg = "🌱 You plant the ancient seed in the dirt. Water it to see what grows!"
+    else:
+        msg = "🌱 You plant the sapling in the dirt. Water it to grow a tree!"
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_plant_overworld_choice(
+    interaction: discord.Interaction, guild_id: int, user_id: int, item_id: str
+) -> None:
+    """Handle overworld plant choice from PlantOverworldView."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    seed_w = await get_or_create_world(db, guild_id)
+    wx, wy = player.world_x, player.world_y
+    grid = await load_viewport(wx, wy, seed_w, db)
+    vc_ = 4
+    center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
+    if center_t != "dirt":
+        content = render_grid(grid, player, "You're no longer standing on a dirt patch.")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+    inv = await get_inventory(db, user_id)
+    has_item = any(it["item_id"] == item_id and it["quantity"] > 0 for it in inv)
+    if not has_item:
+        content = render_grid(grid, player, f"🌱 You don't have any {item_id.replace('_', ' ')}.")
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+    await _plant_overworld_item(interaction, guild_id, user_id, player, db, item_id)
 
 
 async def handle_canoe_sail(
@@ -8675,19 +8780,11 @@ async def handle_interact(
             content = render_grid(grid, player, f"You chop down the tree! Got a log{extra_str}. A sapling remains.")
 
         elif terrain == "sapling" and "shovel" in hand_items:
-            # Dig up sapling
-            await set_tile_override(db, wx, wy, "path")
+            # Dig up sapling → leaves a dirt patch
+            await set_tile_override(db, wx, wy, "dirt")
             await add_to_inventory(db, user_id, "sapling", 1)
             grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "You dig up the sapling. The ground becomes a path.")
-
-        elif terrain == "path" and "sapling" in hand_items:
-            # Plant sapling
-            await set_tile_override(db, wx, wy, "sapling")
-            await remove_from_inventory(db, user_id, "sapling", 1)
-            await _auto_unequip_depleted(db, user_id, "sapling", player)
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "You plant the sapling.")
+            content = render_grid(grid, player, "You dig up the sapling. The ground turns to dirt.")
 
         elif terrain == "path" and "seed" in hand_items:
             # Plant seed → seedling
@@ -8708,6 +8805,18 @@ async def handle_interact(
                 await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
+
+        elif terrain == "ancient_sapling" and "watering_can" in hand_items:
+            # Water ancient sapling → dense_forest
+            if player.watering_can_uses <= 0:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+            else:
+                await set_tile_override(db, wx, wy, "dense_forest")
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🌳 You water the ancient sapling. It grows into a mighty tree!")
 
         elif terrain == "short_grass" and "watering_can" in hand_items:
             # Water short grass → grass
@@ -8777,17 +8886,17 @@ async def handle_interact(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "🌱 You plant a seed in the farmland.")
 
-        elif terrain in ("grass", "plains") and "hoe" in hand_items:
-            # Hoe creates farmland from grass/plains (no shovel required)
+        elif terrain in ("grass", "plains", "dirt") and "hoe" in hand_items:
+            # Hoe creates farmland from grass, plains, or dug dirt
             await set_tile_override(db, wx, wy, "farmland")
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "🟤 You till the soil into farmland.")
 
-        elif terrain in ("grass", "plains", "sand") and "shovel" in hand_items and terrain != "sapling":
-            # Create farmland from soft terrain
-            await set_tile_override(db, wx, wy, "farmland")
+        elif terrain in ("grass", "plains", "sand", "short_grass") and "shovel" in hand_items:
+            # Dig up soft terrain → dirt patch
+            await set_tile_override(db, wx, wy, "dirt")
             grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "🟤 You dig up the soil and create farmland.")
+            content = render_grid(grid, player, "🟤 You dig up the soil and create a dirt patch.")
 
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             food_id = "cooked_fish" if "cooked_fish" in hand_items else "fish"

@@ -123,6 +123,7 @@ from dwarf_explorer.ui.game_view import (
     handle_plant,
     handle_plant_choice,
     handle_plant_cancel,
+    handle_plant_overworld_choice,
     handle_puzzle_move,
     handle_puzzle_reset,
     handle_puzzle_close,
@@ -700,6 +701,9 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             elif act.startswith("plant_choice_"):
                 seed_type = act[len("plant_choice_"):]
                 await handle_plant_choice(interaction, gid, uid, seed_type)
+            elif act.startswith("plant_ow_"):
+                item_id = act[len("plant_ow_"):]
+                await handle_plant_overworld_choice(interaction, gid, uid, item_id)
             # Farmer shop
             elif act.startswith("farmer_buy_"):
                 item_id = act[len("farmer_buy_"):]

@@ -48,9 +48,11 @@ TERRAIN_EMOJI = {
     "crop_sprout":  "\U0001F33F",    # 🌿 herb
     "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
-    "sapling":     "\U0001F331",    # 🌱
-    "short_grass": "\U0001F7E9",    # 🟩  short grass
-    "seedling":    "\U0001FAB4",    # 🪴
+    "sapling":          "\U0001F331",    # 🌱
+    "ancient_sapling":  "\U0001F333",    # 🌳 planted ancient sapling (overworld)
+    "short_grass":      "\U0001F7E9",    # 🟩  short grass
+    "seedling":         "\U0001FAB4",    # 🪴
+    "dirt":             "\U0001F7E4",    # 🟤 dug soil (shovel); hoe turns it into farmland
 }
 
 STRUCTURE_EMOJI = {
@@ -254,7 +256,7 @@ FARM_CROPS: dict[str, dict] = {
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
-    "sapling", "short_grass", "seedling",
+    "sapling", "ancient_sapling", "short_grass", "seedling", "dirt",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
@@ -1171,7 +1173,6 @@ ITEM_EQUIP_SLOTS = {
     "torch":        "hand",
     "watering_can": "hand",
     "seed":         "hand",
-    "sapling":      "hand",
     "shovel":       "hand",
     "pickaxe":      "hand",
     "slingshot":    "hand",
@@ -1212,7 +1213,7 @@ ITEM_EQUIP_SLOTS = {
 }
 
 # Items that occupy both hand slots
-TWO_HANDED_ITEMS = {"shovel"}
+TWO_HANDED_ITEMS: set[str] = set()  # shovel is now 1-handed
 
 # Equipment stat bonuses: {item_id: {stat: bonus}}
 EQUIP_BONUSES = {
@@ -1226,7 +1227,6 @@ EQUIP_BONUSES = {
     "shovel":       {},
     "watering_can": {},
     "seed":         {},
-    "sapling":      {},
     "small_pouch":       {},
     "medium_pouch":      {},
     "large_pouch":       {},
