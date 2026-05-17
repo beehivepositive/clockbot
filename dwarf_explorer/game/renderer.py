@@ -548,6 +548,7 @@ def render_inventory(
     gold: int = 0,
     cursor_mode: str = "inventory",
     equipped_cursor: int = 0,
+    watering_can_uses: int = 0,
 ) -> str:
     """Render gold + equipped row + inventory grid as text."""
     total_slots = inv_rows * inv_cols
@@ -629,6 +630,9 @@ def render_inventory(
             stat_parts.append(f"+{stats['defense']} def")
         if "attack" in stats:
             stat_parts.append(f"+{stats['attack']} atk")
+        # Watering can: show uses remaining
+        if item_id == "watering_can":
+            stat_parts.append(f"{watering_can_uses}/9 uses")
         stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
         lines.append(
             f"Cursor: **{display_name}** ×{item['quantity']}{stat_str}{sel_marker}"

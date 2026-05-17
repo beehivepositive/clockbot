@@ -3009,28 +3009,7 @@ def _compute_context_labels(
         action_label, action_enabled = "🪵 Mill", True
     elif "b_pet" in adj_terrains and not action_enabled:
         action_label, action_enabled = "🐱 Pet", True
-    else:
-        # Fishing and/or watering can fill (can show simultaneously when both equipped)
-        _water_adj = adj_terrains & {"river", "bridge", "shallow_water", "deep_water",
-                                     "vil_well", "vil_fountain"}
-        has_rod = "fishing_rod" in hand_items
-        has_can = "watering_can" in hand_items
-        from dwarf_explorer.config import ITEM_EMOJI as _IE_wc
-        _wc_emoji = _IE_wc.get("watering_can", "🪣")
-
-        if has_rod and has_can and _water_adj:
-            # Both equipped + adjacent water — show two buttons, main hand first
-            if player.hand_1 == "fishing_rod":
-                action_label, action_enabled = "🎣 Fish", True
-                action2_label, action2_enabled, action2_id = _wc_emoji, True, "fill_watering_can"
-            else:
-                # hand_1 = watering_can → fill is primary, fish is secondary
-                action_label, action_enabled = _wc_emoji, True
-                action2_label, action2_enabled, action2_id = "🎣 Fish", True, "fish_secondary"
-        elif has_rod and _water_adj:
-            action_label, action_enabled = "🎣 Fish", True
-        elif has_can and _water_adj:
-            action_label, action_enabled = _wc_emoji, True
+    # Fishing rod and watering can fill are now handled by H1/H2 hand buttons.
 
     if not action_enabled and center_tile and not player.in_house and "house_kit" in hand_items:
         # Offer to build a house on the current tile if house_kit is equipped and tile is buildable
@@ -3155,12 +3134,23 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                 _WATER_TILES = {"sapling", "ancient_sapling", "short_grass", "seedling",
                                 "crop_planted", "crop_sprout"}
                 _SHOVEL_TILES = {"sapling", "dirt", "grass", "plains", "sand", "short_grass"}
+                _FILL_WATER = {"river", "bridge", "shallow_water", "deep_water",
+                               "vil_well", "vil_fountain"}
+                # Check all 4 adjacent grid cells for a water source
+                _vc4 = 4
+                _adj_water = any(
+                    0 <= _vc4 + _ro < len(grid)
+                    and 0 <= _vc4 + _co < len(grid[_vc4 + _ro])
+                    and grid[_vc4 + _ro][_vc4 + _co].terrain in _FILL_WATER
+                    for _ro, _co in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                )
 
                 def _tool_action_enabled(item: str | None) -> bool:
                     if not item:
                         return False
                     return bool(
-                        (item == "watering_can" and _t in _WATER_TILES)
+                        (item == "watering_can" and (_t in _WATER_TILES or _adj_water))
+                        or (item == "fishing_rod" and _adj_water)
                         or (item == "shovel" and _t in _SHOVEL_TILES)
                         or (item == "hoe" and _t in ("grass", "plains", "dirt"))
                         or (item == "axe" and _t in ("forest", "dense_forest"))
@@ -9189,8 +9179,50 @@ async def _execute_tool_action(
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "💧 The crop needs more time before the next watering (5 min cooldown).")
         else:
+            # Check adjacent tiles for a water source to fill from
+            _FILL_SRC = {"river", "bridge", "shallow_water", "deep_water",
+                         "vil_well", "vil_fountain"}
+            _can_fill = False
+            for _ddx, _ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                _at = await load_single_tile(wx + _ddx, wy + _ddy, seed, db)
+                if _at.terrain in _FILL_SRC:
+                    _can_fill = True
+                    break
+            if _can_fill:
+                player.watering_can_uses = 9
+                await db.execute(
+                    "UPDATE players SET watering_can_uses=9 WHERE user_id=?", (user_id,)
+                )
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "\U0001FAA3 You fill the watering can. **(9/9)**")
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "\U0001FAA3 Nothing to water here.")
+
+    # ── Fishing rod ───────────────────────────────────────────────────────────
+    elif tool == "fishing_rod":
+        _FISH_SRC = {"river", "bridge", "shallow_water", "deep_water"}
+        _fish_water = False
+        for _ddx, _ddy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            _at = await load_single_tile(wx + _ddx, wy + _ddy, seed, db)
+            if _at.terrain in _FISH_SRC:
+                _fish_water = True
+                break
+        if not _fish_water:
             grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "💧 Nothing to water here.")
+            content = render_grid(grid, player, "\U0001F3A3 No water nearby to fish from.")
+        else:
+            roll = _random.random()
+            if roll < 0.50:
+                await add_to_inventory(db, user_id, "fish", 1)
+                msg = "\U0001F3A3 You cast your line... and reel in a **fish**!"
+            elif roll < 0.51:
+                await add_to_inventory(db, user_id, "map_fragment", 1)
+                msg = "\U0001F3A3 You reel in something unusual — a **map fragment**!"
+            else:
+                msg = "\U0001F3A3 You cast your line... the fish got away."
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, msg)
 
     # ── Shovel ────────────────────────────────────────────────────────────────
     elif tool == "shovel":
@@ -11030,6 +11062,7 @@ async def handle_inventory(
         "cursor_mode": "inventory", "equipped_cursor": 0,
         "move_mode": False, "move_origin": None,
         "nav_target": prev_nav_target,
+        "watering_can_uses": player.watering_can_uses,
     }
     items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
@@ -11157,7 +11190,7 @@ async def handle_inv_down(
 
 def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict,
               inv_rows: int, inv_cols: int, state: dict, msg_suffix: str = "",
-              gold: int = 0) -> tuple[str, "InventoryView"]:
+              gold: int = 0, watering_can_uses: int = 0) -> tuple[str, "InventoryView"]:
     """Helper: build inventory content + view with consistent state."""
     from dwarf_explorer.game.renderer import _EQUIP_SLOT_ORDER
     selections = state.get("selections", {})
@@ -11194,9 +11227,11 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
 
     move_qty = state.get("move_qty", 1)
 
+    _wcu = watering_can_uses or state.get("watering_can_uses", 0)
     content = render_inventory(
         items, sel, equipped, label, inv_rows, inv_cols, selections,
         gold=gold, cursor_mode=cursor_mode, equipped_cursor=equipped_cursor,
+        watering_can_uses=_wcu,
     )
     if move_mode:
         # Show move qty and total in move mode suffix
