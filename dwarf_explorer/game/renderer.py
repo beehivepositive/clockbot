@@ -448,6 +448,57 @@ def _build_slot_map(visible_items: list[dict], total_slots: int, inv_cols: int =
     return result
 
 
+def _render_canoe_aware_slots(
+    slot_map: dict[int, dict], total_slots: int, inv_cols: int,
+    selected: int, cursor_active: bool,
+    selections: dict | None = None,
+) -> tuple[list[str], set[int]]:
+    """Build a list of slot-cell strings, rendering same-row canoe_left+
+    canoe_right pairs as a flush combined emoji with the cursor sitting
+    immediately right of canoe_right.
+
+    Returns (slot_strings, canoe_right_positions) so callers that need to
+    detect "cursor is on a canoe pair" for the detail line can look it up.
+    """
+    selections = selections or {}
+    canoe_right_skip: set[int] = set()
+    for i in range(total_slots - 1):
+        left = slot_map.get(i)
+        right = slot_map.get(i + 1)
+        if (left is not None and left.get("item_id") == "canoe_left"
+                and right is not None and right.get("item_id") == "canoe_right"
+                and i // inv_cols == (i + 1) // inv_cols):
+            canoe_right_skip.add(i + 1)
+
+    slots: list[str] = []
+    for i in range(total_slots):
+        item = slot_map.get(i)
+        if item is not None:
+            item_id = item["item_id"]
+            qty = item["quantity"]
+            is_selected = item_id in selections
+
+            if item_id == "canoe_left" and (i + 1) in canoe_right_skip:
+                left_e = _item_emoji("canoe_left")
+                slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
+            elif item_id == "canoe_right" and i in canoe_right_skip:
+                right_e = _item_emoji("canoe_right")
+                cursor_on = cursor_active and i == selected
+                if cursor_on:
+                    slots.append(f"{right_e}{_CUR}{_PAD}")
+                else:
+                    slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
+            else:
+                cursor_on = cursor_active and i == selected
+                slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
+        else:
+            if i == selected and cursor_active:
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}")
+            else:
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_PAD}")
+    return slots, canoe_right_skip
+
+
 def render_inventory(
     items: list[dict],
     selected: int,
@@ -495,52 +546,11 @@ def render_inventory(
     # --- Inventory grid (position-aware: slot_index = grid cell index) ---
     visible_items = [it for it in items if it["item_id"] != "gold_coin"]
     slot_map = _build_slot_map(visible_items, total_slots, inv_cols)
-
-    slots: list[str] = []
-    _canoe_right_skip: set[int] = set()
-    # Pre-pass: identify canoe pair right-halves — used ONLY for the detail line
-    # below the grid (so it shows "Canoe" instead of "canoe right").
-    # Each canoe half is rendered as a normal individual slot in the main loop
-    # so that every row stays exactly 7×4 chars wide and columns align perfectly.
-    for i in range(total_slots - 1):
-        left = slot_map.get(i)
-        right = slot_map.get(i + 1)
-        if (left is not None and left["item_id"] == "canoe_left"
-                and right is not None and right["item_id"] == "canoe_right"
-                and i // inv_cols == (i + 1) // inv_cols):   # same row
-            _canoe_right_skip.add(i + 1)
-
-    for i in range(total_slots):
-        item = slot_map.get(i)
-        if item is not None:
-            item_id = item["item_id"]
-            qty = item["quantity"]
-            is_selected = item_id in selections
-
-            if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
-                # Left half — no cursor ever (nav always redirects to canoe_right).
-                left_e = _item_emoji("canoe_left")
-                slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
-
-            elif item_id == "canoe_right" and i in _canoe_right_skip:
-                # Right half — cursor to the right of this emoji.
-                right_e = _item_emoji("canoe_right")
-                cursor_on = cursor_mode == "inventory" and i == selected
-                if cursor_on:
-                    # Canoe is double-wide; add 1 char of pad after cursor so
-                    # the next row's items don't crowd it.
-                    slots.append(f"{right_e}{_CUR}{_PAD}")
-                else:
-                    slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
-
-            else:
-                cursor_on = (i == selected) and cursor_mode == "inventory"
-                slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
-        else:
-            if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}")  # cursor right of emoji, no trailing pad
-            else:
-                slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_PAD}")
+    slots, _canoe_right_skip = _render_canoe_aware_slots(
+        slot_map, total_slots, inv_cols,
+        selected=selected, cursor_active=(cursor_mode == "inventory"),
+        selections=selections,
+    )
 
     for row in range(inv_rows):
         lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
@@ -640,19 +650,11 @@ def render_bank(
         # --- Inventory grid (position-aware) ---
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
         total_slots = inv_rows * inv_cols
-        slot_map = _build_slot_map(visible, total_slots)
-        slots: list[str] = []
-        for i in range(total_slots):
-            item = slot_map.get(i)
-            if item is not None:
-                slots.append(_fmt_slot(item["item_id"], item["quantity"],
-                                       cursor_on=(cursor_mode == "inventory" and i == selected),
-                                       is_selected=False))
-            else:
-                if cursor_mode == "inventory" and i == selected:
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_CUR}")
-                else:
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD * 2}")
+        slot_map = _build_slot_map(visible, total_slots, inv_cols)
+        slots, _ = _render_canoe_aware_slots(
+            slot_map, total_slots, inv_cols,
+            selected=selected, cursor_active=(cursor_mode == "inventory"),
+        )
         for row in range(inv_rows):
             lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
 
@@ -688,19 +690,11 @@ def render_bank(
             lines.append(f"Cursor: 🪙 **Bank Gold** ×{bank_gold}  |  📥 Withdraw qty: **{qty}**")
         lines.append("")
 
-        slot_map = _build_slot_map(vault_items, BANK_TOTAL)
-        slots = []
-        for i in range(BANK_TOTAL):
-            item = slot_map.get(i)
-            if item is not None:
-                slots.append(_fmt_slot(item["item_id"], item["quantity"],
-                                       cursor_on=(i == selected and cursor_mode != "gold"),
-                                       is_selected=False))
-            else:
-                if i == selected and cursor_mode != "gold":
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_CUR}")
-                else:
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD * 2}")
+        slot_map = _build_slot_map(vault_items, BANK_TOTAL, BANK_COLS)
+        slots, _ = _render_canoe_aware_slots(
+            slot_map, BANK_TOTAL, BANK_COLS,
+            selected=selected, cursor_active=(cursor_mode != "gold"),
+        )
         for row in range(BANK_ROWS):
             lines.append("".join(slots[row * BANK_COLS: row * BANK_COLS + BANK_COLS]))
 
@@ -1001,18 +995,11 @@ def render_shop(
         # Inventory grid
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
         total_slots = inv_rows * inv_cols
-        slot_map = _build_slot_map(visible, total_slots)
-        slots: list[str] = []
-        for i in range(total_slots):
-            item = slot_map.get(i)
-            if item is not None:
-                slots.append(_fmt_slot(item["item_id"], item["quantity"],
-                                       cursor_on=(i == selected), is_selected=False))
-            else:
-                if i == selected:
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_CUR}")
-                else:
-                    slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD * 2}")
+        slot_map = _build_slot_map(visible, total_slots, inv_cols)
+        slots, _ = _render_canoe_aware_slots(
+            slot_map, total_slots, inv_cols,
+            selected=selected, cursor_active=True,
+        )
         for row in range(inv_rows):
             lines.append("".join(slots[row * inv_cols: row * inv_cols + inv_cols]))
 

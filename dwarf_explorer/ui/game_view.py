@@ -12605,6 +12605,10 @@ async def handle_bank_deposit(
         item = slot_map.get(sel)
         if item is None:
             suffix = "\n*(Empty slot)*"
+        elif item["item_id"] in ("canoe_left", "canoe_right"):
+            # Canoes deposit as a pair (both halves at once, 1 canoe per click)
+            ok = await bank_deposit(db, user_id, item["item_id"], 1)
+            suffix = "\n*Deposited 1× Canoe.*" if ok else "\n*(Need a full canoe pair in inventory)*"
         else:
             actual_qty = min(qty, item["quantity"])
             # Find the exact inventory row for this slot and remove directly
@@ -12711,8 +12715,13 @@ async def handle_bank_withdraw(
     player_items = await get_inventory(db, user_id)
     bank_items_new = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
-    suffix = (f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
-              if ok else "\n*Withdraw failed.*")
+    if ok:
+        if item["item_id"] in ("canoe_left", "canoe_right"):
+            suffix = f"\n*Withdrew {actual_qty}× Canoe.*"
+        else:
+            suffix = f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
+    else:
+        suffix = "\n*Withdraw failed.*"
     new_state = {**state, "qty": 1}
     _ui_state[user_id] = new_state
     content = _bank_render(new_state, player_items, bank_items_new, equipped, player.gold, inv_rows, inv_cols) + suffix
