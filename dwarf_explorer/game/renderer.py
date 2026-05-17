@@ -330,6 +330,7 @@ _ITEM_SLOT_EMOJI = {
     "canoe_left":        "\U0001F6F6",       # 🛶 left half (fallback)
     "canoe_right":       "\U0001F6F6",       # 🛶 right half (fallback)
     "canoe_whole":       "\U0001F6F6",       # 🛶 whole canoe / player-on-water icon (fallback)
+    "canoe":             "\U0001F6F6",       # 🛶 single canoe item (equipped row); overridden with canoe_whole
 }
 _EMPTY_SLOT = "\u2B1C"   # ⬜
 
@@ -405,28 +406,55 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
 def _build_slot_map(visible_items: list[dict], total_slots: int, inv_cols: int = 7) -> dict[int, dict]:
     """Map grid cell index → item using slot_index as the grid position.
 
+    Each canoe item ("canoe") in storage occupies TWO adjacent slots in the
+    visual grid. At map-build time we expand each canoe row into a virtual
+    canoe_left at slot N and canoe_right at slot N+1, so all downstream
+    rendering/navigation code can keep treating canoes as two cells without
+    knowing about the underlying single-item storage.
+
     Items whose slot_index falls outside [0, total_slots) are packed into
     the nearest free cell at the end so they are never invisible.
 
-    Keeps canoe pairs (canoe_left + canoe_right at adjacent slots) on the
-    same display row. If canoe_left lands at the last column of a row and
-    canoe_right at the first column of the next row, a 3-way rotation
-    moves the pair to the start of the next row and bumps the item that
-    was at next-row col 1 back into the freed last-column slot. This keeps
-    both halves visually together without leaving phantom empty slots.
+    Row-keep pass: if a canoe lands with canoe_left at the last column of a
+    row, rotate three slots so the pair sits together at the start of the
+    next row, bumping any item that was there back into the freed slot.
     """
     result: dict[int, dict] = {}
     overflow: list[dict] = []
+
+    def _expand_canoe(it: dict, idx: int) -> None:
+        result[idx] = {
+            "item_id": "canoe_left",
+            "quantity": 1,
+            "slot_index": idx,
+            "_canoe_origin": idx,
+        }
+        if idx + 1 < total_slots:
+            result[idx + 1] = {
+                "item_id": "canoe_right",
+                "quantity": 1,
+                "slot_index": idx + 1,
+                "_canoe_origin": idx,
+            }
+
     for it in visible_items:
         idx = it["slot_index"]
         if 0 <= idx < total_slots:
-            result[idx] = it
+            if it["item_id"] == "canoe":
+                _expand_canoe(it, idx)
+            else:
+                result[idx] = it
         else:
             overflow.append(it)
     for it in overflow:
         for i in range(total_slots - 1, -1, -1):
             if i not in result:
-                result[i] = it
+                if it["item_id"] == "canoe" and (i + 1 < total_slots) and (i + 1) not in result:
+                    _expand_canoe(it, i)
+                elif it["item_id"] != "canoe":
+                    result[i] = it
+                else:
+                    continue
                 break
 
     # Canoe pair row-keeping pass
@@ -438,8 +466,11 @@ def _build_slot_map(visible_items: list[dict], total_slots: int, inv_cols: int =
                 and (i % inv_cols) == inv_cols - 1):
             # canoe_left at last column → 3-way rotate forward by 1.
             displaced = result.get(i + 2)
-            result[i + 1] = left
-            result[i + 2] = right
+            new_origin = i + 1
+            shifted_left = {**left, "slot_index": i + 1, "_canoe_origin": new_origin}
+            shifted_right = {**right, "slot_index": i + 2, "_canoe_origin": new_origin}
+            result[i + 1] = shifted_left
+            result[i + 2] = shifted_right
             if displaced is not None:
                 result[i] = displaced
             else:

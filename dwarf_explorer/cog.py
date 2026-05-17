@@ -75,10 +75,9 @@ async def _ensure_admin_resources(db, player_id: int) -> None:
             "UPDATE inventory SET quantity=81 WHERE id=?",
             (existing["id"],)
         )
-    # Give admin a 2-piece canoe for testing if they don't have one
+    # Give admin a canoe for testing if they don't have one
     canoe_row = await db.fetch_one(
-        "SELECT COUNT(*) as cnt FROM inventory "
-        "WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right')",
+        "SELECT COUNT(*) as cnt FROM inventory WHERE user_id=? AND item_id='canoe'",
         (player_id,)
     )
     if not canoe_row or canoe_row["cnt"] == 0:

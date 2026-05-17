@@ -652,10 +652,11 @@ async def create_drop_box(
 
 
 async def add_canoe_pair(db: Database, user_id: int, inv_cols: int = 7) -> None:
-    """Insert a canoe_left + canoe_right pair into two adjacent inventory slots
-    that share the same display row. If the natural next slot would land at the
-    rightmost column (splitting the pair across rows), bump both pieces forward
-    to the start of the following row so they remain visually combined.
+    """Insert a single 'canoe' inventory row. The canoe is one item that
+    visually occupies two adjacent slots (rendered as canoe_left + canoe_right).
+    If the chosen slot would put the canoe's left half at the rightmost column
+    (splitting the pair across rows), bump to the start of the next row.
+    Each canoe always lives in its own row — canoes do not stack.
     """
     row_obj = await db.fetch_one(
         "SELECT COALESCE(MAX(slot_index)+1, 0) AS nxt FROM inventory WHERE user_id=?",
@@ -663,15 +664,10 @@ async def add_canoe_pair(db: Database, user_id: int, inv_cols: int = 7) -> None:
     )
     nxt = row_obj["nxt"] if row_obj else 0
     if nxt % inv_cols == inv_cols - 1:
-        # Left piece would be at the last column; bump to start of next row
         nxt = (nxt // inv_cols + 1) * inv_cols
     await db.execute(
         "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
-        (user_id, "canoe_left", nxt),
-    )
-    await db.execute(
-        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
-        (user_id, "canoe_right", nxt + 1),
+        (user_id, "canoe", nxt),
     )
 
 
@@ -682,45 +678,29 @@ async def pickup_drop_box(
 
     Returns list of (item_id, qty) actually picked up.
     Gold coins go directly to players.gold rather than inventory.
-    Canoe halves are picked up together as a paired item so they land at
-    adjacent slots on the same display row.
+    Canoes are stored as a single 'canoe' item; each one is added via
+    add_canoe_pair so it lands as an adjacent pair of slots on the same row.
     """
     items = await db.fetch_all(
         "SELECT id, item_id, quantity FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
         (world_x, world_y),
     )
-    # Separate canoe halves so we can pair-place them. Order matters: canoe_left
-    # must precede canoe_right in inventory slots.
-    canoe_left_rows = [r for r in items if r["item_id"] == "canoe_left"]
-    canoe_right_rows = [r for r in items if r["item_id"] == "canoe_right"]
-    other_rows = [r for r in items if r["item_id"] not in ("canoe_left", "canoe_right")]
-
     picked = []
-    for row in other_rows:
-        if row["item_id"] == "gold_coin":
-            # Gold goes directly to the player's gold total, not inventory
+    for row in items:
+        item_id = row["item_id"]
+        qty = row["quantity"]
+        if item_id == "gold_coin":
             await db.execute(
                 "UPDATE players SET gold=gold+? WHERE user_id=?",
-                (row["quantity"], user_id),
+                (qty, user_id),
             )
+        elif item_id == "canoe":
+            for _ in range(qty):
+                await add_canoe_pair(db, user_id)
         else:
-            await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+            await add_to_inventory(db, user_id, item_id, qty)
         await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
-        picked.append((row["item_id"], row["quantity"]))
-
-    # Pair-pickup: for each matched canoe_left/canoe_right pair, place them together.
-    pair_count = min(len(canoe_left_rows), len(canoe_right_rows))
-    for i in range(pair_count):
-        await add_canoe_pair(db, user_id)
-        await db.execute("DELETE FROM ground_items WHERE id=?", (canoe_left_rows[i]["id"],))
-        await db.execute("DELETE FROM ground_items WHERE id=?", (canoe_right_rows[i]["id"],))
-        picked.append(("canoe_left", 1))
-        picked.append(("canoe_right", 1))
-    # Stragglers (orphan half — shouldn't normally happen) fall back to normal add
-    for row in canoe_left_rows[pair_count:] + canoe_right_rows[pair_count:]:
-        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
-        await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
-        picked.append((row["item_id"], row["quantity"]))
+        picked.append((item_id, qty))
     # Remove tile_override if no drop items remain
     remaining = await db.fetch_one(
         "SELECT COUNT(*) AS cnt FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
@@ -829,25 +809,19 @@ async def get_bank_items(db: Database, user_id: int) -> list[dict]:
         "SELECT item_id, quantity FROM bank_items WHERE user_id = ? ORDER BY rowid",
         (user_id,),
     )
-    # Canoes are stored as stacked quantities in bank_items but must display as
-    # individual paired slots (canoe_left then canoe_right, one of each per pair).
-    # Extract them, then emit alternating qty=1 entries at the END of the grid so
-    # _build_slot_map's row-keep pass can pair them.
-    canoe_left_qty = 0
-    canoe_right_qty = 0
-    other_rows: list[dict] = []
-    for r in rows:
-        if r["item_id"] == "canoe_left":
-            canoe_left_qty += r["quantity"]
-        elif r["item_id"] == "canoe_right":
-            canoe_right_qty += r["quantity"]
-        else:
-            other_rows.append(r)
-
-    # Split oversized non-canoe stacks into MAX_STACK_SIZE chunks; gold never splits.
+    # Split oversized stacks into MAX_STACK_SIZE chunks so the vault grid respects limits.
+    # gold_coin is never split — it has no cap in the bank.
+    # Canoes are stored as a single 'canoe' item but displayed as a pair of slots
+    # (canoe_left + canoe_right) in the vault grid. Emit one 'canoe' entry per
+    # canoe; _build_slot_map expands each into the two-cell visual.
+    BANK_COLS = 7  # vault grid width — must match render_bank
     result: list[dict] = []
+    canoe_count = 0
     slot_idx = 0
-    for r in other_rows:
+    for r in rows:
+        if r["item_id"] == "canoe":
+            canoe_count += r["quantity"]
+            continue
         if r["item_id"] == "gold_coin":
             result.append({"item_id": "gold_coin", "quantity": r["quantity"], "slot_index": slot_idx})
             slot_idx += 1
@@ -858,51 +832,18 @@ async def get_bank_items(db: Database, user_id: int) -> list[dict]:
             result.append({"item_id": r["item_id"], "quantity": stack_qty, "slot_index": slot_idx})
             remaining -= stack_qty
             slot_idx += 1
-
-    # Emit canoe pairs (left+right) at the end, qty=1 each, adjacent slots.
-    pair_count = min(canoe_left_qty, canoe_right_qty)
-    for _ in range(pair_count):
-        result.append({"item_id": "canoe_left",  "quantity": 1, "slot_index": slot_idx})
-        slot_idx += 1
-        result.append({"item_id": "canoe_right", "quantity": 1, "slot_index": slot_idx})
-        slot_idx += 1
-    # Orphan halves (shouldn't normally happen) — emit as standalone qty=1 entries
-    for _ in range(canoe_left_qty - pair_count):
-        result.append({"item_id": "canoe_left", "quantity": 1, "slot_index": slot_idx})
-        slot_idx += 1
-    for _ in range(canoe_right_qty - pair_count):
-        result.append({"item_id": "canoe_right", "quantity": 1, "slot_index": slot_idx})
-        slot_idx += 1
+    # Append canoes at the end, each occupying 2 slots. If the next slot would
+    # split a canoe across rows (left at last col), skip the last col so the
+    # canoe lives on the next row's first two cells.
+    for _ in range(canoe_count):
+        if slot_idx % BANK_COLS == BANK_COLS - 1:
+            slot_idx += 1  # leave the rightmost cell empty
+        result.append({"item_id": "canoe", "quantity": 1, "slot_index": slot_idx})
+        slot_idx += 2
     return result
 
 
 async def bank_deposit(db: Database, user_id: int, item_id: str, quantity: int = 1) -> bool:
-    # Canoes deposit as pairs: depositing canoe_left or canoe_right deposits BOTH
-    # halves at the same time. Quantity counts pairs (1 = 1 canoe = 1 of each half).
-    if item_id in ("canoe_left", "canoe_right"):
-        # Require both halves present in inventory
-        left_have = await db.fetch_one(
-            "SELECT COALESCE(SUM(quantity),0) AS n FROM inventory WHERE user_id=? AND item_id='canoe_left'",
-            (user_id,),
-        )
-        right_have = await db.fetch_one(
-            "SELECT COALESCE(SUM(quantity),0) AS n FROM inventory WHERE user_id=? AND item_id='canoe_right'",
-            (user_id,),
-        )
-        pairs_have = min(left_have["n"] if left_have else 0,
-                         right_have["n"] if right_have else 0)
-        if pairs_have < quantity:
-            return False
-        await remove_from_inventory(db, user_id, "canoe_left", quantity)
-        await remove_from_inventory(db, user_id, "canoe_right", quantity)
-        for half in ("canoe_left", "canoe_right"):
-            await db.execute(
-                "INSERT INTO bank_items (user_id, item_id, quantity) VALUES (?, ?, ?) "
-                "ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + ?",
-                (user_id, half, quantity, quantity),
-            )
-        return True
-
     removed = await remove_from_inventory(db, user_id, item_id, quantity)
     if not removed:
         return False
@@ -916,42 +857,6 @@ async def bank_deposit(db: Database, user_id: int, item_id: str, quantity: int =
 
 async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int = 1,
                         gold_cap: int | None = None) -> bool:
-    # Canoes withdraw as pairs: requesting canoe_left or canoe_right withdraws BOTH
-    # halves and places them as an adjacent pair in inventory via add_canoe_pair.
-    # Quantity counts pairs.
-    if item_id in ("canoe_left", "canoe_right"):
-        left_row = await db.fetch_one(
-            "SELECT quantity FROM bank_items WHERE user_id=? AND item_id='canoe_left'",
-            (user_id,),
-        )
-        right_row = await db.fetch_one(
-            "SELECT quantity FROM bank_items WHERE user_id=? AND item_id='canoe_right'",
-            (user_id,),
-        )
-        pairs_have = min(left_row["quantity"] if left_row else 0,
-                         right_row["quantity"] if right_row else 0)
-        if pairs_have < quantity:
-            return False
-        for _ in range(quantity):
-            for half in ("canoe_left", "canoe_right"):
-                cur_row = await db.fetch_one(
-                    "SELECT quantity FROM bank_items WHERE user_id=? AND item_id=?",
-                    (user_id, half),
-                )
-                new_qty = (cur_row["quantity"] if cur_row else 0) - 1
-                if new_qty <= 0:
-                    await db.execute(
-                        "DELETE FROM bank_items WHERE user_id=? AND item_id=?",
-                        (user_id, half),
-                    )
-                else:
-                    await db.execute(
-                        "UPDATE bank_items SET quantity=? WHERE user_id=? AND item_id=?",
-                        (new_qty, user_id, half),
-                    )
-            await add_canoe_pair(db, user_id)
-        return True
-
     row = await db.fetch_one(
         "SELECT quantity FROM bank_items WHERE user_id = ? AND item_id = ?",
         (user_id, item_id),
@@ -969,7 +874,9 @@ async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int 
             "UPDATE bank_items SET quantity = ? WHERE user_id = ? AND item_id = ?",
             (new_qty, user_id, item_id),
         )
-    # Gold goes back to players.gold, not inventory
+    # Gold goes back to players.gold, not inventory.
+    # Canoes are stored as a single 'canoe' item but must land in inventory as
+    # an adjacent slot pair, so route through add_canoe_pair.
     if item_id == "gold_coin":
         if gold_cap is not None:
             await db.execute(
@@ -981,6 +888,9 @@ async def bank_withdraw(db: Database, user_id: int, item_id: str, quantity: int 
                 "UPDATE players SET gold = gold + ? WHERE user_id = ?",
                 (quantity, user_id),
             )
+    elif item_id == "canoe":
+        for _ in range(quantity):
+            await add_canoe_pair(db, user_id)
     else:
         await add_to_inventory(db, user_id, item_id, quantity)
     return True

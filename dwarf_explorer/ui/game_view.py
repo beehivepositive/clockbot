@@ -147,14 +147,24 @@ _CUSTOM_EMOJI_RE = _re.compile(r"^<a?:(\w+):(\d+)>$")
 
 
 def _cursor_item(visible: list[dict], slot_pos: int) -> dict | None:
-    """Return the inventory item whose slot_index == slot_pos (grid cell), or None."""
-    return next((it for it in visible if it["slot_index"] == slot_pos), None)
+    """Return the inventory item whose slot_index == slot_pos (grid cell), or None.
+
+    A 'canoe' item occupies two adjacent slots (N and N+1), so if there's no
+    item at slot_pos but the previous slot holds a canoe, return that canoe.
+    """
+    item = next((it for it in visible if it["slot_index"] == slot_pos), None)
+    if item is not None:
+        return item
+    prev = next((it for it in visible if it["slot_index"] == slot_pos - 1), None)
+    if prev is not None and prev["item_id"] == "canoe":
+        return prev
+    return None
 
 
 async def _player_has_canoe(db, user_id: int) -> bool:
-    """Return True if the player has any canoe piece (or legacy canoe) in inventory."""
+    """Return True if the player has a canoe in inventory."""
     row = await db.fetch_one(
-        "SELECT 1 FROM inventory WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right') LIMIT 1",
+        "SELECT 1 FROM inventory WHERE user_id=? AND item_id='canoe' LIMIT 1",
         (user_id,),
     )
     return bool(row)
@@ -317,14 +327,13 @@ def _embed(content: str) -> discord.Embed:
 
 
 def _pickup_desc(results: list[tuple[str, int]]) -> str:
-    """Build a human-readable pickup description, collapsing canoe halves into 'canoe'."""
-    canoe_count = sum(qty for iid, qty in results if iid in ("canoe_left", "canoe_right")) // 2
-    other = [(iid, qty) for iid, qty in results if iid not in ("canoe_left", "canoe_right")]
+    """Build a human-readable pickup description."""
     parts = []
-    if canoe_count:
-        parts.append(f"{canoe_count}× canoe")
-    for iid, qty in other:
-        parts.append(f"{qty}× {iid.replace('_', ' ')}")
+    for iid, qty in results:
+        if iid == "canoe":
+            parts.append(f"{qty}× canoe")
+        else:
+            parts.append(f"{qty}× {iid.replace('_', ' ')}")
     return ", ".join(parts)
 
 
@@ -2734,7 +2743,7 @@ def _compute_context_labels(
             and not player.in_ocean and not player.in_canoe):
         _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
         # Accept inventory presence (has_canoe), equipped hand slot, or legacy item
-        _has_canoe = has_canoe or "canoe" in hand_items or "canoe_left" in hand_items
+        _has_canoe = has_canoe or "canoe" in hand_items
         if _has_canoe:
             for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
                 r, c = vc + ro, vc + co
@@ -10212,7 +10221,11 @@ async def handle_inv_equip(
     existing_in_slot = equipped.get(slot_type)
     if existing_in_slot:
         # Return old equipped item to inventory first
-        await add_to_inventory(db, user_id, existing_in_slot, 1)
+        if existing_in_slot == "canoe":
+            from dwarf_explorer.database.repositories import add_canoe_pair as _acp
+            await _acp(db, user_id)
+        else:
+            await add_to_inventory(db, user_id, existing_in_slot, 1)
 
     # Resolve hand slot
     if slot_type == "hand":
@@ -10321,7 +10334,12 @@ async def handle_inv_unequip(
     else:
         await unequip_item(db, user_id, slot)
 
-    await add_to_inventory(db, user_id, item_id, 1)
+    if item_id == "canoe":
+        # Canoe needs a 2-slot adjacent pair, not the regular add_to_inventory path
+        from dwarf_explorer.database.repositories import add_canoe_pair
+        await add_canoe_pair(db, user_id)
+    else:
+        await add_to_inventory(db, user_id, item_id, 1)
     # Recalculate attack: if main hand was unequipped, reset to base
     if slot in ("hand_1",) or item_id in TWO_HANDED_ITEMS:
         from dwarf_explorer.config import PLAYER_START_ATTACK
@@ -10895,19 +10913,6 @@ async def handle_inv_drop(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Canoe is a 2-piece item — dropping either half drops both and clears equip slots
-    _canoe_half_in_drop = any(iid in ("canoe_left", "canoe_right") for iid, _ in drop_pairs)
-    if _canoe_half_in_drop:
-        for _half in ("canoe_left", "canoe_right"):
-            if not any(iid == _half for iid, _ in drop_pairs):
-                _have = sum(it["quantity"] for it in items if it["item_id"] == _half)
-                if _have > 0:
-                    drop_pairs.append((_half, _have))
-        await unequip_item(db, user_id, "hand_1")
-        await unequip_item(db, user_id, "hand_2")
-        player.hand_1 = None
-        player.hand_2 = None
-
     for item_id, qty in drop_pairs:
         await remove_from_inventory(db, user_id, item_id, qty)
     if gold_to_drop:
@@ -10915,7 +10920,7 @@ async def handle_inv_drop(
         await db.execute(
             "UPDATE players SET gold=gold-? WHERE user_id=?", (gold_to_drop, user_id)
         )
-    _is_canoe_drop = any(iid in ("canoe_left", "canoe_right") for iid, _ in drop_pairs)
+    _is_canoe_drop = any(iid == "canoe" for iid, _ in drop_pairs)
     _drop_tile_type = "canoe_box" if _is_canoe_drop else "drop_box"
     await create_drop_box(db, wx, wy, drop_pairs, tile_type=_drop_tile_type)
     _invalidate_vp(user_id)  # tile changed without movement — bust cache
@@ -10929,14 +10934,7 @@ async def handle_inv_drop(
         if iid == "gold_coin":
             return "Gold Coin"
         return iid.replace("_", " ").title()
-    # Collapse canoe halves into a single "1× Canoe" entry (halves are paired).
-    canoe_halves = sum(qty for iid, qty in drop_pairs if iid in ("canoe_left", "canoe_right"))
-    other_pairs = [(iid, qty) for iid, qty in drop_pairs if iid not in ("canoe_left", "canoe_right")]
-    desc_parts: list[str] = []
-    if canoe_halves:
-        desc_parts.append(f"{canoe_halves // 2}× Canoe")
-    desc_parts.extend(f"{qty}× {_drop_name(iid)}" for iid, qty in other_pairs)
-    drop_desc = ", ".join(desc_parts)
+    drop_desc = ", ".join(f"{qty}× {_drop_name(iid)}" for iid, qty in drop_pairs)
     content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                               inv_rows, inv_cols, _ui_state[user_id],
                               f"\n*🫳 Dropped: {drop_desc}.*",
@@ -11001,27 +10999,43 @@ async def handle_inv_move_confirm(
     if origin == sel or origin_item is None:
         msg = "\n*(Nothing to move)*"
 
-    elif origin_item["item_id"] in ("canoe_left", "canoe_right"):
-        # Canoe 2-piece: always move both halves together as a unit.
-        # Find the paired half: left is at origin, right at origin+1 (or vice-versa).
-        left_item  = origin_item if origin_item["item_id"] == "canoe_left" else _cursor_item(visible, origin - 1)
-        right_item = _cursor_item(visible, origin + 1) if origin_item["item_id"] == "canoe_left" else origin_item
-        if left_item and right_item and left_item["item_id"] == "canoe_left" and right_item["item_id"] == "canoe_right":
-            # Destination slot: where left piece goes. Right piece goes to dest+1.
-            # Ensure both dest slots are on the same row and neither wraps.
-            dest_left  = sel if origin_item["item_id"] == "canoe_left" else sel - 1
-            dest_right = dest_left + 1
-            if dest_left >= 0 and dest_right < inv_rows * inv_cols and dest_left // inv_cols == dest_right // inv_cols:
-                # Swap both pieces into their destination slots.
-                # Any items already at dest_left/dest_right naturally move to where
-                # the canoe currently sits — a clean two-swap approach.
-                await swap_inventory_slots(db, user_id, left_item["slot_index"], dest_left)
-                await swap_inventory_slots(db, user_id, right_item["slot_index"], dest_right)
-                msg = "\n*🛶 Canoe moved.*"
-            else:
-                msg = "\n*(Canoe would wrap across rows — choose a different slot)*"
+    elif origin_item["item_id"] == "canoe":
+        # Canoe occupies 2 adjacent slots. dest_left is where the canoe's left
+        # half should land; the right half then sits at dest_left+1.
+        # The cursor lives on the right half visually, so sel points at the
+        # destination right cell — meaning dest_left = sel - 1.
+        dest_left = sel - 1 if _cursor_item(visible, sel - 1) is None or _cursor_item(visible, sel - 1) is origin_item else sel
+        dest_right = dest_left + 1
+        total = inv_rows * inv_cols
+        if (dest_left < 0 or dest_right >= total
+                or dest_left // inv_cols != dest_right // inv_cols):
+            msg = "\n*(Canoe needs 2 adjacent slots on the same row)*"
+        elif dest_left == origin_item["slot_index"]:
+            msg = "\n*(Canoe is already here)*"
         else:
-            msg = "\n*(Canoe piece is missing its pair)*"
+            # Move the canoe row's slot_index. If items occupy dest_left/dest_right,
+            # they slide back to where the canoe used to be.
+            canoe_old = origin_item["slot_index"]
+            blockers = [it for it in visible
+                        if it["slot_index"] in (dest_left, dest_right)
+                        and it is not origin_item]
+            if len(blockers) > 1:
+                msg = "\n*(Destination blocked by multiple items)*"
+            else:
+                await db.execute(
+                    "UPDATE inventory SET slot_index = -1 WHERE user_id=? AND item_id='canoe' AND slot_index=?",
+                    (user_id, canoe_old),
+                )
+                if blockers:
+                    await db.execute(
+                        "UPDATE inventory SET slot_index=? WHERE user_id=? AND slot_index=?",
+                        (canoe_old, user_id, blockers[0]["slot_index"]),
+                    )
+                await db.execute(
+                    "UPDATE inventory SET slot_index=? WHERE user_id=? AND item_id='canoe' AND slot_index=-1",
+                    (dest_left, user_id),
+                )
+                msg = "\n*🛶 Canoe moved.*"
 
     elif dest_item is not None and dest_item["item_id"] != origin_item["item_id"]:
         # Different item types — swap full stacks, ignore move_qty
@@ -12603,12 +12617,15 @@ async def handle_bank_deposit(
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
         slot_map = _build_slot_map(visible, inv_rows * inv_cols)
         item = slot_map.get(sel)
+        # Resolve canoe virtual halves back to the real DB row
+        if item is not None and item.get("_canoe_origin") is not None:
+            origin = item["_canoe_origin"]
+            item = next((it for it in visible if it["item_id"] == "canoe" and it["slot_index"] == origin), item)
         if item is None:
             suffix = "\n*(Empty slot)*"
-        elif item["item_id"] in ("canoe_left", "canoe_right"):
-            # Canoes deposit as a pair (both halves at once, 1 canoe per click)
-            ok = await bank_deposit(db, user_id, item["item_id"], 1)
-            suffix = "\n*Deposited 1× Canoe.*" if ok else "\n*(Need a full canoe pair in inventory)*"
+        elif item["item_id"] == "canoe":
+            ok = await bank_deposit(db, user_id, "canoe", 1)
+            suffix = "\n*Deposited 1× Canoe.*" if ok else "\n*Deposit failed.*"
         else:
             actual_qty = min(qty, item["quantity"])
             # Find the exact inventory row for this slot and remove directly
@@ -12708,6 +12725,9 @@ async def handle_bank_withdraw(
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=BankView(guild_id, user_id, "bank"))
         return
+    # Resolve canoe virtual halves to the real 'canoe' item entry
+    if item.get("_canoe_origin") is not None:
+        item = next((it for it in vault_items if it["item_id"] == "canoe" and it["slot_index"] == item["_canoe_origin"]), item)
     actual_qty = min(qty, item["quantity"])
     cap = COIN_PURSE_CAPACITY.get(player.coin_purse, COIN_PURSE_CAPACITY[None])
     ok = await bank_withdraw(db, user_id, item["item_id"], actual_qty, gold_cap=cap)
@@ -12716,7 +12736,7 @@ async def handle_bank_withdraw(
     bank_items_new = await get_bank_items(db, user_id)
     equipped = _equipped_dict(player)
     if ok:
-        if item["item_id"] in ("canoe_left", "canoe_right"):
+        if item["item_id"] == "canoe":
             suffix = f"\n*Withdrew {actual_qty}× Canoe.*"
         else:
             suffix = f"\n*Withdrew {actual_qty}× {item['item_id'].replace('_', ' ')}.*"
@@ -15013,32 +15033,12 @@ async def handle_lumber_convert_cancel(
 
 
 async def _add_canoe_to_inventory(db, user_id: int) -> None:
-    """Add a 2-piece canoe (canoe_left + canoe_right) to adjacent inventory slots.
-
-    The two pieces are placed in consecutive slot_indices on the same row (assuming
-    inv_cols=7). If the natural next slot would wrap to a new row, we bump both
-    pieces to the start of the following row so they stay side-by-side.
+    """Add a canoe to the player's inventory. Delegates to add_canoe_pair, which
+    inserts a single 'canoe' row at a slot that leaves room for the visual
+    two-cell pair on the same display row.
     """
-    INV_COLS = 7
-    # Find the next free slot index
-    row_obj = await db.fetch_one(
-        "SELECT COALESCE(MAX(slot_index)+1, 0) AS nxt FROM inventory WHERE user_id=?",
-        (user_id,)
-    )
-    nxt = row_obj["nxt"] if row_obj else 0
-    # Ensure both pieces land on the same row (no wrap across row boundary)
-    left_col = nxt % INV_COLS
-    if left_col == INV_COLS - 1:
-        # Left piece would be at the last column; bump to start of next row
-        nxt = (nxt // INV_COLS + 1) * INV_COLS
-    await db.execute(
-        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
-        (user_id, "canoe_left", nxt),
-    )
-    await db.execute(
-        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
-        (user_id, "canoe_right", nxt + 1),
-    )
+    from dwarf_explorer.database.repositories import add_canoe_pair
+    await add_canoe_pair(db, user_id)
     # db auto-commits on execute(); no explicit commit needed
 
 

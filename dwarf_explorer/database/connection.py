@@ -802,6 +802,96 @@ class Database:
             except Exception as e:
                 _log.warning("Temple mountain migration warning: %s", e)
 
+            # ── Canoe consolidation: collapse canoe_left+canoe_right pairs into a single "canoe" item ──
+            # Inventory: for each user, find adjacent canoe_left @ slot N and canoe_right @ slot N+1,
+            # insert a single canoe row at slot N (preserve quantity = min of the two), delete the halves.
+            try:
+                # Inventory
+                rows = conn.execute(
+                    "SELECT user_id, slot_index, item_id, quantity FROM inventory "
+                    "WHERE item_id IN ('canoe_left','canoe_right') ORDER BY user_id, slot_index"
+                ).fetchall()
+                by_user: dict[int, list[tuple[int, str, int]]] = {}
+                for r in rows:
+                    by_user.setdefault(r[0], []).append((r[1], r[2], r[3]))
+                for uid, half_list in by_user.items():
+                    # Match left at N with right at N+1
+                    half_map = {(s, iid): q for (s, iid, q) in half_list}
+                    used: set[tuple[int, str]] = set()
+                    for (s, iid, q) in half_list:
+                        if iid != "canoe_left" or (s, iid) in used:
+                            continue
+                        right_key = (s + 1, "canoe_right")
+                        if right_key in half_map and right_key not in used:
+                            qty = min(q, half_map[right_key])
+                            used.add((s, "canoe_left"))
+                            used.add(right_key)
+                            # Insert canoe row at slot s, qty preserved
+                            conn.execute(
+                                "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,?,?)",
+                                (uid, "canoe", qty, s),
+                            )
+                    # Delete all original canoe_left/canoe_right halves for this user
+                    conn.execute(
+                        "DELETE FROM inventory WHERE user_id=? AND item_id IN ('canoe_left','canoe_right')",
+                        (uid,),
+                    )
+                # Bank: merge canoe_left + canoe_right quantities into single canoe row
+                bank_rows = conn.execute(
+                    "SELECT user_id, item_id, quantity FROM bank_items "
+                    "WHERE item_id IN ('canoe_left','canoe_right')"
+                ).fetchall()
+                bank_pairs: dict[int, dict[str, int]] = {}
+                for uid, iid, qty in bank_rows:
+                    bank_pairs.setdefault(uid, {})[iid] = qty
+                for uid, halves in bank_pairs.items():
+                    pair_qty = min(halves.get("canoe_left", 0), halves.get("canoe_right", 0))
+                    conn.execute(
+                        "DELETE FROM bank_items WHERE user_id=? AND item_id IN ('canoe_left','canoe_right')",
+                        (uid,),
+                    )
+                    if pair_qty > 0:
+                        conn.execute(
+                            "INSERT INTO bank_items(user_id, item_id, quantity) VALUES(?, 'canoe', ?) "
+                            "ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + ?",
+                            (uid, pair_qty, pair_qty),
+                        )
+                # Ground items: collapse paired halves at same (world_x, world_y) into a single canoe item
+                gi_rows = conn.execute(
+                    "SELECT world_x, world_y, item_id, SUM(quantity) FROM ground_items "
+                    "WHERE item_id IN ('canoe_left','canoe_right') AND is_drop=1 "
+                    "GROUP BY world_x, world_y, item_id"
+                ).fetchall()
+                gi_pairs: dict[tuple[int, int], dict[str, int]] = {}
+                for wx, wy, iid, qty in gi_rows:
+                    gi_pairs.setdefault((wx, wy), {})[iid] = qty
+                for (wx, wy), halves in gi_pairs.items():
+                    pair_qty = min(halves.get("canoe_left", 0), halves.get("canoe_right", 0))
+                    conn.execute(
+                        "DELETE FROM ground_items WHERE world_x=? AND world_y=? AND item_id IN ('canoe_left','canoe_right')",
+                        (wx, wy),
+                    )
+                    if pair_qty > 0:
+                        conn.execute(
+                            "INSERT INTO ground_items(world_x, world_y, item_id, quantity, is_drop) VALUES(?,?,?,?,1)",
+                            (wx, wy, "canoe", pair_qty),
+                        )
+                # Equipment table: rename canoe_left→canoe; delete canoe_right (canoe is one item now)
+                conn.execute(
+                    "UPDATE equipment SET item_id='canoe' WHERE item_id='canoe_left'"
+                )
+                conn.execute(
+                    "DELETE FROM equipment WHERE item_id='canoe_right'"
+                )
+                # players.hand_1 / hand_2: rename canoe_left→canoe; clear canoe_right
+                conn.execute("UPDATE players SET hand_1='canoe' WHERE hand_1='canoe_left'")
+                conn.execute("UPDATE players SET hand_2='canoe' WHERE hand_2='canoe_left'")
+                conn.execute("UPDATE players SET hand_1=NULL WHERE hand_1='canoe_right'")
+                conn.execute("UPDATE players SET hand_2=NULL WHERE hand_2='canoe_right'")
+                conn.commit()
+            except Exception as e:
+                _log.warning("Canoe consolidation migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

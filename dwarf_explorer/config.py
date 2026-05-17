@@ -213,6 +213,7 @@ ITEM_EMOJI = {
     "canoe":            "🛶",       # 🛶  canoe (legacy single-item)
     "canoe_left":       "🛶",       # left half of 2-piece canoe (overridden by custom emoji)
     "canoe_right":      "🛶",       # right half of 2-piece canoe (overridden by custom emoji)
+    "canoe":            "🛶",       # canoe as a single item (used in equip row, tooltips); overridden with canoe_whole emoji
     "canoe_whole":      "🛶",       # player-on-water display (overridden by custom emoji)
     "hammer":           "🔨",       # 🔨  hammer (ship repair)
     "nail":             "📌",       # 📌  nail (ship repair)
@@ -1180,6 +1181,7 @@ ITEM_EQUIP_SLOTS = {
     "medium_pouch":      "pouch",
     "large_pouch":       "pouch",
     "house_kit":         "hand",
+    "canoe":             "hand",
     "small_coin_purse":  "coin_purse",
     "medium_coin_purse": "coin_purse",
     "large_coin_purse":  "coin_purse",
@@ -1616,6 +1618,11 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         if canoe_key in cache:
             ITEM_EMOJI[canoe_key] = cache[canoe_key]
             _renderer._ITEM_SLOT_EMOJI[canoe_key] = cache[canoe_key]
+    # The single 'canoe' item (used in the equipped row and other single-emoji
+    # contexts) uses the canoe_whole custom emoji when available.
+    if "canoe_whole" in cache:
+        ITEM_EMOJI["canoe"] = cache["canoe_whole"]
+        _renderer._ITEM_SLOT_EMOJI["canoe"] = cache["canoe_whole"]
 
     # Empty gear socket custom emoji
     if "gear_socket" in cache:
