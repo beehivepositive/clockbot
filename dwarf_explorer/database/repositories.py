@@ -494,7 +494,16 @@ async def add_to_inventory(
 
     If max_slots is given, no new slots are created beyond that count.
     Returns the leftover quantity that could not be stored (0 = all fit).
+
+    Canoes are special: they occupy two adjacent display slots and must never
+    stack.  Any call with item_id == "canoe" is automatically forwarded to
+    add_canoe_pair() so every code path is safe without individual guards.
     """
+    if item_id == "canoe":
+        for _ in range(quantity):
+            await add_canoe_pair(db, user_id)
+        return 0  # canoes always fit (no stack limit applies)
+
     remaining = quantity
     # Fill existing stacks that have room
     rows = await db.fetch_all(
@@ -550,13 +559,21 @@ async def remove_from_inventory(db: Database, user_id: int, item_id: str, quanti
 
 
 async def _compact_slot_index(db: Database, user_id: int) -> None:
-    """Renumber slot_index values so they're contiguous starting from 0."""
+    """Renumber slot_index values so they're contiguous starting from 0.
+
+    Canoe rows occupy TWO visual slots (the DB row is slot N, the virtual
+    canoe_right lives at slot N+1).  After compacting we must leave that
+    gap so the right half is never overwritten by the next item.
+    """
     rows = await db.fetch_all(
-        "SELECT id FROM inventory WHERE user_id = ? ORDER BY slot_index, id",
+        "SELECT id, item_id FROM inventory WHERE user_id = ? ORDER BY slot_index, id",
         (user_id,),
     )
-    for new_idx, row in enumerate(rows):
+    new_idx = 0
+    for row in rows:
         await db.execute("UPDATE inventory SET slot_index = ? WHERE id = ?", (new_idx, row["id"]))
+        # Canoe uses two visual slots — advance by 2 so the right half slot stays free
+        new_idx += 2 if row["item_id"] == "canoe" else 1
 
 
 async def swap_inventory_slots(db: Database, user_id: int, slot_a: int, slot_b: int) -> None:

@@ -914,6 +914,55 @@ class Database:
             except Exception as e:
                 _log.warning("Canoe consolidation migration warning: %s", e)
 
+            # ── Canoe slot-gap fix: re-compact every user's inventory so each ──
+            # canoe row is followed by an empty slot (its virtual right half).
+            # Also un-equip any canoes that ended up in the equipment table.
+            # This migration is idempotent — safe to run every startup.
+            try:
+                # 1. Return equipped canoes to inventory
+                equipped_canoe_users = conn.execute(
+                    "SELECT DISTINCT user_id FROM equipment WHERE item_id='canoe'"
+                ).fetchall()
+                INV_COLS = 7
+                for (uid,) in equipped_canoe_users:
+                    conn.execute(
+                        "UPDATE equipment SET item_id=NULL WHERE user_id=? AND item_id='canoe'",
+                        (uid,),
+                    )
+                    max_row = conn.execute(
+                        "SELECT COALESCE(MAX(slot_index)+1, 0) FROM inventory WHERE user_id=?",
+                        (uid,),
+                    ).fetchone()
+                    nxt = max_row[0] if max_row else 0
+                    if nxt % INV_COLS == INV_COLS - 1:
+                        nxt = (nxt // INV_COLS + 1) * INV_COLS
+                    conn.execute(
+                        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+                        (uid, "canoe", nxt),
+                    )
+
+                # 2. Canoe-aware compact for every user who has a canoe in inventory.
+                #    Each canoe DB row occupies two visual slots; the slot AFTER the
+                #    canoe's slot_index must be free for the virtual right half.
+                canoe_users = conn.execute(
+                    "SELECT DISTINCT user_id FROM inventory WHERE item_id='canoe'"
+                ).fetchall()
+                for (uid,) in canoe_users:
+                    inv_rows = conn.execute(
+                        "SELECT id, item_id FROM inventory WHERE user_id=? ORDER BY slot_index, id",
+                        (uid,),
+                    ).fetchall()
+                    new_idx = 0
+                    for row_id, iid in inv_rows:
+                        conn.execute(
+                            "UPDATE inventory SET slot_index=? WHERE id=?",
+                            (new_idx, row_id),
+                        )
+                        new_idx += 2 if iid == "canoe" else 1
+                conn.commit()
+            except Exception as e:
+                _log.warning("Canoe slot-gap migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

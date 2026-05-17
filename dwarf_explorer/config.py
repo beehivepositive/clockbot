@@ -1181,7 +1181,8 @@ ITEM_EQUIP_SLOTS = {
     "medium_pouch":      "pouch",
     "large_pouch":       "pouch",
     "house_kit":         "hand",
-    "canoe":             "hand",
+    # "canoe" is intentionally NOT in this dict — canoe is a world item,
+    # not equippable gear; it lives only in the inventory grid.
     "small_coin_purse":  "coin_purse",
     "medium_coin_purse": "coin_purse",
     "large_coin_purse":  "coin_purse",

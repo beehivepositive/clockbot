@@ -441,7 +441,14 @@ def _build_slot_map(visible_items: list[dict], total_slots: int, inv_cols: int =
         idx = it["slot_index"]
         if 0 <= idx < total_slots:
             if it["item_id"] == "canoe":
-                _expand_canoe(it, idx)
+                # Need room for both halves.  If the right slot is out of bounds
+                # OR already occupied by another item (shouldn't happen after the
+                # canoe-aware compact, but be defensive), treat as overflow so the
+                # overflow handler can find a clean 2-slot gap.
+                if idx + 1 < total_slots and (idx + 1) not in result:
+                    _expand_canoe(it, idx)
+                else:
+                    overflow.append(it)
             else:
                 result[idx] = it
         else:
