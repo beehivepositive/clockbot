@@ -675,7 +675,6 @@ class DwarfExplorer(commands.Cog):
         await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
 
         leftover = await add_to_inventory(db, ADMIN_PLAYER_ID, item_id.strip(), quantity)
-        await db.commit()
 
         if leftover == 0:
             await interaction.response.send_message(

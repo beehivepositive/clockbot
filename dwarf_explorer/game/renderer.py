@@ -609,6 +609,8 @@ def render_inventory(
                 stat_parts.append(f"+{stats['defense']} def")
             if "attack" in stats:
                 stat_parts.append(f"+{stats['attack']} atk")
+            if item_id == "watering_can":
+                stat_parts.append(f"{watering_can_uses}/9")
             stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
             lines.append(f"Cursor: **{label}** — {item_id.replace('_', ' ').title()}{stat_str}")
         else:
@@ -632,7 +634,7 @@ def render_inventory(
             stat_parts.append(f"+{stats['attack']} atk")
         # Watering can: show uses remaining
         if item_id == "watering_can":
-            stat_parts.append(f"{watering_can_uses}/9 uses")
+            stat_parts.append(f"{watering_can_uses}/9")
         stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
         lines.append(
             f"Cursor: **{display_name}** ×{item['quantity']}{stat_str}{sel_marker}"

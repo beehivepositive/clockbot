@@ -49,6 +49,7 @@ TERRAIN_EMOJI = {
     "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
     "sapling":          "\U0001F331",    # 🌱
+    "ancient_planted":  "\U0001F331",    # 🌱 planted ancient seed (water to grow into sapling)
     "ancient_sapling":  "\U0001F333",    # 🌳 planted ancient sapling (overworld)
     "short_grass":      "\U0001F7E9",    # 🟩  short grass
     "seedling":         "\U0001FAB4",    # 🪴
@@ -261,7 +262,7 @@ FARM_CROPS: dict[str, dict] = {
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
-    "sapling", "ancient_sapling", "short_grass", "seedling", "dirt",
+    "sapling", "ancient_planted", "ancient_sapling", "short_grass", "seedling", "dirt",
     "ancient_tree_top_left", "ancient_tree_top_right",
     "ancient_tree_bottom_left", "ancient_tree_bottom_right",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",

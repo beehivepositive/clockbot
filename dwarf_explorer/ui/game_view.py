@@ -3131,7 +3131,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             _ct = grid[4][4] if len(grid) > 4 and len(grid[4]) > 4 else None
             if _ct:
                 _t = _ct.terrain
-                _WATER_TILES = {"sapling", "ancient_sapling", "short_grass", "seedling",
+                _WATER_TILES = {"sapling", "ancient_planted", "ancient_sapling", "short_grass", "seedling",
                                 "crop_planted", "crop_sprout"}
                 _SHOVEL_TILES = {"sapling", "dirt", "grass", "plains", "sand", "short_grass"}
                 _FILL_WATER = {"river", "bridge", "shallow_water", "deep_water",
@@ -5788,11 +5788,12 @@ async def handle_feed_cat(
 # ── Plant seeds view (choose seed type) ───────────────────────────────────────
 
 class PlantOverworldView(discord.ui.View):
-    """Choose what to plant on an overworld dirt tile (sapling or ancient_seed)."""
+    """Choose what to plant on an overworld dirt tile (sapling, ancient_seed, or ancient_sapling)."""
 
     _LABELS = {
-        "sapling":      ("🌱", "Sapling"),
-        "ancient_seed": ("🌱", "Ancient Seed"),
+        "sapling":          ("🌱", "Sapling"),
+        "ancient_seed":     ("🌱", "Ancient Seed"),
+        "ancient_sapling":  ("🌳", "Ancient Sapling"),
     }
 
     def __init__(self, guild_id: int, user_id: int, choices: list[str]):
@@ -5855,7 +5856,12 @@ async def handle_plant(
         inv = await get_inventory(db, user_id)
         has_sapling = any(it["item_id"] == "sapling" and it["quantity"] > 0 for it in inv)
         has_ancient = any(it["item_id"] == "ancient_seed" and it["quantity"] > 0 for it in inv)
-        choices = ([item for item, flag in [("sapling", has_sapling), ("ancient_seed", has_ancient)] if flag])
+        has_ancient_sapling = any(it["item_id"] == "ancient_sapling" and it["quantity"] > 0 for it in inv)
+        choices = ([item for item, flag in [
+            ("sapling", has_sapling),
+            ("ancient_seed", has_ancient),
+            ("ancient_sapling", has_ancient_sapling),
+        ] if flag])
         if not choices:
             content = render_grid(grid, player, "🌱 You have no saplings or ancient seeds to plant.")
             await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
@@ -5961,17 +5967,20 @@ async def _plant_overworld_item(
     interaction: discord.Interaction, guild_id: int, user_id: int,
     player, db, item_id: str
 ) -> None:
-    """Plant a sapling or ancient_seed on the player's current dirt tile."""
+    """Plant a sapling, ancient_seed, or ancient_sapling item on the player's current dirt tile."""
     seed_w = await get_or_create_world(db, guild_id)
     wx, wy = player.world_x, player.world_y
-    tile_type = "ancient_sapling" if item_id == "ancient_seed" else "sapling"
+    if item_id == "ancient_seed":
+        tile_type = "ancient_planted"
+        msg = "🌱 You plant the ancient seed in the dirt. Water it to sprout a sapling!"
+    elif item_id == "ancient_sapling":
+        tile_type = "ancient_sapling"
+        msg = "🌳 You plant the ancient sapling in the dirt. Water it to grow a mighty tree!"
+    else:
+        tile_type = "sapling"
+        msg = "🌱 You plant the sapling in the dirt. Water it to grow a tree!"
     await set_tile_override(db, wx, wy, tile_type)
     await remove_from_inventory(db, user_id, item_id, 1)
-    grid = await load_viewport(wx, wy, seed_w, db)
-    if item_id == "ancient_seed":
-        msg = "🌱 You plant the ancient seed in the dirt. Water it to see what grows!"
-    else:
-        msg = "🌱 You plant the sapling in the dirt. Water it to grow a tree!"
     content = render_grid(grid, player, msg)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
@@ -9123,6 +9132,12 @@ async def _execute_tool_action(
             await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
+        elif terrain == "ancient_planted":
+            await set_tile_override(db, wx, wy, "ancient_sapling")
+            player.watering_can_uses = max(0, player.watering_can_uses - 1)
+            await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🌱 You water the ancient seed. A sapling sprouts! Water it again to grow the ancient tree.")
         elif terrain == "ancient_sapling":
             # Try to grow a 2×2 ancient tree (sapling = bottom-left corner)
             _at_positions = _ancient_tree_positions(wx, wy)
