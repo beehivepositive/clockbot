@@ -9586,15 +9586,18 @@ async def _anvil_refresh(
     )
 
 
+_ANVIL_COLS = 7
+
+
 async def handle_anvil_up(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move the anvil cursor up within the active material's recipe list."""
+    """Move the anvil cursor up one row (7 slots back) within the recipe list."""
     state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
     mat_idx = state.get("anvil_material", 0)
     cursor  = state.get("anvil_cursor", 0)
     count   = len(_anvil_filtered_recipes(mat_idx))
-    cursor  = (cursor - 1) % max(count, 1)
+    cursor  = (cursor - _ANVIL_COLS) % max(count, 1)
     _ui_state[user_id] = {**state, "anvil_cursor": cursor}
     await _anvil_refresh(interaction, guild_id, user_id)
 
@@ -9602,12 +9605,12 @@ async def handle_anvil_up(
 async def handle_anvil_down(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Move the anvil cursor down within the active material's recipe list."""
+    """Move the anvil cursor down one row (7 slots forward) within the recipe list."""
     state   = _ui_state.get(user_id, {"anvil_cursor": 0, "anvil_material": 0})
     mat_idx = state.get("anvil_material", 0)
     cursor  = state.get("anvil_cursor", 0)
     count   = len(_anvil_filtered_recipes(mat_idx))
-    cursor  = (cursor + 1) % max(count, 1)
+    cursor  = (cursor + _ANVIL_COLS) % max(count, 1)
     _ui_state[user_id] = {**state, "anvil_cursor": cursor}
     await _anvil_refresh(interaction, guild_id, user_id)
 

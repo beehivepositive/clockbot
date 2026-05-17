@@ -276,7 +276,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 # ── Inventory / Bank / Shop text renderers ────────────────────────────────────
 
 _ITEM_SLOT_EMOJI = {
-    "knife":        "\U0001F5E1\uFE0F",
+    "knife":        "\U0001F52A",   # default knife emoji
     "hiking_boots": "\U0001F97E",
     "torch":        "\U0001F526",
     "sword":        "\U0001F5E1\uFE0F",
