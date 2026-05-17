@@ -6816,8 +6816,8 @@ async def handle_interact(
             elif htile.terrain == "b_lumber_npc":
                 grid = await _load_house_grid()
                 inv_items = await get_inventory(db, user_id)
-                log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
-                plank_count = sum(it["qty"] for it in inv_items if it["item_id"] == "plank")
+                log_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "log")
+                plank_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "plank")
                 if log_count > 0 or plank_count >= 18:
                     _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
                     content = render_grid(grid, player,
@@ -8739,6 +8739,25 @@ async def handle_action(
 
         if "b_farmer_npc" in adj_terrains:
             return await _open_farmer_shop(interaction, guild_id, user_id, player)
+
+        if "b_lumber_npc" in adj_terrains:
+            log_rows = await db.fetch_all(
+                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='log'",
+                (user_id,),
+            )
+            plank_rows = await db.fetch_all(
+                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='plank'",
+                (user_id,),
+            )
+            log_count_lm = log_rows[0]["total"] if log_rows else 0
+            plank_count_lm = plank_rows[0]["total"] if plank_rows else 0
+            _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
+            content = render_grid(grid, player,
+                f"🪵 **Lumber Mill** — Convert logs → planks (1 log = 2 planks) or craft a canoe (18 planks).\n"
+                f"You have **{log_count_lm}** logs and **{plank_count_lm}** planks.")
+            view = LumberConvertView(guild_id, user_id, log_count_lm, plank_count_lm)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         if "b_resident" in adj_terrains:
             import hashlib as _rh
@@ -14967,7 +14986,7 @@ async def handle_lumber_convert_confirm(
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     inv_items = await get_inventory(db, user_id)
-    log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
+    log_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "log")
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     if log_count <= 0:
         content = render_grid(grid, player, '"No logs to convert."')
@@ -15036,28 +15055,18 @@ async def handle_lumber_craft_canoe(
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     inv_items = await get_inventory(db, user_id)
-    log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
-    plank_count = sum(it["qty"] for it in inv_items if it["item_id"] == "plank")
+    log_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "log")
+    plank_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "plank")
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     if plank_count < 18:
         content = render_grid(grid, player, f"You need **18 planks** to build a canoe. You have {plank_count}.")
         view = LumberConvertView(guild_id, user_id, log_count, plank_count)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
-    # Check if player already has a canoe (either old single-piece or new 2-piece)
-    canoe_rows = await db.fetch_all(
-        "SELECT COALESCE(SUM(quantity),0) as total FROM inventory "
-        "WHERE user_id=? AND item_id IN ('canoe','canoe_left','canoe_right')",
-        (user_id,)
-    )
-    canoe_total = canoe_rows[0]["total"] if canoe_rows else 0
-    if canoe_total >= 1:
-        content = render_grid(grid, player, "You already have a canoe — you don't need another one.")
-        view = _game_view(guild_id, user_id, player, grid=grid)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
     await remove_from_inventory(db, user_id, "plank", 18)
-    # Add canoe as 2-piece: canoe_left in next slot, canoe_right in the slot after
+    # Add canoe as 2-piece: canoe_left in next slot, canoe_right in the slot after.
+    # add_canoe_pair always inserts new slot rows, so each crafted canoe lives
+    # in its own pair of slots — canoes never stack.
     await _add_canoe_to_inventory(db, user_id)
     content = render_grid(grid, player,
         "🛶 The mill worker shapes the planks into a **canoe**! "
