@@ -50,7 +50,7 @@ TERRAIN_EMOJI = {
     # Player-modifiable terrain
     "sapling":          "\U0001F331",    # 🌱
     "ancient_planted":  "\U0001F331",    # 🌱 planted ancient seed (water to grow into sapling)
-    "ancient_sapling":  "\U0001F333",    # 🌳 planted ancient sapling (overworld)
+    "ancient_sapling":  "\U0001F331",    # 🌱 planted ancient sapling (water to grow into 2×2 tree)
     "short_grass":      "\U0001F7E9",    # 🟩  short grass
     "seedling":         "\U0001FAB4",    # 🪴
     "dirt":             "\U0001F7E4",    # 🟤 dug soil (shovel); hoe turns it into farmland
@@ -237,7 +237,7 @@ ITEM_EMOJI = {
     "living_root":    "\U0001FAB5",           # 🪵 crafting ingredient
     "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
     "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
-    "ancient_sapling":"\U0001F333",           # 🌳 planted ancient sapling
+    "ancient_sapling":"\U0001F331",           # 🌱 planted ancient sapling (same as sapling)
 }
 
 # Maps seed item_id → crop progression for village farmland

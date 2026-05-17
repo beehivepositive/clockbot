@@ -5981,6 +5981,7 @@ async def _plant_overworld_item(
         msg = "🌱 You plant the sapling in the dirt. Water it to grow a tree!"
     await set_tile_override(db, wx, wy, tile_type)
     await remove_from_inventory(db, user_id, item_id, 1)
+    grid = await load_viewport(wx, wy, seed_w, db)
     content = render_grid(grid, player, msg)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
