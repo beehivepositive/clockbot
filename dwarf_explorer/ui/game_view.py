@@ -2348,8 +2348,6 @@ def _compute_context_labels(
     if center_tile:
         t = center_tile.terrain
         s = center_tile.structure
-        if t in ("drop_box", "canoe_box") or s in ("drop_box", "canoe_box"):
-            print(f"[DEBUG canoe-tile] uid={player.user_id} pos=({player.world_x},{player.world_y}) t={t!r} s={s!r} ground_item={getattr(center_tile,'ground_item',None)!r} in_canoe={player.in_canoe} in_ocean={player.in_ocean} in_island={getattr(player,'in_island',0)}", flush=True)
 
         # Ship tile context (highest priority when in_ship)
         if player.in_ship:
@@ -2591,7 +2589,8 @@ def _compute_context_labels(
             center_label, center_enabled = "🪵 Convert", True
         # Lumbermill conveyor: player interacts while standing ADJACENT to input/output
         # (those tiles are not walkable, so we check neighbours)
-        if getattr(player, "house_type", None) == "lumber_mill" and not center_enabled:
+        if (player.in_house and getattr(player, "house_type", None) == "lumber_mill"
+                and not center_enabled):
             for _dy_lm, _dx_lm in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _r_lm, _c_lm = vc + _dy_lm, vc + _dx_lm
                 if 0 <= _r_lm < len(grid) and 0 <= _c_lm < len(grid[_r_lm]):
@@ -2650,9 +2649,6 @@ def _compute_context_labels(
         # Item-based interactions (lower priority)
         elif t in ("drop_box", "canoe_box"):
             center_label, center_enabled = "🤲", True
-            print(f"[DEBUG canoe-box-button] uid={player.user_id} t={t!r} s={s!r} -> button enabled", flush=True)
-        if t in ("drop_box", "canoe_box"):
-            print(f"[DEBUG after-chain] uid={player.user_id} t={t!r} s={s!r} center_label={center_label!r} center_enabled={center_enabled} hand_items={hand_items}", flush=True)
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             center_label, center_enabled = "🍗", True
         elif "map_fragment" in hand_items:

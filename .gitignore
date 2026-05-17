@@ -1,1 +1,3 @@
 game209-*.json
+__pycache__/
+*.pyc
