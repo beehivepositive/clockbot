@@ -967,7 +967,8 @@ BUILDING_EMOJI = {
     # Lumber mill unique
     "b_waterwheel":     "⚙️",    # ⚙️  water-powered wheel
     "b_saw":            "\U0001FA9A",  # 🪚  saw
-    "b_log_moving":     "\U0001FAB5",  # 🪵  log/plank in transit through conveyor
+    "b_log_moving":     "\U0001FAB5",  # 🪵  log in transit through conveyor (pre-saw)
+    "b_plank_moving":   "\U0001FAB5",  # 🪵  plank in transit through conveyor (post-saw, overridden with :planks:)
     "b_lumber_npc":     "🧑",       # 🧑  lumber mill worker
     "b_farmer_npc":     "🧑",       # 🧑  farmer NPC
     "b_water":          "🌊",       # 🌊  water tile (lumber mill)
@@ -1502,6 +1503,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI,  "b_gear_br",        "gear_bottom_right"),
         # Lumbermill small gear tile (CCW)
         (BUILDING_EMOJI,  "b_gear_small",     "gear_small_reverse"),
+        # Lumbermill conveyor: plank-in-transit uses :planks: custom emoji
+        (BUILDING_EMOJI,  "b_plank_moving",   "planks"),
     ]
 
     for d, tile_key, emoji_name in _replace:

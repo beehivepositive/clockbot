@@ -1017,11 +1017,11 @@ def _lumber_mill_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,
 
     for cy in range(top_y, bot_y + 1):
         if cy == top_y:
-            tiles[(conv_x, cy)] = "b_log_input"
+            tiles[(conv_x, cy)] = "b_plank_output"
         elif cy == saw_y:
             tiles[(conv_x, cy)] = "b_saw"
         elif cy == bot_y:
-            tiles[(conv_x, cy)] = "b_plank_output"
+            tiles[(conv_x, cy)] = "b_log_input"
         else:
             tiles[(conv_x, cy)] = "b_conveyor"
 

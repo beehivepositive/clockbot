@@ -15127,7 +15127,9 @@ async def handle_lumbermill_insert(
     original_house_id = player.house_id
 
     try:
-        for step in range(_LM_TOP_Y, _LM_BOT_Y + 1):   # y = 1..7
+        # Conveyor now runs bottom → top: log enters at b_log_input (bot_y),
+        # travels up to b_saw (saw_y), and exits as planks at b_plank_output (top_y).
+        for step in range(_LM_BOT_Y, _LM_TOP_Y - 1, -1):   # y = 7,6,5,4,3,2,1
             # Re-fetch player each frame so movement is respected. If the player
             # has walked out of the mill (or to a different building), stop
             # editing the message — they're looking at something else now and
@@ -15146,15 +15148,27 @@ async def handle_lumbermill_insert(
                 g_row = vc + (step        - cur_player.house_y)
                 g_col = vc + (_LM_CONV_X  - cur_player.house_x)
 
+                # Choose the overlay sprite for this phase. We DON'T overlay on
+                # the saw row itself — let the saw emoji show through there.
+                # Pre-saw (below saw_y): render as log. Post-saw (above saw_y):
+                # render as planks.
+                overlay_tile: str | None
+                if step == _LM_SAW_Y:
+                    overlay_tile = None
+                elif step > _LM_SAW_Y:
+                    overlay_tile = "b_log_moving"     # still a log
+                else:
+                    overlay_tile = "b_plank_moving"   # planks after the saw
+
                 # Overlay the moving item onto the grid if it's on screen
-                if 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
+                if overlay_tile is not None and 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
                     grid[g_row][g_col] = dataclasses.replace(
-                        grid[g_row][g_col], terrain="b_log_moving"
+                        grid[g_row][g_col], terrain=overlay_tile
                     )
 
-                # Status message varies by phase
-                if step < _LM_SAW_Y:
-                    status = "⚙️ Log moving through the mill..."
+                # Status message varies by phase (remember: y decreases upward)
+                if step > _LM_SAW_Y:
+                    status = "⚙️ Log moving toward the saw..."
                 elif step == _LM_SAW_Y:
                     status = "🪚 Sawing..."
                 else:
