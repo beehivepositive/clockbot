@@ -486,19 +486,16 @@ def render_inventory(
             is_selected = item_id in selections
 
             if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
-                # Left half — never shows cursor. Cursor always lives on the right half.
-                left_e = _item_emoji("canoe_left")
-                slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
+                # Left half — rendered exactly like a normal qty=1 slot but cursor
+                # is always suppressed (navigation redirects to canoe_right instead).
+                # Keeping emoji at position 1 preserves the row's visual rhythm so
+                # rows above/below align correctly.
+                slots.append(_fmt_slot(item_id, qty, cursor_on=False, is_selected=is_selected))
 
             elif item_id == "canoe_right" and i in _canoe_right_skip:
-                # Right half — cursor lives HERE only (navigation always redirects
-                # canoe_left → canoe_right, so selected is never the left half).
-                right_e = _item_emoji("canoe_right")
+                # Right half — also a normal slot; cursor lives here only.
                 cursor_on = cursor_mode == "inventory" and i == selected
-                if cursor_on:
-                    slots.append(f"{right_e}{_CUR}{_PAD}{_PAD}")
-                else:
-                    slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
+                slots.append(_fmt_slot(item_id, qty, cursor_on=cursor_on, is_selected=is_selected))
 
             else:
                 cursor_on = (i == selected) and cursor_mode == "inventory"
