@@ -53,6 +53,11 @@ TERRAIN_EMOJI = {
     "short_grass":      "\U0001F7E9",    # 🟩  short grass
     "seedling":         "\U0001FAB4",    # 🪴
     "dirt":             "\U0001F7E4",    # 🟤 dug soil (shovel); hoe turns it into farmland
+    # Ancient 2×2 tree (grown by watering ancient_sapling; 10 axe chops to fell)
+    "ancient_tree_top_left":     "\U0001F332",   # 🌲 fallback; overridden by custom emoji
+    "ancient_tree_top_right":    "\U0001F332",
+    "ancient_tree_bottom_left":  "\U0001F332",
+    "ancient_tree_bottom_right": "\U0001F332",
 }
 
 STRUCTURE_EMOJI = {
@@ -257,6 +262,8 @@ WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
     "sapling", "ancient_sapling", "short_grass", "seedling", "dirt",
+    "ancient_tree_top_left", "ancient_tree_top_right",
+    "ancient_tree_bottom_left", "ancient_tree_bottom_right",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
@@ -1428,6 +1435,12 @@ TILE_COLORS = {
     "river": (30, 80, 180),
     "bridge": (160, 120, 60),
     "sapling": (100, 200, 80),
+    "ancient_sapling": (60, 160, 60),
+    "ancient_tree_top_left":     (30, 90, 30),
+    "ancient_tree_top_right":    (30, 90, 30),
+    "ancient_tree_bottom_left":  (30, 90, 30),
+    "ancient_tree_bottom_right": (30, 90, 30),
+    "dirt": (130, 90, 50),
     "short_grass": (120, 200, 60),
     "seedling": (130, 210, 70),
     "farmland": (120, 80, 40),
@@ -1514,6 +1527,11 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         (BUILDING_EMOJI,  "b_gear_small",     "gear_small_reverse"),
         # Lumbermill conveyor: plank-in-transit uses :planks: custom emoji
         (BUILDING_EMOJI,  "b_plank_moving",   "planks"),
+        # Ancient 2×2 tree tiles
+        (TERRAIN_EMOJI, "ancient_tree_top_left",     "ancient_tree_top_left"),
+        (TERRAIN_EMOJI, "ancient_tree_top_right",    "ancient_tree_top_right"),
+        (TERRAIN_EMOJI, "ancient_tree_bottom_left",  "ancient_tree_bottom_left"),
+        (TERRAIN_EMOJI, "ancient_tree_bottom_right", "ancient_tree_bottom_right"),
     ]
 
     for d, tile_key, emoji_name in _replace:

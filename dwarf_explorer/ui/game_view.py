@@ -162,6 +162,35 @@ def _cursor_item(visible: list[dict], slot_pos: int) -> dict | None:
     return None
 
 
+# ── Ancient 2×2 tree helpers ──────────────────────────────────────────────────
+_ANCIENT_TREE_TILES: frozenset[str] = frozenset({
+    "ancient_tree_top_left", "ancient_tree_top_right",
+    "ancient_tree_bottom_left", "ancient_tree_bottom_right",
+})
+
+
+def _ancient_tree_root(tile_type: str, ax: int, ay: int) -> tuple[int, int]:
+    """Given an ancient tree tile type at (ax, ay), return the root (bottom-left) coords."""
+    if tile_type == "ancient_tree_top_left":
+        return (ax, ay + 1)
+    elif tile_type == "ancient_tree_top_right":
+        return (ax - 1, ay + 1)
+    elif tile_type == "ancient_tree_bottom_right":
+        return (ax - 1, ay)
+    else:  # ancient_tree_bottom_left
+        return (ax, ay)
+
+
+def _ancient_tree_positions(root_x: int, root_y: int) -> list[tuple[int, int, str]]:
+    """Return all 4 (x, y, tile_type) positions for an ancient tree given its root."""
+    return [
+        (root_x,     root_y - 1, "ancient_tree_top_left"),
+        (root_x + 1, root_y - 1, "ancient_tree_top_right"),
+        (root_x,     root_y,     "ancient_tree_bottom_left"),
+        (root_x + 1, root_y,     "ancient_tree_bottom_right"),
+    ]
+
+
 async def _count_inv(db, user_id: int, item_id: str) -> int:
     """Return total quantity of item_id in the player's inventory (0 if none)."""
     row = await db.fetch_one(
@@ -2934,7 +2963,7 @@ def _compute_context_labels(
             if adj.structure:
                 adj_terrains.add(adj.structure)
 
-    if "sequoia" in adj_terrains and "axe" in hand_items and not player.in_house:
+    if adj_terrains & _ANCIENT_TREE_TILES and "axe" in hand_items and not player.in_house:
         action_label, action_enabled = "🪓 Chop", True
     elif "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
         action_label, action_enabled = "⚙️ Gears", True
@@ -8943,11 +8972,27 @@ async def handle_use_hand1(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "You water the sapling. It grows into a tree!")
         elif terrain == "ancient_sapling":
-            await set_tile_override(db, wx, wy, "sequoia")
-            player.watering_can_uses = max(0, player.watering_can_uses - 1)
-            await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "🌲 You water the ancient sapling. It grows into a mighty sequoia!")
+            # Try to grow a 2×2 ancient tree (sapling = bottom-left corner)
+            _at_positions = _ancient_tree_positions(wx, wy)
+            _space_ok = True
+            for _tx, _ty, _ in _at_positions[:-1]:  # skip bottom-left (already checked — it's the sapling)
+                if not (0 <= _tx < WORLD_SIZE and 0 <= _ty < WORLD_SIZE):
+                    _space_ok = False
+                    break
+                _check = await load_single_tile(_tx, _ty, seed, db)
+                if not _check.walkable or _check.structure:
+                    _space_ok = False
+                    break
+            if not _space_ok:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🌱 Not enough space — the ancient tree needs a 2×2 clearing to grow.")
+            else:
+                for _tx, _ty, _tt in _at_positions:
+                    await set_tile_override(db, _tx, _ty, _tt)
+                player.watering_can_uses = max(0, player.watering_can_uses - 1)
+                await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🌲 You water the ancient sapling. A vast ancient tree erupts from the earth!")
         elif terrain == "short_grass":
             await set_tile_override(db, wx, wy, "grass")
             player.watering_can_uses = max(0, player.watering_can_uses - 1)
@@ -9048,7 +9093,7 @@ async def handle_use_hand1(
             content = render_grid(grid, player, f"🪓 You chop down the tree! Got a log{extra_str}. A sapling remains.")
         else:
             grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "🪓 Nothing to chop here. (For sequoia, use the axe while adjacent.)")
+            content = render_grid(grid, player, "🪓 Nothing to chop here. (For the ancient tree, stand adjacent and use the action button.)")
 
     # ── Knife ─────────────────────────────────────────────────────────────────
     elif tool == "knife":
@@ -9636,49 +9681,51 @@ async def handle_action(
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
-        # ── Sequoia chop (adjacent axe) ──────────────────────────────────────
+        # ── Ancient tree chop (adjacent axe, 10 chops shared across all 4 tiles) ─
         if "axe" in hand_items:
-            # Find the adjacent sequoia
-            _seq_pos = None
+            # Find any adjacent ancient tree tile
+            _at_hit_type = None
+            _at_hit_x = _at_hit_y = 0
             for _ddy, _ddx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _ax, _ay = wx + _ddx, wy + _ddy
                 _adj_t = await load_single_tile(_ax, _ay, seed, db)
-                if _adj_t.terrain == "sequoia":
-                    _seq_pos = (_ax, _ay)
+                if _adj_t.terrain in _ANCIENT_TREE_TILES:
+                    _at_hit_type = _adj_t.terrain
+                    _at_hit_x, _at_hit_y = _ax, _ay
                     break
-            if _seq_pos:
-                _sq_x, _sq_y = _seq_pos
-                # Load or init chop progress
+            if _at_hit_type:
+                # All 4 tiles share progress tracked at the root (bottom-left)
+                _root_x, _root_y = _ancient_tree_root(_at_hit_type, _at_hit_x, _at_hit_y)
                 _chop_row = await db.fetch_one(
                     "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
-                    (_sq_x, _sq_y)
+                    (_root_x, _root_y)
                 )
                 _chops = (_chop_row["chops"] if _chop_row else 0) + 1
                 if _chops >= 10:
-                    # Fell the tree!
+                    # Fell the tree — set all 4 tiles to dirt and remove progress
                     await db.execute(
                         "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
-                        (_sq_x, _sq_y)
+                        (_root_x, _root_y)
                     )
-                    await set_tile_override(db, _sq_x, _sq_y, "dirt")
+                    for _tx, _ty, _ in _ancient_tree_positions(_root_x, _root_y):
+                        await set_tile_override(db, _tx, _ty, "dirt")
                     await add_to_inventory(db, user_id, "log", 6)
                     await add_to_inventory(db, user_id, "ancient_sapling", 1)
                     grid = await load_viewport(wx, wy, seed, db)
-                    content = render_grid(grid, player, "🪓 The great sequoia crashes down! You gather **6 logs** and recover the **ancient sapling**.")
+                    content = render_grid(grid, player, "🪓 The ancient tree crashes down! You gather **6 logs** and recover the **ancient sapling**.")
                 else:
-                    # Record progress
                     if _chop_row:
                         await db.execute(
                             "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
-                            (_chops, _sq_x, _sq_y)
+                            (_chops, _root_x, _root_y)
                         )
                     else:
                         await db.execute(
                             "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
-                            (_sq_x, _sq_y, _chops)
+                            (_root_x, _root_y, _chops)
                         )
                     grid = await load_viewport(wx, wy, seed, db)
-                    content = render_grid(grid, player, f"🪓 You strike the sequoia. ({_chops}/10 chops)")
+                    content = render_grid(grid, player, f"🪓 You strike the ancient tree. ({_chops}/10 chops)")
                 view = _game_view(guild_id, user_id, player, grid=grid)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
