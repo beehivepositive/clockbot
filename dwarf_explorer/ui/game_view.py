@@ -9985,7 +9985,7 @@ async def handle_inv_nav(
 
         # Canoe pair: cursor always lives on canoe_right, never canoe_left.
         # Build canoe positions (only slots on the same row count as a pair).
-        _slot_map_nav = _build_slot_map(visible, total_slots)
+        _slot_map_nav = _build_slot_map(visible, total_slots, inv_cols)
         _canoe_left_pos: set[int] = set()
         _canoe_right_pos: set[int] = set()
         for _ci in range(total_slots - 1):

@@ -398,11 +398,18 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
 
 
-def _build_slot_map(visible_items: list[dict], total_slots: int) -> dict[int, dict]:
+def _build_slot_map(visible_items: list[dict], total_slots: int, inv_cols: int = 7) -> dict[int, dict]:
     """Map grid cell index → item using slot_index as the grid position.
 
     Items whose slot_index falls outside [0, total_slots) are packed into
     the nearest free cell at the end so they are never invisible.
+
+    Keeps canoe pairs (canoe_left + canoe_right at adjacent slots) on the
+    same display row. If canoe_left lands at the last column of a row and
+    canoe_right at the first column of the next row, a 3-way rotation
+    moves the pair to the start of the next row and bumps the item that
+    was at next-row col 1 back into the freed last-column slot. This keeps
+    both halves visually together without leaving phantom empty slots.
     """
     result: dict[int, dict] = {}
     overflow: list[dict] = []
@@ -417,6 +424,23 @@ def _build_slot_map(visible_items: list[dict], total_slots: int) -> dict[int, di
             if i not in result:
                 result[i] = it
                 break
+
+    # Canoe pair row-keeping pass
+    for i in range(total_slots - 2):
+        left = result.get(i)
+        right = result.get(i + 1)
+        if (left is not None and left.get("item_id") == "canoe_left"
+                and right is not None and right.get("item_id") == "canoe_right"
+                and (i % inv_cols) == inv_cols - 1):
+            # canoe_left at last column → 3-way rotate forward by 1.
+            displaced = result.get(i + 2)
+            result[i + 1] = left
+            result[i + 2] = right
+            if displaced is not None:
+                result[i] = displaced
+            else:
+                result.pop(i, None)
+            break  # only one canoe pair expected
     return result
 
 
@@ -466,7 +490,7 @@ def render_inventory(
 
     # --- Inventory grid (position-aware: slot_index = grid cell index) ---
     visible_items = [it for it in items if it["item_id"] != "gold_coin"]
-    slot_map = _build_slot_map(visible_items, total_slots)
+    slot_map = _build_slot_map(visible_items, total_slots, inv_cols)
 
     slots: list[str] = []
     _canoe_right_skip: set[int] = set()
