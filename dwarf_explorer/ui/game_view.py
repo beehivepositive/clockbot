@@ -1708,8 +1708,9 @@ class ForgeView(discord.ui.View):
         for label, act, style, row in [
             ("🔥 Smelt Iron (1 ore → 1 ingot)",    "forge_iron",      discord.ButtonStyle.primary, 0),
             ("🟡 Smelt Gold (1 ore → 1 ingot)",    "forge_gold",      discord.ButtonStyle.primary, 0),
+            ("📌 Iron Nails (1 ingot → 9 nails)",  "forge_nails",     discord.ButtonStyle.primary, 1),
             ("💍 Gold Ring (2 gold ingots)",        "forge_gold_ring", discord.ButtonStyle.primary, 1),
-            ("❌ Close",                            "forge_close",     discord.ButtonStyle.danger,  1),
+            ("❌ Close",                            "forge_close",     discord.ButtonStyle.danger,  2),
         ]:
             self.add_item(discord.ui.Button(
                 style=style, label=label,
@@ -9522,6 +9523,34 @@ async def handle_forge_gold_ring(
         msg = "💍 You craft a **gold ring**! Combine with an enchanted gem in your inventory to make a special ring."
     else:
         msg = f"💍 You need 2 gold ingots to craft a gold ring. (Have: {ingot_count})"
+
+    await interaction.response.edit_message(
+        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+    )
+
+
+async def handle_forge_nails(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Craft iron nails at the forge — 1 iron ingot → 9 nails. Converts all
+    available iron ingots in one click."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    ingot_rows = await db.fetch_all(
+        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='iron_ingot'",
+        (user_id,),
+    )
+    ingot_count = ingot_rows[0]["total"] if ingot_rows and ingot_rows[0]["total"] else 0
+
+    if ingot_count > 0:
+        await remove_from_inventory(db, user_id, "iron_ingot", ingot_count)
+        nails = ingot_count * 9
+        await add_to_inventory(db, user_id, "nail", nails)
+        msg = (f"📌 Hammered **{ingot_count} iron ingot{'s' if ingot_count > 1 else ''}** → "
+               f"**{nails} nails**!")
+    else:
+        msg = "📌 You need iron ingots to forge nails."
 
     await interaction.response.edit_message(
         embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)

@@ -1536,6 +1536,10 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("watering_can", "watering_can"),
         # Plank (sawn lumber)
         ("plank",        "planks"),
+        # Iron sword / cannonball / iron nails
+        ("sword",        "sword_iron"),
+        ("cannonball",   "cannonball"),
+        ("nail",         "nails_iron"),
     ]
     from dwarf_explorer.game import renderer as _renderer
     for item_key, emoji_name in _item_overrides:
