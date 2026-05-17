@@ -886,6 +886,31 @@ class Database:
                 # Note: players.hand_1/hand_2 are loaded from the equipment table
                 # (slot='hand_1'/'hand_2'), already handled by the equipment UPDATE above.
                 conn.commit()
+
+                # Canoes must not stack: split any inventory canoe row with qty > 1
+                # into individual qty=1 rows at fresh slot pairs.
+                stacked = conn.execute(
+                    "SELECT id, user_id, slot_index, quantity FROM inventory "
+                    "WHERE item_id='canoe' AND quantity > 1"
+                ).fetchall()
+                INV_COLS = 7
+                for row_id, uid, sidx, qty in stacked:
+                    # First row keeps qty=1
+                    conn.execute("UPDATE inventory SET quantity=1 WHERE id=?", (row_id,))
+                    # Add (qty-1) more single canoes at next available 2-wide spots
+                    for _ in range(qty - 1):
+                        max_row = conn.execute(
+                            "SELECT COALESCE(MAX(slot_index)+1, 0) FROM inventory WHERE user_id=?",
+                            (uid,),
+                        ).fetchone()
+                        nxt = max_row[0] if max_row else 0
+                        if nxt % INV_COLS == INV_COLS - 1:
+                            nxt = (nxt // INV_COLS + 1) * INV_COLS
+                        conn.execute(
+                            "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+                            (uid, "canoe", nxt),
+                        )
+                    conn.commit()
             except Exception as e:
                 _log.warning("Canoe consolidation migration warning: %s", e)
 
