@@ -5404,7 +5404,7 @@ async def handle_plant(
     inv_items = await get_inventory(db, user_id)
     seed_types_held = [
         it["item_id"] for it in inv_items
-        if it["item_id"] in FARM_CROPS and it["qty"] > 0
+        if it["item_id"] in FARM_CROPS and it["quantity"] > 0
     ]
     if not seed_types_held:
         content = render_grid(grid, player, "🌱 You have no seeds to plant.")
@@ -12228,6 +12228,9 @@ async def handle_shop_buy(
         player.gold -= total_cost
         await update_player_stats(db, user_id, gold=player.gold)
     await add_to_inventory(db, user_id, item["id"], qty)
+    # Watering can arrives empty — player must fill it at a water source.
+    if item["id"] == "watering_can":
+        await db.execute("UPDATE players SET watering_can_uses=0 WHERE user_id=?", (user_id,))
     player_items = await get_inventory(db, user_id)
     suffix = f"\n*Purchased {qty}× {item['name']} for {total_cost}g!*"
     new_state = {**state, "qty": 1}
