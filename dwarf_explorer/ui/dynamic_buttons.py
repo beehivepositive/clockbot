@@ -34,6 +34,7 @@ async def _bg_avatar_refresh(guild: discord.Guild, user_id: int, db) -> None:
         pass
 from dwarf_explorer.ui.game_view import (
     handle_move, handle_interact, handle_interact2, handle_use_hand1, handle_use_hand2, handle_swap_hands, handle_sprint,
+    handle_embark_dir, handle_chop_dir,
     handle_fill_watering_can, handle_fish_secondary, handle_forest_map,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
@@ -702,6 +703,12 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_lumber_craft_canoe(interaction, gid, uid)
             elif act == "embark":
                 await handle_embark(interaction, gid, uid)
+            elif act in ("embark_up", "embark_down", "embark_left", "embark_right"):
+                direction = act[7:]  # strip "embark_"
+                await handle_embark_dir(interaction, gid, uid, direction)
+            elif act in ("chop_up", "chop_down", "chop_left", "chop_right"):
+                direction = act[5:]  # strip "chop_"
+                await handle_chop_dir(interaction, gid, uid, direction)
             elif act == "feed_cat":
                 await handle_feed_cat(interaction, gid, uid)
             elif act == "plant":

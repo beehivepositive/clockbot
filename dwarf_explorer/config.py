@@ -1557,6 +1557,8 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         ("small_pouch",  "pouch"),
         ("medium_pouch", "pouch"),
         ("large_pouch",  "pouch"),
+        # Hoe
+        ("hoe",          "hoe"),
         # Watering can
         ("watering_can", "watering_can"),
         # Plank (sawn lumber)

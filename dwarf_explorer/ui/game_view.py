@@ -438,10 +438,14 @@ class GameView(discord.ui.View):
                  h1_item: str | None = None,
                  h2_item: str | None = None,
                  h1_action_enabled: bool = False,
-                 h2_action_enabled: bool = False):
+                 h2_action_enabled: bool = False,
+                 canoe_dirs: frozenset[str] = frozenset(),
+                 chop_dirs: frozenset[str] = frozenset()):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
+        self.canoe_dirs = canoe_dirs
+        self.chop_dirs = chop_dirs
         self._build_buttons(boots_equipped, sprinting, mine_dirs,
                             center_label, center_enabled,
                             action_label, action_enabled,
@@ -458,6 +462,23 @@ class GameView(discord.ui.View):
                 style=discord.ButtonStyle.danger,
                 emoji="\u26CF\uFE0F",  # ⛏️
                 custom_id=_custom_id(self.guild_id, self.user_id, f"mine_{direction}"),
+                row=row,
+            )
+        if direction in self.canoe_dirs:
+            _ce = _ITEM_EMOJI.get("canoe") or "\U0001F6F6"
+            _cp = _parse_emoji(_ce) if _ce else None
+            _cd = _cp or (_ce.split()[0] if _ce else "\U0001F6F6")
+            return discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji=_cd,
+                custom_id=_custom_id(self.guild_id, self.user_id, f"embark_{direction}"),
+                row=row,
+            )
+        if direction in self.chop_dirs:
+            return discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                emoji="\U0001FA93",  # 🪓
+                custom_id=_custom_id(self.guild_id, self.user_id, f"chop_{direction}"),
                 row=row,
             )
         return discord.ui.Button(
@@ -3032,21 +3053,8 @@ def _compute_context_labels(
     if adj_terrains & _QUEST_NPC_TILES:
         npc_label, npc_enabled = "💬", True
 
-    # ── Embark canoe: bottom-left button, only in overworld with canoe + adjacent water ──
-    embark_enabled = False
-    if (not player.in_village and not player.in_house and not player.in_cave
-            and not player.in_ocean and not player.in_canoe):
-        _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
-        # Accept inventory presence (has_canoe), equipped hand slot, or legacy item
-        _has_canoe = has_canoe or "canoe" in hand_items
-        if _has_canoe:
-            for ro, co in ((-1,0),(1,0),(0,-1),(0,1)):
-                r, c = vc + ro, vc + co
-                if 0 <= r < len(grid) and 0 <= c < len(grid[r]):
-                    _at = grid[r][c].terrain
-                    if _at in _CANOE_WATER:
-                        embark_enabled = True
-                        break
+    # ── Embark canoe: directional arrow replacement (computed in _game_view) ──
+    embark_enabled = False  # no longer uses bottom-left slot
 
     # ── Feed cat: bottom-left button when adjacent to a pet inside a house ──────
     feed_enabled = False
@@ -3165,6 +3173,36 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                 h1_action_enabled = _tool_action_enabled(h1_item)
                 h2_action_enabled = _tool_action_enabled(h2_item)
 
+    # ── Directional canoe embark (replace arrow with 🛶 when water adjacent) ─
+    canoe_dirs: frozenset[str] = frozenset()
+    chop_dirs: frozenset[str] = frozenset()
+    if (grid is not None
+            and not player.in_cave and not player.in_village
+            and not player.in_house and not player.in_ocean
+            and not player.in_canoe and not player.in_ship):
+        _vc = 4  # viewport center index
+        _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
+        _has_canoe_item = has_canoe or bool(player.hand_1 == "canoe" or player.hand_2 == "canoe")
+        _dir_offsets = [("up", -1, 0), ("down", 1, 0), ("left", 0, -1), ("right", 0, 1)]
+        if _has_canoe_item:
+            _cd: set[str] = set()
+            for _dn, _ro, _co in _dir_offsets:
+                _r, _c = _vc + _ro, _vc + _co
+                if 0 <= _r < len(grid) and 0 <= _c < len(grid[_r]):
+                    if grid[_r][_c].terrain in _CANOE_WATER:
+                        _cd.add(_dn)
+            canoe_dirs = frozenset(_cd)
+        # ── Directional ancient tree chop (replace arrow with 🪓 when adj) ─
+        _has_axe = (player.hand_1 == "axe" or player.hand_2 == "axe")
+        if _has_axe:
+            _chopd: set[str] = set()
+            for _dn, _ro, _co in _dir_offsets:
+                _r, _c = _vc + _ro, _vc + _co
+                if 0 <= _r < len(grid) and 0 <= _c < len(grid[_r]):
+                    if grid[_r][_c].terrain in _ANCIENT_TREE_TILES:
+                        _chopd.add(_dn)
+            chop_dirs = frozenset(_chopd)
+
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
                     sprinting=player.sprinting,
@@ -3187,7 +3225,9 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     h1_item=h1_item,
                     h2_item=h2_item,
                     h1_action_enabled=h1_action_enabled,
-                    h2_action_enabled=h2_action_enabled)
+                    h2_action_enabled=h2_action_enabled,
+                    canoe_dirs=canoe_dirs,
+                    chop_dirs=chop_dirs)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -5535,6 +5575,110 @@ async def handle_canoe_dock(
     await update_player_stats(db, user_id, world_x=lx, world_y=ly, in_canoe=0)
     grid = await load_viewport(lx, ly, seed, db)
     content = render_grid(grid, player, "🏞️ You pull the canoe ashore.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_embark_dir(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    direction: str,
+) -> None:
+    """Embark onto the water tile in a specific cardinal direction."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if player.in_canoe:
+        return
+
+    dx, dy = DIRECTIONS[direction]
+    ax, ay = player.world_x + dx, player.world_y + dy
+
+    if not (0 <= ax < WORLD_SIZE and 0 <= ay < WORLD_SIZE):
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "Can't embark there — world boundary.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    t = await load_single_tile(ax, ay, seed, db)
+    _CANOE_WATER = {"river", "bridge", "shallow_water", "deep_water"}
+    if t.terrain not in _CANOE_WATER:
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "No water to launch from there.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    player.world_x, player.world_y = ax, ay
+    player.in_canoe = True
+    await update_player_stats(db, user_id, world_x=ax, world_y=ay, in_canoe=1)
+    grid = await load_viewport(ax, ay, seed, db)
+    content = render_grid(grid, player, "\U0001F6F6 You push off from the bank and onto the water.")
+    dock_dirs = await _compute_canoe_dock_dirs(player, seed, db)
+    has_fishing_rod = (player.hand_1 == "fishing_rod" or player.hand_2 == "fishing_rod")
+    view = CanoeView(guild_id, user_id, dock_dirs=dock_dirs, has_fishing_rod=has_fishing_rod)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_chop_dir(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    direction: str,
+) -> None:
+    """Chop the ancient tree in a specific cardinal direction."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    if not (player.hand_1 == "axe" or player.hand_2 == "axe"):
+        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player, "\U0001FA93 You need an axe equipped to chop the ancient tree.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    dx, dy = DIRECTIONS[direction]
+    wx, wy = player.world_x, player.world_y
+    ax, ay = wx + dx, wy + dy
+    t = await load_single_tile(ax, ay, seed, db)
+
+    if t.terrain not in _ANCIENT_TREE_TILES:
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, "\U0001FA93 Nothing to chop there.")
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    _root_x, _root_y = _ancient_tree_root(t.terrain, ax, ay)
+    _chop_row = await db.fetch_one(
+        "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+        (_root_x, _root_y)
+    )
+    _chops = (_chop_row["chops"] if _chop_row else 0) + 1
+    if _chops >= 10:
+        await db.execute(
+            "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+            (_root_x, _root_y)
+        )
+        for _tx, _ty, _ in _ancient_tree_positions(_root_x, _root_y):
+            await set_tile_override(db, _tx, _ty, "dirt")
+        await add_to_inventory(db, user_id, "log", 6)
+        await add_to_inventory(db, user_id, "ancient_sapling", 1)
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, "\U0001FA93 The ancient tree crashes down! You gather **6 logs** and recover the **ancient sapling**.")
+    else:
+        if _chop_row:
+            await db.execute(
+                "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
+                (_chops, _root_x, _root_y)
+            )
+        else:
+            await db.execute(
+                "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
+                (_root_x, _root_y, _chops)
+            )
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, f"\U0001FA93 You strike the ancient tree. ({_chops}/10 chops)")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
