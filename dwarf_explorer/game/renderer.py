@@ -491,7 +491,10 @@ def render_inventory(
 
     slots: list[str] = []
     _canoe_right_skip: set[int] = set()
-    # Pre-pass: identify canoe pair right-halves so we can skip them in main loop
+    # Pre-pass: identify canoe pair right-halves — used ONLY for the detail line
+    # below the grid (so it shows "Canoe" instead of "canoe right").
+    # Each canoe half is rendered as a normal individual slot in the main loop
+    # so that every row stays exactly 7×4 chars wide and columns align perfectly.
     for i in range(total_slots - 1):
         left = slot_map.get(i)
         right = slot_map.get(i + 1)
@@ -499,34 +502,36 @@ def render_inventory(
                 and right is not None and right["item_id"] == "canoe_right"
                 and i // inv_cols == (i + 1) // inv_cols):   # same row
             _canoe_right_skip.add(i + 1)
+
     for i in range(total_slots):
-        if i in _canoe_right_skip:
-            # Canoe-right placeholder: emit _PAD×2 so the combined cell + placeholder
-            # together equal exactly 2 normal slot widths (8 chars total).
-            slots.append(f"{_PAD}{_PAD}")
-            continue
         item = slot_map.get(i)
         if item is not None:
             item_id = item["item_id"]
-            # Check if this is the left half of a seamless canoe pair
-            if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
-                left_emoji  = _item_emoji("canoe_left")
-                right_emoji = _item_emoji("canoe_right")
-                cursor_on_pair = (
-                    (i == selected or i + 1 == selected) and cursor_mode == "inventory"
-                )
-                # Padded to 6 chars so combined with 2-char placeholder = 8 chars
-                # (same as two regular qty=1 slots).  Extra _PAD on each end centres
-                # the pair and stops the row above from appearing to skip 2 columns.
-                if cursor_on_pair:
-                    slots.append(f"{_PAD}{_PAD}{left_emoji}{right_emoji}{_PAD}{_CUR}")
-                else:
-                    slots.append(f"{_PAD}{_PAD}{left_emoji}{right_emoji}{_PAD}{_PAD}")
-                continue
             qty = item["quantity"]
             is_selected = item_id in selections
-            cursor_on = (i == selected) and cursor_mode == "inventory"
-            slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
+
+            if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
+                # Combined cell: both halves in one 4-unit slot.
+                # cursor/selection replaces the LEFT pad — never added on top.
+                cursor_on = cursor_mode == "inventory" and (
+                    i == selected or i + 1 == selected
+                )
+                left_e = _item_emoji("canoe_left")
+                right_e = _item_emoji("canoe_right")
+                if cursor_on:
+                    slots.append(f"{_CUR}{left_e}{right_e}{_PAD}")
+                elif is_selected:
+                    slots.append(f"{_SEL}{left_e}{right_e}{_PAD}")
+                else:
+                    slots.append(f"{_PAD}{left_e}{right_e}{_PAD}")
+
+            elif item_id == "canoe_right" and i in _canoe_right_skip:
+                # Spacer slot consumed by the combined canoe_left cell above.
+                slots.append(f"{_PAD}{_PAD}{_PAD}{_PAD}")
+
+            else:
+                cursor_on = (i == selected) and cursor_mode == "inventory"
+                slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
                 slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_CUR}")  # cursor trailing ◄
