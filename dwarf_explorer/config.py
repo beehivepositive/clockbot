@@ -263,8 +263,6 @@ WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
     "sapling", "ancient_planted", "ancient_sapling", "short_grass", "seedling", "dirt",
-    "ancient_tree_top_left", "ancient_tree_top_right",
-    "ancient_tree_bottom_left", "ancient_tree_bottom_right",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable

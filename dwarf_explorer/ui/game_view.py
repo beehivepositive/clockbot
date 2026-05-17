@@ -2985,9 +2985,7 @@ def _compute_context_labels(
             if adj.structure:
                 adj_terrains.add(adj.structure)
 
-    if adj_terrains & _ANCIENT_TREE_TILES and "axe" in hand_items and not player.in_house:
-        action_label, action_enabled = "🪓 Chop", True
-    elif "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
+    if "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
         action_label, action_enabled = "⚙️ Gears", True
     elif "b_stove" in adj_terrains:
         action_label, action_enabled = "🔥 Cook", True
@@ -3136,12 +3134,18 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                 _SHOVEL_TILES = {"sapling", "dirt", "grass", "plains", "sand", "short_grass"}
                 _FILL_WATER = {"river", "bridge", "shallow_water", "deep_water",
                                "vil_well", "vil_fountain"}
-                # Check all 4 adjacent grid cells for a water source
+                # Check all 4 adjacent grid cells for a water source or ancient tree
                 _vc4 = 4
                 _adj_water = any(
                     0 <= _vc4 + _ro < len(grid)
                     and 0 <= _vc4 + _co < len(grid[_vc4 + _ro])
                     and grid[_vc4 + _ro][_vc4 + _co].terrain in _FILL_WATER
+                    for _ro, _co in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                )
+                _adj_ancient_tree = any(
+                    0 <= _vc4 + _ro < len(grid)
+                    and 0 <= _vc4 + _co < len(grid[_vc4 + _ro])
+                    and grid[_vc4 + _ro][_vc4 + _co].terrain in _ANCIENT_TREE_TILES
                     for _ro, _co in ((-1, 0), (1, 0), (0, -1), (0, 1))
                 )
 
@@ -3153,7 +3157,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         or (item == "fishing_rod" and _adj_water)
                         or (item == "shovel" and _t in _SHOVEL_TILES)
                         or (item == "hoe" and _t in ("grass", "plains", "dirt"))
-                        or (item == "axe" and _t in ("forest", "dense_forest"))
+                        or (item == "axe" and (_t in ("forest", "dense_forest") or _adj_ancient_tree))
                         or (item == "knife" and _t in ("grass", "plains"))
                         or item in ("cooked_fish", "fish")
                         or item == "map_fragment"
@@ -9288,6 +9292,7 @@ async def _execute_tool_action(
     # ── Axe (on-tile forest chop) ─────────────────────────────────────────────
     elif tool == "axe":
         if terrain in ("forest", "dense_forest"):
+            # Chop the tree you're standing on — highest priority
             rng = _random.Random()
             await set_tile_override(db, wx, wy, "sapling")
             await add_to_inventory(db, user_id, "log", 1)
@@ -9302,8 +9307,51 @@ async def _execute_tool_action(
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, f"🪓 You chop down the tree! Got a log{extra_str}. A sapling remains.")
         else:
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, "🪓 Nothing to chop here. (For the ancient tree, stand adjacent and use the action button.)")
+            # No forest underfoot — check adjacent tiles for an ancient tree (up > down > left > right)
+            _adj_dir = None
+            for _dn in ("up", "down", "left", "right"):
+                _ddx, _ddy = DIRECTIONS[_dn]
+                _adj_t = await load_single_tile(wx + _ddx, wy + _ddy, seed, db)
+                if _adj_t.terrain in _ANCIENT_TREE_TILES:
+                    _adj_dir = _dn
+                    break
+            if _adj_dir is not None:
+                _ddx, _ddy = DIRECTIONS[_adj_dir]
+                _ax, _ay = wx + _ddx, wy + _ddy
+                _at = await load_single_tile(_ax, _ay, seed, db)
+                _root_x, _root_y = _ancient_tree_root(_at.terrain, _ax, _ay)
+                _chop_row = await db.fetch_one(
+                    "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                    (_root_x, _root_y)
+                )
+                _chops = (_chop_row["chops"] if _chop_row else 0) + 1
+                if _chops >= 10:
+                    await db.execute(
+                        "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                        (_root_x, _root_y)
+                    )
+                    for _tx, _ty, _ in _ancient_tree_positions(_root_x, _root_y):
+                        await set_tile_override(db, _tx, _ty, "dirt")
+                    await add_to_inventory(db, user_id, "log", 6)
+                    await add_to_inventory(db, user_id, "ancient_sapling", 1)
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, "\U0001FA93 The ancient tree crashes down! You gather **6 logs** and recover the **ancient sapling**.")
+                else:
+                    if _chop_row:
+                        await db.execute(
+                            "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
+                            (_chops, _root_x, _root_y)
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
+                            (_root_x, _root_y, _chops)
+                        )
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, f"\U0001FA93 You strike the ancient tree. ({_chops}/10 chops)")
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🪓 Nothing to chop here.")
 
     # ── Knife ─────────────────────────────────────────────────────────────────
     elif tool == "knife":
