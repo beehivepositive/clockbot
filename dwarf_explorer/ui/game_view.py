@@ -6742,14 +6742,28 @@ async def handle_interact(
                 fish_row = await db.fetch_one(
                     "SELECT quantity FROM inventory WHERE user_id=? AND item_id='fish'", (user_id,)
                 )
+                potato_row = await db.fetch_one(
+                    "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='potato'", (user_id,)
+                )
+                fish_count = fish_row["quantity"] if fish_row and fish_row["quantity"] else 0
+                potato_count = potato_row["total"] if potato_row and potato_row["total"] else 0
                 grid = await _load_house_grid()
-                if fish_row and fish_row["quantity"] > 0:
-                    count = fish_row["quantity"]
-                    await remove_from_inventory(db, user_id, "fish", count)
-                    await add_to_inventory(db, user_id, "cooked_fish", count)
-                    content = render_grid(grid, player, f"🔥 You cook {count} fish at the hearth. Got {count} cooked fish!")
+                if fish_count > 0 and potato_count > 0:
+                    await remove_from_inventory(db, user_id, "fish", fish_count)
+                    await add_to_inventory(db, user_id, "cooked_fish", fish_count)
+                    await remove_from_inventory(db, user_id, "potato", potato_count)
+                    await add_to_inventory(db, user_id, "baked_potato", potato_count)
+                    content = render_grid(grid, player, f"🔥 You cook {fish_count} fish and {potato_count} potato{'es' if potato_count != 1 else ''} at the hearth!")
+                elif fish_count > 0:
+                    await remove_from_inventory(db, user_id, "fish", fish_count)
+                    await add_to_inventory(db, user_id, "cooked_fish", fish_count)
+                    content = render_grid(grid, player, f"🔥 You cook {fish_count} fish at the hearth. Got {fish_count} cooked fish!")
+                elif potato_count > 0:
+                    await remove_from_inventory(db, user_id, "potato", potato_count)
+                    await add_to_inventory(db, user_id, "baked_potato", potato_count)
+                    content = render_grid(grid, player, f"🔥 You bake {potato_count} potato{'es' if potato_count != 1 else ''} at the hearth!")
                 else:
-                    content = render_grid(grid, player, "A warm hearth. Bring raw fish to cook here.")
+                    content = render_grid(grid, player, "A warm hearth. Bring raw fish or potatoes to cook here.")
 
             elif htile.terrain in ("b_bed", "b_table", "b_bookshelf", "b_chair", "b_candle"):
                 msgs = {
@@ -10240,6 +10254,11 @@ def _inv_view(guild_id: int, user_id: int, items: list, sel: int, equipped: dict
         # Show move qty and total in move mode suffix
         total_max = state.get("move_qty_max") or move_qty
         content += f"\n*↔️ Moving ×{move_qty} of {total_max} — navigate to destination, then Confirm.*"
+    # Consumable tooltip: show what the item does when cursor rests on one
+    if cursor_mode == "inventory" and cursor_id and cursor_id in CONSUMABLE_ITEMS:
+        _cons = CONSUMABLE_ITEMS[cursor_id]
+        _cons_name = cursor_id.replace("_", " ").title()
+        content += f"\n*{_cons_name}: {_cons['desc']}*"
     if msg_suffix:
         content += msg_suffix
 

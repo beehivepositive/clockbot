@@ -128,6 +128,7 @@ ITEM_EMOJI = {
     "wheat":       "\U0001F33E",     # 🌾
     "carrot":      "\U0001F955",     # 🥕
     "potato":      "\U0001F954",     # 🥔
+    "baked_potato": "\U0001F360",    # 🍠 roasted sweet potato
     "hoe":         "\U0001FAB0",     # 🪰  (overridable with :hoe:)
     "wood": "\U0001FAB5",            # 🪵
     "stone": "\U0001FAA8",           # 🪨
@@ -390,6 +391,7 @@ CONSUMABLE_ITEMS = {
     "meat_stew":    {"hp": 20,  "desc": "+20 HP"},
     "cowards_ale":  {"hp": 0,   "desc": "Guaranteed escape — no parting blow", "escape": True},
     "forest_nut":   {"hp": 8,   "desc": "+8 HP"},
+    "baked_potato": {"hp": 5,   "desc": "+5 HP"},
 }
 
 # Tavern food/drink menu (price in gold)
@@ -1389,6 +1391,7 @@ ITEM_SELL_PRICES = {
     "wheat":             3,
     "carrot":            3,
     "potato":            3,
+    "baked_potato":      4,
     "hoe":               12,
     "breath_of_the_sea": 30,
     "gust_of_aevos":     20,
