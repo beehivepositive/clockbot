@@ -651,6 +651,30 @@ async def create_drop_box(
             )
 
 
+async def add_canoe_pair(db: Database, user_id: int, inv_cols: int = 7) -> None:
+    """Insert a canoe_left + canoe_right pair into two adjacent inventory slots
+    that share the same display row. If the natural next slot would land at the
+    rightmost column (splitting the pair across rows), bump both pieces forward
+    to the start of the following row so they remain visually combined.
+    """
+    row_obj = await db.fetch_one(
+        "SELECT COALESCE(MAX(slot_index)+1, 0) AS nxt FROM inventory WHERE user_id=?",
+        (user_id,),
+    )
+    nxt = row_obj["nxt"] if row_obj else 0
+    if nxt % inv_cols == inv_cols - 1:
+        # Left piece would be at the last column; bump to start of next row
+        nxt = (nxt // inv_cols + 1) * inv_cols
+    await db.execute(
+        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+        (user_id, "canoe_left", nxt),
+    )
+    await db.execute(
+        "INSERT INTO inventory(user_id, item_id, quantity, slot_index) VALUES(?,?,1,?)",
+        (user_id, "canoe_right", nxt + 1),
+    )
+
+
 async def pickup_drop_box(
     db: Database, world_x: int, world_y: int, user_id: int
 ) -> list[tuple[str, int]]:
@@ -658,13 +682,21 @@ async def pickup_drop_box(
 
     Returns list of (item_id, qty) actually picked up.
     Gold coins go directly to players.gold rather than inventory.
+    Canoe halves are picked up together as a paired item so they land at
+    adjacent slots on the same display row.
     """
     items = await db.fetch_all(
         "SELECT id, item_id, quantity FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
         (world_x, world_y),
     )
+    # Separate canoe halves so we can pair-place them. Order matters: canoe_left
+    # must precede canoe_right in inventory slots.
+    canoe_left_rows = [r for r in items if r["item_id"] == "canoe_left"]
+    canoe_right_rows = [r for r in items if r["item_id"] == "canoe_right"]
+    other_rows = [r for r in items if r["item_id"] not in ("canoe_left", "canoe_right")]
+
     picked = []
-    for row in items:
+    for row in other_rows:
         if row["item_id"] == "gold_coin":
             # Gold goes directly to the player's gold total, not inventory
             await db.execute(
@@ -673,6 +705,20 @@ async def pickup_drop_box(
             )
         else:
             await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+        await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
+        picked.append((row["item_id"], row["quantity"]))
+
+    # Pair-pickup: for each matched canoe_left/canoe_right pair, place them together.
+    pair_count = min(len(canoe_left_rows), len(canoe_right_rows))
+    for i in range(pair_count):
+        await add_canoe_pair(db, user_id)
+        await db.execute("DELETE FROM ground_items WHERE id=?", (canoe_left_rows[i]["id"],))
+        await db.execute("DELETE FROM ground_items WHERE id=?", (canoe_right_rows[i]["id"],))
+        picked.append(("canoe_left", 1))
+        picked.append(("canoe_right", 1))
+    # Stragglers (orphan half — shouldn't normally happen) fall back to normal add
+    for row in canoe_left_rows[pair_count:] + canoe_right_rows[pair_count:]:
+        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
         await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
         picked.append((row["item_id"], row["quantity"]))
     # Remove tile_override if no drop items remain
