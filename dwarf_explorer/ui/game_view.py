@@ -161,23 +161,20 @@ async def _player_has_canoe(db, user_id: int) -> bool:
 
 
 def _canoe_cursor_adjust(visible: list[dict], sel: int, inv_cols: int) -> int:
-    """If cursor lands on the canoe_right spacer slot, redirect it back to canoe_left.
+    """If cursor lands on canoe_left, redirect it to canoe_right.
 
-    The cursor always rests on the LEFT half of the canoe pair so it is visible.
-    canoe_right is a display-only spacer — the cursor should never sit there.
+    The cursor always rests on the RIGHT half so its visual column matches
+    the navigation column (prevents off-by-one confusion in the row above).
     """
-    right = _cursor_item(visible, sel)
-    if right is None or right["item_id"] != "canoe_right":
-        return sel
-    if sel == 0:
-        return sel  # nothing to the left
-    left = _cursor_item(visible, sel - 1)
+    left = _cursor_item(visible, sel)
     if left is None or left["item_id"] != "canoe_left":
         return sel
-    # Both on same row?
-    if (sel - 1) // inv_cols != sel // inv_cols:
+    right = _cursor_item(visible, sel + 1)
+    if right is None or right["item_id"] != "canoe_right":
         return sel
-    return sel - 1  # redirect to canoe_left
+    if sel // inv_cols != (sel + 1) // inv_cols:
+        return sel  # different rows — can't pair
+    return sel + 1  # redirect to canoe_right
 
 
 def _parse_emoji(s: str) -> discord.PartialEmoji | None:
@@ -9986,6 +9983,27 @@ async def handle_inv_nav(
         current_sel = state.get("selected", 0)
         new_sel = (current_sel + delta) % max(1, total_slots)
 
+        # Canoe pair: cursor always lives on canoe_right, never canoe_left.
+        # Build canoe positions (only slots on the same row count as a pair).
+        _slot_map_nav = _build_slot_map(visible, total_slots)
+        _canoe_left_pos: set[int] = set()
+        _canoe_right_pos: set[int] = set()
+        for _ci in range(total_slots - 1):
+            _l = _slot_map_nav.get(_ci)
+            _r = _slot_map_nav.get(_ci + 1)
+            if (_l and _l["item_id"] == "canoe_left"
+                    and _r and _r["item_id"] == "canoe_right"
+                    and _ci // inv_cols == (_ci + 1) // inv_cols):
+                _canoe_left_pos.add(_ci)
+                _canoe_right_pos.add(_ci + 1)
+
+        if delta == -1 and current_sel in _canoe_right_pos:
+            # LEFT from canoe_right → skip the whole pair, land on item before canoe_left
+            new_sel = (current_sel - 2) % max(1, total_slots)
+        elif new_sel in _canoe_left_pos:
+            # Landed on canoe_left → redirect to canoe_right
+            new_sel += 1
+
         _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     else:
         _ui_state[user_id] = {**state}
@@ -10014,6 +10032,7 @@ async def handle_inv_up(
             new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
         else:
             new_sel = max(0, state["selected"] - inv_cols)
+            new_sel = _canoe_cursor_adjust(visible, new_sel, inv_cols)
             new_state = {**state, "selected": new_sel}
     elif cursor_mode == "equipped":
         new_state = {**state, "cursor_mode": "gold"}
@@ -10043,9 +10062,11 @@ async def handle_inv_down(
     if cursor_mode == "gold":
         new_state = {**state, "cursor_mode": "equipped", "equipped_cursor": 0}
     elif cursor_mode == "equipped":
-        new_state = {**state, "cursor_mode": "inventory", "selected": 0}
+        start_sel = _canoe_cursor_adjust(visible, 0, inv_cols)
+        new_state = {**state, "cursor_mode": "inventory", "selected": start_sel}
     else:
         new_sel = min(total_slots - 1, state.get("selected", 0) + inv_cols)
+        new_sel = _canoe_cursor_adjust(visible, new_sel, inv_cols)
         new_state = {**state, "selected": new_sel}
 
     _ui_state[user_id] = {**new_state, "type": "inventory"}

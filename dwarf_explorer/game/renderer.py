@@ -489,13 +489,11 @@ def render_inventory(
                 slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
 
             elif item_id == "canoe_right" and i in _canoe_right_skip:
-                # Right half — one cursor for the whole pair, placed right of this emoji.
-                # Shows cursor if selected is on THIS slot OR the left-half slot.
+                # Right half — cursor lives HERE only (navigation always redirects
+                # canoe_left → canoe_right, so selected is never the left half).
                 right_e = _item_emoji("canoe_right")
-                cursor_on_pair = cursor_mode == "inventory" and (
-                    i == selected or i - 1 == selected
-                )
-                if cursor_on_pair:
+                cursor_on = cursor_mode == "inventory" and i == selected
+                if cursor_on:
                     slots.append(f"{right_e}{_CUR}{_PAD}{_PAD}")
                 else:
                     slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
