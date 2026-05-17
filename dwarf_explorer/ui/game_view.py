@@ -15126,10 +15126,21 @@ async def handle_lumbermill_insert(
     vc = 4  # viewport centre index (9×9 grid, index 4)
     original_house_id = player.house_id
 
+    # Build the frame script. Each entry is (y_position, overlay_tile, status).
+    # overlay_tile=None means render the underlying tile (e.g., the saw alone).
+    # We insert a "plank emerges at saw" transformation frame right after the
+    # saw frame so the moment of transformation is visible at the saw position
+    # before the planks travel up to the output.
+    frames: list[tuple[int, str | None, str]] = []
+    for y in range(_LM_BOT_Y, _LM_SAW_Y, -1):           # 7,6,5  (below saw)
+        frames.append((y, "b_log_moving", "⚙️ Log moving toward the saw..."))
+    frames.append((_LM_SAW_Y, None, "🪚 Sawing..."))                          # 4: saw alone
+    frames.append((_LM_SAW_Y, "b_plank_moving", "🪵 Planks emerging..."))     # 4: planks at saw
+    for y in range(_LM_SAW_Y - 1, _LM_TOP_Y - 1, -1):   # 3,2,1  (above saw)
+        frames.append((y, "b_plank_moving", "🪵 Planks moving to output..."))
+
     try:
-        # Conveyor now runs bottom → top: log enters at b_log_input (bot_y),
-        # travels up to b_saw (saw_y), and exits as planks at b_plank_output (top_y).
-        for step in range(_LM_BOT_Y, _LM_TOP_Y - 1, -1):   # y = 7,6,5,4,3,2,1
+        for y_step, overlay_tile, status in frames:
             # Re-fetch player each frame so movement is respected. If the player
             # has walked out of the mill (or to a different building), stop
             # editing the message — they're looking at something else now and
@@ -15145,34 +15156,14 @@ async def handle_lumbermill_insert(
                 )
 
                 # Calculate where this building tile appears in the 9×9 viewport
-                g_row = vc + (step        - cur_player.house_y)
+                g_row = vc + (y_step      - cur_player.house_y)
                 g_col = vc + (_LM_CONV_X  - cur_player.house_x)
 
-                # Choose the overlay sprite for this phase. We DON'T overlay on
-                # the saw row itself — let the saw emoji show through there.
-                # Pre-saw (below saw_y): render as log. Post-saw (above saw_y):
-                # render as planks.
-                overlay_tile: str | None
-                if step == _LM_SAW_Y:
-                    overlay_tile = None
-                elif step > _LM_SAW_Y:
-                    overlay_tile = "b_log_moving"     # still a log
-                else:
-                    overlay_tile = "b_plank_moving"   # planks after the saw
-
-                # Overlay the moving item onto the grid if it's on screen
+                # Overlay the moving item onto the grid if we have one and it's on-screen
                 if overlay_tile is not None and 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
                     grid[g_row][g_col] = dataclasses.replace(
                         grid[g_row][g_col], terrain=overlay_tile
                     )
-
-                # Status message varies by phase (remember: y decreases upward)
-                if step > _LM_SAW_Y:
-                    status = "⚙️ Log moving toward the saw..."
-                elif step == _LM_SAW_Y:
-                    status = "🪚 Sawing..."
-                else:
-                    status = "🪵 Planks moving to output..."
 
                 content = render_grid(grid, player=cur_player, status_msg=status)
                 try:
