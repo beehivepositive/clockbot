@@ -2651,6 +2651,8 @@ def _compute_context_labels(
         elif t in ("drop_box", "canoe_box"):
             center_label, center_enabled = "🤲", True
             print(f"[DEBUG canoe-box-button] uid={player.user_id} t={t!r} s={s!r} -> button enabled", flush=True)
+        if t in ("drop_box", "canoe_box"):
+            print(f"[DEBUG after-chain] uid={player.user_id} t={t!r} s={s!r} center_label={center_label!r} center_enabled={center_enabled} hand_items={hand_items}", flush=True)
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             center_label, center_enabled = "🍗", True
         elif "map_fragment" in hand_items:
