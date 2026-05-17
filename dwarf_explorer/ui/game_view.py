@@ -404,7 +404,8 @@ class GameView(discord.ui.View):
                  feed_enabled: bool = False,
                  plant_enabled: bool = False,
                  action2_label: str = "", action2_enabled: bool = False,
-                 action2_id: str = "sp_action2"):
+                 action2_id: str = "sp_action2",
+                 interact2_label: str = "", interact2_enabled: bool = False):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -413,7 +414,8 @@ class GameView(discord.ui.View):
                             action_label, action_enabled,
                             edit_enabled, npc_label, npc_enabled,
                             embark_enabled, feed_enabled, plant_enabled,
-                            action2_label, action2_enabled, action2_id)
+                            action2_label, action2_enabled, action2_id,
+                            interact2_label, interact2_enabled)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -442,6 +444,7 @@ class GameView(discord.ui.View):
                        plant_enabled: bool = False,
                        action2_label: str = "", action2_enabled: bool = False,
                        action2_id: str = "sp_action2",
+                       interact2_label: str = "", interact2_enabled: bool = False,
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -557,8 +560,25 @@ class GameView(discord.ui.View):
                 row=2,
             )
 
-        # ── Row 3: feed/plant/embark/spacer | ⬇️ | NPC ───────────────────────
-        if feed_enabled:
+        # ── Row 3: interact2/feed/plant/embark/spacer | ⬇️ | NPC ─────────────
+        if interact2_enabled and interact2_label:
+            _i2_emoji = _parse_emoji(interact2_label)
+            if _i2_emoji:
+                sp5_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_i2_emoji,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "interact2"),
+                    row=3,
+                )
+            else:
+                _i2_emoji_char = interact2_label.split()[0]
+                sp5_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    emoji=_i2_emoji_char,
+                    custom_id=_custom_id(self.guild_id, self.user_id, "interact2"),
+                    row=3,
+                )
+        elif feed_enabled:
             sp5_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
                 emoji="🐟",
@@ -2505,10 +2525,11 @@ def _compute_context_labels(
     player: Player,
     hand_items: set[str],
     has_canoe: bool = False,
-) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool, str, bool, str]:
+) -> tuple[str, bool, str, bool, bool, str, bool, bool, bool, bool, str, bool, str, str, bool]:
     """Return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
                npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
-               action2_label, action2_enabled, action2_id).
+               action2_label, action2_enabled, action2_id,
+               interact2_label, interact2_enabled).
 
     center = on-tile interaction (interact button at row-2 center)
     action = adjacent-tile interaction (action button at row-1 col-2)
@@ -2524,7 +2545,7 @@ def _compute_context_labels(
     edit_enabled = False
 
     if not grid or len(grid) <= vc:
-        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+        return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
@@ -2557,7 +2578,7 @@ def _compute_context_labels(
                     center_label, center_enabled = "🔨 Repair", True
                 else:
                     center_label, center_enabled = "🕳️ Damage", False
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Shipwreck tile context
         if getattr(player, "in_shipwreck", False):
@@ -2565,7 +2586,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "\U0001F300 Exit", True
             elif t == "sw_chest":
                 center_label, center_enabled = "\U0001F4B0 Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Temple tile context (outer & main)
         if getattr(player, "in_temple", False):
@@ -2579,7 +2600,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌀 Enter", True
             elif t == "temple_portal_locked":
                 center_label, center_enabled = "🔒 Locked", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Sky biome tile context
         if getattr(player, "in_sky", False):
@@ -2591,7 +2612,7 @@ def _compute_context_labels(
                 center_label, center_enabled = "✨ Inspect", True
             elif t == "sky_temple":
                 center_label, center_enabled = "\U0001F3DB️ Inspect", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Forest tile context
         if getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
@@ -2610,7 +2631,7 @@ def _compute_context_labels(
                 from dwarf_explorer.config import FOREST_EMOJI as _FE
                 _ce = _FE.get("fst_chest", "📦")
                 center_label, center_enabled = f"{_ce} Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Tree City tile context
         if getattr(player, "in_tree_city", False):
@@ -2639,7 +2660,7 @@ def _compute_context_labels(
                         _tc_npc_adj = True
                         break
             _tc_npc_label = ("💬", True) if _tc_npc_adj else ("", False)
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _tc_npc_label[0], _tc_npc_label[1], False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _tc_npc_label[0], _tc_npc_label[1], False, False, False, "", False, "sp_action2", "", False
 
         # Maze tile context
         if getattr(player, "in_maze", False):
@@ -2648,7 +2669,7 @@ def _compute_context_labels(
             elif t in ("maze_chest", "maze_mimic"):
                 # maze_mimic looks identical to maze_chest intentionally
                 center_label, center_enabled = "💰 Open", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Grove tile context
         if getattr(player, "in_grove", False):
@@ -2661,7 +2682,7 @@ def _compute_context_labels(
                     if grid[_ar_g][_ac_g].terrain == "grove_statue":
                         action_label, action_enabled = "🗿 Touch", True
                         break
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Bandit camp tile context
         if getattr(player, "in_bandit_camp", False):
@@ -2677,7 +2698,7 @@ def _compute_context_labels(
                         _bc_bandit_adj = True
                         break
             _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2", "", False
 
         # Island tile context
         if player.in_island:
@@ -2701,7 +2722,7 @@ def _compute_context_labels(
                         local_adj.add(_adj.terrain)
             if "fishing_rod" in hand_items and local_adj & {"island_void", "vol_void"}:
                 action_label, action_enabled = "🎣 Fish", True
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2"
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Structural overrides (cave/village on overworld)
         if s == "player_house":
@@ -2857,7 +2878,9 @@ def _compute_context_labels(
             if adj.structure:
                 adj_terrains.add(adj.structure)
 
-    if "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
+    if "sequoia" in adj_terrains and "axe" in hand_items and not player.in_house:
+        action_label, action_enabled = "🪓 Chop", True
+    elif "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
         action_label, action_enabled = "⚙️ Gears", True
     elif "b_stove" in adj_terrains:
         action_label, action_enabled = "🔥 Cook", True
@@ -2959,9 +2982,18 @@ def _compute_context_labels(
         if center_tile and center_tile.terrain == "dirt":
             plant_enabled = True
 
+    # ── interact2: overflow second center action to bottom-left D-pad ─────────
+    interact2_label, interact2_enabled = "", False
+    if center_enabled and not player.in_house and not player.in_village:
+        if ("cooked_fish" in hand_items or "fish" in hand_items) and center_label not in ("🍗",):
+            interact2_label, interact2_enabled = "🍗", True
+        elif "map_fragment" in hand_items and center_label not in ("🗺️",):
+            interact2_label, interact2_enabled = "🗺️", True
+
     return (center_label, center_enabled, action_label, action_enabled, edit_enabled,
             npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
-            action2_label, action2_enabled, action2_id)
+            action2_label, action2_enabled, action2_id,
+            interact2_label, interact2_enabled)
 
 
 async def _load_house_grid(player: Player, db) -> list[list]:
@@ -3008,6 +3040,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
     npc_label, npc_enabled = "", False
 
     plant_enabled = False
+    interact2_label = ""
+    interact2_enabled = False
     if grid is not None:
         hand_items: set[str] = set()
         if player.hand_1:
@@ -3016,7 +3050,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             hand_items.add(player.hand_2)
         (center_label, center_enabled, action_label, action_enabled, edit_enabled,
          npc_label, npc_enabled, embark_enabled, feed_enabled, plant_enabled,
-         action2_label, action2_enabled, action2_id) = \
+         action2_label, action2_enabled, action2_id,
+         interact2_label, interact2_enabled) = \
             _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
     return GameView(guild_id, user_id,
@@ -3035,7 +3070,9 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     plant_enabled=plant_enabled,
                     action2_label=action2_label,
                     action2_enabled=action2_enabled,
-                    action2_id=action2_id)
+                    action2_id=action2_id,
+                    interact2_label=interact2_label,
+                    interact2_enabled=interact2_enabled)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -8812,11 +8849,11 @@ async def handle_interact(
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
             else:
-                await set_tile_override(db, wx, wy, "dense_forest")
+                await set_tile_override(db, wx, wy, "sequoia")
                 player.watering_can_uses = max(0, player.watering_can_uses - 1)
                 await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
                 grid = await load_viewport(wx, wy, seed, db)
-                content = render_grid(grid, player, "🌳 You water the ancient sapling. It grows into a mighty tree!")
+                content = render_grid(grid, player, "🌲 You water the ancient sapling. It grows into a mighty sequoia!")
 
         elif terrain == "short_grass" and "watering_can" in hand_items:
             # Water short grass → grass
@@ -8939,6 +8976,71 @@ async def handle_interact(
 
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_interact2(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Handle the secondary context-sensitive button (bottom-left D-pad overflow).
+    Currently handles: eat food (fish/cooked_fish), use map_fragment."""
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    hand_items: set[str] = set()
+    if player.hand_1:
+        hand_items.add(player.hand_1)
+    if player.hand_2:
+        hand_items.add(player.hand_2)
+
+    wx, wy = player.world_x, player.world_y
+
+    if "cooked_fish" in hand_items or "fish" in hand_items:
+        food_id = "cooked_fish" if "cooked_fish" in hand_items else "fish"
+        food_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id=?", (user_id, food_id)
+        )
+        if food_row:
+            await remove_from_inventory(db, user_id, food_id, 1)
+            await _auto_unequip_depleted(db, user_id, food_id, player)
+            heal_amt = FOOD_HP_RESTORE.get(food_id, 15)
+            heal = min(heal_amt, player.max_hp - player.hp)
+            player.hp += heal
+            await update_player_stats(db, user_id, hp=player.hp)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, f"🍗 You eat the {food_id.replace('_', ' ')}. Restored **{heal}** HP. ({player.hp}/{player.max_hp})")
+        else:
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "Nothing to eat here.")
+    elif "map_fragment" in hand_items:
+        frag_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='map_fragment'", (user_id,)
+        )
+        if frag_row and frag_row["quantity"] >= 5:
+            existing = await get_treasure_map(db, user_id)
+            if existing and not existing["found"]:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "🗺️ You already have an active treasure map.")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            await remove_from_inventory(db, user_id, "map_fragment", 5)
+            await _auto_unequip_depleted(db, user_id, "map_fragment", player)
+            tx, ty = await _find_treasure_location(user_id, seed, db)
+            await set_treasure_map(db, user_id, tx, ty)
+            await add_to_inventory(db, user_id, "treasure_map", 1)
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player, "🗺️ You assemble 5 map fragments into a **treasure map**! Check your inventory.")
+        else:
+            grid = await load_viewport(wx, wy, seed, db)
+            count = frag_row["quantity"] if frag_row else 0
+            content = render_grid(grid, player, f"🗺️ You need 5 map fragments to make a treasure map. ({count}/5)")
+    else:
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, "Nothing to do here.")
+
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 # ── Action button handlers (adjacent-tile interactions) ───────────────────────
@@ -9349,6 +9451,53 @@ async def handle_action(
                 await create_player_house(db, user_id, wx, wy, is_cave=False, loc_cave_id=None)
                 grid = await load_viewport(wx, wy, seed, db)
                 content = render_grid(grid, player, "🏠 **House built!** Step inside to decorate it.")
+                view = _game_view(guild_id, user_id, player, grid=grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+
+        # ── Sequoia chop (adjacent axe) ──────────────────────────────────────
+        if "axe" in hand_items:
+            # Find the adjacent sequoia
+            _seq_pos = None
+            for _ddy, _ddx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ax, _ay = wx + _ddx, wy + _ddy
+                _adj_t = await load_single_tile(_ax, _ay, seed, db)
+                if _adj_t.terrain == "sequoia":
+                    _seq_pos = (_ax, _ay)
+                    break
+            if _seq_pos:
+                _sq_x, _sq_y = _seq_pos
+                # Load or init chop progress
+                _chop_row = await db.fetch_one(
+                    "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                    (_sq_x, _sq_y)
+                )
+                _chops = (_chop_row["chops"] if _chop_row else 0) + 1
+                if _chops >= 10:
+                    # Fell the tree!
+                    await db.execute(
+                        "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                        (_sq_x, _sq_y)
+                    )
+                    await set_tile_override(db, _sq_x, _sq_y, "dirt")
+                    await add_to_inventory(db, user_id, "log", 6)
+                    await add_to_inventory(db, user_id, "ancient_sapling", 1)
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, "🪓 The great sequoia crashes down! You gather **6 logs** and recover the **ancient sapling**.")
+                else:
+                    # Record progress
+                    if _chop_row:
+                        await db.execute(
+                            "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
+                            (_chops, _sq_x, _sq_y)
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
+                            (_sq_x, _sq_y, _chops)
+                        )
+                    grid = await load_viewport(wx, wy, seed, db)
+                    content = render_grid(grid, player, f"🪓 You strike the sequoia. ({_chops}/10 chops)")
                 view = _game_view(guild_id, user_id, player, grid=grid)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return

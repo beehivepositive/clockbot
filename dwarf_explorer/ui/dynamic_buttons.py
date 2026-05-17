@@ -33,7 +33,7 @@ async def _bg_avatar_refresh(guild: discord.Guild, user_id: int, db) -> None:
     except Exception:
         pass
 from dwarf_explorer.ui.game_view import (
-    handle_move, handle_interact, handle_sprint,
+    handle_move, handle_interact, handle_interact2, handle_sprint,
     handle_fill_watering_can, handle_fish_secondary, handle_forest_map,
     handle_help, handle_help_back, handle_map,
     handle_inventory, handle_inv_nav, handle_inv_equip, handle_inv_close,
@@ -397,6 +397,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_move(interaction, gid, uid, act)
             elif act == "interact":
                 await handle_interact(interaction, gid, uid)
+            elif act == "interact2":
+                await handle_interact2(interaction, gid, uid)
             elif act == "sprint":
                 await handle_sprint(interaction, gid, uid)
             elif act == "help":
