@@ -1736,6 +1736,141 @@ class ForgeView(discord.ui.View):
         ))
 
 
+# ── Hearth recipe data ────────────────────────────────────────────────────────
+
+_HEARTH_RECIPES: list[dict] = [
+    # input_id, input_qty, output_id, output_qty, label, in_emoji, out_emoji
+    {"input_id": "fish",   "input_qty": 1, "output_id": "cooked_fish",  "output_qty": 1,
+     "label": "Cook Fish",   "in_emoji": "🐟", "out_emoji": "🍖"},
+    {"input_id": "potato", "input_qty": 1, "output_id": "baked_potato", "output_qty": 1,
+     "label": "Bake Potato", "in_emoji": "🥔", "out_emoji": "🍠"},
+]
+
+
+def _hearth_content(available: list[tuple[int, int, int]]) -> str:
+    """Build the hearth recipe-list embed content.
+    available: list of (recipe_idx, have_qty, max_batches)
+    """
+    lines = ["🔥 **Hearth** — What would you like to cook?", ""]
+    for ridx, have_qty, max_batches in available:
+        r = _HEARTH_RECIPES[ridx]
+        lines.append(
+            f"{r['in_emoji']} **{r['label']}** — "
+            f"you have **{have_qty}** {r['input_id'].replace('_',' ')} "
+            f"(can make up to **{max_batches}**)"
+        )
+    if not available:
+        lines.append("*Bring fish or potatoes to cook here.*")
+    return "\n".join(lines)
+
+
+def _hearth_qty_content(recipe_idx: int, qty: int, max_qty: int) -> str:
+    r = _HEARTH_RECIPES[recipe_idx]
+    return (
+        f"🔥 **Hearth — {r['label']}**\n\n"
+        f"{r['in_emoji']} × {qty} → {r['out_emoji']} × {qty * r['output_qty']}\n"
+        f"*(max: {max_qty})*"
+    )
+
+
+class HearthView(discord.ui.View):
+    """Recipe-chooser menu for the hearth."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 available: list[tuple[int, int, int]]):
+        """available: list of (recipe_idx, have_qty, max_batches)"""
+        super().__init__(timeout=None)
+        for row_i, (ridx, _have, _max) in enumerate(available):
+            r = _HEARTH_RECIPES[ridx]
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"{r['in_emoji']}→{r['out_emoji']} {r['label']}",
+                custom_id=_custom_id(guild_id, user_id, f"hearth_choose_{ridx}"),
+                row=row_i,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="❌ Close",
+            custom_id=_custom_id(guild_id, user_id, "hearth_close"),
+            row=min(len(available), 3),
+        ))
+
+
+class HearthQtyView(discord.ui.View):
+    """Quantity-selector for a specific hearth recipe."""
+
+    def __init__(self, guild_id: int, user_id: int,
+                 recipe_idx: int, qty: int, max_qty: int):
+        super().__init__(timeout=None)
+        gid, uid = guild_id, user_id
+        rid = recipe_idx
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="−",
+            custom_id=_custom_id(gid, uid, "hearth_qty_dec"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label=f"×{qty}",
+            custom_id=_custom_id(gid, uid, "hearth_qty_display"),
+            disabled=True, row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="+",
+            custom_id=_custom_id(gid, uid, "hearth_qty_inc"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary, label="All",
+            custom_id=_custom_id(gid, uid, "hearth_qty_all"), row=0,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary, label="📝 Custom",
+            custom_id=_custom_id(gid, uid, "hearth_qty_modal"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.success, label=f"🔥 Cook ×{qty}",
+            custom_id=_custom_id(gid, uid, "hearth_qty_cook"), row=1,
+        ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Cancel",
+            custom_id=_custom_id(gid, uid, "hearth_close"), row=1,
+        ))
+
+
+class HearthQtyModal(discord.ui.Modal, title="How many to cook?"):
+    """Modal for entering a custom hearth cook quantity."""
+
+    qty_input: discord.ui.TextInput = discord.ui.TextInput(
+        label="Quantity",
+        placeholder="Enter a number…",
+        min_length=1,
+        max_length=4,
+        required=True,
+    )
+
+    def __init__(self, guild_id: int, user_id: int, max_qty: int):
+        super().__init__()
+        self.guild_id = guild_id
+        self.user_id  = user_id
+        self.max_qty  = max_qty
+        self.qty_input.placeholder = f"1 – {max_qty}"
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        raw = self.qty_input.value.strip()
+        try:
+            entered = max(1, min(int(raw), self.max_qty))
+        except ValueError:
+            await interaction.followup.send("*Not a valid number.*", ephemeral=True)
+            return
+        state = _ui_state.get(self.user_id, {})
+        _ui_state[self.user_id] = {**state, "hearth_qty": entered}
+        rid   = state.get("hearth_recipe", 0)
+        content = _hearth_qty_content(rid, entered, self.max_qty)
+        await interaction.edit_original_response(
+            embed=_embed(content), content=None,
+            view=HearthQtyView(self.guild_id, self.user_id, rid, entered, self.max_qty),
+        )
+
+
 # ── Anvil recipe data ─────────────────────────────────────────────────────────
 
 _ANVIL_RECIPES: list[dict] = [
@@ -2615,8 +2750,6 @@ def _compute_context_labels(
             center_label, center_enabled = "🏦", True
         elif t == "b_shop_npc":
             center_label, center_enabled = "🛒", True
-        elif t == "b_stove":
-            center_label, center_enabled = "🔥", True
         elif t == "b_blacksmith_npc":
             center_label, center_enabled = "⚒️", True
         elif t == "b_priest":
@@ -2724,6 +2857,8 @@ def _compute_context_labels(
 
     if "gear_machine" in adj_terrains and getattr(player, "in_temple", False):
         action_label, action_enabled = "⚙️ Gears", True
+    elif "b_stove" in adj_terrains:
+        action_label, action_enabled = "🔥 Cook", True
     elif "b_forge" in adj_terrains:
         action_label, action_enabled = "🔥 Forge", True
     elif "b_anvil" in adj_terrains:
@@ -6738,34 +6873,7 @@ async def handle_interact(
                 return await load_building_viewport(
                     player.house_id, player.house_x, player.house_y, db)
 
-            if htile.terrain == "b_stove":
-                fish_row = await db.fetch_one(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='fish'", (user_id,)
-                )
-                potato_row = await db.fetch_one(
-                    "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='potato'", (user_id,)
-                )
-                fish_count = fish_row["quantity"] if fish_row and fish_row["quantity"] else 0
-                potato_count = potato_row["total"] if potato_row and potato_row["total"] else 0
-                grid = await _load_house_grid()
-                if fish_count > 0 and potato_count > 0:
-                    await remove_from_inventory(db, user_id, "fish", fish_count)
-                    await add_to_inventory(db, user_id, "cooked_fish", fish_count)
-                    await remove_from_inventory(db, user_id, "potato", potato_count)
-                    await add_to_inventory(db, user_id, "baked_potato", potato_count)
-                    content = render_grid(grid, player, f"🔥 You cook {fish_count} fish and {potato_count} potato{'es' if potato_count != 1 else ''} at the hearth!")
-                elif fish_count > 0:
-                    await remove_from_inventory(db, user_id, "fish", fish_count)
-                    await add_to_inventory(db, user_id, "cooked_fish", fish_count)
-                    content = render_grid(grid, player, f"🔥 You cook {fish_count} fish at the hearth. Got {fish_count} cooked fish!")
-                elif potato_count > 0:
-                    await remove_from_inventory(db, user_id, "potato", potato_count)
-                    await add_to_inventory(db, user_id, "baked_potato", potato_count)
-                    content = render_grid(grid, player, f"🔥 You bake {potato_count} potato{'es' if potato_count != 1 else ''} at the hearth!")
-                else:
-                    content = render_grid(grid, player, "A warm hearth. Bring raw fish or potatoes to cook here.")
-
-            elif htile.terrain in ("b_bed", "b_table", "b_bookshelf", "b_chair", "b_candle"):
+            if htile.terrain in ("b_bed", "b_table", "b_bookshelf", "b_chair", "b_candle"):
                 msgs = {
                     "b_bed": "A cozy bed. You feel rested.",
                     "b_table": "A sturdy wooden table.",
@@ -8816,6 +8924,9 @@ async def handle_action(
                 if t:
                     adj_terrains.add(t)
 
+        if "b_stove" in adj_terrains:
+            return await _open_hearth(interaction, guild_id, user_id, player, db, grid)
+
         if "b_forge" in adj_terrains:
             iron_ore = await _count_inv(db, user_id, "iron_ore")
             gold_ore = await _count_inv(db, user_id, "gold_ore")
@@ -9615,6 +9726,176 @@ async def handle_forge_close(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
     content = render_grid(grid, player, "You step away from the forge.")
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Hearth handlers ──────────────────────────────────────────────────────────
+
+async def _open_hearth(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player, db, grid=None
+) -> None:
+    """Build the hearth recipe menu and present it."""
+    items = await get_inventory(db, user_id)
+    counts: dict[str, int] = {}
+    for it in items:
+        counts[it["item_id"]] = counts.get(it["item_id"], 0) + it["quantity"]
+
+    available: list[tuple[int, int, int]] = []
+    for ridx, r in enumerate(_HEARTH_RECIPES):
+        have = counts.get(r["input_id"], 0)
+        if have >= r["input_qty"]:
+            max_batches = have // r["input_qty"]
+            available.append((ridx, have, max_batches))
+
+    content = _hearth_content(available)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HearthView(guild_id, user_id, available),
+    )
+
+
+async def handle_hearth_choose(
+    interaction: discord.Interaction, guild_id: int, user_id: int, recipe_idx: int
+) -> None:
+    """Player selected a recipe — open the qty chooser, or cook directly if max==1."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    items = await get_inventory(db, user_id)
+    r = _HEARTH_RECIPES[recipe_idx]
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+
+    state = _ui_state.get(user_id, {})
+    _ui_state[user_id] = {**state, "hearth_recipe": recipe_idx, "hearth_qty": 1}
+
+    if max_batches == 1:
+        # Skip the qty menu and cook the single batch directly
+        await _execute_hearth_cook(interaction, guild_id, user_id, player, db, recipe_idx, 1)
+    else:
+        content = _hearth_qty_content(recipe_idx, 1, max_batches)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=HearthQtyView(guild_id, user_id, recipe_idx, 1, max_batches),
+        )
+
+
+async def _execute_hearth_cook(
+    interaction: discord.Interaction, guild_id: int, user_id: int,
+    player, db, recipe_idx: int, qty: int
+) -> None:
+    """Consume ingredients and produce output; return to game view."""
+    r = _HEARTH_RECIPES[recipe_idx]
+    cost = qty * r["input_qty"]
+    output = qty * r["output_qty"]
+    await remove_from_inventory(db, user_id, r["input_id"], cost)
+    await add_to_inventory(db, user_id, r["output_id"], output)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    in_name  = r["input_id"].replace("_", " ")
+    out_name = r["output_id"].replace("_", " ")
+    content = render_grid(
+        grid, player,
+        f"🔥 You {r['label'].lower()} {cost} {in_name} → {output} {out_name}!"
+    )
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_hearth_qty_inc(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    rid = state.get("hearth_recipe", 0)
+    r = _HEARTH_RECIPES[rid]
+    db = await get_database(guild_id)
+    items = await get_inventory(db, user_id)
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+    qty = state.get("hearth_qty", 1)
+    qty = qty % max_batches + 1  # wrap: 1…max
+    _ui_state[user_id] = {**state, "hearth_qty": qty}
+    content = _hearth_qty_content(rid, qty, max_batches)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HearthQtyView(guild_id, user_id, rid, qty, max_batches),
+    )
+
+
+async def handle_hearth_qty_dec(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    rid = state.get("hearth_recipe", 0)
+    r = _HEARTH_RECIPES[rid]
+    db = await get_database(guild_id)
+    items = await get_inventory(db, user_id)
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+    qty = state.get("hearth_qty", 1)
+    qty = max_batches if qty <= 1 else qty - 1  # wrap: max…1
+    _ui_state[user_id] = {**state, "hearth_qty": qty}
+    content = _hearth_qty_content(rid, qty, max_batches)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HearthQtyView(guild_id, user_id, rid, qty, max_batches),
+    )
+
+
+async def handle_hearth_qty_all(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    rid = state.get("hearth_recipe", 0)
+    r = _HEARTH_RECIPES[rid]
+    db = await get_database(guild_id)
+    items = await get_inventory(db, user_id)
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+    _ui_state[user_id] = {**state, "hearth_qty": max_batches}
+    content = _hearth_qty_content(rid, max_batches, max_batches)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=HearthQtyView(guild_id, user_id, rid, max_batches, max_batches),
+    )
+
+
+async def handle_hearth_qty_modal(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    rid = state.get("hearth_recipe", 0)
+    r = _HEARTH_RECIPES[rid]
+    db = await get_database(guild_id)
+    items = await get_inventory(db, user_id)
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+    await interaction.response.send_modal(HearthQtyModal(guild_id, user_id, max_batches))
+
+
+async def handle_hearth_qty_cook(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    state = _ui_state.get(user_id, {})
+    rid = state.get("hearth_recipe", 0)
+    qty = state.get("hearth_qty", 1)
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    # Clamp qty to what we actually have right now
+    r = _HEARTH_RECIPES[rid]
+    items = await get_inventory(db, user_id)
+    have = sum(it["quantity"] for it in items if it["item_id"] == r["input_id"])
+    max_batches = max(1, have // r["input_qty"])
+    qty = max(1, min(qty, max_batches))
+    await _execute_hearth_cook(interaction, guild_id, user_id, player, db, rid, qty)
+
+
+async def handle_hearth_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    content = render_grid(grid, player, "You step away from the hearth.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 

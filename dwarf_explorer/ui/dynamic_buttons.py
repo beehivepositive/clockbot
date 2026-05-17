@@ -63,6 +63,9 @@ from dwarf_explorer.ui.game_view import (
     _ship_chest_action,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
+    handle_hearth_choose, handle_hearth_qty_inc, handle_hearth_qty_dec,
+    handle_hearth_qty_all, handle_hearth_qty_modal, handle_hearth_qty_cook,
+    handle_hearth_close,
     handle_forge_iron, handle_forge_gold, handle_forge_close,
     handle_anvil_up, handle_anvil_down, handle_anvil_prev, handle_anvil_next,
     handle_anvil_mat_prev, handle_anvil_mat_next,
@@ -308,6 +311,23 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_inventory(interaction, gid, uid)
             elif act == "action":
                 await handle_action(interaction, gid, uid)
+            # Hearth
+            elif act.startswith("hearth_choose_") and act[14:].isdigit():
+                await handle_hearth_choose(interaction, gid, uid, int(act[14:]))
+            elif act == "hearth_qty_inc":
+                await handle_hearth_qty_inc(interaction, gid, uid)
+            elif act == "hearth_qty_dec":
+                await handle_hearth_qty_dec(interaction, gid, uid)
+            elif act == "hearth_qty_all":
+                await handle_hearth_qty_all(interaction, gid, uid)
+            elif act == "hearth_qty_modal":
+                await handle_hearth_qty_modal(interaction, gid, uid)
+            elif act == "hearth_qty_cook":
+                await handle_hearth_qty_cook(interaction, gid, uid)
+            elif act == "hearth_close":
+                await handle_hearth_close(interaction, gid, uid)
+            elif act == "hearth_qty_display":
+                await interaction.response.defer()
             # Forge
             elif act == "forge_iron":
                 await handle_forge_iron(interaction, gid, uid)

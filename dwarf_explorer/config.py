@@ -390,8 +390,9 @@ CONSUMABLE_ITEMS = {
     "bread":        {"hp": 10,  "desc": "+10 HP"},
     "meat_stew":    {"hp": 20,  "desc": "+20 HP"},
     "cowards_ale":  {"hp": 0,   "desc": "Guaranteed escape — no parting blow", "escape": True},
-    "forest_nut":   {"hp": 8,   "desc": "+8 HP"},
+    "forest_nut":   {"hp": 3,   "desc": "+3 HP"},
     "baked_potato": {"hp": 5,   "desc": "+5 HP"},
+    "carrot":       {"hp": 3,   "desc": "+3 HP"},
 }
 
 # Tavern food/drink menu (price in gold)
@@ -1020,7 +1021,7 @@ VILLAGE_WALKABLE = {
 BUILDING_WALKABLE = {
     "b_floor", "b_floor_wood", "b_door",
     "b_priest", "b_bank_npc", "b_shop_npc", "b_blacksmith_npc",
-    "b_pew", "b_table", "b_stove", "b_bed",
+    "b_pew", "b_table", "b_bed",
     "b_barkeep", "b_tavern_npc", "b_healer", "b_barrel", "b_bar_counter", "b_medicine_shelf",
     "b_anvil", "b_chair", "b_bookshelf", "b_candle",
     "b_chest", "b_resident", "b_pet",
