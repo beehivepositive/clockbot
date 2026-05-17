@@ -13,6 +13,7 @@ from dwarf_explorer.database.repositories import (
     update_player_village_state,
     is_world_initialized, mark_world_initialized,
     reset_world_seed,
+    add_to_inventory,
 )
 from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn, find_nearest_village
 from dwarf_explorer.world.villages import load_village_viewport
@@ -646,6 +647,46 @@ class DwarfExplorer(commands.Cog):
             f"✅ Avatar updated! You'll now appear as {emoji} in the viewport.",
             ephemeral=True,
         )
+
+
+    @app_commands.command(name="give", description="Give the admin account an item (admin only).")
+    @app_commands.describe(item_id="Item ID (e.g. ancient_sapling, axe, sword)", quantity="How many to give (default 1)")
+    async def give(self, interaction: discord.Interaction, item_id: str, quantity: int = 1) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "Only the admin can use this command.", ephemeral=True
+            )
+            return
+        if quantity < 1:
+            await interaction.response.send_message(
+                "Quantity must be at least 1.", ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+
+        # Ensure admin player exists
+        await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+
+        leftover = await add_to_inventory(db, ADMIN_PLAYER_ID, item_id.strip(), quantity)
+        await db.commit()
+
+        if leftover == 0:
+            await interaction.response.send_message(
+                f"✅ Added **{quantity}x {item_id}** to the admin inventory.", ephemeral=True
+            )
+        else:
+            added = quantity - leftover
+            await interaction.response.send_message(
+                f"⚠️ Added **{added}x {item_id}** to the admin inventory "
+                f"({leftover} could not fit — inventory full).", ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
