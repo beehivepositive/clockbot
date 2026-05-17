@@ -48,6 +48,10 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return STRUCTURE_EMOJI[tile.structure]
     if tile.enemy and tile.enemy in ENTITY_EMOJI:
         return ENTITY_EMOJI[tile.enemy]
+    # Drop/canoe box tiles render their box emoji even though ground_items
+    # are also indexed at that coord — items are conceptually inside the box.
+    if tile.terrain in ("drop_box", "canoe_box"):
+        return TERRAIN_EMOJI.get(tile.terrain, _BLACK)
     if tile.ground_item and tile.ground_item in ITEM_EMOJI:
         return ITEM_EMOJI[tile.ground_item]
     return TERRAIN_EMOJI.get(tile.terrain, _BLACK)

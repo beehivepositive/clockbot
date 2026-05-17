@@ -65,7 +65,7 @@ async def on_ready():
         out = f"{name}.json"
         with open(out, "w", encoding="utf-8") as f:
             json.dump(messages, f, indent=2, ensure_ascii=False)
-        log(f"DONE '{name}': {len(messages)} messages → {out}")
+        log(f"DONE '{name}': {len(messages)} messages -> {out}")
 
     log("COMPLETE"); await client.close()
 
