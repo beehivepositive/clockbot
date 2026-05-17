@@ -1,0 +1,603 @@
+[
+  {
+    "id": "1503038156373622854",
+    "author_name": "Clockbot",
+    "author_id": "1291896257476034611",
+    "timestamp": "2026-05-10T14:17:01.578000+00:00",
+    "content": "# Day 0",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503110817048957092",
+    "author_name": "carp",
+    "author_id": "1429833343373021216",
+    "timestamp": "2026-05-10T19:05:45.233000+00:00",
+    "content": "<@&1339576885096743034> Engine agreement rate, top-three engine agreement, centipawn loss, critical-position accuracy, only-move accuracy, blunder avoidance, defensive accuracy, quiet engine-move frequency, conversion accuracy, opening-book deviation strength, endgame precision, move-difficulty calibration, think-time versus complexity, repeated timing rhythms, instant difficult moves, long pauses before engine-like moves, clock-pressure accuracy, post-opening timing shifts, rating-to-performance mismatch, sudden improvement spikes, style discontinuity, opening repertoire inconsistency, strength by game phase, puzzle-to-game mismatch, engine-ranking correlation, human-cohort comparison, multi-game outlier score, performance versus opponent strength, error distribution, move naturalness, session patterns, tab/app focus behavior, device linkage, account linkage, IP linkage, game-start patterns, game-abandon patterns, rematch behavior, chat reports, opponent reports, fair-play history, time-control dependence, rated-versus-unrated behavior, tournament performance spikes, opponent-specific performance, position-source familiarity, consistency across games, fatigue patterns, tilt patterns, accuracy by material imbalance, accuracy in tactical positions, accuracy in positional positions, accuracy after sacrifices, accuracy after opponent blunders, move latency distribution, premove behavior, browser/device telemetry, concurrent account behavior, historical rating trajectory, opening novelty accuracy, tablebase agreement, resignation timing, draw-offer behavior",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503113710065946704",
+    "author_name": "Sunshiney",
+    "author_id": "273249730568650763",
+    "timestamp": "2026-05-10T19:17:14.982000+00:00",
+    "content": "https://tenor.com/view/reze-tongue-out-reze-chainsaw-man-moving-her-head-reze-head-moving-reze-chainsaw-man-gif-15937294161332759512",
+    "attachments": [],
+    "embeds": [
+      {
+        "thumbnail": {
+          "url": "https://media.tenor.com/3Sykma8la9gAAAAe/reze-tongue-out-reze-chainsaw-man-moving-her-head.png",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/30FxgpjWFYmqAe0N7Ft0Uh88v_9iwv-87IVby8SOul8/https/media.tenor.com/3Sykma8la9gAAAAe/reze-tongue-out-reze-chainsaw-man-moving-her-head.png",
+          "width": 448,
+          "height": 498,
+          "placeholder": "YDcKFgA4AzmZSCe3jIlwiot3eYAVIfs=",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "video": {
+          "url": "https://media.tenor.com/3Sykma8la9gAAAPo/reze-tongue-out-reze-chainsaw-man-moving-her-head.mp4",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/VVrbYtvbIlqp_IWgZwcd02imdlzAILTyzDbWwi8jRCA/https/media.tenor.com/3Sykma8la9gAAAPo/reze-tongue-out-reze-chainsaw-man-moving-her-head.mp4",
+          "width": 448,
+          "height": 498,
+          "placeholder": "YDcKFgA4AzmZSCe3jIlwiot3eYAVIfs=",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "provider": {
+          "name": "Tenor",
+          "url": "https://tenor.co"
+        },
+        "flags": 0,
+        "type": "gifv",
+        "url": "https://tenor.com/view/reze-tongue-out-reze-chainsaw-man-moving-her-head-reze-head-moving-reze-chainsaw-man-gif-15937294161332759512"
+      }
+    ],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503129440245383312",
+    "author_name": "Sunshiney",
+    "author_id": "273249730568650763",
+    "timestamp": "2026-05-10T20:19:45.349000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "20260506_133952-1.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025581350981653/1503129439972888586/20260506_133952-1.png?ex=6a077fe1&is=6a062e61&hm=e1f34db90c825b7f8530adeeaf47ac3f581140d46d0dff9f624ee9debcff9c09&",
+        "content_type": "image/png",
+        "size": 321841
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443712192024646",
+    "author_name": "Clockbot",
+    "author_id": "1291896257476034611",
+    "timestamp": "2026-05-11T17:08:33.620000+00:00",
+    "content": "# Day 1",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503446418122084562",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-11T17:19:18.764000+00:00",
+    "content": "<@&1339576885096743034> \n\nI am the **lunatic**. I learned the following:\n* Demon type: Vigormortis\n* Bluffs: Empath, Slayer, Alsaahir\n* Minions: Gdow, Red, Prolly\n* King: Sunny\n* No Lunatic\n* No Marionette\n* No Magician\n\nI reached out to Prolly and it was immediately obvious that he was not my minion as he said he’s not a minion and I gave him another chance to tell me if he was fucking with me before I went public. Thanks and god bless.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503449427459702895",
+    "author_name": "goblinbeans",
+    "author_id": "1063134802041131008",
+    "timestamp": "2026-05-11T17:31:16.246000+00:00",
+    "content": "i have hardclaimed to sunny",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503462020861923520",
+    "author_name": "CuteSnack",
+    "author_id": "1184071592234467349",
+    "timestamp": "2026-05-11T18:21:18.747000+00:00",
+    "content": "<@&1339575806678143047> i am alsaahir, this is my guess\ndemon matty\nminions gdow, red, prolly",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1503463033220104252",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-11T18:25:20.112000+00:00",
+    "content": "welp if ur actually alsaahir at least we still have tomorrow for you to guess again <:mojo:603970205453910016>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1503465820729114704",
+    "author_name": "goblinbeans",
+    "author_id": "1063134802041131008",
+    "timestamp": "2026-05-11T18:36:24.706000+00:00",
+    "content": "i have hardclaimed to 4o4",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503466013671293059",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-11T18:37:10.707000+00:00",
+    "content": "<@&1339576885096743034> I asked sunny to trade hard claims and she wouldn’t",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503466196874559600",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-11T18:37:54.386000+00:00",
+    "content": "Sus",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503467882351431761",
+    "author_name": "Sunshiney",
+    "author_id": "273249730568650763",
+    "timestamp": "2026-05-11T18:44:36.235000+00:00",
+    "content": "The last time I hardclaimed to butti he outted me almost immediately <:marseyindignant:1339775337822818314>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503493159546785946",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-11T20:25:02.788000+00:00",
+    "content": "She whispered five people so probably has bluff now",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1503553424577527899",
+    "author_name": "prolly",
+    "author_id": "1425254357909110906",
+    "timestamp": "2026-05-12T00:24:31.091000+00:00",
+    "content": "<@&1339576885096743034> dunno why red is collecting votes but we shouldn’t hang anyone on info until d2. We can better assess whether it’s Vortox after night info.\n\nWe should **not** no hang so I like a matty hang today. She’s either a useless role (Luna) or evil.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503555795793612953",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-12T00:33:56.433000+00:00",
+    "content": "game ends if its vortox retard\n\nI'm hanging prolly",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1503558358416756889",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-12T00:44:07.410000+00:00",
+    "content": "You can always edit to cover your tracks but the record maintains the stupidity",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503559946267000914",
+    "author_name": "RabbitCarrot",
+    "author_id": "810975089910611968",
+    "timestamp": "2026-05-12T00:50:25.983000+00:00",
+    "content": "There are reasons to hang red",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1503773881025171667",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-12T15:00:32.004000+00:00",
+    "content": "I would like someone to rationalize Red or Matty hangs in focused please",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825534621319320",
+    "author_name": "Clockbot",
+    "author_id": "1291896257476034611",
+    "timestamp": "2026-05-12T18:25:47.181000+00:00",
+    "content": "# Day 2",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825950867980488",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-12T18:27:26.422000+00:00",
+    "content": "I lunapicked Gdow last night.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503832162007519335",
+    "author_name": "prolly",
+    "author_id": "1425254357909110906",
+    "timestamp": "2026-05-12T18:52:07.273000+00:00",
+    "content": "I am the **Choirboy** but actually the **Drunk** since we don't have a King.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503845996579389571",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-12T19:47:05.692000+00:00",
+    "content": "I am the Recluse. Sorry if I registered as evil to anyone. \nAnd if I didn’t register as evil to you I’m remembering that.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503849250684010627",
+    "author_name": "4o4n0tf0und",
+    "author_id": "1010233794395115600",
+    "timestamp": "2026-05-12T20:00:01.531000+00:00",
+    "content": "Ok! Now that I've chatted everyone: I'm the noble, pings are butti/Jeff/Diddy. I've chatted with all, and don't have strong feelings about who it might be, if my info is accurate. \n\nThrough my many whispers, we tentatively have TC and FG in play, so if we can have a reasonable number of noms and have some (different each day) folks agree not to vote each day, that'll really help build info quickly (or demonstrate vortox before long).",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503982290726944860",
+    "author_name": "Red Shill",
+    "author_id": "1082061325066305678",
+    "timestamp": "2026-05-13T04:48:40.749000+00:00",
+    "content": "<@&1339576885096743034> I was the magician btw, i have avoided saying it because i was curious/waiting to see how people whispered after my death. It may still be legion, but if not rabbit's reason for hanging me was because a seamstress got a \"no\" on me and him. rabbit is evil or the seamstress is. I do wonder if it's legion because no one seemed particularly afraid to hang me, but I also may have telegraphed myself as magician a bit too hard to <@273249730568650763> , who i claimed to be a minion to and she did not mention again to me or anyone else afaik. Prolly's choir boy thing is also retarded but I don't know if discount would do that.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504088278155005963",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-13T11:49:50.121000+00:00",
+    "content": "<@&1339576885096743034>",
+    "attachments": [
+      {
+        "filename": "IMG_7290.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025581350981653/1504088278641414164/IMG_7290.png?ex=6a07b11e&is=6a065f9e&hm=d00759db910e425498ef286a768fe9f03775a6b2ece3785565adf89a4a5f01ef&",
+        "content_type": "image/png",
+        "size": 4131445
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504105229396742225",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-13T12:57:11.612000+00:00",
+    "content": "I have hard claimed and have done nothing suspicious, unlike you who instantly claimed lunatic before you even had the info to be sure you weren’t the real demon.\n\nDon’t have suicidal empathy because you are mad I bullied 89 last game.\n\n<@&1339576885096743034>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504114103457808525",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-13T13:32:27.353000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "A2DB1137-1F5A-433C-8D58-BC522357D6D3.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025581350981653/1504114103940284596/A2DB1137-1F5A-433C-8D58-BC522357D6D3.png?ex=6a07c92b&is=6a0677ab&hm=51c0ea574322c9eddce3ee316504146929f0484b8795f87f1247f0a4ccbd84fd&",
+        "content_type": "image/jpeg",
+        "size": 1326213
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504185880640753774",
+    "author_name": "Clockbot",
+    "author_id": "1291896257476034611",
+    "timestamp": "2026-05-13T18:17:40.367000+00:00",
+    "content": "# Day 3",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504186131762118808",
+    "author_name": "RabbitCarrot",
+    "author_id": "810975089910611968",
+    "timestamp": "2026-05-13T18:18:40.239000+00:00",
+    "content": "I was savant\n\nd1: one of your neighbors is evil or an outsider\n\ntheres 1 pair of evils or outsiders opposite of each other\n\n\nd2: The number of evils alive is a prime number.\n\nThe lunatic is the only outsider.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504192757680570521",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-13T18:44:59.981000+00:00",
+    "content": "I am towncrier, and got yes both nights.\n\nSo Matty or Cindery are minions.\n\nOr it’s a legion game.\n\n<@&1339576885096743034>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504196995282370560",
+    "author_name": "techi",
+    "author_id": "1475827805420785705",
+    "timestamp": "2026-05-13T19:01:50.304000+00:00",
+    "content": "I'm the Empath: 0, 1, 1",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504197936303571004",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-13T19:05:34.661000+00:00",
+    "content": "I am Recluse therefore Techi info is suspect but that’s why it would explain it changing night to night despite diddy and I both being alive all three nights",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504198958208122930",
+    "author_name": "4o4n0tf0und",
+    "author_id": "1010233794395115600",
+    "timestamp": "2026-05-13T19:09:38.302000+00:00",
+    "content": "Fwiw, I assume techi is trying to alternately throw one of you under the mez-bus",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504205941757968434",
+    "author_name": "techi",
+    "author_id": "1475827805420785705",
+    "timestamp": "2026-05-13T19:37:23.310000+00:00",
+    "content": "<@&1339576885096743034> I support hanging Cindery to see if I can be useful for once. Now with Matty dead I can check 4o4.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504237151787946035",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-13T21:41:24.361000+00:00",
+    "content": "<@&1339576885096743034>",
+    "attachments": [
+      {
+        "filename": "3196C362-ACD9-4B62-8EEE-5360FF47B0DC.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025581350981653/1504237152022560768/3196C362-ACD9-4B62-8EEE-5360FF47B0DC.png?ex=6a079304&is=6a064184&hm=64a7ca869997ad79d750588c7004fafd5c47bbaa5623fe0888f8fe92e7328ca3&",
+        "content_type": "image/jpeg",
+        "size": 1445418
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504472788847558798",
+    "author_name": "prolly",
+    "author_id": "1425254357909110906",
+    "timestamp": "2026-05-14T13:17:44.614000+00:00",
+    "content": "KILL Elli. She whispered open evil Techi and is implicated in info. Cinder pinky promised not to poison info by voting or noming.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547322468765726",
+    "author_name": "Clockbot",
+    "author_id": "1291896257476034611",
+    "timestamp": "2026-05-14T18:13:54.814000+00:00",
+    "content": "# Day 4",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547446468903063",
+    "author_name": "Maybe Butti",
+    "author_id": "999025271321665587",
+    "timestamp": "2026-05-14T18:14:24.378000+00:00",
+    "content": "N2 Yes\nN3 Yes\nN4 yes\n\nJeff and Diddy nominated, so 404 prob good",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504549141156466708",
+    "author_name": "Sunshiney",
+    "author_id": "273249730568650763",
+    "timestamp": "2026-05-14T18:21:08.423000+00:00",
+    "content": "I'm Balloon Jeff/autism/elli/diddy\nThe following are the most likely worlds for my info, I'm just excluding xaan 1 basically \n \n**Vortox**\nJeff \nAutism\nElli\nDiddy\nAll town \n\n**Xaan 2**\nJeff (town?)\nAutism (town?)\nElli (evil or outsider?)\nDiddy (town, evil, or outsider?)\n\n**Xaan 3**\nJeff (evil or outsider?)\nAutism (town?)\nElli (town?)\nDiddy (evil or outsider?)\n\n**Other info**\nSeams rabbit/red no \nOracle 1-2-?\nFg yes/yes/?\nNoble butti/Diddy/Jeff \nTechi empath 0-1-1-? (neighbouring recluse claim) claimed goblin \nTown crier yes/yes/yes\n\nDeaths \nD1 red (claimed mag)\nN2 prolly (claimed choir possibly drunk)\nD2 Matty (claimed Luna)\nN3 rabbit (claimed savant)\nD3 elli (claimed alsaahir)\nN4 gdow \n\n<@&1339576885096743034> all the info I'm aware of",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504549801138589696",
+    "author_name": "_dj_dj_dj_",
+    "author_id": "1224197933751205922",
+    "timestamp": "2026-05-14T18:23:45.775000+00:00",
+    "content": "<@&1339576885096743034> I'm the actual empath. Techi, retardedly instantly outed himself as evil by immediately claiming goblin when nominated. 404 can confirm that I claimed empath to her d1.\n\nN1: 1 on red/rabbit\n\nN2: 1 on rabbit/elli\n\nN3: 0 on gdow/elli\n\nN4: 1 on autism/404\n\nI believe autism is evil, or it's possible rabbit was vig killed and is poisoning me.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504555645393965358",
+    "author_name": "RabbitCarrot",
+    "author_id": "810975089910611968",
+    "timestamp": "2026-05-14T18:46:59.154000+00:00",
+    "content": "yup jeff is evil",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504555731167215706",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-14T18:47:19.604000+00:00",
+    "content": "https://tenor.com/view/we-know-duh-hello-of-course-gif-13989211",
+    "attachments": [],
+    "embeds": [
+      {
+        "thumbnail": {
+          "url": "https://media.tenor.com/j7qFccAo5k0AAAAe/we-know-duh.png",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/1PRjFXaQ2LtcNGLfoeLZj6-YPYiAJ6fv68mdnNvJll4/https/media.tenor.com/j7qFccAo5k0AAAAe/we-know-duh.png",
+          "width": 360,
+          "height": 232,
+          "placeholder": "HigGDIIvL8VjfJeXhqdcL6KiEA==",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "video": {
+          "url": "https://media.tenor.com/j7qFccAo5k0AAAPo/we-know-duh.mp4",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/ORpQYLzbELYsZhFaLAbbtA5fXxzI_HJXAUmx9vYKy9s/https/media.tenor.com/j7qFccAo5k0AAAPo/we-know-duh.mp4",
+          "width": 360,
+          "height": 232,
+          "placeholder": "HigGDIIvL8VjfJeXhqdcL6KiEA==",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "provider": {
+          "name": "Tenor",
+          "url": "https://tenor.co"
+        },
+        "flags": 0,
+        "type": "gifv",
+        "url": "https://tenor.com/view/we-know-duh-hello-of-course-gif-13989211"
+      }
+    ],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504560392620347654",
+    "author_name": "techi",
+    "author_id": "1475827805420785705",
+    "timestamp": "2026-05-14T19:05:50.981000+00:00",
+    "content": "I had 0 1 1 1 on my neighbors",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504560656618098942",
+    "author_name": "Sunshiney",
+    "author_id": "273249730568650763",
+    "timestamp": "2026-05-14T19:06:53.923000+00:00",
+    "content": "Since autism claimed gobbo I will also add\n\nXaan 1/sober\nJeff  (town?)\nAutism (minion?)\nElli (town?)\nDiddy (minion/demon/out?)",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504565971698974823",
+    "author_name": "matty",
+    "author_id": "488179318711648257",
+    "timestamp": "2026-05-14T19:28:01.137000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "IMG_7328.jpg",
+        "url": "https://cdn.discordapp.com/attachments/1503025581350981653/1504565971942113290/IMG_7328.jpg?ex=6a0773c1&is=6a062241&hm=f3eab1c3784f317bc5abed6a0e5a111378828cc4b0dc8ab186449f74e29a4ccc&",
+        "content_type": "image/jpeg",
+        "size": 528817
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504639582858117140",
+    "author_name": "prolly",
+    "author_id": "1425254357909110906",
+    "timestamp": "2026-05-15T00:20:31.405000+00:00",
+    "content": "FG. Yes both days.\n\nD1 votes:\ndiddy\n404\nred\nelli\nprolly\nbutti\nmatty\ngdow\nrabbit\njeff\ntechi\n\ncinder autism sunny did not vote d1\n\nD2\nbutti\nautism\nsunny\n404\nelli\ncinder\ntechi\nmatty\ndiddy\n\nbutti, 404 elli techi diddy voted both days. matty too but she died that day\n\nEdit: all the people that didn’t vote d1 voted d2. This rules out vortox I think",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504639918327070910",
+    "author_name": "4o4n0tf0und",
+    "author_id": "1010233794395115600",
+    "timestamp": "2026-05-15T00:21:51.387000+00:00",
+    "content": "Can you do all three days?",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504642928759537747",
+    "author_name": "RabbitCarrot",
+    "author_id": "810975089910611968",
+    "timestamp": "2026-05-15T00:33:49.130000+00:00",
+    "content": "He died n3",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.reply"
+  },
+  {
+    "id": "1504644596804751463",
+    "author_name": "CinderyRabbit",
+    "author_id": "1468755788339089675",
+    "timestamp": "2026-05-15T00:40:26.823000+00:00",
+    "content": "<@&1339576885096743034> \nI am the **discombobulator**\nOn day 4 I learned that\nAll Tulpas are **retarded**\nand I will **not be voting **",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504652379084296252",
+    "author_name": "gdow",
+    "author_id": "684944824268357718",
+    "timestamp": "2026-05-15T01:11:22.263000+00:00",
+    "content": "<@&1339576885096743034> 4o4 is flowergirl I'm noble 🤪",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  }
+]

@@ -1,0 +1,1020 @@
+[
+  {
+    "id": "1503026263655452712",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T13:29:46.133000+00:00",
+    "content": "**[How to Play]** https://discord.com/channels/1339575347032621191/1339575475676123188/1344072737051775057\n\n**[House Rules TL;DR]**\n\n50 character demon whisper, whisper groups, voting recovable until 30 minutes prior to EOD\n\n# **[Game Specific House Rules]**\n\n**[Demon Whisper]** Once per game, each Demon may send a 50 character anonymous \"Demon whisper\" to any player by DMing the ST the message and the recipient.\n\n**[Night Length]** If night runs for more than 1 hour and you are most responsible for this, I choose for you and I will be annoyed. This only applies if the previous day did not end early. You can whisper ST to privately pre-queue actions if you'd like (please do if you might not be around).\n\n**[Whispers]** Each player is limited to 5 whispers (private conversations, via Discord DM) per day. N-party whispers cost each party (N-1) whispers, e.g. a 3-way whisper costs each player two whispers. You do not need to log whispers with the Storyteller for any reason. Please include me in all whispers for potential Pixie madness.\n\n**[Neighbor Whispers]** You may whisper for free and unlogged with your two neighbors. Neighbor whispers can continue through the night as long as information from that night is not shared.\n\n# **[House Rules]**\n\n**[Against Exact Evidence]** Please refrain from providing exact evidence such as screenshots, exact quotes, or exact timestamps of whispers with players or the Storyteller. These are unusually convincing, hard to bluff, and could not be replicated in an IRL game.\n\n**[Night Chat]** You are allowed to chat in game-chat at night. However: You cannot talk about your night information until morning.\n\n**[Voting]** Votes this game are revocable until 30 minutes before end of day; react with ⬆️ to place a vote. Discretion is applied if many votes occur near lock time/EOD, etc.\n\n**[Day Length Adjustment]** Upon request, I may create a poll to extend a day by 24hrs. React to a nomination with ⏩ if you would like to fast forward on that nomination. Day adjustment requirements are at my discretion and will protect the interests of dead voters.\n\n# Jinxes\n\n**[Magician x Marionette]** If the Magician is alive, the Demon doesn't know which neighbor is the Marionette.\n\n**[Magician x Legion]** Legion knows if a Magician is in play, but not which player it is.\n\n# Custom Jinxes \n\n**[Vortox]** If you hard Vortox check day 1(not executing to see if it's a Vortox game) and Vortox is in play, I may continue the game for a few days before announcing evil has won.\n\n**[Goblin]** If a player claims goblin less than 30 minutes before or during vote lock, votes will be unlocked on their nomination only for 30 minutes and day might be extended. Goblin must be claimed within 5 minutes of seeing their nomination to count.\n\n**[Mez]** The Mez word must be said in public chat.\n\n**[Legion X Magician]** If both Magician and Legion are in play, Legion do not get demon whispers.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503030779611971746",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T13:47:42.821000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Paranoia.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503030778521718824/Paranoia.png?ex=6a091e3e&is=6a07ccbe&hm=b4e16abee68e9d04d0c5ff02e653220b661572dbfeaf6812b9e8e17a64cf9b0d&",
+        "content_type": "image/png",
+        "size": 1150545
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503030783336779989",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T13:47:43.709000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Paranoia-meta.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503030783068078122/Paranoia-meta.png?ex=6a091e3f&is=6a07ccbf&hm=3550ab9f030a0b50622fdd9a97d67813fbbbdd356f3adce1f4a0f93078af3d94&",
+        "content_type": "image/png",
+        "size": 748582
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503038154612150354",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T14:17:01.158000+00:00",
+    "content": "# Day 0",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503087019730145360",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T17:31:11.510000+00:00",
+    "content": "Spirit of Ivory is also in play. Tyfyattm",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503097083123601628",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T18:11:10.810000+00:00",
+    "content": "<@1429833343373021216> nominates <@684944824268357718> to be out of the game",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503097459012927661",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T18:12:40.429000+00:00",
+    "content": "<@1425254357909110906> nominates <@273249730568650763> to be kicked out of the game",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503098481823453405",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T18:16:44.286000+00:00",
+    "content": "<@273249730568650763> nominates <@999025271321665587>  to be expelled from this mortal plane",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503102454668071022",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T18:32:31.486000+00:00",
+    "content": "<@999025271321665587> nominates <@1475827805420785705>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503105602979627199",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T18:45:02.102000+00:00",
+    "content": "<@1184071592234467349> nominates <@1224197933751205922>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503115890575540345",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T19:25:54.856000+00:00",
+    "content": "<@1468755788339089675> nominates <@810975089910611968>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503135963369443369",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T20:45:40.583000+00:00",
+    "content": "<@810975089910611968> nominates <@1468755788339089675>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503139014729924749",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T20:57:48.084000+00:00",
+    "content": "<@&1339576885096743034> <@1082061325066305678> spontaneously explodes and is removed from the game. It is pre-night 1. Roles going out shortly",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503143743484596334",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T21:16:35.507000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_2026-05-10_161619.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503143743166087198/Screenshot_2026-05-10_161619.png?ex=6a098773&is=6a0835f3&hm=baafb76de3711cbb65f7041f8d07eac39da72bf5976cdd46d7b33685569c1c72&",
+        "content_type": "image/png",
+        "size": 1183650
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503144142631469189",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-10T21:18:10.671000+00:00",
+    "content": "{\"bluffs\":[null,null,null],\"edition\":{\"id\":\"custom\",\"author\":\"Discount\",\"name\":\"Paranoia\"},\"roles\":[{\"id\":\"noble\"},{\"id\":\"pixie\"},{\"id\":\"empath\"},{\"id\":\"balloonist\"},{\"id\":\"king\"},{\"id\":\"flowergirl\"},{\"id\":\"towncrier\"},{\"id\":\"oracle\"},{\"id\":\"savant\"},{\"id\":\"alsaahir\"},{\"id\":\"seamstress\"},{\"id\":\"slayer\"},{\"id\":\"choirboy\"},{\"id\":\"magician\"},{\"id\":\"lunatic\"},{\"id\":\"drunk\"},{\"id\":\"recluse\"},{\"id\":\"klutz\"},{\"id\":\"mezepheles\"},{\"id\":\"xaan\"},{\"id\":\"marionette\"},{\"id\":\"goblin\"},{\"id\":\"imp\"},{\"id\":\"vigormortis\"},{\"id\":\"vortox\"},{\"id\":\"legion\"}],\"npcs\":[{\"id\":\"djinn\"}],\"players\":[{\"name\":\"Matty\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Gdow\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Autism\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Prolly\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Elli\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Diddy\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Carp\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Rabbit\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"4o4\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Butti\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Tech\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Jeff\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Sunny\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Cindery\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"}]}",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503190691579301939",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T00:23:08.805000+00:00",
+    "content": "<@&1339576885096743034> Rerack Autism did a thing",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503190725670473799",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T00:23:16.933000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "image.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503190723837821189/image.png?ex=6a090a74&is=6a07b8f4&hm=86da472b78b439bca6070190d8151a18062e9f64fe1e64089bd8bc7a5da3ba8c&",
+        "content_type": "image/png",
+        "size": 1994897
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503194420399575300",
+    "author_name": "carp",
+    "author_id": "1429833343373021216",
+    "timestamp": "2026-05-11T00:37:57.825000+00:00",
+    "content": "<@&1339576885096743034> carp nominates <@926541705279315988> 7 to exe forever",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503195014996431070",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T00:40:19.588000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_2026-05-10_193953.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503195014753419284/Screenshot_2026-05-10_193953.png?ex=6a090e73&is=6a07bcf3&hm=d5ee015045a2b913be6efbca00301220be0c75018d5ab85232ef06f3073bffc0&",
+        "content_type": "image/png",
+        "size": 1096882
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503195134567645265",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T00:40:48.096000+00:00",
+    "content": "{\"bluffs\":[null,null,null],\"edition\":{\"id\":\"custom\",\"author\":\"Discount\",\"name\":\"Paranoia\"},\"roles\":[{\"id\":\"noble\"},{\"id\":\"pixie\"},{\"id\":\"empath\"},{\"id\":\"balloonist\"},{\"id\":\"king\"},{\"id\":\"flowergirl\"},{\"id\":\"towncrier\"},{\"id\":\"oracle\"},{\"id\":\"savant\"},{\"id\":\"alsaahir\"},{\"id\":\"seamstress\"},{\"id\":\"slayer\"},{\"id\":\"choirboy\"},{\"id\":\"magician\"},{\"id\":\"lunatic\"},{\"id\":\"drunk\"},{\"id\":\"recluse\"},{\"id\":\"klutz\"},{\"id\":\"mezepheles\"},{\"id\":\"xaan\"},{\"id\":\"marionette\"},{\"id\":\"goblin\"},{\"id\":\"imp\"},{\"id\":\"vigormortis\"},{\"id\":\"vortox\"},{\"id\":\"legion\"}],\"npcs\":[{\"id\":\"djinn\"}],\"players\":[{\"name\":\"Jeff\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Rabbit\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Gdow\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"4o4\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Matty\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Cindery\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Tech\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Diddy\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Sunny\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Butti\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Autism\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Prolly\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Elli\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"},{\"name\":\"Red\",\"id\":\"\",\"connected\":false,\"role\":{},\"alignmentIndex\":0,\"reminders\":[],\"isVoteless\":false,\"hasTwoVotes\":false,\"hasResponded\":{},\"isDead\":false,\"handRaised\":false,\"pronouns\":\"\"}]}",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503441586439327744",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:00:06.801000+00:00",
+    "content": "# Night 1",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443695737770045",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:08:29.697000+00:00",
+    "content": "Ok thats enough of that. It is day. <@&1339576885096743034> it is day.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443709788688466",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:08:33.047000+00:00",
+    "content": "# Day 1",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443780634935487",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:08:49.938000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_2026-05-10_193953-1.png",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503443780567699456/Screenshot_2026-05-10_193953-1.png?ex=6a094d61&is=6a07fbe1&hm=200c2fc30aa0cf1fa326b705927afd72a4863fd257ccb1274e7f0a8cacd5ee79&",
+        "content_type": "image/png",
+        "size": 1096882
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443785122840727",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:08:51.008000+00:00",
+    "content": "**7 to exe**",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503443818551181344",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T17:08:58.978000+00:00",
+    "content": "Day ends <t:1778608800:f>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503456687263055992",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T18:00:07.118000+00:00",
+    "content": "<@1063134802041131008> nominates <@1089157937118855188>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503461048752148681",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T18:17:26.978000+00:00",
+    "content": "<@273249730568650763> nominates <@488179318711648257>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503461422087147771",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T18:18:55.988000+00:00",
+    "content": "<@684944824268357718> nominates <@1425254357909110906>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503475789176377364",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T19:16:01.369000+00:00",
+    "content": "<@810975089910611968> nominates <@1082061325066305678>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503483256845242459",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T19:45:41.800000+00:00",
+    "content": "",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.pins_add"
+  },
+  {
+    "id": "1503493484642959431",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-11T20:26:20.297000+00:00",
+    "content": "<@999025271321665587> nominates <@273249730568650763>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503734483864522773",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T12:23:58.989000+00:00",
+    "content": "https://tenor.com/view/alice-in-wonderland-grinsecat-gif-19169713",
+    "attachments": [],
+    "embeds": [
+      {
+        "thumbnail": {
+          "url": "https://media.tenor.com/2-hiix0_ncgAAAAe/alice-in-wonderland-grinsecat.png",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/sSkZEkaO-bmeqxNQimRkV1VsDNbpbiTn4PlhgjQ6Fl4/https/media.tenor.com/2-hiix0_ncgAAAAe/alice-in-wonderland-grinsecat.png",
+          "width": 640,
+          "height": 428,
+          "placeholder": "BtcBBYAzT6ahO6iVZ9pVk/5P7P7F",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "video": {
+          "url": "https://media.tenor.com/2-hiix0_ncgAAAPo/alice-in-wonderland-grinsecat.mp4",
+          "proxy_url": "https://images-ext-1.discordapp.net/external/kDvW5gRhNRH0-9rXFUNNMLC3zZpNjrBFKSYRYTghJLc/https/media.tenor.com/2-hiix0_ncgAAAPo/alice-in-wonderland-grinsecat.mp4",
+          "width": 640,
+          "height": 428,
+          "placeholder": "BtcBBYAzT6ahO6iVZ9pVk/5P7P7F",
+          "placeholder_version": 1,
+          "flags": 0
+        },
+        "provider": {
+          "name": "Tenor",
+          "url": "https://tenor.co"
+        },
+        "flags": 0,
+        "type": "gifv",
+        "url": "https://tenor.com/view/alice-in-wonderland-grinsecat-gif-19169713"
+      }
+    ],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503736232231043155",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T12:30:55.832000+00:00",
+    "content": "<@488179318711648257> nominates <@999025271321665587>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503803981430915213",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T17:00:08.500000+00:00",
+    "content": "<@&1339576885096743034> votes lock in thirty(30) minutes",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503811509493567568",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T17:30:03.330000+00:00",
+    "content": "<@&1339576885096743034> votes are locked and loaded.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503819100760051723",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:00:13.229000+00:00",
+    "content": "<@&1339576885096743034> <@1082061325066305678> is executed and dies...",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503819142812270683",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:00:23.255000+00:00",
+    "content": "And the game continues",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503819248332574720",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:00:48.413000+00:00",
+    "content": "It looks like the demon is still... among us 😎",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503819281920692255",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:00:56.421000+00:00",
+    "content": "# Night 2",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825519202795532",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:25:43.505000+00:00",
+    "content": "<@&1339576885096743034> <@1425254357909110906> has died overnight. It is day.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825532737945651",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:25:46.732000+00:00",
+    "content": "# Day 2",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825558692434032",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:25:52.920000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_20260512_131853_Chrome.jpg",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1503825558444707991/Screenshot_20260512_131853_Chrome.jpg?ex=6a095f70&is=6a080df0&hm=e6284ec017c79c27a0ec75796263915cc4d42c0a976581207c9dc046d8d6a1de&",
+        "content_type": "image/jpeg",
+        "size": 209691
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825604338782380",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:26:03.803000+00:00",
+    "content": "**6 to hang**",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503825633350910103",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T18:26:10.720000+00:00",
+    "content": "Day ends <t:1778695200:f>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503839559392432271",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T19:21:30.947000+00:00",
+    "content": "<@999025271321665587> nominates <@488179318711648257>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1503839589297684584",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-12T19:21:38.077000+00:00",
+    "content": "<@488179318711648257> nominates <@999025271321665587>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504086405691740350",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T11:42:23.691000+00:00",
+    "content": "<@1468755788339089675> nominates <@1089157937118855188>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504166342406836416",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T17:00:02.089000+00:00",
+    "content": "<@&1339576885096743034> votes lock in half(½) an hour",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504173894804832418",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T17:30:02.721000+00:00",
+    "content": "<@&1339576885096743034> votes are LOCKED <:BikeLock2:505856915050463232>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504181718272180234",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:01:07.981000+00:00",
+    "content": "<@&1339576885096743034> <@488179318711648257> is executed and dies",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504181732033957939",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:01:11.262000+00:00",
+    "content": "It is night",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504181738669080678",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:01:12.844000+00:00",
+    "content": "# Night 3",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504185862836064346",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:17:36.122000+00:00",
+    "content": "<@&1339576885096743034> <@810975089910611968> has been skewered and skinned. It is day.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504185878183153754",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:17:39.781000+00:00",
+    "content": "# Day 3",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504185895761481739",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:17:43.972000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_20260513_122826_Chrome.jpg",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1504185896075788288/Screenshot_20260513_122826_Chrome.jpg?ex=6a095d88&is=6a080c08&hm=932f9270ebd12270f7fe8d91195ea949e757132503aa8e750650e35c54353b6e&",
+        "content_type": "image/jpeg",
+        "size": 232179
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504185914010636349",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:17:48.323000+00:00",
+    "content": "**5 to exe**",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504186077416652811",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:18:27.282000+00:00",
+    "content": "Day ends <t:1778781600:f>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504187701845426347",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T18:24:54.576000+00:00",
+    "content": "<@684944824268357718> nominates <@1475827805420785705>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504197290116649021",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T19:03:00.598000+00:00",
+    "content": "<@&1339576885096743034> <@1475827805420785705> claims goblin",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504197889147011134",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T19:05:23.418000+00:00",
+    "content": "<@999025271321665587> nominates <@1468755788339089675>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504215083096608920",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-13T20:13:42.775000+00:00",
+    "content": "<@1063134802041131008> nominates <@684944824268357718>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504305619727810673",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T02:13:28.390000+00:00",
+    "content": "<@1224197933751205922> nominates <@1184071592234467349>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504472209211789352",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T13:15:26.418000+00:00",
+    "content": "<@&1339576885096743034> <@1184071592234467349> charges at <@1475827805420785705> and attempts to impale him with her antlers...",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504472308126060685",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T13:15:50.001000+00:00",
+    "content": "But then she realizes shes a girl deer and doesnt have antlers. Techi gets bumped slightly but nothing happens. She humps Tech's leg though and he seems to enjoy it",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504477204858536047",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T13:35:17.473000+00:00",
+    "content": "<@&1339576885096743034> <@1063134802041131008> grabs <@999025271321665587>  by the few tufts of hair on his head and starts shoving yeast rolls down his throat. Butti is forced to swallow them down and becomes obese. He will die of diabetes in 5 years but not now.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504530063360659540",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T17:05:19.922000+00:00",
+    "content": "<@&1339576885096743034> votes lock in 25(two five) minutes",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504536278903951450",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T17:30:01.823000+00:00",
+    "content": "<@&1339576885096743034> votes are now locked <a:gear_small_reverse:1503911194325680158>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504543933651222599",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:00:26.857000+00:00",
+    "content": "<@&1339576885096743034> <@1184071592234467349> is executed and dies.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504543970347450571",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:00:35.606000+00:00",
+    "content": "It is night",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504543988601065502",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:00:39.958000+00:00",
+    "content": "# Night 4",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547291086848212",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:13:47.332000+00:00",
+    "content": "<@&1339576885096743034> <@684944824268357718> is dead! IT  IS DAY",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547319553724529",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:13:54.119000+00:00",
+    "content": "# Day 4",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547336313901156",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:13:58.115000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_20260514_131002_Chrome.jpg",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1504547336427409619/Screenshot_20260514_131002_Chrome.jpg?ex=6a095ca6&is=6a080b26&hm=0efe5c0cc11f0ba44157d4d0e227b6e3a9086c3dd9033dc043b8341d6b594892&",
+        "content_type": "image/jpeg",
+        "size": 145668
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547395008991364",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:14:12.109000+00:00",
+    "content": "**4 to hang**",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504547431398768775",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:14:20.785000+00:00",
+    "content": "Day ends <t:1778868000:f>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504549211859976352",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:21:25.280000+00:00",
+    "content": "<@999025271321665587> nominates <@1089157937118855188>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504549309658431548",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:21:48.597000+00:00",
+    "content": "<@273249730568650763> nominates <@1063134802041131008>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504549566983180479",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:22:49.948000+00:00",
+    "content": "<@&1339576885096743034> <@1089157937118855188> claims goblin",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504550467701833748",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T18:26:24.696000+00:00",
+    "content": "<@&1339576885096743034> <@1063134802041131008> claims goblin",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504562155473866833",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T19:12:51.278000+00:00",
+    "content": "<@1475827805420785705> nominates <@1468755788339089675>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504562221223776416",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T19:13:06.954000+00:00",
+    "content": "<@1063134802041131008> nominates <@1475827805420785705>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504562262181019779",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T19:13:16.719000+00:00",
+    "content": "<@&1339576885096743034> <@1475827805420785705> claims goblin",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504629506709655633",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-14T23:40:29.064000+00:00",
+    "content": "<@1089157937118855188> nominates <@1010233794395115600>",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504892771675410543",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T17:06:36.323000+00:00",
+    "content": "<@&1339576885096743034> votes lock in 24 minutes",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504898681004888286",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T17:30:05.217000+00:00",
+    "content": "<@&1339576885096743034> votes are locked",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504906236108345456",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:00:06.494000+00:00",
+    "content": "<@&1339576885096743034> <@1475827805420785705> is executed and dies...",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504906294623211702",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:00:20.445000+00:00",
+    "content": "It is night.",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504906305410957382",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:00:23.017000+00:00",
+    "content": "# Night 5",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504907891084361828",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:06:41.071000+00:00",
+    "content": "<@&1339576885096743034> I lied it is not night. The game is over",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504907918556794930",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:06:47.621000+00:00",
+    "content": "",
+    "attachments": [
+      {
+        "filename": "Screenshot_20260515_121108_Chrome.jpg",
+        "url": "https://cdn.discordapp.com/attachments/1503025578339471520/1504907918665977856/Screenshot_20260515_121108_Chrome.jpg?ex=6a095af7&is=6a080977&hm=41fdf3fa7306afc5b5ae6b48a7c23fec384a5512ad7b65e1ed7945e3cda06d54&",
+        "content_type": "image/jpeg",
+        "size": 228323
+      }
+    ],
+    "embeds": [],
+    "type": "MessageType.default"
+  },
+  {
+    "id": "1504907937187893419",
+    "author_name": "(Discount)",
+    "author_id": "926541705279315988",
+    "timestamp": "2026-05-15T18:06:52.063000+00:00",
+    "content": "Congratulations to the evil team:\nTechi as possibly the most obvious Goblin we've had. Demerits to everyone who pushed him\n\nMatty as the Xaan triggering on N2 \n\nDiddy as the Marionette just doing Marionette things\n\nSunny as the Imp(or maybe Lunatic?) stressing herself out and going insane\n\n\n**Evil MVP:** Matty for high efforting on socials and solving to lead town astray\n\n**Evil LVP:** N/A\n\n**Good MVP:** 4o4 for trying her best to coordinate and solve.\n\nJeff for being the only one to really attempt to unravel savant info.\n\n**Good LVP:** Autism for hiding himself as King while neighboring the Choirboy and claiming Goblin skewing the solve entirely while also killing the Goblin for the evil wincon. \n\n**Runner up LVPs:** Prolly for pushing the Goblin hang so hard. \nCinder for blindly voting for him because Matty said and ruining Town Crier info from a meme nom that wouldve otherwise confirmed Matty as a minion",
+    "attachments": [],
+    "embeds": [],
+    "type": "MessageType.default"
+  }
+]

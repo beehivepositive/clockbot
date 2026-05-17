@@ -2348,6 +2348,8 @@ def _compute_context_labels(
     if center_tile:
         t = center_tile.terrain
         s = center_tile.structure
+        if t in ("drop_box", "canoe_box") or s in ("drop_box", "canoe_box"):
+            print(f"[DEBUG canoe-tile] uid={player.user_id} pos=({player.world_x},{player.world_y}) t={t!r} s={s!r} ground_item={getattr(center_tile,'ground_item',None)!r} in_canoe={player.in_canoe} in_ocean={player.in_ocean} in_island={getattr(player,'in_island',0)}", flush=True)
 
         # Ship tile context (highest priority when in_ship)
         if player.in_ship:
@@ -2648,6 +2650,7 @@ def _compute_context_labels(
         # Item-based interactions (lower priority)
         elif t in ("drop_box", "canoe_box"):
             center_label, center_enabled = "🤲", True
+            print(f"[DEBUG canoe-box-button] uid={player.user_id} t={t!r} s={s!r} -> button enabled", flush=True)
         elif "cooked_fish" in hand_items or "fish" in hand_items:
             center_label, center_enabled = "🍗", True
         elif "map_fragment" in hand_items:
