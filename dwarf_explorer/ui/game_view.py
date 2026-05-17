@@ -2015,28 +2015,24 @@ class TreeCityShopView(discord.ui.View):
 # ── Lumber convert view ────────────────────────────────────────────────────────
 
 class LumberConvertView(discord.ui.View):
-    """Confirm converting logs → planks, or crafting a canoe."""
+    """Lumber NPC menu: craft a canoe from planks.
 
-    def __init__(self, guild_id: int, user_id: int, log_count: int, plank_count: int = 0):
+    Log → plank conversion is handled by the conveyor (📥 / 📤), not the NPC.
+    """
+
+    def __init__(self, guild_id: int, user_id: int, log_count: int = 0, plank_count: int = 0):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
-        if log_count > 0:
-            self.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.success,
-                label=f"✅ Convert {log_count} logs → {log_count*2} planks",
-                custom_id=_custom_id(gid, uid, "lumber_convert"),
-                row=0,
-            ))
         if plank_count >= 18:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary,
                 label="🛶 Craft Canoe (18 planks)",
                 custom_id=_custom_id(gid, uid, "lumber_craft_canoe"),
-                row=1,
+                row=0,
             ))
         self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary, label="❌ Cancel",
-            custom_id=_custom_id(gid, uid, "lumber_convert_cancel"), row=2,
+            custom_id=_custom_id(gid, uid, "lumber_convert_cancel"), row=1,
         ))
 
 
@@ -6816,18 +6812,19 @@ async def handle_interact(
             elif htile.terrain == "b_lumber_npc":
                 grid = await _load_house_grid()
                 inv_items = await get_inventory(db, user_id)
-                log_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "log")
                 plank_count = sum(it["quantity"] for it in inv_items if it["item_id"] == "plank")
-                if log_count > 0 or plank_count >= 18:
-                    _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
+                _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
+                if plank_count >= 18:
                     content = render_grid(grid, player,
-                        f"\"Logs to planks (1 log = 2 planks), or I can shape 18 planks into a canoe.\"\n"
-                        f"You have **{log_count}** logs and **{plank_count}** planks.")
-                    view = LumberConvertView(guild_id, user_id, log_count, plank_count)
-                    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-                    return
+                        f"\"Bring me 18 planks and I'll shape them into a canoe.\"\n"
+                        f"You have **{plank_count}** planks.")
                 else:
-                    content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
+                    content = render_grid(grid, player,
+                        f"\"Run logs through the saw, then bring me 18 planks for a canoe.\"\n"
+                        f"You have **{plank_count}** planks.")
+                view = LumberConvertView(guild_id, user_id, 0, plank_count)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
             # ── Lumbermill adjacent-tile interactions ─────────────────────────
             # Conveyor tiles are non-walkable; player stands on adjacent b_floor.
@@ -8741,21 +8738,17 @@ async def handle_action(
             return await _open_farmer_shop(interaction, guild_id, user_id, player)
 
         if "b_lumber_npc" in adj_terrains:
-            log_rows = await db.fetch_all(
-                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='log'",
-                (user_id,),
-            )
             plank_rows = await db.fetch_all(
                 "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='plank'",
                 (user_id,),
             )
-            log_count_lm = log_rows[0]["total"] if log_rows else 0
             plank_count_lm = plank_rows[0]["total"] if plank_rows else 0
             _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
             content = render_grid(grid, player,
-                f"🪵 **Lumber Mill** — Convert logs → planks (1 log = 2 planks) or craft a canoe (18 planks).\n"
-                f"You have **{log_count_lm}** logs and **{plank_count_lm}** planks.")
-            view = LumberConvertView(guild_id, user_id, log_count_lm, plank_count_lm)
+                f"🪵 **Lumber Mill** — Craft a canoe (18 planks). "
+                f"Run logs through 📥 → 📤 to make planks.\n"
+                f"You have **{plank_count_lm}** planks.")
+            view = LumberConvertView(guild_id, user_id, 0, plank_count_lm)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
@@ -8825,24 +8818,16 @@ async def handle_action(
                 if t.structure: adj_terrains.add(t.structure)
 
         if "b_lumber_npc" in adj_terrains:
-            log_rows = await db.fetch_all(
-                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='log'",
-                (user_id,)
-            )
             plank_rows = await db.fetch_all(
                 "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='plank'",
                 (user_id,)
             )
-            log_count = log_rows[0]["total"] if log_rows else 0
             plank_count = plank_rows[0]["total"] if plank_rows else 0
-            if log_count >= 1 or plank_count >= 18:
-                content = render_grid(grid, player,
-                    f"🪵 **Lumber Mill** — Convert logs → planks (1 log = 2 planks) or craft a canoe (18 planks).\n"
-                    f"You have **{log_count}** logs and **{plank_count}** planks.")
-                view = LumberConvertView(guild_id, user_id, log_count, plank_count)
-            else:
-                content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
-                view = _game_view(guild_id, user_id, player, grid=grid)
+            content = render_grid(grid, player,
+                f"🪵 **Lumber Mill** — Craft a canoe (18 planks). "
+                f"Run logs through 📥 → 📤 to make planks.\n"
+                f"You have **{plank_count}** planks.")
+            view = LumberConvertView(guild_id, user_id, 0, plank_count)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
