@@ -364,12 +364,9 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell — always exactly 4 units wide.
 
     Unit layout:
-      qty >= 10 : [CUR/PAD][emoji][digit1][digit2]   cursor left of emoji (only option)
-      qty 2–9   : [PAD    ][emoji][digit ][CUR/PAD]  cursor right of digit (no gap)
-      qty 1     : [PAD    ][emoji][CUR/PAD][PAD   ]  cursor right of emoji (no gap)
-
-    Cursor always sits immediately adjacent to the emoji or quantity digit — no
-    padding character between the cursor marker and the item content.
+      qty >= 10 : [CUR/PAD][emoji][digit1][digit2]   cursor replaces prefix (left)
+      qty 2–9   : [PAD    ][emoji][digit ][CUR/PAD]  cursor replaces trailing pad (right)
+      qty 1     : [PAD    ][emoji][PAD   ][CUR/PAD]  cursor replaces trailing pad (right)
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
@@ -387,9 +384,9 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
             return f"{_SEL}{emoji}{qty}{_PAD}"
         return f"{_PAD}{emoji}{qty}{_PAD}"
     else:
-        # qty=1: unit 3 is the cursor slot — immediately after the emoji, no gap
+        # qty=1: cursor replaces the trailing pad (unit 4) — original behaviour
         if cursor_on:
-            return f"{_PAD}{emoji}{_CUR}{_PAD}"
+            return f"{_PAD}{emoji}{_PAD}{_CUR}"
         if is_selected:
             return f"{_SEL}{emoji}{_PAD}{_PAD}"
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
