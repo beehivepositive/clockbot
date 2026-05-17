@@ -15124,33 +15124,48 @@ async def handle_lumbermill_insert(
     await interaction.response.defer()
 
     vc = 4  # viewport centre index (9×9 grid, index 4)
+    original_house_id = player.house_id
 
     try:
         for step in range(_LM_TOP_Y, _LM_BOT_Y + 1):   # y = 1..7
-            grid = await load_building_viewport(
-                player.house_id, player.house_x, player.house_y, db
-            )
+            # Re-fetch player each frame so movement is respected. If the player
+            # has walked out of the mill (or to a different building), stop
+            # editing the message — they're looking at something else now and
+            # we shouldn't overwrite their view. The animation continues in the
+            # background and the planks will be ready when they return.
+            cur_player = await get_or_create_player(db, user_id, interaction.user.display_name)
+            in_same_mill = (cur_player.in_house and cur_player.house_id == original_house_id
+                            and cur_player.house_type == "lumber_mill")
 
-            # Calculate where this building tile appears in the 9×9 viewport
-            g_row = vc + (step            - player.house_y)
-            g_col = vc + (_LM_CONV_X     - player.house_x)
-
-            # Overlay the moving item onto the grid if it's on screen
-            if 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
-                grid[g_row][g_col] = dataclasses.replace(
-                    grid[g_row][g_col], terrain="b_log_moving"
+            if in_same_mill:
+                grid = await load_building_viewport(
+                    cur_player.house_id, cur_player.house_x, cur_player.house_y, db
                 )
 
-            # Status message varies by phase
-            if step < _LM_SAW_Y:
-                status = "⚙️ Log moving through the mill..."
-            elif step == _LM_SAW_Y:
-                status = "🪚 Sawing..."
-            else:
-                status = "🪵 Planks moving to output..."
+                # Calculate where this building tile appears in the 9×9 viewport
+                g_row = vc + (step        - cur_player.house_y)
+                g_col = vc + (_LM_CONV_X  - cur_player.house_x)
 
-            content = render_grid(grid, player, status)
-            await interaction.edit_original_response(embed=_embed(content))
+                # Overlay the moving item onto the grid if it's on screen
+                if 0 <= g_row < len(grid) and 0 <= g_col < len(grid[g_row]):
+                    grid[g_row][g_col] = dataclasses.replace(
+                        grid[g_row][g_col], terrain="b_log_moving"
+                    )
+
+                # Status message varies by phase
+                if step < _LM_SAW_Y:
+                    status = "⚙️ Log moving through the mill..."
+                elif step == _LM_SAW_Y:
+                    status = "🪚 Sawing..."
+                else:
+                    status = "🪵 Planks moving to output..."
+
+                content = render_grid(grid, player=cur_player, status_msg=status)
+                try:
+                    await interaction.edit_original_response(embed=_embed(content))
+                except Exception:
+                    # Message may have been superseded by another handler; ignore
+                    pass
             await asyncio.sleep(1.0)
 
         # All done — store planks for manual pickup
@@ -15158,15 +15173,22 @@ async def handle_lumbermill_insert(
     finally:
         _ui_state[_lm_busy_key] = False
 
-    # Final frame: clean grid with done message
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(
-        grid, player,
-        "✅ **3 planks** are waiting at 📤 — walk to the output and interact to collect."
-    )
-    view = _game_view(guild_id, user_id, player, grid=grid)
-    await interaction.edit_original_response(embed=_embed(content), view=view)
+    # Final frame: only update if player is still in the mill; otherwise leave
+    # whatever view they're looking at alone.
+    final_player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if final_player.in_house and final_player.house_id == original_house_id:
+        grid = await load_building_viewport(
+            final_player.house_id, final_player.house_x, final_player.house_y, db
+        )
+        content = render_grid(
+            grid, final_player,
+            "✅ **3 planks** are waiting at 📤 — walk to the output and interact to collect."
+        )
+        view = _game_view(guild_id, user_id, final_player, grid=grid)
+        try:
+            await interaction.edit_original_response(embed=_embed(content), view=view)
+        except Exception:
+            pass
 
 
 async def handle_lumbermill_pickup(
