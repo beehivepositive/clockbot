@@ -384,9 +384,11 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
             return f"{_SEL}{emoji}{qty}{_PAD}"
         return f"{_PAD}{emoji}{qty}{_PAD}"
     else:
-        # qty=1: cursor replaces the trailing pad (unit 4) — original behaviour
+        # qty=1: cursor sits immediately after the emoji (unit 3), not at the
+        # trailing edge — keeps the cursor anchored to its emoji so movement
+        # looks like a clean 1-slot jump instead of a floating edge artifact.
         if cursor_on:
-            return f"{_PAD}{emoji}{_PAD}{_CUR}"
+            return f"{_PAD}{emoji}{_CUR}{_PAD}"
         if is_selected:
             return f"{_SEL}{emoji}{_PAD}{_PAD}"
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
