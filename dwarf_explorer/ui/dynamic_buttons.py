@@ -63,7 +63,7 @@ from dwarf_explorer.ui.game_view import (
     _ship_chest_action,
     handle_merchant_nav, handle_merchant_buy, handle_merchant_close,
     handle_action,
-    handle_forge_iron, handle_forge_gold, handle_forge_gold_ring, handle_forge_nails, handle_forge_close,
+    handle_forge_iron, handle_forge_gold, handle_forge_close,
     handle_anvil_up, handle_anvil_down, handle_anvil_prev, handle_anvil_next,
     handle_anvil_mat_prev, handle_anvil_mat_next,
     handle_anvil_mat_iron, handle_anvil_mat_wyvern,
@@ -313,10 +313,6 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_forge_iron(interaction, gid, uid)
             elif act == "forge_gold":
                 await handle_forge_gold(interaction, gid, uid)
-            elif act == "forge_gold_ring":
-                await handle_forge_gold_ring(interaction, gid, uid)
-            elif act == "forge_nails":
-                await handle_forge_nails(interaction, gid, uid)
             elif act == "forge_close":
                 await handle_forge_close(interaction, gid, uid)
             # Anvil (list-style navigation)

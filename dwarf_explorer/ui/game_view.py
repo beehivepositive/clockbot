@@ -161,6 +161,15 @@ def _cursor_item(visible: list[dict], slot_pos: int) -> dict | None:
     return None
 
 
+async def _count_inv(db, user_id: int, item_id: str) -> int:
+    """Return total quantity of item_id in the player's inventory (0 if none)."""
+    row = await db.fetch_one(
+        "SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory WHERE user_id=? AND item_id=?",
+        (user_id, item_id),
+    )
+    return int(row["n"]) if row else 0
+
+
 async def _player_has_canoe(db, user_id: int) -> bool:
     """Return True if the player has a canoe in inventory."""
     row = await db.fetch_one(
@@ -1701,27 +1710,36 @@ class ShrineView(discord.ui.View):
 
 
 class ForgeView(discord.ui.View):
-    """Forge interaction menu: smelt iron/gold ore into ingots, craft gold ring."""
+    """Forge interaction menu: smelt iron/gold ore into ingots. Ore-smelt
+    buttons only appear when the player actually has that ore — anything
+    further (weapons, nails, rings, etc.) is crafted at the anvil.
+    """
 
-    def __init__(self, guild_id: int, user_id: int):
+    def __init__(self, guild_id: int, user_id: int,
+                 iron_ore: int = 0, gold_ore: int = 0):
         super().__init__(timeout=None)
-        for label, act, style, row in [
-            ("🔥 Smelt Iron (1 ore → 1 ingot)",    "forge_iron",      discord.ButtonStyle.primary, 0),
-            ("🟡 Smelt Gold (1 ore → 1 ingot)",    "forge_gold",      discord.ButtonStyle.primary, 0),
-            ("📌 Iron Nails (1 ingot → 9 nails)",  "forge_nails",     discord.ButtonStyle.primary, 1),
-            ("💍 Gold Ring (2 gold ingots)",        "forge_gold_ring", discord.ButtonStyle.primary, 1),
-            ("❌ Close",                            "forge_close",     discord.ButtonStyle.danger,  2),
-        ]:
+        if iron_ore > 0:
             self.add_item(discord.ui.Button(
-                style=style, label=label,
-                custom_id=_custom_id(guild_id, user_id, act), row=row,
+                style=discord.ButtonStyle.primary,
+                label=f"🔥 Smelt {iron_ore} Iron Ore → {iron_ore} Ingot" + ("s" if iron_ore > 1 else ""),
+                custom_id=_custom_id(guild_id, user_id, "forge_iron"), row=0,
             ))
+        if gold_ore > 0:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"🟡 Smelt {gold_ore} Gold Ore → {gold_ore} Ingot" + ("s" if gold_ore > 1 else ""),
+                custom_id=_custom_id(guild_id, user_id, "forge_gold"), row=0,
+            ))
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.danger, label="❌ Close",
+            custom_id=_custom_id(guild_id, user_id, "forge_close"), row=1,
+        ))
 
 
 # ── Anvil recipe data ─────────────────────────────────────────────────────────
 
 _ANVIL_RECIPES: list[dict] = [
-    # category, item_id, emoji, name, cost_item, cost_qty, base_item, stat
+    # category, item_id, emoji, name, cost_item, cost_qty, base_item, stat, output_qty (default 1)
     {"category": "Iron Weapons",    "item_id": "dagger",           "emoji": "🗡️",  "name": "Dagger",           "cost_item": "iron_ingot",    "cost_qty": 1, "base_item": None,            "stat": "+8 atk"},
     {"category": "Iron Weapons",    "item_id": "sword",            "emoji": "⚔️",  "name": "Sword",            "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+12 atk"},
     {"category": "Iron Armor",      "item_id": "iron_helmet",      "emoji": "🪖",  "name": "Iron Helmet",      "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+3 def"},
@@ -1730,15 +1748,17 @@ _ANVIL_RECIPES: list[dict] = [
     {"category": "Iron Armor",      "item_id": "iron_boots",       "emoji": "🥾",  "name": "Iron Boots",       "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "+2 def"},
     {"category": "Iron Armor",      "item_id": "iron_shield",      "emoji": "🛡️",  "name": "Iron Shield",      "cost_item": "iron_ingot",    "cost_qty": 4, "base_item": None,            "stat": "+4 def"},
     {"category": "Iron Ammo",       "item_id": "cannonball",       "emoji": "💣",  "name": "Cannonball",       "cost_item": "iron_ingot",    "cost_qty": 2, "base_item": None,            "stat": "cannon ammo"},
+    {"category": "Iron Misc",       "item_id": "nail",             "emoji": "📌",  "name": "Iron Nails",       "cost_item": "iron_ingot",    "cost_qty": 1, "base_item": None,            "stat": "ship repair", "output_qty": 9},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_helmet",    "emoji": "🐉",  "name": "Wyvern Helmet",    "cost_item": "wyvern_scale",  "cost_qty": 2, "base_item": "iron_helmet",   "stat": "+5 def"},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_chestplate","emoji": "🐉",  "name": "Wyvern Chestplate","cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_chestplate","stat": "+8 def"},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_leggings",  "emoji": "🐉",  "name": "Wyvern Leggings",  "cost_item": "wyvern_scale",  "cost_qty": 3, "base_item": "iron_leggings", "stat": "+6 def"},
     {"category": "Wyvern Upgrades", "item_id": "wyvern_shield",    "emoji": "🐉",  "name": "Wyvern Shield",    "cost_item": "wyvern_scale",  "cost_qty": 4, "base_item": "iron_shield",   "stat": "+7 def"},
+    {"category": "Gold",            "item_id": "gold_ring",        "emoji": "💍",  "name": "Gold Ring",        "cost_item": "gold_ingot",    "cost_qty": 2, "base_item": None,            "stat": "combine w/ gem"},
 ]
 
 
-_ANVIL_MATERIALS = ["iron_ingot", "wyvern_scale"]
-_ANVIL_MATERIAL_LABELS = ["🧱 Iron", "🐉 Wyvern"]
+_ANVIL_MATERIALS = ["iron_ingot", "wyvern_scale", "gold_ingot"]
+_ANVIL_MATERIAL_LABELS = ["🧱 Iron", "🐉 Wyvern", "🟡 Gold"]
 
 
 def _anvil_filtered_recipes(material_idx: int) -> list[dict]:
@@ -1759,10 +1779,11 @@ def _render_anvil(cursor_idx: int, inv_counts: dict[str, int], material_idx: int
 
     iron_qty  = inv_counts.get("iron_ingot", 0)
     scale_qty = inv_counts.get("wyvern_scale", 0)
+    gold_qty  = inv_counts.get("gold_ingot", 0)
     mat_label = _ANVIL_MATERIAL_LABELS[material_idx % len(_ANVIL_MATERIAL_LABELS)]
 
     lines: list[str] = [f"⚒️ **Anvil** — {mat_label}"]
-    lines.append(f"🧱 Iron ingots: **{iron_qty}**  |  🐉 Wyvern scales: **{scale_qty}**\n")
+    lines.append(f"🧱 Iron ingots: **{iron_qty}**  |  🐉 Wyvern scales: **{scale_qty}**  |  🟡 Gold ingots: **{gold_qty}**\n")
 
     recipes = _anvil_filtered_recipes(material_idx)
 
@@ -8727,10 +8748,14 @@ async def handle_action(
                     adj_terrains.add(t)
 
         if "b_forge" in adj_terrains:
+            iron_ore = await _count_inv(db, user_id, "iron_ore")
+            gold_ore = await _count_inv(db, user_id, "gold_ore")
+            msg = "🔥 **Forge** — What would you like to smelt?"
+            if iron_ore == 0 and gold_ore == 0:
+                msg += "\n*Bring iron ore or gold ore to smelt into ingots.*"
             await interaction.response.edit_message(
-                embed=_embed("🔥 **Forge** — What would you like to smelt?"),
-                content=None,
-                view=ForgeView(guild_id, user_id),
+                embed=_embed(msg), content=None,
+                view=ForgeView(guild_id, user_id, iron_ore=iron_ore, gold_ore=gold_ore),
             )
             return
 
@@ -9471,8 +9496,11 @@ async def handle_forge_iron(
     else:
         msg = "🔥 You need iron ore to smelt ingots."
 
+    iron_ore = await _count_inv(db, user_id, "iron_ore")
+    gold_ore = await _count_inv(db, user_id, "gold_ore")
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+        embed=_embed(msg), content=None,
+        view=ForgeView(guild_id, user_id, iron_ore=iron_ore, gold_ore=gold_ore),
     )
 
 
@@ -9497,61 +9525,11 @@ async def handle_forge_gold(
     else:
         msg = "🟡 You need gold ore to smelt gold ingots."
 
+    iron_ore = await _count_inv(db, user_id, "iron_ore")
+    gold_ore = await _count_inv(db, user_id, "gold_ore")
     await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
-    )
-
-
-async def handle_forge_gold_ring(
-    interaction: discord.Interaction, guild_id: int, user_id: int
-) -> None:
-    """Craft a gold ring from 2 gold ingots at the forge."""
-    db = await get_database(guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
-    ingot_rows = await db.fetch_all(
-        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='gold_ingot'",
-        (user_id,)
-    )
-    ingot_count = ingot_rows[0]["total"] if ingot_rows and ingot_rows[0]["total"] else 0
-
-    if ingot_count >= 2:
-        await remove_from_inventory(db, user_id, "gold_ingot", 2)
-        await add_to_inventory(db, user_id, "gold_ring", 1)
-        msg = "💍 You craft a **gold ring**! Combine with an enchanted gem in your inventory to make a special ring."
-    else:
-        msg = f"💍 You need 2 gold ingots to craft a gold ring. (Have: {ingot_count})"
-
-    await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
-    )
-
-
-async def handle_forge_nails(
-    interaction: discord.Interaction, guild_id: int, user_id: int
-) -> None:
-    """Craft iron nails at the forge — 1 iron ingot → 9 nails. Converts all
-    available iron ingots in one click."""
-    db = await get_database(guild_id)
-    player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
-    ingot_rows = await db.fetch_all(
-        "SELECT SUM(quantity) as total FROM inventory WHERE user_id=? AND item_id='iron_ingot'",
-        (user_id,),
-    )
-    ingot_count = ingot_rows[0]["total"] if ingot_rows and ingot_rows[0]["total"] else 0
-
-    if ingot_count > 0:
-        await remove_from_inventory(db, user_id, "iron_ingot", ingot_count)
-        nails = ingot_count * 9
-        await add_to_inventory(db, user_id, "nail", nails)
-        msg = (f"📌 Hammered **{ingot_count} iron ingot{'s' if ingot_count > 1 else ''}** → "
-               f"**{nails} nails**!")
-    else:
-        msg = "📌 You need iron ingots to forge nails."
-
-    await interaction.response.edit_message(
-        embed=_embed(msg), content=None, view=ForgeView(guild_id, user_id)
+        embed=_embed(msg), content=None,
+        view=ForgeView(guild_id, user_id, iron_ore=iron_ore, gold_ore=gold_ore),
     )
 
 
@@ -9690,46 +9668,53 @@ async def handle_anvil_craft(
 
     db = await get_database(guild_id)
 
+    cost_item = recipe["cost_item"]
+    cost_qty  = recipe["cost_qty"]
+    output_qty = recipe.get("output_qty", 1)
+
     if recipe["base_item"]:
-        # Wyvern upgrade: needs base iron piece + wyvern scales
+        # Wyvern-style upgrade: needs base iron piece + cost_item (scales/etc)
         base_row = await db.fetch_one(
             "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id=?",
             (user_id, recipe["base_item"]),
         )
-        scale_row = await db.fetch_one(
-            "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id='wyvern_scale'",
-            (user_id,),
+        mat_row = await db.fetch_one(
+            "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id=?",
+            (user_id, cost_item),
         )
-        base_qty  = (base_row["total"] or 0) if base_row else 0
-        scale_qty = (scale_row["total"] or 0) if scale_row else 0
-        cost_qty  = recipe["cost_qty"]
+        base_qty = (base_row["total"] or 0) if base_row else 0
+        mat_qty  = (mat_row["total"] or 0) if mat_row else 0
 
-        if base_qty >= 1 and scale_qty >= cost_qty:
+        if base_qty >= 1 and mat_qty >= cost_qty:
             await remove_from_inventory(db, user_id, recipe["base_item"], 1)
-            await remove_from_inventory(db, user_id, "wyvern_scale", cost_qty)
-            await add_to_inventory(db, user_id, recipe["item_id"], 1)
+            await remove_from_inventory(db, user_id, cost_item, cost_qty)
+            await add_to_inventory(db, user_id, recipe["item_id"], output_qty)
             msg = f"🐉 You forge a **{recipe['name']}**! ({recipe['stat']})"
         elif base_qty < 1:
             base_name = recipe["base_item"].replace("_", " ")
             msg = f"🐉 You need a **{base_name}** to upgrade."
         else:
-            msg = f"🐉 You need {cost_qty} wyvern scales (have {scale_qty})."
+            mat_name = cost_item.replace("_", " ")
+            msg = f"🐉 You need {cost_qty} {mat_name}{'s' if cost_qty > 1 else ''} (have {mat_qty})."
     else:
-        # Iron crafting
-        ingot_row = await db.fetch_one(
-            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ingot'", (user_id,)
+        mat_row = await db.fetch_one(
+            "SELECT SUM(quantity) AS total FROM inventory WHERE user_id=? AND item_id=?",
+            (user_id, cost_item),
         )
-        ingot_count = ingot_row["quantity"] if ingot_row else 0
-        cost_qty    = recipe["cost_qty"]
+        mat_qty = (mat_row["total"] or 0) if mat_row else 0
 
-        if ingot_count >= cost_qty:
-            await remove_from_inventory(db, user_id, "iron_ingot", cost_qty)
-            await add_to_inventory(db, user_id, recipe["item_id"], 1)
-            msg = f"⚒️ You craft a **{recipe['name']}**! ({recipe['stat']})"
+        if mat_qty >= cost_qty:
+            await remove_from_inventory(db, user_id, cost_item, cost_qty)
+            await add_to_inventory(db, user_id, recipe["item_id"], output_qty)
+            if output_qty > 1:
+                msg = f"⚒️ You craft **{output_qty}× {recipe['name']}**!"
+            else:
+                msg = f"⚒️ You craft a **{recipe['name']}**! ({recipe['stat']})"
         else:
+            mat_name = cost_item.replace("_", " ")
             msg = (
-                f"⚒️ You need {cost_qty} iron ingot{'s' if cost_qty > 1 else ''} "
-                f"to craft a {recipe['name']} (have {ingot_count})."
+                f"⚒️ You need {cost_qty} {mat_name}{'s' if cost_qty > 1 else ''} "
+                f"to craft a {recipe['name']} (have {mat_qty})."
             )
 
     await _anvil_refresh(interaction, guild_id, user_id, msg)
