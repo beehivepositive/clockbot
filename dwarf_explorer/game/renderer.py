@@ -383,18 +383,18 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
             return f"{tens}{emoji}{_SEL}{ones}"
         return f"{tens}{emoji}{_PAD}{ones}"
     elif qty > 1:
-        # qty at unit 0, cursor/selection at unit 2, trailing pad at unit 3
+        # qty at unit 0, cursor/selection at unit 2; no padding after cursor
         if cursor_on:
-            return f"{qty}{emoji}{_CUR}{_PAD}"
+            return f"{qty}{emoji}{_CUR}"
         if is_selected:
-            return f"{qty}{emoji}{_SEL}{_PAD}"
+            return f"{qty}{emoji}{_SEL}"
         return f"{qty}{emoji}{_PAD}{_PAD}"
     else:
-        # qty=1: placeholder pad at unit 0, cursor/selection at unit 2
+        # qty=1: placeholder pad at unit 0, cursor/selection at unit 2; no pad after cursor
         if cursor_on:
-            return f"{_PAD}{emoji}{_CUR}{_PAD}"
+            return f"{_PAD}{emoji}{_CUR}"
         if is_selected:
-            return f"{_PAD}{emoji}{_SEL}{_PAD}"
+            return f"{_PAD}{emoji}{_SEL}"
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
 
 
@@ -499,7 +499,7 @@ def render_inventory(
                 right_e = _item_emoji("canoe_right")
                 cursor_on = cursor_mode == "inventory" and i == selected
                 if cursor_on:
-                    slots.append(f"{right_e}{_CUR}{_PAD}{_PAD}")
+                    slots.append(f"{right_e}{_CUR}")
                 else:
                     slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
 
@@ -508,7 +508,7 @@ def render_inventory(
                 slots.append(_fmt_slot(item_id, qty, cursor_on, is_selected))
         else:
             if i == selected and cursor_mode == "inventory":
-                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}{_PAD}")  # cursor right of emoji
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}")  # cursor right of emoji, no trailing pad
             else:
                 slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_PAD}")
 
