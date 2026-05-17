@@ -5446,7 +5446,7 @@ async def handle_plant_choice(
         return
 
     inv_items = await get_inventory(db, user_id)
-    has_seed = any(it["item_id"] == seed_type and it["qty"] > 0 for it in inv_items)
+    has_seed = any(it["item_id"] == seed_type and it["quantity"] > 0 for it in inv_items)
     vc_ = 4  # VIEWPORT_CENTER
     center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
 
