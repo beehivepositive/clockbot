@@ -364,11 +364,12 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     """Format a single inventory slot cell — always exactly 4 units wide.
 
     Unit layout:
-      qty >= 10 : [prefix][emoji][digit1][digit2]   cursor replaces prefix (left)
-      qty 2–9   : [prefix][emoji][digit ][pad    ]   cursor replaces trailing pad (right)
-      qty 1     : [prefix][emoji][pad   ][pad    ]   cursor replaces second pad (right)
+      qty >= 10 : [CUR/PAD][emoji][digit1][digit2]   cursor left of emoji (only option)
+      qty 2–9   : [PAD    ][emoji][digit ][CUR/PAD]  cursor right of digit (no gap)
+      qty 1     : [PAD    ][emoji][CUR/PAD][PAD   ]  cursor right of emoji (no gap)
 
-    prefix: ◄ (cursor) | « (selected) | EN QUAD (normal)
+    Cursor always sits immediately adjacent to the emoji or quantity digit — no
+    padding character between the cursor marker and the item content.
     """
     emoji = _item_emoji(item_id)
     if qty >= 10:
@@ -379,16 +380,16 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
             return f"{_SEL}{emoji}{qty}"
         return f"{_PAD}{emoji}{qty}"
     elif qty > 1:
-        # 1-digit qty in unit 3; unit 4 is a pad that cursor can replace
+        # 1-digit qty in unit 3; cursor in unit 4 — immediately after the digit
         if cursor_on:
             return f"{_PAD}{emoji}{qty}{_CUR}"
         if is_selected:
             return f"{_SEL}{emoji}{qty}{_PAD}"
         return f"{_PAD}{emoji}{qty}{_PAD}"
     else:
-        # qty=1: units 3+4 are both pads; cursor replaces unit 4
+        # qty=1: unit 3 is the cursor slot — immediately after the emoji, no gap
         if cursor_on:
-            return f"{_PAD}{emoji}{_PAD}{_CUR}"
+            return f"{_PAD}{emoji}{_CUR}{_PAD}"
         if is_selected:
             return f"{_SEL}{emoji}{_PAD}{_PAD}"
         return f"{_PAD}{emoji}{_PAD}{_PAD}"
@@ -511,24 +512,21 @@ def render_inventory(
             is_selected = item_id in selections
 
             if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
-                # Left half: 2 pads moved to the left so the emoji sits at the
-                # rightmost position — this places it flush against the right
-                # half's emoji in the adjacent slot with no gap between them.
-                # Cursor/selection replaces the leading pad (unit 0), never adds.
-                cursor_on = cursor_mode == "inventory" and (i == selected)
+                # Left half — never shows cursor. Cursor always lives on the right half.
                 left_e = _item_emoji("canoe_left")
-                if cursor_on:
-                    slots.append(f"{_CUR}{_PAD}{_PAD}{left_e}")
-                elif is_selected:
-                    slots.append(f"{_SEL}{_PAD}{_PAD}{left_e}")
-                else:
-                    slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
+                slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
 
             elif item_id == "canoe_right" and i in _canoe_right_skip:
-                # Right half: emoji at leftmost position, 3 trailing pads.
-                # Cursor never lands here (navigation always redirects to canoe_left).
+                # Right half — one cursor for the whole pair, placed right of this emoji.
+                # Shows cursor if selected is on THIS slot OR the left-half slot.
                 right_e = _item_emoji("canoe_right")
-                slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
+                cursor_on_pair = cursor_mode == "inventory" and (
+                    i == selected or i - 1 == selected
+                )
+                if cursor_on_pair:
+                    slots.append(f"{right_e}{_CUR}{_PAD}{_PAD}")
+                else:
+                    slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
 
             else:
                 cursor_on = (i == selected) and cursor_mode == "inventory"
