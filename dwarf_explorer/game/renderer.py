@@ -511,23 +511,24 @@ def render_inventory(
             is_selected = item_id in selections
 
             if item_id == "canoe_left" and (i + 1) in _canoe_right_skip:
-                # Combined cell: both halves in one 4-unit slot.
-                # cursor/selection replaces the LEFT pad — never added on top.
-                cursor_on = cursor_mode == "inventory" and (
-                    i == selected or i + 1 == selected
-                )
+                # Left half: 2 pads moved to the left so the emoji sits at the
+                # rightmost position — this places it flush against the right
+                # half's emoji in the adjacent slot with no gap between them.
+                # Cursor/selection replaces the leading pad (unit 0), never adds.
+                cursor_on = cursor_mode == "inventory" and (i == selected)
                 left_e = _item_emoji("canoe_left")
-                right_e = _item_emoji("canoe_right")
                 if cursor_on:
-                    slots.append(f"{_CUR}{left_e}{right_e}{_PAD}")
+                    slots.append(f"{_CUR}{_PAD}{_PAD}{left_e}")
                 elif is_selected:
-                    slots.append(f"{_SEL}{left_e}{right_e}{_PAD}")
+                    slots.append(f"{_SEL}{_PAD}{_PAD}{left_e}")
                 else:
-                    slots.append(f"{_PAD}{left_e}{right_e}{_PAD}")
+                    slots.append(f"{_PAD}{_PAD}{_PAD}{left_e}")
 
             elif item_id == "canoe_right" and i in _canoe_right_skip:
-                # Spacer slot consumed by the combined canoe_left cell above.
-                slots.append(f"{_PAD}{_PAD}{_PAD}{_PAD}")
+                # Right half: emoji at leftmost position, 3 trailing pads.
+                # Cursor never lands here (navigation always redirects to canoe_left).
+                right_e = _item_emoji("canoe_right")
+                slots.append(f"{right_e}{_PAD}{_PAD}{_PAD}")
 
             else:
                 cursor_on = (i == selected) and cursor_mode == "inventory"

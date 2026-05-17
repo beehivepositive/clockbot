@@ -161,20 +161,23 @@ async def _player_has_canoe(db, user_id: int) -> bool:
 
 
 def _canoe_cursor_adjust(visible: list[dict], sel: int, inv_cols: int) -> int:
-    """If cursor lands on canoe_left with canoe_right adjacent on the same row, advance to right piece.
+    """If cursor lands on the canoe_right spacer slot, redirect it back to canoe_left.
 
-    This ensures the cursor always rests on the right half of the canoe pair.
+    The cursor always rests on the LEFT half of the canoe pair so it is visible.
+    canoe_right is a display-only spacer — the cursor should never sit there.
     """
-    left = _cursor_item(visible, sel)
-    if left is None or left["item_id"] != "canoe_left":
-        return sel
-    right = _cursor_item(visible, sel + 1)
+    right = _cursor_item(visible, sel)
     if right is None or right["item_id"] != "canoe_right":
         return sel
-    # Both on same row?
-    if sel // inv_cols != (sel + 1) // inv_cols:
+    if sel == 0:
+        return sel  # nothing to the left
+    left = _cursor_item(visible, sel - 1)
+    if left is None or left["item_id"] != "canoe_left":
         return sel
-    return sel + 1
+    # Both on same row?
+    if (sel - 1) // inv_cols != sel // inv_cols:
+        return sel
+    return sel - 1  # redirect to canoe_left
 
 
 def _parse_emoji(s: str) -> discord.PartialEmoji | None:
@@ -9997,12 +10000,13 @@ async def handle_inv_nav(
                 _canoe_left_pos.add(_ci)
                 _canoe_right_pos.add(_ci + 1)
 
+        # Cursor always lives on canoe_left; canoe_right is a display-only spacer.
         if delta == 1 and current_sel in _canoe_left_pos:
-            # Leaving canoe to the right: skip over canoe_right half
+            # Moving RIGHT off the canoe: jump over the spacer slot.
             new_sel = (current_sel + 2) % max(1, total_slots)
-        elif delta == -1 and current_sel in _canoe_right_pos:
-            # Leaving canoe to the left: skip over canoe_left half
-            new_sel = (current_sel - 2) % max(1, total_slots)
+        elif new_sel in _canoe_right_pos:
+            # Somehow landed on the spacer (e.g. wrap-around edge case): fix it.
+            new_sel = new_sel - 1
 
         _ui_state[user_id] = {**state, "type": "inventory", "selected": new_sel}
     else:
