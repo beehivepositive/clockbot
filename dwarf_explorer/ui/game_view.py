@@ -170,6 +170,34 @@ async def _player_has_canoe(db, user_id: int) -> bool:
     return bool(row)
 
 
+def _canoe_nav_adjust(slot_map: dict, current_sel: int, new_sel: int,
+                       total: int, inv_cols: int, delta_col: int = 0) -> int:
+    """Skip the cursor past canoe_left virtual cells so it always lands on
+    canoe_right. When moving LEFT from canoe_right, skip past the canoe_left
+    cell on the way out so it takes one button press, not two.
+
+    Works on any slot_map that has been expanded by _build_slot_map (so canoes
+    show as virtual canoe_left at slot N and canoe_right at slot N+1).
+    """
+    if total <= 0:
+        return new_sel
+    canoe_left_pos: set[int] = set()
+    canoe_right_pos: set[int] = set()
+    for ci in range(total - 1):
+        l = slot_map.get(ci)
+        r = slot_map.get(ci + 1)
+        if (l and l.get("item_id") == "canoe_left"
+                and r and r.get("item_id") == "canoe_right"
+                and ci // inv_cols == (ci + 1) // inv_cols):
+            canoe_left_pos.add(ci)
+            canoe_right_pos.add(ci + 1)
+    if delta_col == -1 and current_sel in canoe_right_pos:
+        return (new_sel - 1) % max(1, total)
+    if new_sel in canoe_left_pos:
+        return (new_sel + 1) % max(1, total)
+    return new_sel
+
+
 def _canoe_cursor_adjust(visible: list[dict], sel: int, inv_cols: int) -> int:
     """If cursor lands on canoe_left, redirect it to canoe_right.
 
@@ -12033,6 +12061,12 @@ async def _shop_nav(
     total = _shop_nav_bounds(state, player_items, inv_rows, inv_cols)
     cols = inv_cols if state.get("shop_view") == "player" else 7
     new_sel = (sel + delta_col + delta_row * cols) % total
+    # Apply canoe-pair cursor skip when navigating the player's inventory view
+    if state.get("shop_view") == "player":
+        from dwarf_explorer.game.renderer import _build_slot_map as _bsm
+        visible = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map_nav = _bsm(visible, total, cols)
+        new_sel = _canoe_nav_adjust(slot_map_nav, sel, new_sel, total, cols, delta_col)
     new_state = {**state, "selected": new_sel, "qty": 1}  # reset qty on nav
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
@@ -12324,19 +12358,21 @@ async def _bank_nav(
     cursor_mode = state.get("cursor_mode", "inventory")
     eq_cur = state.get("equipped_cursor", 0)
 
+    from dwarf_explorer.game.renderer import _build_slot_map as _bsm
     if bv == "player":
         cols = inv_cols
         total = max(1, inv_rows * inv_cols)
+        visible_p = [it for it in player_items if it["item_id"] != "gold_coin"]
+        slot_map_nav = _bsm(visible_p, total, inv_cols)
+        prev_sel = sel
         if delta_row < 0:   # UP
             if cursor_mode == "inventory" and sel < cols:
-                # Top row → go to equipped
                 cursor_mode = "equipped"
                 eq_cur = min(eq_cur, len(_ESO) - 1)
             elif cursor_mode == "inventory":
                 sel = (sel - cols) % total
             elif cursor_mode == "equipped":
                 cursor_mode = "gold"
-            # already at gold — do nothing
         elif delta_row > 0:  # DOWN
             if cursor_mode == "gold":
                 cursor_mode = "equipped"
@@ -12354,20 +12390,23 @@ async def _bank_nav(
                     sel = new_sel
                 else:
                     sel = new_sel % total
+        if cursor_mode == "inventory":
+            sel = _canoe_nav_adjust(slot_map_nav, prev_sel, sel, total, cols, delta_col)
     else:
         # Bank vault — grid nav with gold row above
         bank_gold = next((it["quantity"] for it in bank_items if it["item_id"] == "gold_coin"), 0)
         cols = 7
         vault_total = 9 * 7  # 63 slots (9×7)
+        vault_items = [it for it in bank_items if it["item_id"] != "gold_coin"]
+        slot_map_nav = _bsm(vault_items, vault_total, cols)
+        prev_sel = sel
         if cursor_mode == "gold":
-            if delta_row > 0:  # down → enter vault grid
+            if delta_row > 0:
                 cursor_mode = "inventory"
                 sel = 0
-            # up/left/right on gold row: do nothing
         else:
             cursor_mode = "inventory"
             if delta_row < 0 and sel < cols and bank_gold > 0:
-                # Up from top row → gold row
                 cursor_mode = "gold"
             elif delta_row < 0:
                 sel = (sel - cols) % vault_total
@@ -12375,6 +12414,8 @@ async def _bank_nav(
                 sel = (sel + cols) % vault_total
             else:
                 sel = (sel + delta_col) % vault_total
+        if cursor_mode == "inventory":
+            sel = _canoe_nav_adjust(slot_map_nav, prev_sel, sel, vault_total, cols, delta_col)
 
     new_state = {**state, "selected": sel, "qty": 1, "cursor_mode": cursor_mode,
                  "equipped_cursor": eq_cur}
