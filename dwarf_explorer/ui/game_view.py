@@ -2017,19 +2017,20 @@ class TreeCityShopView(discord.ui.View):
 class LumberConvertView(discord.ui.View):
     """Confirm converting logs → planks, or crafting a canoe."""
 
-    def __init__(self, guild_id: int, user_id: int, log_count: int):
+    def __init__(self, guild_id: int, user_id: int, log_count: int, plank_count: int = 0):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.success,
-            label=f"✅ Convert {log_count} logs → {log_count*2} planks",
-            custom_id=_custom_id(gid, uid, "lumber_convert"),
-            row=0,
-        ))
-        if log_count >= 10:
+        if log_count > 0:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=f"✅ Convert {log_count} logs → {log_count*2} planks",
+                custom_id=_custom_id(gid, uid, "lumber_convert"),
+                row=0,
+            ))
+        if plank_count >= 18:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.primary,
-                label="🛶 Craft Canoe (10 logs)",
+                label="🛶 Craft Canoe (18 planks)",
                 custom_id=_custom_id(gid, uid, "lumber_craft_canoe"),
                 row=1,
             ))
@@ -6815,16 +6816,17 @@ async def handle_interact(
                 grid = await _load_house_grid()
                 inv_items = await get_inventory(db, user_id)
                 log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
-                if log_count > 0:
+                plank_count = sum(it["qty"] for it in inv_items if it["item_id"] == "plank")
+                if log_count > 0 or plank_count >= 18:
                     _ui_state[user_id] = {**_ui_state.get(user_id, {}), "type": "lumber_convert"}
                     content = render_grid(grid, player,
-                        "Bring me logs and I'll turn them into planks. " +
-                        f"You have **{log_count} logs**. Convert to **{log_count*2} planks**?")
-                    view = LumberConvertView(guild_id, user_id, log_count)
+                        f"\"Logs to planks (1 log = 2 planks), or I can shape 18 planks into a canoe.\"\n"
+                        f"You have **{log_count}** logs and **{plank_count}** planks.")
+                    view = LumberConvertView(guild_id, user_id, log_count, plank_count)
                     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                     return
                 else:
-                    content = render_grid(grid, player, "\"Bring me logs and I'll turn them into planks.\"")
+                    content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
 
             # ── Lumbermill adjacent-tile interactions ─────────────────────────
             # Conveyor tiles are non-walkable; player stands on adjacent b_floor.
@@ -8807,11 +8809,17 @@ async def handle_action(
                 "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='log'",
                 (user_id,)
             )
+            plank_rows = await db.fetch_all(
+                "SELECT COALESCE(SUM(quantity),0) as total FROM inventory WHERE user_id=? AND item_id='plank'",
+                (user_id,)
+            )
             log_count = log_rows[0]["total"] if log_rows else 0
-            if log_count >= 1:
+            plank_count = plank_rows[0]["total"] if plank_rows else 0
+            if log_count >= 1 or plank_count >= 18:
                 content = render_grid(grid, player,
-                    f"🪵 **Lumber Mill** — Convert logs to planks (3 logs → 1 plank) or craft a canoe (10 logs).\nYou have **{log_count}** logs.")
-                view = LumberConvertView(guild_id, user_id, log_count)
+                    f"🪵 **Lumber Mill** — Convert logs → planks (1 log = 2 planks) or craft a canoe (18 planks).\n"
+                    f"You have **{log_count}** logs and **{plank_count}** planks.")
+                view = LumberConvertView(guild_id, user_id, log_count, plank_count)
             else:
                 content = render_grid(grid, player, "\"Bring me logs and I'll put them to good use.\"")
                 view = _game_view(guild_id, user_id, player, grid=grid)
@@ -15019,15 +15027,16 @@ async def _add_canoe_to_inventory(db, user_id: int) -> None:
 async def handle_lumber_craft_canoe(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Craft a canoe from 10 logs (one canoe max, does not stack)."""
+    """Craft a canoe from 18 planks (one canoe max, does not stack)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     inv_items = await get_inventory(db, user_id)
     log_count = sum(it["qty"] for it in inv_items if it["item_id"] == "log")
+    plank_count = sum(it["qty"] for it in inv_items if it["item_id"] == "plank")
     grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    if log_count < 10:
-        content = render_grid(grid, player, f"You need **10 logs** to build a canoe. You have {log_count}.")
-        view = LumberConvertView(guild_id, user_id, log_count)
+    if plank_count < 18:
+        content = render_grid(grid, player, f"You need **18 planks** to build a canoe. You have {plank_count}.")
+        view = LumberConvertView(guild_id, user_id, log_count, plank_count)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
     # Check if player already has a canoe (either old single-piece or new 2-piece)
@@ -15042,11 +15051,11 @@ async def handle_lumber_craft_canoe(
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
-    await remove_from_inventory(db, user_id, "log", 10)
+    await remove_from_inventory(db, user_id, "plank", 18)
     # Add canoe as 2-piece: canoe_left in next slot, canoe_right in the slot after
     await _add_canoe_to_inventory(db, user_id)
     content = render_grid(grid, player,
-        "🛶 The mill worker shapes the logs into a **canoe**! "
+        "🛶 The mill worker shapes the planks into a **canoe**! "
         "Equip the left piece and stand next to a river to embark.")
     _ui_state.pop(user_id, None)
     await interaction.response.edit_message(
