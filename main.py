@@ -1439,15 +1439,28 @@ async def botc_vigormortis_poison(ii:discord.Interaction,minion_name:str,directi
 
 @bot.tree.command(name="convertscript", description="Convert a clocktower.live game state JSON into script tool format")
 @app_commands.describe(
+    edition="Base edition shortcut (tb / bmr / snv)",
     game_state="The clocktower.live JSON (paste the full object)",
     name="Override the script name",
     author="Override the author",
 )
-async def convertscript_cmd(interaction: discord.Interaction, game_state: str, name: Optional[str] = None, author: Optional[str] = None):
-    try:
-        result = clocktower_convert(game_state, name=name, author=author)
-    except (json.JSONDecodeError, ValueError) as e:
-        await interaction.response.send_message(f"Invalid JSON: {e}", ephemeral=True)
+@app_commands.choices(edition=[
+    app_commands.Choice(name="Trouble Brewing (tb)", value="tb"),
+    app_commands.Choice(name="Bad Moon Rising (bmr)", value="bmr"),
+    app_commands.Choice(name="Sects & Violets (snv)", value="snv"),
+])
+async def convertscript_cmd(interaction: discord.Interaction, edition: Optional[app_commands.Choice[str]] = None, game_state: Optional[str] = None, name: Optional[str] = None, author: Optional[str] = None):
+    if edition is not None:
+        fake_json = json.dumps({"bluffs": [], "edition": {"id": edition.value}, "roles": "", "npcs": [], "players": []})
+        result = clocktower_convert(fake_json, name=name, author=author)
+    elif game_state is not None:
+        try:
+            result = clocktower_convert(game_state, name=name, author=author)
+        except (json.JSONDecodeError, ValueError) as e:
+            await interaction.response.send_message(f"Invalid JSON: {e}", ephemeral=True)
+            return
+    else:
+        await interaction.response.send_message("Provide either an edition or a game state JSON.", ephemeral=True)
         return
     output = json.dumps(result, indent=2, ensure_ascii=False)
     script_name = result[0].get("name", "script") if result else "script"
