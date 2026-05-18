@@ -48,8 +48,13 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
 
+GUILD_ID = 1339575347032621191
+
 @bot.event
 async def on_ready():
+    guild = discord.Object(id=GUILD_ID)
+    bot.tree.copy_global_to(guild=guild)
+    await bot.tree.sync(guild=guild)
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
     if not game_clock.is_running():
