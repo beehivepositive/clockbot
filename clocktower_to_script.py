@@ -66,6 +66,8 @@ EDITION_NAMES = {
 
 def norm_id(s):
     """Strip to lowercase alphanumeric — matches clocktower.live's internal ID format."""
+    if s is None:
+        return ""
     if isinstance(s, dict):
         s = s.get("id", "")
     return re.sub(r"[^a-z0-9]", "", str(s).lower())
@@ -82,9 +84,17 @@ def convert(game_state, name=None, author=None):
     edition_id = norm_id(game_state.get("edition", {}).get("id", ""))
     roles_raw = game_state.get("roles", "")
 
+    # roles is sometimes a JSON string rather than already-parsed
+    if isinstance(roles_raw, str) and roles_raw.strip().startswith("["):
+        try:
+            roles_raw = json.loads(roles_raw)
+        except json.JSONDecodeError:
+            roles_raw = ""
+
     # Determine character list
     if roles_raw and isinstance(roles_raw, list) and len(roles_raw) > 0:
         # Custom script: roles is a list of {"id": "..."} objects or strings
+        # norm_id returns "" for None/empty entries; filter those out
         characters = [norm_id(r) for r in roles_raw if norm_id(r)]
         default_name = game_state.get("edition", {}).get("name", "") or "Custom Script"
         default_author = game_state.get("edition", {}).get("author", "") or ""
