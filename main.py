@@ -1441,6 +1441,7 @@ async def botc_vigormortis_poison(ii:discord.Interaction,minion_name:str,directi
 @app_commands.describe(
     edition="Base edition shortcut (tb / bmr / snv)",
     game_state="The clocktower.live JSON (paste the full object)",
+    attachment="Upload a .json file instead of pasting",
     name="Override the script name",
     author="Override the author",
 )
@@ -1449,25 +1450,70 @@ async def botc_vigormortis_poison(ii:discord.Interaction,minion_name:str,directi
     app_commands.Choice(name="Bad Moon Rising (bmr)", value="bmr"),
     app_commands.Choice(name="Sects & Violets (snv)", value="snv"),
 ])
-async def convertscript_cmd(interaction: discord.Interaction, edition: Optional[app_commands.Choice[str]] = None, game_state: Optional[str] = None, name: Optional[str] = None, author: Optional[str] = None):
-    if edition is not None:
-        fake_json = json.dumps({"bluffs": [], "edition": {"id": edition.value}, "roles": "", "npcs": [], "players": []})
-        result = clocktower_convert(fake_json, name=name, author=author)
+async def convertscript_cmd(interaction: discord.Interaction, edition: Optional[app_commands.Choice[str]] = None, game_state: Optional[str] = None, attachment: Optional[discord.Attachment] = None, name: Optional[str] = None, author: Optional[str] = None):
+    await interaction.response.defer()
+    if attachment is not None:
+        raw = await attachment.read()
+        src = raw.decode("utf-8")
     elif game_state is not None:
-        try:
-            result = clocktower_convert(game_state, name=name, author=author)
-        except (json.JSONDecodeError, ValueError) as e:
-            await interaction.response.send_message(f"Invalid JSON: {e}", ephemeral=True)
-            return
+        src = game_state
+    elif edition is not None:
+        src = json.dumps({"bluffs": [], "edition": {"id": edition.value}, "roles": "", "npcs": [], "players": []})
     else:
-        await interaction.response.send_message("Provide either an edition or a game state JSON.", ephemeral=True)
+        await interaction.followup.send("Provide an edition, JSON text, or a JSON file.", ephemeral=True)
+        return
+    try:
+        result = clocktower_convert(src, name=name, author=author)
+    except (json.JSONDecodeError, ValueError) as e:
+        await interaction.followup.send(f"Invalid JSON: {e}", ephemeral=True)
         return
     output = json.dumps(result, indent=2, ensure_ascii=False)
     script_name = result[0].get("name", "script") if result else "script"
     safe_name = re.sub(r"[^a-z0-9_-]", "_", script_name.lower())
     buf = io.BytesIO(output.encode("utf-8"))
-    await interaction.response.send_message(
-            file=discord.File(buf, filename=f"{safe_name}.json"),
-        )
+    await interaction.followup.send(file=discord.File(buf, filename=f"{safe_name}.json"))
+
+@bot.tree.command(name="scriptimage", description="Add a custom image to a script tool JSON", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(
+    game_state="The script tool JSON array (paste it)",
+    attachment="Upload the script JSON as a file",
+    image_url="Public URL of the image to embed in the script",
+    image_file="Upload an image file (its Discord URL will be used)",
+)
+async def scriptimage_cmd(interaction: discord.Interaction, game_state: Optional[str] = None, attachment: Optional[discord.Attachment] = None, image_url: Optional[str] = None, image_file: Optional[discord.Attachment] = None):
+    await interaction.response.defer()
+    if attachment is not None:
+        raw = await attachment.read()
+        src = raw.decode("utf-8")
+    elif game_state is not None:
+        src = game_state
+    else:
+        await interaction.followup.send("Provide a script JSON as text or file.", ephemeral=True)
+        return
+    if image_file is not None:
+        img_url = image_file.url
+    elif image_url is not None:
+        img_url = image_url
+    else:
+        await interaction.followup.send("Provide an image URL or upload an image file.", ephemeral=True)
+        return
+    try:
+        script = json.loads(src)
+    except json.JSONDecodeError as e:
+        await interaction.followup.send(f"Invalid JSON: {e}", ephemeral=True)
+        return
+    if not isinstance(script, list) or not script:
+        await interaction.followup.send("Expected a script tool JSON array.", ephemeral=True)
+        return
+    meta = script[0]
+    if isinstance(meta, dict) and meta.get("id") == "_meta":
+        meta["image"] = img_url
+    else:
+        script.insert(0, {"id": "_meta", "name": "", "author": "", "image": img_url})
+    output = json.dumps(script, indent=2, ensure_ascii=False)
+    script_name = script[0].get("name", "script") if isinstance(script[0], dict) else "script"
+    safe_name = re.sub(r"[^a-z0-9_-]", "_", script_name.lower())
+    buf = io.BytesIO(output.encode("utf-8"))
+    await interaction.followup.send(file=discord.File(buf, filename=f"{safe_name}.json"))
 
 bot.run(TOKEN)
