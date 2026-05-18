@@ -1516,4 +1516,85 @@ async def scriptimage_cmd(interaction: discord.Interaction, game_state: Optional
     buf = io.BytesIO(output.encode("utf-8"))
     await interaction.followup.send(file=discord.File(buf, filename=f"{safe_name}.json"))
 
+@bot.tree.command(name="getgamejson", description="Scan a game logs channel, read script + grimoire images, return a game state JSON", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(
+    channel="The game logs channel to scan",
+    limit="How many recent messages to look through (default 150)",
+)
+async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 150):
+    await interaction.response.defer()
+    try:
+        from botc_image_reader import classify_image, extract_script_characters, extract_player_names, TESSERACT_OK
+    except Exception as e:
+        await interaction.followup.send(f"Image reader unavailable: {e}", ephemeral=True)
+        return
+    if not TESSERACT_OK:
+        await interaction.followup.send("Tesseract OCR is not installed on the server. Ask an admin to run:\n```\napt-get install -y tesseract-ocr && pip install pytesseract\n```", ephemeral=True)
+        return
+
+    script_chars = None
+    player_names = None
+    script_url = None
+    grim_url = None
+
+    IMAGE_EXTS_SET = {".png", ".jpg", ".jpeg", ".webp"}
+    async with aiohttp.ClientSession() as session:
+        async for msg in channel.history(limit=limit, oldest_first=True):
+            for att in msg.attachments:
+                if not any(att.filename.lower().endswith(e) for e in IMAGE_EXTS_SET):
+                    continue
+                try:
+                    async with session.get(att.url) as resp:
+                        if resp.status != 200:
+                            continue
+                        img_bytes = await resp.read()
+                    img_type = classify_image(img_bytes)
+                    if img_type == "script" and script_chars is None:
+                        script_chars = extract_script_characters(img_bytes)
+                        script_url = att.url
+                    elif img_type == "grimoire" and player_names is None:
+                        player_names = extract_player_names(img_bytes)
+                        grim_url = att.url
+                except Exception:
+                    continue
+            if script_chars is not None and player_names is not None:
+                break
+
+    if script_chars is None and player_names is None:
+        await interaction.followup.send("No recognisable script or grimoire images found in that channel.", ephemeral=True)
+        return
+
+    from botc_runner import _norm_role_id
+
+    def _player_entry(name):
+        return {"name": name, "id": "", "connected": False, "role": {},
+                "alignmentIndex": 0, "reminders": [], "isVoteless": False,
+                "hasTwoVotes": False, "hasResponded": {}, "isDead": False,
+                "handRaised": False, "pronouns": ""}
+
+    state = {
+        "bluffs": [None, None, None],
+        "edition": {"id": "custom", "name": "", "author": ""},
+        "roles": [{"id": _norm_role_id(c)} for c in (script_chars or [])],
+        "npcs": [],
+        "players": [_player_entry(n) for n in (player_names or [])],
+    }
+
+    lines = []
+    if script_chars is not None:
+        lines.append(f"**Script** ({len(script_chars)} chars): {', '.join(script_chars[:6])}{'…' if len(script_chars) > 6 else ''}")
+    else:
+        lines.append("**Script**: not found — post the script image in that channel first")
+    if player_names is not None:
+        lines.append(f"**Players** ({len(player_names)}): {', '.join(player_names)}")
+    else:
+        lines.append("**Players**: not found — no grimoire screenshot detected")
+
+    output = json.dumps(state, indent=2, ensure_ascii=False)
+    buf = io.BytesIO(output.encode("utf-8"))
+    await interaction.followup.send(
+        "\n".join(lines),
+        file=discord.File(buf, filename="game_state.json"),
+    )
+
 bot.run(TOKEN)
