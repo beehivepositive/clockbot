@@ -14,6 +14,7 @@ from botc_runner import run_botc_code, get_character_info, get_game, set_game, d
 import datetime, pytz
 from botc_st import start_night, end_night, end_day, handle_dm_action, find_pending_game as find_pending_botc_game, resolve_execution as botc_resolve_execution
 from game_state import load_whisper_state,save_whisper_state,get_game_state,set_game_state,get_game_key,is_excluded,find_dest
+from clocktower_to_script import convert as clocktower_convert
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
@@ -1430,5 +1431,29 @@ async def botc_vigormortis_poison(ii:discord.Interaction,minion_name:str,directi
     if d not in ("left","right"): await ii.response.send_message("direction must be left or right",ephemeral=True);return
     _BL.apply_vigormortis_poison(mn["id"],d,g); set_game(gk,g)
     await ii.response.send_message(f"Vigormortis: poisoned {d} neighbour of {mn.get("name",mn["id"])}.")
+
+@bot.tree.command(name="convertscript", description="Convert a clocktower.live game state JSON into script tool format")
+@app_commands.describe(
+    game_state="The clocktower.live JSON (paste the full object)",
+    name="Override the script name",
+    author="Override the author",
+)
+async def convertscript_cmd(interaction: discord.Interaction, game_state: str, name: Optional[str] = None, author: Optional[str] = None):
+    try:
+        result = clocktower_convert(game_state, name=name, author=author)
+    except (json.JSONDecodeError, ValueError) as e:
+        await interaction.response.send_message(f"Invalid JSON: {e}", ephemeral=True)
+        return
+    output = json.dumps(result, indent=2, ensure_ascii=False)
+    if len(output) <= 1900:
+        await interaction.response.send_message(f"```json\n{output}\n```", ephemeral=True)
+    else:
+        script_name = result[0].get("name", "script") if result else "script"
+        safe_name = re.sub(r"[^a-z0-9_-]", "_", script_name.lower())
+        buf = io.BytesIO(output.encode("utf-8"))
+        await interaction.response.send_message(
+            file=discord.File(buf, filename=f"{safe_name}.json"),
+            ephemeral=True,
+        )
 
 bot.run(TOKEN)
