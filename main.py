@@ -1450,15 +1450,11 @@ async def convertscript_cmd(interaction: discord.Interaction, game_state: str, n
         await interaction.response.send_message(f"Invalid JSON: {e}", ephemeral=True)
         return
     output = json.dumps(result, indent=2, ensure_ascii=False)
-    if len(output) <= 1900:
-        await interaction.response.send_message(f"```json\n{output}\n```", ephemeral=True)
-    else:
-        script_name = result[0].get("name", "script") if result else "script"
-        safe_name = re.sub(r"[^a-z0-9_-]", "_", script_name.lower())
-        buf = io.BytesIO(output.encode("utf-8"))
-        await interaction.response.send_message(
+    script_name = result[0].get("name", "script") if result else "script"
+    safe_name = re.sub(r"[^a-z0-9_-]", "_", script_name.lower())
+    buf = io.BytesIO(output.encode("utf-8"))
+    await interaction.response.send_message(
             file=discord.File(buf, filename=f"{safe_name}.json"),
-            ephemeral=True,
         )
 
 bot.run(TOKEN)
