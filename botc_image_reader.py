@@ -16,6 +16,13 @@ try:
 except ImportError:
     TESSERACT_OK = False
 
+# Words that appear constantly in ability text and would false-match character names
+_ABILITY_NOISE = {
+    "drunk", "dead", "alive", "kill", "die", "dies", "good", "evil",
+    "night", "day", "vote", "player", "town", "game", "fool", "recluse",
+    "spy", "baron", "imp", "slayer", "virgin", "monk", "soldier", "mayor",
+}
+
 
 def _load_chars():
     for path in ["/home/discord-bot/botc_data.json", "botc_data.json"]:
@@ -32,20 +39,38 @@ def _load_chars():
 
 BOTC_CHARS, BOTC_NORM = _load_chars()
 
+# Common non-name words to exclude from player list
+_UI_WORDS = {
+    "day", "night", "vote", "votes", "chat", "dawn", "dusk", "alive",
+    "dead", "the", "and", "for", "you", "are", "not", "can",
+}
+
 
 def _norm(s):
     return re.sub(r"[^a-z0-9]", "", str(s).lower())
 
 
 def _match_char(word):
-    """Return the canonical display name for a BotC character, or None."""
+    """
+    Return the canonical BotC character display name for a word, or None.
+
+    Uses exact match first, then fuzzy with a high cutoff.
+    Requires the first letter to match — prevents 'night' → 'Knight' etc.
+    Skips words that are common ability-text noise.
+    """
     n = _norm(word)
     if not n or len(n) < 3:
         return None
+    # Skip words that are almost always from ability text, not character names
+    if n in _ABILITY_NOISE:
+        return None
     if n in BOTC_NORM:
         return BOTC_NORM[n]
-    close = difflib.get_close_matches(n, BOTC_NORM.keys(), n=1, cutoff=0.84)
-    return BOTC_NORM[close[0]] if close else None
+    # Fuzzy match: require high ratio AND same first letter
+    close = difflib.get_close_matches(n, BOTC_NORM.keys(), n=1, cutoff=0.88)
+    if close and close[0][0] == n[0]:
+        return BOTC_NORM[close[0]]
+    return None
 
 
 def _preprocess(img_bytes):
@@ -54,13 +79,14 @@ def _preprocess(img_bytes):
     w, h = img.size
 
     # Scale up small images — helps OCR on low-res screenshots
-    if w < 1200:
-        scale = 1200 / w
+    if w < 1400:
+        scale = 1400 / w
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
         w, h = img.size
 
-    # Detect dark-background images (grimoire screenshots)
-    sample = list(img.crop((0, 0, min(300, w), min(300, h))).getdata())
+    # Detect dark-background images (grimoire screenshots) by sampling the centre
+    cx, cy = w // 2, h // 2
+    sample = list(img.crop((cx - 100, cy - 100, cx + 100, cy + 100)).getdata())
     avg = sum(r + g + b for r, g, b in sample) / (3 * len(sample))
     if avg < 110:
         img = ImageOps.invert(img)
@@ -96,11 +122,7 @@ def _ocr_boxes(img_bytes):
 # ---------------------------------------------------------------------------
 
 def classify_image(img_bytes):
-    """
-    Return 'script', 'grimoire', or 'unknown'.
-    Script images contain many matching BotC character names.
-    Grimoire images contain player names arranged in a circle.
-    """
+    """Return 'script' or 'grimoire'. Script images contain many BotC character names."""
     items, _, _ = _ocr_boxes(img_bytes)
     texts = [t for t, *_ in items]
 
@@ -111,10 +133,7 @@ def classify_image(img_bytes):
         elif i + 1 < len(texts) and _match_char(t + texts[i + 1]):
             matches += 1
 
-    if matches >= 4:
-        return "script"
-    # Grimoire: fewer char matches, lots of short proper-noun-ish words
-    return "grimoire"
+    return "script" if matches >= 4 else "grimoire"
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +143,11 @@ def classify_image(img_bytes):
 def extract_script_characters(img_bytes):
     """
     Return ordered list of BotC character display names found in a script image.
-    Works by matching OCR words (and adjacent word pairs) against the known character list.
+
+    Scans OCR words (and adjacent pairs for two-word names) against the known
+    character list. Uses strict matching to avoid ability-text false positives.
+    Deduplicates: each character counted once regardless of how many times the
+    name appears in ability text.
     """
     items, _, _ = _ocr_boxes(img_bytes)
     texts = [t for t, *_ in items]
@@ -132,8 +155,8 @@ def extract_script_characters(img_bytes):
     found = []
     i = 0
     while i < len(texts):
-        # Try merging with next word first (handles "Town Crier", "Tea Lady", etc.)
         m = None
+        # Try two-word match first ("Town Crier", "Tea Lady", "Snake Charmer", etc.)
         if i + 1 < len(texts):
             m = (_match_char(texts[i] + texts[i + 1]) or
                  _match_char(texts[i] + " " + texts[i + 1]))
@@ -157,38 +180,36 @@ def extract_script_characters(img_bytes):
 
 def extract_player_names(img_bytes):
     """
-    Return player names from a grimoire/circle image, sorted clockwise from the top.
+    Return player names from a grimoire circle image, sorted clockwise from the top.
 
     Strategy:
-    - Find the centre of the image.
-    - All detected text is tagged with its radial distance and angle from centre.
-    - Player name tokens live in a "ring" at 30–95% of the max radial distance.
-    - BotC character names (role icons) are excluded; what remains are player names.
-    - Sorted by angle (clockwise from 12 o'clock).
+    - Get all OCR text with positions.
+    - Discard: BotC character names, pure numbers, UI words, single chars.
+    - Compute angle of each remaining item from the image centre.
+    - Sort clockwise (angle 0 = 12 o'clock).
+
+    The ring-distance filter is intentionally removed — UI panels in screenshots
+    can shift the circle off-centre, making distance-based filtering unreliable.
     """
     items, img_w, img_h = _ocr_boxes(img_bytes)
     cx, cy = img_w / 2, img_h / 2
 
-    tagged = []
+    candidates = []
     for text, x, y, w, h in items:
+        # Skip short tokens, pure numbers, known UI words, BotC character names
         if len(text) < 2:
             continue
+        if text.isdigit():
+            continue
+        if _norm(text) in _UI_WORDS:
+            continue
+        if _match_char(text):
+            continue
+        # Skip two-word combos that match a character (e.g. "Town Crier")
         tx = x + w / 2
         ty = y + h / 2
-        dist = math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2)
         angle = math.atan2(tx - cx, cy - ty) % (2 * math.pi)
-        tagged.append((dist, angle, text))
+        candidates.append((angle, text))
 
-    if not tagged:
-        return []
-
-    max_dist = max(d for d, *_ in tagged)
-    # Keep only the outer ring where player names live
-    ring = [(a, t) for d, a, t in tagged
-            if max_dist * 0.30 <= d <= max_dist * 0.95]
-
-    # Drop anything that fuzzy-matches a BotC character name
-    players = [(a, t) for a, t in ring if not _match_char(t)]
-
-    players.sort(key=lambda x: x[0])
-    return [t for _, t in players]
+    candidates.sort(key=lambda c: c[0])
+    return [t for _, t in candidates]
