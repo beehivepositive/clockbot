@@ -1437,7 +1437,7 @@ async def botc_vigormortis_poison(ii:discord.Interaction,minion_name:str,directi
     _BL.apply_vigormortis_poison(mn["id"],d,g); set_game(gk,g)
     await ii.response.send_message(f"Vigormortis: poisoned {d} neighbour of {mn.get("name",mn["id"])}.")
 
-@bot.tree.command(name="convertscript", description="Convert a clocktower.live game state JSON into script tool format")
+@bot.tree.command(name="convertscript", description="Convert a clocktower.live game state JSON into script tool format", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     edition="Base edition shortcut (tb / bmr / snv)",
     game_state="The clocktower.live JSON (paste the full object)",
