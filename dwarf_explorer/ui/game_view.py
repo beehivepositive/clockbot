@@ -9439,18 +9439,20 @@ async def _bomb_blast_cave(
                                 fq.append((nx2, ny2))
                     blast_msg_parts.append("🪨 A hidden passage is revealed!")
                 else:
-                    # Standard mineable rock: remove it (become floor) + drop items
+                    # Standard mineable rock: remove it (become floor) + drop items as ground tile
                     await db.execute(
                         "UPDATE cave_tiles SET tile_type='stone_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
                         (cave_id, tx, ty)
                     )
+                    drop_loot: list[tuple[str, int]] = []
                     if t == "iron_ore_deposit":
-                        await add_to_inventory(db, user_id, "iron_ore", _random.randint(1, 2))
+                        drop_loot = [("iron_ore", _random.randint(1, 2))]
                     elif t == "gold_ore_deposit":
-                        await add_to_inventory(db, user_id, "gold_ore", 1)
+                        drop_loot = [("gold_ore", 1)]
                     elif t in ("cave_rock", "bomb_lit"):
-                        # Drop rocks on the floor (as ground item; simplified: straight to inventory)
-                        await add_to_inventory(db, user_id, "rock", _random.randint(1, 3))
+                        drop_loot = [("rock", _random.randint(1, 3))]
+                    if drop_loot:
+                        await create_cave_drop_box(db, cave_id, tx, ty, drop_loot)
         # Edit message
         if message_id and channel_id and player.in_cave:
             ch = client.get_channel(channel_id)
