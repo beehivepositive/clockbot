@@ -166,8 +166,11 @@ def _ocr_grimoire(img_bytes):
     # names scattered around the ring that PSM 3 misses.
     gray_lo = ImageEnhance.Contrast(base).enhance(2.0)
     gray_hi = ImageEnhance.Contrast(base).enhance(3.0)
-    items_a = _run_ocr(gray_lo, config="--psm 3")
-    items_b = _run_ocr(gray_hi, config="--psm 11")
+    # Confidence floor of 65: player names consistently read at 78–96; polka-dot /
+    # textured background noise almost always falls below 65, so this one threshold
+    # eliminates it without discarding any real names.
+    items_a = _run_ocr(gray_lo, min_conf=65, config="--psm 3")
+    items_b = _run_ocr(gray_hi, min_conf=65, config="--psm 11")
     seen_n = set()
     merged = []
     for item in items_a + items_b:
