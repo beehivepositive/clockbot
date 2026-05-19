@@ -280,12 +280,19 @@ async def get_all_overworld_players(
 
 # --- Caves ---
 
+_lava_cave_cache: dict[int, bool] = {}  # cave_id → True if lava cave; permanent (type never changes)
+
+
 async def _is_lava_cave(db: Database, cave_id: int) -> bool:
     """Return True if this cave has cave_type='lava' (a volcano island lava cave)."""
+    if cave_id in _lava_cave_cache:
+        return _lava_cave_cache[cave_id]
     row = await db.fetch_one(
         "SELECT cave_type FROM caves WHERE cave_id = ?", (cave_id,)
     )
-    return bool(row and row["cave_type"] == "lava")
+    result = bool(row and row["cave_type"] == "lava")
+    _lava_cave_cache[cave_id] = result
+    return result
 
 
 async def register_island_cave(

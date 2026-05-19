@@ -860,6 +860,8 @@ CAVE_EMOJI = {
     "cracked_stone":      "⬛",               # ⬛ looks identical to stone_wall — visually hidden!
     "bomb_lit":           "\U0001F4A3",            # 💣 placed lit bomb (walkable, about to explode)
     "hidden_chamber_entrance": "\U0001F7EB",       # 🟫 opened chamber floor (was cracked_stone)
+    # Ground drops (mirrors TERRAIN_EMOJI so cave renderer can find it)
+    "drop_box":           "\U0001F4E6",            # 📦 dropped item box in cave
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
@@ -869,7 +871,9 @@ CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_mediu
                  # Boss room tiles (door is walkable so key-check logic runs inside the movement loop)
                  "cave_boss_door", "cave_boss_floor", "cave_boss_trigger", "cave_boss_chest",
                  # Bomb system (lit bomb tile is walkable; cracked_stone is NOT — it's a wall)
-                 "bomb_lit", "hidden_chamber_entrance"}
+                 "bomb_lit", "hidden_chamber_entrance",
+                 # Ground drops in cave (walk onto to pick up)
+                 "drop_box"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 # --- Shipwreck System ---

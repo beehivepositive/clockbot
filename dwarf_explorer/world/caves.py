@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import time as _time
+
+# Throttle _restore_regenerated_rocks to once per 5 min per cave_id
+_last_rock_restore: dict[int, float] = {}
 
 from dwarf_explorer.config import (
     CAVE_MIN_SIZE, CAVE_MAX_SIZE, CAVE_WALK_STEPS,
@@ -917,7 +921,10 @@ async def _restore_regenerated_rocks(cave_id: int, db) -> None:
 async def load_cave_viewport(
     cave_id: int, center_x: int, center_y: int, db
 ) -> list[list[TileData]]:
-    await _restore_regenerated_rocks(cave_id, db)
+    _now = _time.monotonic()
+    if _now - _last_rock_restore.get(cave_id, 0) > 300:
+        _last_rock_restore[cave_id] = _now
+        await _restore_regenerated_rocks(cave_id, db)
     half  = VIEWPORT_CENTER
     x_min = center_x - half
     y_min = center_y - half
