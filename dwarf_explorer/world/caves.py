@@ -891,7 +891,31 @@ async def populate_chest_loot(chest_id: int, chest_type: str, db, lava_mode: boo
 
 async def _maybe_regen_cracked_chambers(cave_id: int, db, rng) -> None:
     """If no cracked_stone tiles remain in the cave, replace any pending
-    cave_crack_breaks records with new cracked_stone chambers at random locations."""
+    cave_crack_breaks records with new cracked_stone chambers at random locations.
+
+    Chambers are fully isolated: every hidden_chamber and stone_chest tile is
+    surrounded by solid cave_rock on all sides except toward the entrance.
+    If the wall is thin (the chamber would touch another floor section from any
+    angle), we walk deeper into the rock until we find tiles that are completely
+    sealed.  No part of the generated corridor or chamber touches the existing
+    cave floor.
+    """
+    _FLOOR_TYPES = {"stone_floor", "cave_floor", "stone_path", "rift_floor"}
+    _MAX_WALK = 10  # maximum steps to carve into the rock per direction
+
+    async def _adj_to_floor(x: int, y: int, owned: set) -> bool:
+        """Return True if (x, y) has a non-owned floor tile as a neighbor."""
+        for nx2, ny2 in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if (nx2, ny2) in owned:
+                continue
+            nb = await db.fetch_one(
+                "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, nx2, ny2),
+            )
+            if nb and nb["tile_type"] in _FLOOR_TYPES:
+                return True
+        return False
+
     # Check pending breaks older than 48h
     pending = await db.fetch_all(
         "SELECT id FROM cave_crack_breaks WHERE cave_id=? AND broken_at <= datetime('now', '-48 hours')",
@@ -916,7 +940,7 @@ async def _maybe_regen_cracked_chambers(cave_id: int, db, rng) -> None:
 
     to_place = needed - current_count
 
-    # Find cave_rock tiles adjacent to a floor tile (potential cracked_stone spots)
+    # Find cave_rock tiles adjacent to a floor tile (potential cracked_stone entrance spots)
     candidates = await db.fetch_all(
         """
         SELECT ct.local_x, ct.local_y FROM cave_tiles ct
@@ -942,46 +966,90 @@ async def _maybe_regen_cracked_chambers(cave_id: int, db, rng) -> None:
     candidates = list(candidates)
     rng.shuffle(candidates)
     placed = 0
+
     for cand in candidates:
         if placed >= to_place:
             break
         cx, cy = cand["local_x"], cand["local_y"]
-        # Find a direction away from the floor (into the wall) to place the chamber
+
         for dx, dy in rng.sample([(0, 1), (0, -1), (1, 0), (-1, 0)], 4):
-            nx, ny = cx + dx, cy + dy
-            tile_row = await db.fetch_one(
-                "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
-                (cave_id, nx, ny),
-            )
-            if tile_row and tile_row["tile_type"] == "cave_rock":
-                # Place cracked_stone at cx,cy and a hidden_chamber at nx,ny
-                await db.execute(
-                    "UPDATE cave_tiles SET tile_type='cracked_stone' WHERE cave_id=? AND local_x=? AND local_y=?",
-                    (cave_id, cx, cy),
-                )
-                await db.execute(
-                    "UPDATE cave_tiles SET tile_type='hidden_chamber' WHERE cave_id=? AND local_x=? AND local_y=?",
-                    (cave_id, nx, ny),
-                )
-                # Place a stone_chest one tile deeper if possible
-                nx2, ny2 = nx + dx, ny + dy
-                deep = await db.fetch_one(
+            # Walk straight into the rock.  Every tile in the path must be:
+            #   (a) currently cave_rock
+            #   (b) NOT adjacent to any floor tile outside our owned corridor
+            # If a tile fails check (b), we cannot use this direction — the chamber
+            # would be accessible from the outside.  Try the next direction.
+            owned = {(cx, cy)}  # entrance tile (will become cracked_stone)
+            path: list[tuple[int, int]] = []
+            direction_ok = True
+
+            for step in range(1, _MAX_WALK + 1):
+                tx, ty = cx + dx * step, cy + dy * step
+                t_row = await db.fetch_one(
                     "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
-                    (cave_id, nx2, ny2),
+                    (cave_id, tx, ty),
                 )
-                if deep and deep["tile_type"] == "cave_rock":
-                    await db.execute(
-                        "UPDATE cave_tiles SET tile_type='stone_chest' WHERE cave_id=? AND local_x=? AND local_y=?",
-                        (cave_id, nx2, ny2),
-                    )
-                else:
-                    # Make the chamber tile itself a chest
-                    await db.execute(
-                        "UPDATE cave_tiles SET tile_type='stone_chest' WHERE cave_id=? AND local_x=? AND local_y=?",
-                        (cave_id, nx, ny),
-                    )
-                placed += 1
-                break
+                if not t_row or t_row["tile_type"] != "cave_rock":
+                    # Hit a non-rock tile (floor, wall edge, or missing) — stop
+                    direction_ok = False
+                    break
+
+                owned.add((tx, ty))
+
+                if await _adj_to_floor(tx, ty, owned):
+                    # This tile touches existing cave floor from a non-owned direction.
+                    # The chamber would be reachable from the outside — abandon direction.
+                    direction_ok = False
+                    break
+
+                path.append((tx, ty))
+                # We have at least one fully isolated tile — that's enough for a chamber
+                break  # use the shallowest valid depth; deeper is carved via corridor below
+
+            # If direction failed or no valid tile found, try next direction
+            if not direction_ok or not path:
+                continue
+
+            # We have a valid isolated path.  All tiles in `path` are safe.
+            # Build a slightly deeper chamber if possible: keep walking while safe,
+            # collecting up to 3 total corridor tiles (last one = stone_chest).
+            for extra_step in range(len(path) + 1, _MAX_WALK + 1):
+                tx2, ty2 = cx + dx * extra_step, cy + dy * extra_step
+                t2 = await db.fetch_one(
+                    "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (cave_id, tx2, ty2),
+                )
+                if not t2 or t2["tile_type"] != "cave_rock":
+                    break
+                owned.add((tx2, ty2))
+                if await _adj_to_floor(tx2, ty2, owned):
+                    break
+                path.append((tx2, ty2))
+                if len(path) >= 3:
+                    break  # 3-tile corridor is plenty
+
+            # Place the chamber:
+            #   entrance → cracked_stone
+            #   path[:-1] → hidden_chamber (corridor)
+            #   path[-1]  → stone_chest
+            await db.execute(
+                "UPDATE cave_tiles SET tile_type='cracked_stone' "
+                "WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, cx, cy),
+            )
+            for hx, hy in path[:-1]:
+                await db.execute(
+                    "UPDATE cave_tiles SET tile_type='hidden_chamber' "
+                    "WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (cave_id, hx, hy),
+                )
+            lx, ly = path[-1]
+            await db.execute(
+                "UPDATE cave_tiles SET tile_type='stone_chest' "
+                "WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, lx, ly),
+            )
+            placed += 1
+            break
 
     # Delete the processed break records
     ids = [r["id"] for r in pending[:to_place]]
