@@ -1,5 +1,9 @@
 from __future__ import annotations
+import time
 from dataclasses import dataclass
+
+# Throttle for lazy drop-box expiry — runs at most once per 5 minutes per DB
+_last_cleanup: dict[int, float] = {}
 
 from dwarf_explorer.config import (
     CHUNK_SIZE, WALKABLE_TILES, STRUCTURE_TILES, SPAWN_X, SPAWN_Y,
@@ -123,12 +127,15 @@ async def load_viewport(center_x: int, center_y: int, seed: int, db=None) -> lis
         y_min = center_y - half
         y_max = center_y + half
 
-        # Lazily expire old drop boxes on every viewport load
-        try:
-            from dwarf_explorer.database.repositories import cleanup_expired_drop_boxes
-            await cleanup_expired_drop_boxes(db)
-        except Exception:
-            pass
+        # Lazily expire old drop boxes — throttled to once per 5 minutes
+        _db_key = id(db)
+        if time.monotonic() - _last_cleanup.get(_db_key, 0) > 300:
+            _last_cleanup[_db_key] = time.monotonic()
+            try:
+                from dwarf_explorer.database.repositories import cleanup_expired_drop_boxes
+                await cleanup_expired_drop_boxes(db)
+            except Exception:
+                pass
 
         # Tile overrides (rivers, structures)
         overrides = await db.fetch_all(

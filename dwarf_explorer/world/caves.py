@@ -514,7 +514,7 @@ def _generate_cave_interior(
             elif (x, y) in cracked_positions:
                 tiles.append((x, y, "cracked_stone"))
             elif (x, y) in chamber_tiles:
-                tiles.append((x, y, "stone_floor"))
+                tiles.append((x, y, "hidden_chamber"))
             elif (x, y) in carved:
                 tiles.append((x, y, "stone_floor"))
             else:

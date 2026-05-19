@@ -7271,9 +7271,15 @@ async def _complete_delivery_quests_for_village(
 
 def _wayerwood_signal(user_id: int, dist_now: int) -> str:
     """Return the hot/cold flavour string by comparing dist_now to the last
-    stored reading.  Always updates the stored value after comparing."""
+    stored reading.  Always updates the stored value after comparing.
+
+    "Hums steadily" is reserved for when the player is directly adjacent
+    (cardinal distance == 1) — right next to the bombable wall.
+    """
     last_dist = _ui_state.get(user_id, {}).get("ww_last_dist")
     _ui_state.setdefault(user_id, {})["ww_last_dist"] = dist_now
+    if dist_now == 1:
+        return "🪄 *The wayerwood hums steadily. The wall is right before you.*"
     if last_dist is None:
         return "🪄 *The wayerwood pulses faintly. Something stirs within these walls...*"
     elif dist_now < last_dist:
@@ -7281,7 +7287,7 @@ def _wayerwood_signal(user_id: int, dist_now: int) -> str:
     elif dist_now > last_dist:
         return "🪄 *The wayerwood dims... you've veered away.*"
     else:
-        return "🪄 *The wayerwood hums steadily.*"
+        return "🪄 *The wayerwood quivers faintly — keep moving to get a clearer reading.*"
 
 
 async def _try_wayerwood_attune(player, user_id: int, db) -> str | None:
@@ -9398,11 +9404,31 @@ async def _bomb_blast_cave(
             t = tile_row["tile_type"]
             if t in _BOMB_BLAST_CAVE_DESTROYS or t == "bomb_lit":
                 if t == "cracked_stone":
-                    # Open up the hidden chamber — just make the cracked tile walkable floor
+                    # Convert cracked wall to floor
                     await db.execute(
                         "UPDATE cave_tiles SET tile_type='stone_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
                         (cave_id, tx, ty)
                     )
+                    # Flood-fill through hidden_chamber tiles to reveal the entire chamber
+                    fq: list[tuple[int, int]] = [(tx, ty)]
+                    fv: set[tuple[int, int]] = {(tx, ty)}
+                    while fq:
+                        qx, qy = fq.pop(0)
+                        for nx2, ny2 in ((qx+1, qy), (qx-1, qy), (qx, qy+1), (qx, qy-1)):
+                            if (nx2, ny2) in fv:
+                                continue
+                            fv.add((nx2, ny2))
+                            nb = await db.fetch_one(
+                                "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                                (cave_id, nx2, ny2)
+                            )
+                            if nb and nb["tile_type"] == "hidden_chamber":
+                                await db.execute(
+                                    "UPDATE cave_tiles SET tile_type='stone_floor' "
+                                    "WHERE cave_id=? AND local_x=? AND local_y=?",
+                                    (cave_id, nx2, ny2)
+                                )
+                                fq.append((nx2, ny2))
                     blast_msg_parts.append("🪨 A hidden passage is revealed!")
                 else:
                     # Standard mineable rock: remove it (become floor) + drop items
@@ -9793,7 +9819,12 @@ async def _execute_tool_action(
     # ── Attuned wayerwood ────────────────────────────────────────────────────
     elif tool == "attuned_wayerwood":
         if player.in_cave:
-            # Cave: hot/cold signal toward nearest cracked_stone
+            # Reset last-reading if we've entered a different cave
+            _ww_state = _ui_state.setdefault(user_id, {})
+            if _ww_state.get("ww_cave_id") != player.cave_id:
+                _ww_state.pop("ww_last_dist", None)
+                _ww_state["ww_cave_id"] = player.cave_id
+            # Hot/cold signal toward nearest cracked_stone
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
             cracks = await db.fetch_all(
                 "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
@@ -9808,6 +9839,11 @@ async def _execute_tool_action(
                 ww_msg = _wayerwood_signal(user_id, dist_now)
         elif getattr(player, "in_forest", False) and not getattr(player, "in_grove", False):
             # Forest: hot/cold signal toward the wayerwood target grove tile
+            # Reset last-reading if we've moved to a different forest
+            _ww_state = _ui_state.setdefault(user_id, {})
+            if _ww_state.get("ww_cave_id") != ("forest", player.forest_id):
+                _ww_state.pop("ww_last_dist", None)
+                _ww_state["ww_cave_id"] = ("forest", player.forest_id)
             from dwarf_explorer.world.forest import (
                 get_wayerwood_target as _gwwt_ex,
                 load_forest_viewport as _lfv_ex,
