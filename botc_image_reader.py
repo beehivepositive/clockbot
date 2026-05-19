@@ -89,9 +89,9 @@ def _apply_color_mask(img_rgb):
 # OCR helpers
 # ---------------------------------------------------------------------------
 
-def _run_ocr(pil_img, min_conf=20):
+def _run_ocr(pil_img, min_conf=20, config=""):
     """Run Tesseract on a preprocessed PIL image. Returns list of (text, x, y, w, h)."""
-    data = pytesseract.image_to_data(pil_img, output_type=pytesseract.Output.DICT)
+    data = pytesseract.image_to_data(pil_img, output_type=pytesseract.Output.DICT, config=config)
     items = []
     for i in range(len(data["text"])):
         t = data["text"][i].strip()
@@ -123,9 +123,10 @@ def _ocr_script(img_bytes):
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
-    # Lower confidence threshold — color masking already eliminates false positives,
+    # Low confidence floor — color masking already eliminates false positives,
     # so short names like "Po" that Tesseract reads with low confidence still count.
-    return _run_ocr(gray, min_conf=5), w, h
+    # --psm 11: sparse text, suits character names scattered down a script page.
+    return _run_ocr(gray, min_conf=5, config="--psm 11"), w, h
 
 
 def _ocr_grimoire(img_bytes):
@@ -156,8 +157,9 @@ def _ocr_grimoire(img_bytes):
     if avg < 130:
         img = ImageOps.invert(img)
 
-    gray = ImageEnhance.Contrast(img.convert("L")).enhance(2.0)
-    return _run_ocr(gray), w, h
+    gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
+    # --psm 11: sparse text — find text scattered in any order (suits the circle layout)
+    return _run_ocr(gray, config="--psm 11"), w, h
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +191,10 @@ def debug_grimoire(img_bytes):
     if inverted:
         img = ImageOps.invert(img)
 
-    gray = ImageEnhance.Contrast(img.convert("L")).enhance(2.0)
+    gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
 
-    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
-    lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}"]
+    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, config="--psm 11")
+    lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}  psm=11"]
     for i in range(len(data["text"])):
         t = data["text"][i].strip()
         if not t:
