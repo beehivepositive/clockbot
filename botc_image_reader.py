@@ -123,10 +123,18 @@ def _ocr_script(img_bytes):
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
-    # Confidence floor of -1 (accept everything including conf=0) — color masking
-    # already eliminates false positives, so even a barely-read short name like "Po"
-    # gets through. --psm 11: sparse text suits names scattered down a script page.
-    return _run_ocr(gray, min_conf=-1, config="--psm 11"), w, h
+    # Disable Tesseract's word-frequency and system dictionaries — they reject short
+    # real words like "Po" as statistically implausible. The color mask already
+    # eliminates false positives so we don't need the language-model gate at all.
+    # Alphabetic whitelist + sparse-text mode for scattered character names.
+    _SCRIPT_CFG = (
+        "--psm 11 --oem 1"
+        " -c load_system_dawg=0"
+        " -c load_freq_dawg=0"
+        " -c tessedit_char_whitelist="
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    )
+    return _run_ocr(gray, min_conf=-1, config=_SCRIPT_CFG), w, h
 
 
 def _ocr_grimoire(img_bytes):
