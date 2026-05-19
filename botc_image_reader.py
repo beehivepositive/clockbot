@@ -123,17 +123,12 @@ def _ocr_script(img_bytes):
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
-    # Disable Tesseract's word-frequency and system dictionaries — they reject short
-    # real words like "Po" as statistically implausible. The color mask already
-    # eliminates false positives so we don't need the language-model gate at all.
-    # Alphabetic whitelist + sparse-text mode for scattered character names.
-    _SCRIPT_CFG = (
-        "--psm 11 --oem 1"
-        " -c load_system_dawg=0"
-        " -c load_freq_dawg=0"
-        " -c tessedit_char_whitelist="
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    )
+    # Disable word-frequency and system dictionaries — they silently reject short
+    # real words like "Po" as statistically implausible. Color masking already
+    # eliminates false positives so we don't need the language-model gate.
+    # Note: --oem 1 and tessedit_char_whitelist are intentionally omitted —
+    # whitelist is unreliable in LSTM mode, and oem 1 fails if LSTM data is missing.
+    _SCRIPT_CFG = "--psm 11 -c load_system_dawg=0 -c load_freq_dawg=0"
     return _run_ocr(gray, min_conf=-1, config=_SCRIPT_CFG), w, h
 
 
@@ -233,6 +228,37 @@ def debug_grimoire(img_bytes):
 
     buf = io.BytesIO()
     gray_lo.save(buf, format="PNG")
+    return buf.getvalue(), lines
+
+
+def debug_script(img_bytes):
+    """
+    Return (masked_png_bytes, ocr_lines) for debugging script OCR.
+    masked_png_bytes: the color-masked grayscale image Tesseract sees.
+    ocr_lines: every word Tesseract found, with conf and position, NO filtering.
+    """
+    if not TESSERACT_OK:
+        raise RuntimeError("pytesseract not installed")
+
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = _scale_up(img, min_width=2000)
+    w, h = img.size
+    masked = _apply_color_mask(img)
+    gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
+
+    cfg = "--psm 11 -c load_system_dawg=0 -c load_freq_dawg=0"
+    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, config=cfg)
+    lines = [f"size={w}x{h}  config={cfg!r}"]
+    for i in range(len(data["text"])):
+        t = data["text"][i].strip()
+        if not t:
+            continue
+        conf = int(data["conf"][i])
+        x, y, bw, bh = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+        lines.append(f"conf={conf:3d}  '{t}'  at ({x},{y}) size {bw}x{bh}")
+
+    buf = io.BytesIO()
+    gray.save(buf, format="PNG")
     return buf.getvalue(), lines
 
 
