@@ -1520,11 +1520,12 @@ async def scriptimage_cmd(interaction: discord.Interaction, game_state: Optional
 @app_commands.describe(
     channel="The game logs channel to scan",
     limit="How many recent messages to look through (default 150)",
+    debug="Return the preprocessed grimoire image and raw OCR output for debugging",
 )
-async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 150):
+async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 150, debug: bool = False):
     await interaction.response.defer()
     try:
-        from botc_image_reader import classify_image, extract_script_characters, extract_player_names, TESSERACT_OK
+        from botc_image_reader import classify_image, extract_script_characters, extract_player_names, debug_grimoire, TESSERACT_OK
     except Exception as e:
         await interaction.followup.send(f"Image reader unavailable: {e}", ephemeral=True)
         return
@@ -1555,6 +1556,18 @@ async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.Tex
                     elif img_type == "grimoire" and player_names is None:
                         player_names = extract_player_names(img_bytes)
                         grim_url = att.url
+                        if debug:
+                            dbg_png, dbg_lines = debug_grimoire(img_bytes)
+                            dbg_text = "\n".join(dbg_lines)
+                            dbg_txt_buf = io.BytesIO(dbg_text.encode("utf-8"))
+                            dbg_img_buf = io.BytesIO(dbg_png)
+                            await interaction.followup.send(
+                                "**Debug: preprocessed grimoire image + raw OCR**",
+                                files=[
+                                    discord.File(dbg_img_buf, filename="grim_debug.png"),
+                                    discord.File(dbg_txt_buf, filename="grim_ocr.txt"),
+                                ],
+                            )
                 except Exception:
                     continue
             if script_chars is not None and player_names is not None:

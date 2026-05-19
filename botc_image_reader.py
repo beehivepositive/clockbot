@@ -161,6 +161,52 @@ def _ocr_grimoire(img_bytes):
 
 
 # ---------------------------------------------------------------------------
+# Debug helpers
+# ---------------------------------------------------------------------------
+
+def debug_grimoire(img_bytes):
+    """
+    Return (preprocessed_png_bytes, ocr_lines) for debugging.
+    preprocessed_png_bytes: what Tesseract actually sees (post-inversion, post-contrast).
+    ocr_lines: list of strings "conf=XX  '{text}'  at ({x},{y}) size {w}x{h}"
+    """
+    if not TESSERACT_OK:
+        raise RuntimeError("pytesseract not installed")
+
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = _scale_up(img)
+    w, h = img.size
+
+    cs = min(150, w // 6, h // 6)
+    corner_pixels = (
+        list(img.crop((0,     0,     cs,     cs)).getdata()) +
+        list(img.crop((w-cs,  0,     w,      cs)).getdata()) +
+        list(img.crop((0,     h-cs,  cs,     h )).getdata()) +
+        list(img.crop((w-cs,  h-cs,  w,      h )).getdata())
+    )
+    avg = sum(r + g + b for r, g, b in corner_pixels) / (3 * len(corner_pixels))
+    inverted = avg < 130
+    if inverted:
+        img = ImageOps.invert(img)
+
+    gray = ImageEnhance.Contrast(img.convert("L")).enhance(2.0)
+
+    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+    lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}"]
+    for i in range(len(data["text"])):
+        t = data["text"][i].strip()
+        if not t:
+            continue
+        conf = int(data["conf"][i])
+        x, y, bw, bh = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+        lines.append(f"conf={conf:3d}  '{t}'  at ({x},{y}) size {bw}x{bh}")
+
+    buf = io.BytesIO()
+    gray.save(buf, format="PNG")
+    return buf.getvalue(), lines
+
+
+# ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
 
