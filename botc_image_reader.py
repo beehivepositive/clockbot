@@ -266,15 +266,48 @@ def debug_script(img_bytes):
 # Classification
 # ---------------------------------------------------------------------------
 
+def _has_grimoire_center(img_rgb):
+    """
+    Return True if the image has a cluster of distinctly-coloured pixels near
+    its centre — the grimoire always renders coloured token icons there
+    (green for Townsfolk, red for Demons, orange for reminders, etc.).
+    Script images have only grey/black ability text in the centre, so they fail.
+    """
+    w, h = img_rgb.size
+    cx, cy = w // 2, h // 2
+    r = min(w, h) // 6          # sample the central ~16 % × 16 % region
+    region = img_rgb.crop((max(0, cx - r), max(0, cy - r),
+                           min(w, cx + r), min(h, cy + r)))
+    pixels = list(region.getdata())
+    if not pixels:
+        return False
+    colored = 0
+    for rv, gv, bv in pixels:
+        mx = max(rv, gv, bv)
+        mn = min(rv, gv, bv)
+        sat = (mx - mn) / mx if mx > 0 else 0.0
+        if sat > 0.35 and 40 < mx < 230:
+            colored += 1
+    return (colored / len(pixels)) > 0.05
+
+
 def classify_image(img_bytes):
     """
     Return 'script' or 'grimoire'.
-    Tries script OCR (color-masked); if it finds 4+ BotC character names → script.
+
+    Grimoire detection uses a positive signal — coloured token icons always
+    clustered in the centre — so random images and custom-background shots
+    that happen to look dark don't get misclassified.
+    Script detection falls back to colour-masked OCR finding BotC names.
     """
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    if _has_grimoire_center(img):
+        return "grimoire"
+
     try:
         items, _, _ = _ocr_script(img_bytes)
     except Exception:
-        return "grimoire"
+        return "unknown"
 
     texts = [t for t, *_ in items]
     matches = 0
@@ -284,7 +317,7 @@ def classify_image(img_bytes):
         elif i + 1 < len(texts) and _match_char(t + texts[i + 1]):
             matches += 1
 
-    return "script" if matches >= 3 else "grimoire"
+    return "script" if matches >= 3 else "unknown"
 
 
 # ---------------------------------------------------------------------------
