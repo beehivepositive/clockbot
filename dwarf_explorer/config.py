@@ -514,6 +514,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     # Sky temple gears
     frozenset({("iron_ingot", 2)}):                              {"result": "small_gear",        "qty": 1, "label": "⚙️ Forge Small Gear"},
     frozenset({("iron_ingot", 3)}):                              {"result": "large_gear",         "qty": 1, "label": "🔩 Forge Large Gear"},
+    # Wayerwood attunement (consumes rock, keeps wayerwood, returns hot/cold signal)
+    frozenset({("wayerwood", 1), ("rock", 1)}):                  {"result": None, "qty": 0, "label": "🪄 Attune", "special": "wayerwood_attune"},
 }
 
 # Terrain that blocks movement inside the combat arena

@@ -12274,6 +12274,46 @@ async def handle_inv_craft(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+    # ── Special recipe: wayerwood attunement ─────────────────────────────────
+    if recipe.get("special") == "wayerwood_attune":
+        # Consume rock only; wayerwood stays in inventory
+        await remove_from_inventory(db, user_id, "rock", 1)
+        _ui_state[user_id] = {**state, "selections": {}}
+        items = await get_inventory(db, user_id)
+        player = await get_or_create_player(db, user_id, interaction.user.display_name)
+        equipped = _equipped_dict(player)
+        # Compute hot/cold signal
+        if not getattr(player, "in_cave", False):
+            ww_msg = "🪄 *The wayerwood feels lifeless here. It only stirs in the depths of the earth.*"
+        else:
+            cracks = await db.fetch_all(
+                "SELECT local_x, local_y FROM cave_tiles "
+                "WHERE cave_id=? AND tile_type='cracked_stone'",
+                (player.cave_id,)
+            )
+            if not cracks:
+                ww_msg = "🪄 *The wayerwood hums quietly. No hidden passages stir within these walls.*"
+            else:
+                cx, cy = player.cave_x, player.cave_y
+                nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx) + abs(r["local_y"] - cy))
+                dist_now = abs(nearest["local_x"] - cx) + abs(nearest["local_y"] - cy)
+                last_dist = _ui_state.get(user_id, {}).get("ww_last_dist")
+                _ui_state.setdefault(user_id, {})["ww_last_dist"] = dist_now
+                if last_dist is None:
+                    ww_msg = "🪄 *The wayerwood pulses faintly. Something stirs within these walls...*"
+                elif dist_now < last_dist:
+                    ww_msg = "🪄 *The wayerwood pulses... pulling you forward.*"
+                elif dist_now > last_dist:
+                    ww_msg = "🪄 *The wayerwood dims... you've veered away.*"
+                else:
+                    ww_msg = "🪄 *The wayerwood hums steadily.*"
+        content, view = _inv_view(guild_id, user_id, items, sel, equipped,
+                                  inv_rows, inv_cols, _ui_state[user_id],
+                                  f"\n{ww_msg}",
+                                  gold=player.gold)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
     # Consume ingredients and add result
     for item_id, qty in selections.items():
         await remove_from_inventory(db, user_id, item_id, qty)
