@@ -19,6 +19,8 @@ class Database:
             self._conn = sqlite3.connect(self._path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL; reduces fsyncs
+            self._conn.execute("PRAGMA cache_size=-16000")    # 16 MB page cache
             self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
 
@@ -492,6 +494,11 @@ class Database:
     acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, map_type, ref_id)
 )""",
+                # Performance indexes (idempotent — CREATE INDEX IF NOT EXISTS)
+                "CREATE INDEX IF NOT EXISTS idx_tile_overrides_type ON tile_overrides(tile_type)",
+                "CREATE INDEX IF NOT EXISTS idx_quest_pool_source ON quest_pool(source_type, source_key)",
+                "CREATE INDEX IF NOT EXISTS idx_cave_rock_breaks_time ON cave_rock_breaks(cave_id, broken_at)",
+                "CREATE INDEX IF NOT EXISTS idx_ground_items_cave ON ground_items(cave_id, cave_x, cave_y)",
             ]
             for mig_sql in migrations:
                 try:

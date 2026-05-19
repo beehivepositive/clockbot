@@ -13,19 +13,25 @@ from dwarf_explorer.game.player import Player
 # --- World ---
 # All servers share one world stored under guild_id = 0 (global key).
 _GLOBAL_WORLD_KEY = 0
+_seed_cache: int | None = None  # cached world seed — never changes during a run
 
 
 async def get_or_create_world(db: Database, guild_id: int) -> int:
     """Return the current world seed. All guilds share one world (guild_id ignored)."""
+    global _seed_cache
+    if _seed_cache is not None:
+        return _seed_cache
     row = await db.fetch_one("SELECT seed FROM world WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
     if row:
-        return row["seed"]
+        _seed_cache = row["seed"]
+        return _seed_cache
     # First run ever — pick a random seed and store it
     new_seed = random.randint(1, 2**31 - 1)
     await db.execute(
         "INSERT INTO world (guild_id, seed, initialized) VALUES (?, ?, 0)",
         (_GLOBAL_WORLD_KEY, new_seed),
     )
+    _seed_cache = new_seed
     return new_seed
 
 
@@ -40,6 +46,8 @@ async def mark_world_initialized(db: Database, guild_id: int) -> None:
 
 async def reset_world_seed(db: Database) -> int:
     """Generate a fresh random seed, clear initialized flag, return the new seed."""
+    global _seed_cache
+    _seed_cache = None  # bust the in-memory seed cache
     new_seed = random.randint(1, 2**31 - 1)
     row = await db.fetch_one("SELECT guild_id FROM world WHERE guild_id = ?", (_GLOBAL_WORLD_KEY,))
     if row:
@@ -89,7 +97,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
                     "DELETE FROM equipment WHERE user_id=? AND slot='light'", (user_id,)
                 )
 
-        cols = row.keys()
+        cols = set(row.keys())  # set for O(1) membership tests (was O(N) sqlite3.Row.keys())
         return Player(
             user_id=row["user_id"],
             display_name=row["display_name"],
@@ -610,20 +618,23 @@ async def _find_free_tile_override_pos(db: Database, wx: int, wy: int) -> tuple[
 
     Used by create_drop_box so that a drop box is never silently swallowed by an
     existing cave/village/structure tile at the same coordinate.
+    Fetches the entire search area in one query and spirals in Python.
     """
     from dwarf_explorer.config import WORLD_SIZE
+    rows = await db.fetch_all(
+        "SELECT world_x, world_y FROM tile_overrides"
+        " WHERE world_x BETWEEN ? AND ? AND world_y BETWEEN ? AND ?",
+        (wx - 9, wx + 9, wy - 9, wy + 9),
+    )
+    occupied = {(r["world_x"], r["world_y"]) for r in rows}
     for radius in range(1, 10):
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
                 if abs(dx) != radius and abs(dy) != radius:
                     continue  # only the ring at this radius
                 nx, ny = wx + dx, wy + dy
-                if not (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE):
-                    continue
-                row = await db.fetch_one(
-                    "SELECT 1 FROM tile_overrides WHERE world_x=? AND world_y=?", (nx, ny)
-                )
-                if not row:
+                if (0 <= nx < WORLD_SIZE and 0 <= ny < WORLD_SIZE
+                        and (nx, ny) not in occupied):
                     return nx, ny
     return wx, wy  # fallback: original position (rare edge case)
 
@@ -740,19 +751,19 @@ async def pickup_drop_box(
 
 async def cleanup_expired_drop_boxes(db: Database) -> None:
     """Delete drop box items older than 1 hour and remove their tile_overrides."""
-    expired_positions = await db.fetch_all(
-        "SELECT DISTINCT world_x, world_y FROM ground_items"
-        " WHERE is_drop=1 AND spawned_at < datetime('now', '-1 hour')",
+    # Delete all expired ground items in one statement
+    await db.execute(
+        "DELETE FROM ground_items WHERE is_drop=1 AND spawned_at < datetime('now', '-1 hour')"
     )
-    for pos in expired_positions:
-        await db.execute(
-            "DELETE FROM ground_items WHERE world_x=? AND world_y=? AND is_drop=1",
-            (pos["world_x"], pos["world_y"]),
-        )
-        await db.execute(
-            "DELETE FROM tile_overrides WHERE world_x=? AND world_y=? AND tile_type IN ('drop_box','canoe_box')",
-            (pos["world_x"], pos["world_y"]),
-        )
+    # Remove any drop_box/canoe_box tile_overrides that no longer have items under them
+    await db.execute(
+        "DELETE FROM tile_overrides WHERE tile_type IN ('drop_box','canoe_box')"
+        " AND NOT EXISTS ("
+        "   SELECT 1 FROM ground_items"
+        "   WHERE is_drop=1 AND ground_items.world_x=tile_overrides.world_x"
+        "     AND ground_items.world_y=tile_overrides.world_y"
+        ")"
+    )
 
 
 async def create_cave_drop_box(

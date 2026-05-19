@@ -3268,11 +3268,18 @@ async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
     """Build a GameView with mine buttons for any adjacent mineable tiles."""
     mine_dirs: set[str] = set()
     if player.in_cave:
+        # Fetch all four adjacent tiles in one range query instead of 4 individual queries
+        adj_rows = await db.fetch_all(
+            "SELECT local_x, local_y, tile_type FROM cave_tiles"
+            " WHERE cave_id=? AND local_x BETWEEN ? AND ? AND local_y BETWEEN ? AND ?",
+            (player.cave_id,
+             player.cave_x - 1, player.cave_x + 1,
+             player.cave_y - 1, player.cave_y + 1),
+        )
+        adj = {(r["local_x"], r["local_y"]): r["tile_type"] for r in adj_rows}
+        _mineable = frozenset(("cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"))
         for direction, (dx, dy) in DIRECTIONS.items():
-            tile = await load_cave_single_tile(
-                player.cave_id, player.cave_x + dx, player.cave_y + dy, db
-            )
-            if tile.terrain in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"):
+            if adj.get((player.cave_x + dx, player.cave_y + dy)) in _mineable:
                 mine_dirs.add(direction)
     return _game_view(guild_id, user_id, player, frozenset(mine_dirs), grid=grid)
 

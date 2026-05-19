@@ -898,24 +898,29 @@ async def _restore_regenerated_rocks(cave_id: int, db) -> None:
     )
     if not rows:
         return
-    for row in rows:
-        lx, ly = row["local_x"], row["local_y"]
-        # Don't restore if a player-built house is standing here
-        ph = await db.fetch_one(
-            "SELECT house_id FROM player_houses"
-            " WHERE is_cave=1 AND loc_cave_id=? AND loc_x=? AND loc_y=?",
-            (cave_id, lx, ly),
+    # Pre-fetch all blocked positions (player-built houses) in one query
+    ph_rows = await db.fetch_all(
+        "SELECT loc_x, loc_y FROM player_houses WHERE is_cave=1 AND loc_cave_id=?",
+        (cave_id,),
+    )
+    blocked = {(r["loc_x"], r["loc_y"]) for r in ph_rows}
+    # Bulk-restore tiles not occupied by a house, then bulk-delete break records
+    to_restore = [
+        (cave_id, r["local_x"], r["local_y"])
+        for r in rows
+        if (r["local_x"], r["local_y"]) not in blocked
+    ]
+    to_delete = [(cave_id, r["local_x"], r["local_y"]) for r in rows]
+    if to_restore:
+        await db.executemany(
+            "UPDATE cave_tiles SET tile_type='cave_rock'"
+            " WHERE cave_id=? AND local_x=? AND local_y=?",
+            to_restore,
         )
-        if not ph:
-            await db.execute(
-                "UPDATE cave_tiles SET tile_type='cave_rock'"
-                " WHERE cave_id=? AND local_x=? AND local_y=?",
-                (cave_id, lx, ly),
-            )
-        await db.execute(
-            "DELETE FROM cave_rock_breaks WHERE cave_id=? AND local_x=? AND local_y=?",
-            (cave_id, lx, ly),
-        )
+    await db.executemany(
+        "DELETE FROM cave_rock_breaks WHERE cave_id=? AND local_x=? AND local_y=?",
+        to_delete,
+    )
 
 
 async def load_cave_viewport(
