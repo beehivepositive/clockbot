@@ -203,6 +203,105 @@ def _carve_boss_room(
     return None, set(), None, None
 
 
+def _place_cracked_stone_chambers(
+    rng: random.Random,
+    carved: set[tuple[int, int]],
+    width: int,
+    height: int,
+    count: int = 3,
+) -> tuple[set[tuple[int, int]], set[tuple[int, int]], set[tuple[int, int]]]:
+    """Place 2-4 cracked_stone wall tiles, each with a hidden chamber behind them.
+
+    A valid candidate wall tile must:
+      - Not be in 'carved' (i.e. it's stone_wall)
+      - Not be on the absolute boundary (row/col 0 or max — entrance edges)
+      - Have at least one carved (floor) neighbour on one side
+      - Have enough uncarved space for a 3×3 chamber on the opposite side
+
+    Returns:
+      cracked_positions  — tiles to render as cracked_stone (look like stone_wall)
+      chamber_tiles      — floor tiles inside the hidden chambers
+      chamber_chests     — guaranteed chest positions (1 per chamber)
+    """
+    CHAMBER_SIZE = 3  # 3×3 hidden chamber
+    candidates: list[tuple[int, int, int, int]] = []  # (cx, cy, expand_dx, expand_dy)
+
+    for y in range(2, height - 2):
+        for x in range(2, width - 2):
+            if (x, y) in carved:
+                continue
+            # Check if this wall tile has a carved (floor) neighbour
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if (nx, ny) in carved:
+                    # The chamber expands in the opposite direction
+                    ex, ey = -dx, -dy
+                    # Ensure there's room for a CHAMBER_SIZE×CHAMBER_SIZE block
+                    ok = True
+                    for cy2 in range(CHAMBER_SIZE + 1):
+                        for cx2 in range(CHAMBER_SIZE + 1):
+                            # Use a rotated room relative to expansion direction
+                            if ex == 0:  # vertical expansion
+                                rx = x + cx2 - CHAMBER_SIZE // 2
+                                ry = y + ey * (1 + cy2)
+                            else:        # horizontal expansion
+                                rx = x + ex * (1 + cy2)
+                                ry = y + cy2 - CHAMBER_SIZE // 2
+                            if not (1 <= rx < width - 1 and 1 <= ry < height - 1):
+                                ok = False
+                                break
+                            if (rx, ry) in carved:
+                                ok = False
+                                break
+                        if not ok:
+                            break
+                    if ok:
+                        candidates.append((x, y, ex, ey))
+                    break  # only need one valid floor neighbour
+
+    if not candidates:
+        return set(), set(), set()
+
+    rng.shuffle(candidates)
+    # Pick 2-count, ensuring they're well spread apart
+    chosen: list[tuple[int, int, int, int]] = []
+    for cand in candidates:
+        cx, cy, _, _ = cand
+        if all(abs(cx - sx) + abs(cy - sy) > 8 for sx, sy, _, _ in chosen):
+            chosen.append(cand)
+        if len(chosen) >= count:
+            break
+
+    cracked_positions: set[tuple[int, int]] = set()
+    chamber_tiles: set[tuple[int, int]] = set()
+    chamber_chests: set[tuple[int, int]] = set()
+
+    for cx, cy, ex, ey in chosen:
+        cracked_positions.add((cx, cy))
+        # Carve hidden chamber
+        room_tiles: list[tuple[int, int]] = []
+        for step in range(1, CHAMBER_SIZE + 2):
+            if ex == 0:  # expanding vertically
+                for offset in range(-CHAMBER_SIZE // 2, CHAMBER_SIZE // 2 + 1):
+                    rx, ry = cx + offset, cy + ey * step
+                    if 1 <= rx < width - 1 and 1 <= ry < height - 1:
+                        chamber_tiles.add((rx, ry))
+                        room_tiles.append((rx, ry))
+            else:        # expanding horizontally
+                for offset in range(-CHAMBER_SIZE // 2, CHAMBER_SIZE // 2 + 1):
+                    rx, ry = cx + ex * step, cy + offset
+                    if 1 <= rx < width - 1 and 1 <= ry < height - 1:
+                        chamber_tiles.add((rx, ry))
+                        room_tiles.append((rx, ry))
+        # Place guaranteed chest deep in the room
+        if room_tiles:
+            # Pick the tile furthest from the cracked wall
+            chest_pos = max(room_tiles, key=lambda p: abs(p[0] - cx) + abs(p[1] - cy))
+            chamber_chests.add(chest_pos)
+
+    return cracked_positions, chamber_tiles, chamber_chests
+
+
 def _generate_cave_interior(
     cave_id: int, seed: int, world_x: int, world_y: int,
     num_entrances: int = 1,
@@ -375,6 +474,16 @@ def _generate_cave_interior(
             rng, carved, floor_tiles, width, height
         )
 
+    # --- Cracked stone hidden chambers ---
+    crack_count = rng.randint(2, 4)
+    cracked_positions, chamber_tiles, chamber_chests = _place_cracked_stone_chambers(
+        rng, carved, width, height, count=crack_count
+    )
+    # Add chamber chests to chest_types
+    for pos in chamber_chests:
+        chest_positions.add(pos)
+        chest_types[pos] = "cave_chest"
+
     # --- Build tile list (enemies no longer placed as tiles — random encounters instead) ---
     tiles: list[tuple[int, int, str]] = []
     for y in range(height):
@@ -402,6 +511,10 @@ def _generate_cave_interior(
                 tiles.append((x, y, "gold_ore_deposit"))
             elif (x, y) in rock_positions:
                 tiles.append((x, y, "cave_rock"))
+            elif (x, y) in cracked_positions:
+                tiles.append((x, y, "cracked_stone"))
+            elif (x, y) in chamber_tiles:
+                tiles.append((x, y, "stone_floor"))
             elif (x, y) in carved:
                 tiles.append((x, y, "stone_floor"))
             else:

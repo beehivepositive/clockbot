@@ -29,6 +29,7 @@ NOISE_BASE_SCALE = 16.0
 TERRAIN_EMOJI = {
     "drop_box":   "\U0001F4E6",      # 📦 dropped item box
     "canoe_box":  "\U0001F6F6",      # 🛶 dropped canoe (overridden with :canoe_whole:)
+    "bomb_lit":   "\U0001F4A3",      # 💣 lit bomb placed on the ground
     "deep_water": "\U0001F30A",      # 🌊
     "shallow_water": "\U0001F4A7",   # 💧
     "river": "\U0001F30A",           # 🌊
@@ -238,6 +239,8 @@ ITEM_EMOJI = {
     "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
     "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
     "ancient_sapling":"\U0001F331",           # 🌱 planted ancient sapling (same as sapling)
+    # Bomb system
+    "bomb":           "\U0001F4A3",           # 💣 throwable explosive
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -268,6 +271,7 @@ WALKABLE_TILES = {
     "harbor",        # harbor dock — walkable
     "drop_box",      # item drop box — walkable, interact to pick up
     "canoe_box",     # dropped canoe — walkable, interact to pick up
+    "bomb_lit",      # placed lit bomb — walkable (blast imminent)
     "sundial",       # sundial ruins — walkable (interact with star_fragment to open rift)
     "sky_portal",    # sky portal on mountain — walkable (legacy; kept for any existing portals)
     "sky_temple_outer",  # outer puzzle temple — walkable overworld tile
@@ -424,6 +428,14 @@ FARMER_SHOP = [
     {"id": "dry_grass",    "name": "Hay",          "price": 1},
     {"id": "plant_fiber",  "name": "Fiber",        "price": 3},
     {"id": "healing_herb", "name": "Herb",         "price": 8},
+]
+
+# Armory shop catalog (price in gold)
+ARMORY_CATALOG = [
+    {"id": "bomb",          "name": "Bomb",           "price": 50,
+     "description": "A lit fuse short. Explodes in a 5-tile cross pattern after a short delay."},
+    {"id": "flint_and_steel","name": "Flint & Steel", "price": 30,
+     "description": "Ignites bombs. Craft it yourself from flint + iron ingot, or buy one here."},
 ]
 
 # Hospital heal cost: gold per missing HP (minimum 5 gold)
@@ -841,6 +853,10 @@ CAVE_EMOJI = {
     "cave_boss_floor":    "\U0001F7E5",            # 🟥 red — boss chamber floor
     "cave_boss_trigger":  "\U0001F7E5",            # 🟥 same look as floor — triggers boss fight
     "cave_boss_chest":    "\U0001F4B0",            # 💰 boss treasure (gold bag)
+    # Bombable walls system
+    "cracked_stone":      "⬛",               # ⬛ looks identical to stone_wall — visually hidden!
+    "bomb_lit":           "\U0001F4A3",            # 💣 placed lit bomb (walkable, about to explode)
+    "hidden_chamber_entrance": "\U0001F7EB",       # 🟫 opened chamber floor (was cracked_stone)
 }
 
 CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_medium", "cave_chest_large", "cave_stairdown", "cave_stairup", "player_house_cave",
@@ -848,7 +864,9 @@ CAVE_WALKABLE = {"stone_floor", "cave_entrance", "cave_chest", "cave_chest_mediu
                  # Lava cave tiles
                  "lava_floor", "lava_bridge",
                  # Boss room tiles (door is walkable so key-check logic runs inside the movement loop)
-                 "cave_boss_door", "cave_boss_floor", "cave_boss_trigger", "cave_boss_chest"}
+                 "cave_boss_door", "cave_boss_floor", "cave_boss_trigger", "cave_boss_chest",
+                 # Bomb system (lit bomb tile is walkable; cracked_stone is NOT — it's a wall)
+                 "bomb_lit", "hidden_chamber_entrance"}
 # cave_rock blocks movement; cave_bat/cave_spider/cave_golem are no longer placed as tiles
 
 # --- Shipwreck System ---
@@ -1003,6 +1021,10 @@ BUILDING_EMOJI = {
     "ph_chest_small":     "\U0001F4E6",       # 📦
     "ph_chest_medium":    "\U0001F5C4\uFE0F", # 🗄️
     "ph_chest_large":     "\U0001F9F3",       # 🧳
+    # Armory unique
+    "b_armory_npc":       "🧑",              # 🧑  armorer NPC
+    "b_weapons_rack":     "\U0001F5E1️", # 🗡️  weapons rack (decoration)
+    "b_ammo_shelf":       "\U0001F4A3",       # 💣  ammo/bomb shelf (decoration)
 }
 
 VILLAGE_WALKABLE = {
@@ -1022,6 +1044,7 @@ VILLAGE_WALKABLE = {
     "vil_pen_grass",       # pen interior ground (walkable)
     "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",  # animals are walkable
     "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
+    "vil_armory",         # enterable armory building
     # Note: vil_fence is a solid obstacle (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
@@ -1039,6 +1062,7 @@ BUILDING_WALKABLE = {
     # (player interacts with conveyor line by standing adjacent to input/output boxes)
     # Note: b_gear_tl/tr/bl/br are NOT walkable (they sit in the water columns)
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
+    "b_armory_npc",   # armorer NPC — walkable
 }
 
 VILLAGE_MIN_SIZE = 32
@@ -1213,6 +1237,7 @@ ITEM_EQUIP_SLOTS = {
     "ring_of_luck":        "accessory",
     "wayerwood":           "accessory",
     "flint_and_steel":     "hand",
+    "bomb":                "hand",
     "hoe":                 "hand",
     "hammer":              "hand",
     "bark_shield":         "hand",
@@ -1258,6 +1283,7 @@ EQUIP_BONUSES = {
     "ring_of_sight":       {},    # 9x9 cave view without torch — handled in cave code
     "ring_of_luck":        {},    # better drops — handled in drop code
     "flint_and_steel":     {},
+    "bomb":                {},
     "arrow":               {},
     "hoe":                 {},
     "bark_shield":         {"defense": 3},

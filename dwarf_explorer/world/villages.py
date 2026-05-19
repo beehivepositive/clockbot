@@ -352,7 +352,7 @@ def _generate_village_interior(
 
     # ── Required special buildings ────────────────────────────────────────────
     required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
-                "vil_tavern", "vil_hospital", "vil_puzzle_board"]
+                "vil_tavern", "vil_hospital", "vil_puzzle_board", "vil_armory"]
     if not _farm_cluster_placed:
         required.append("vil_farmhouse")
     rng.shuffle(required)
@@ -663,7 +663,7 @@ def _generate_harbor_village_interior(
 
     # ── Required buildings (same list as regular village) ─────────────────────
     required = ["vil_church", "vil_bank", "vil_shop", "vil_blacksmith",
-                "vil_tavern", "vil_hospital", "vil_puzzle_board"]
+                "vil_tavern", "vil_hospital", "vil_puzzle_board", "vil_armory"]
     rng.shuffle(required)
     for btype in required:
         for _ in range(400):
@@ -1078,6 +1078,28 @@ def _farmhouse_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int,in
     return tiles
 
 
+def _armory_interior(rng: random.Random, W: int, H: int) -> dict[tuple[int, int], str]:
+    """Generate an armory interior with weapons racks, ammo shelves, and an armorer NPC."""
+    tiles: dict[tuple[int, int], str] = {}
+    for y in range(H):
+        for x in range(W):
+            tiles[(x, y)] = "b_wall" if (x == 0 or x == W - 1 or y == 0 or y == H - 1) else "b_floor"
+    tiles[(W // 2, H - 1)] = "b_door"
+    # Counter across the back
+    for x in range(2, W - 2):
+        tiles[(x, 1)] = "b_shop_counter"
+    # Armorer NPC behind counter
+    tiles[(W // 2, 1)] = "b_armory_npc"
+    # Weapons racks on side walls
+    for y in range(2, H - 2):
+        if tiles.get((1, y)) == "b_floor":
+            tiles[(1, y)] = "b_weapons_rack"
+        if tiles.get((W - 2, y)) == "b_floor":
+            # Ammo shelves on right side
+            tiles[(W - 2, y)] = "b_ammo_shelf"
+    return tiles
+
+
 def _generate_building_interior(
     house_id: int, seed: int, village_id: int,
     building_type: str, door_vx: int, door_vy: int,
@@ -1109,6 +1131,9 @@ def _generate_building_interior(
     elif building_type in ("vil_farmhouse", "farmhouse"):
         W, H = rng.randint(7, 10), rng.randint(6, 8)
         tiles_dict = _farmhouse_interior(rng, W, H)
+    elif building_type in ("vil_armory", "armory"):
+        W, H = rng.randint(8, 10), rng.randint(7, 9)
+        tiles_dict = _armory_interior(rng, W, H)
     else:  # house
         W, H = rng.randint(7, 11), rng.randint(6, 9)
         tiles_dict = _house_interior(rng, W, H)
@@ -1130,6 +1155,7 @@ _CANONICAL_BUILDING_TYPE = {
     "vil_hospital":     "hospital",
     "vil_lumber_mill":  "lumber_mill",
     "vil_farmhouse":    "farmhouse",
+    "vil_armory":       "armory",
 }
 
 

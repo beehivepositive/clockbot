@@ -46,7 +46,7 @@ from dwarf_explorer.ui.game_view import (
     handle_bank_deposit, handle_bank_withdraw, handle_bank_close,
     handle_bank_qty_modal, handle_shop_qty_modal,
     handle_combat_move, handle_combat_attack, handle_combat_flee,
-    handle_combat_eat, handle_combat_end_turn,
+    handle_combat_eat, handle_combat_end_turn, handle_combat_bomb,
     handle_chest_nav, handle_chest_switch, handle_chest_take,
     handle_chest_give, handle_chest_lootall, handle_chest_close,
     handle_fst_chest_nav, handle_fst_chest_take,
@@ -311,6 +311,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_combat_eat(interaction, gid, uid)
             elif act == "c_endturn":
                 await handle_combat_end_turn(interaction, gid, uid)
+            elif act == "c_bomb":
+                await handle_combat_bomb(interaction, gid, uid)
             elif act == "c_inventory":
                 await handle_inventory(interaction, gid, uid)
             elif act == "action":

@@ -1271,7 +1271,7 @@ class ShopView(discord.ui.View):
     """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop",
                  farmer_mode: bool = False, tavern_mode: bool = False,
-                 tree_city_mode: bool = False):
+                 tree_city_mode: bool = False, armory_mode: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -1281,8 +1281,8 @@ class ShopView(discord.ui.View):
         ))
 
         # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv)
-        #           Disabled spacer in farmer_mode / tavern_mode / tree_city_mode (buy-only, no sell tab)
-        if farmer_mode or tavern_mode or tree_city_mode:
+        #           Disabled spacer in buy-only modes (no sell tab)
+        if farmer_mode or tavern_mode or tree_city_mode or armory_mode:
             _sp("shop_switch", 0)
         else:
             switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
@@ -1484,7 +1484,8 @@ class CombatView(discord.ui.View):
     """Arena combat view. Arrows attempt cobweb escape when trapped. Attack disabled while trapped."""
 
     def __init__(self, guild_id: int, user_id: int, trapped: bool = False,
-                 moves_left: int = COMBAT_MOVES_DEFAULT, enemy_type: str = ""):
+                 moves_left: int = COMBAT_MOVES_DEFAULT, enemy_type: str = "",
+                 has_bomb: bool = False, bomb_fuse: int = 0):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
         disabled = (moves_left <= 0)
@@ -1528,11 +1529,25 @@ class CombatView(discord.ui.View):
             label="​", disabled=True,
             custom_id=_custom_id(gid, uid, "csp0"), row=2,
         ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="\u200b", disabled=True,
-            custom_id=_custom_id(gid, uid, "csp_a"), row=2,
-        ))
+        # Bomb button (row 2, slot 4): shows fuse countdown if active, else \ud83d\udca3 if player has bomb
+        if bomb_fuse > 0:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.danger,
+                label=f"\U0001F4A3{bomb_fuse}", disabled=True,
+                custom_id=_custom_id(gid, uid, "csp_a"), row=2,
+            ))
+        elif has_bomb:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                emoji="\U0001F4A3", disabled=disabled,
+                custom_id=_custom_id(gid, uid, "c_bomb"), row=2,
+            ))
+        else:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="\u200b", disabled=True,
+                custom_id=_custom_id(gid, uid, "csp_a"), row=2,
+            ))
 
 
 class BribeModal(discord.ui.Modal, title="Bribe the Bandit"):
@@ -3126,6 +3141,12 @@ def _game_view(guild_id: int, user_id: int, player: Player,
          interact2_label, interact2_enabled) = \
             _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
+        # ── Bomb: always enabled in hand (overworld AND cave) ─────────────
+        if h1_item == "bomb":
+            h1_action_enabled = True
+        if h2_item == "bomb":
+            h2_action_enabled = True
+
         # ── H1 / H2 tool-on-tile action ───────────────────────────────────
         if not player.in_cave and not player.in_ship:
             _ct = grid[4][4] if len(grid) > 4 and len(grid[4]) > 4 else None
@@ -3164,6 +3185,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         or item in ("cooked_fish", "fish")
                         or item == "map_fragment"
                         or item == "shovel"  # treasure dig fallback
+                        or item == "bomb"    # bomb always enabled when in hand (handler checks for flint_and_steel)
                     )
 
                 h1_action_enabled = _tool_action_enabled(h1_item)
@@ -4684,10 +4706,14 @@ async def handle_move(
 # ── Combat handlers ───────────────────────────────────────────────────────────
 
 def _combat_view(guild_id: int, user_id: int, arena: dict, player) -> CombatView:
+    _has_bomb = (getattr(player, "hand_1", None) == "bomb"
+                 or getattr(player, "hand_2", None) == "bomb")
     return CombatView(guild_id, user_id,
                       trapped=arena["player_trapped"],
                       moves_left=player.combat_moves_left,
-                      enemy_type=player.combat_enemy_type or "")
+                      enemy_type=player.combat_enemy_type or "",
+                      has_bomb=_has_bomb,
+                      bomb_fuse=arena.get("bomb_fuse", 0))
 
 
 async def _finish_combat(
@@ -5017,6 +5043,51 @@ async def _after_player_action(
                                player.combat_enemy_hp)))
     enemy_msg = resolve_enemy_turn(arena, player, rng, naval=is_naval)
     arena["combat_log"].append(enemy_msg)
+
+    # ── Bomb fuse countdown ──────────────────────────────────────────────────
+    if "bomb_fuse" in arena:
+        arena["bomb_fuse"] -= 1
+        if arena["bomb_fuse"] <= 0:
+            # BOOM — 5-tile cross blast in arena
+            del arena["bomb_fuse"]
+            bx2, by2 = arena.get("bomb_x", 0), arena.get("bomb_y", 0)
+            enemy_in_blast = any(
+                player.combat_enemy_x == bx2 + dx and player.combat_enemy_y == by2 + dy
+                for dx, dy in _BOMB_CROSS_OFFSETS
+            )
+            player_in_blast = any(
+                player.combat_pos_x == bx2 + dx and player.combat_pos_y == by2 + dy
+                for dx, dy in _BOMB_CROSS_OFFSETS
+            )
+            blast_log = ["💥 **BOOM!** The bomb explodes!"]
+            if enemy_in_blast:
+                enemy_dmg = 25
+                player.combat_enemy_hp = max(0, player.combat_enemy_hp - enemy_dmg)
+                blast_log.append(f"Enemy takes **{enemy_dmg}** blast damage!")
+            if player_in_blast:
+                pdmg = max(1, 15 - player.defense)
+                player.hp = max(0, player.hp - pdmg)
+                blast_log.append(f"You were caught in the blast! **−{pdmg} HP**")
+            arena["combat_log"].extend(blast_log)
+            # Remove bomb tile from arena grid if placed
+            for dx2, dy2 in _BOMB_CROSS_OFFSETS:
+                tx2, ty2 = bx2 + dx2, by2 + dy2
+                if 0 <= ty2 < len(arena.get("grid", [])) and 0 <= tx2 < len(arena["grid"][ty2]):
+                    if arena["grid"][ty2][tx2] == "bomb_lit":
+                        arena["grid"][ty2][tx2] = arena.get("bomb_orig_tile", "grass")
+            # Check deaths from blast
+            if player.combat_enemy_hp <= 0:
+                victory_msg = apply_victory(player)
+                arena["combat_log"].append(victory_msg)
+                content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                                     " ".join(arena["combat_log"][-5:]), won=True)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            if player.hp <= 0:
+                content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                                     " ".join(arena["combat_log"][-5:]))
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
     # Restore player moves for next turn
     player.combat_moves_left = COMBAT_MOVES_DEFAULT + (1 if player.accessory == "ring_of_time" else 0)
@@ -5378,6 +5449,60 @@ async def handle_combat_end_turn(
     player.combat_moves_left = 0  # exhaust moves
     await _after_player_action(interaction, db, guild_id, user_id, player, arena,
                                "You end your turn.")
+
+
+async def handle_combat_bomb(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Place a lit bomb in combat (requires bomb in hand + flint_and_steel available)."""
+    result = await _load_combat(interaction, guild_id, user_id)
+    if result is None:
+        return
+    db, player, arena = result
+
+    # Check bomb in hand
+    if player.hand_1 != "bomb" and player.hand_2 != "bomb":
+        await interaction.response.defer()
+        return
+
+    # Check flint_and_steel
+    other_hand = player.hand_2 if player.hand_1 == "bomb" else player.hand_1
+    has_flint = other_hand == "flint_and_steel"
+    if not has_flint:
+        flint_row = await db.fetch_one(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='flint_and_steel'", (user_id,)
+        )
+        has_flint = bool(flint_row and flint_row["quantity"] > 0)
+    if not has_flint:
+        await save_combat_state(db, user_id, player)
+        content = render_arena(arena, player)
+        content += "\n*You need flint and steel to light the bomb!*"
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Already a bomb placed?
+    if "bomb_fuse" in arena:
+        await save_combat_state(db, user_id, player)
+        content = render_arena(arena, player)
+        content += "\n*A bomb is already burning!*"
+        view = _combat_view(guild_id, user_id, arena, player)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    # Place bomb at player position
+    px_c = getattr(player, "combat_pos_x", ARENA_SIZE // 2)
+    py_c = getattr(player, "combat_pos_y", ARENA_SIZE // 2)
+    arena["bomb_fuse"] = 5
+    arena["bomb_x"] = px_c
+    arena["bomb_y"] = py_c
+    # Remove bomb from player
+    await remove_from_inventory(db, user_id, "bomb", 1)
+    await _auto_unequip_depleted(db, user_id, "bomb", player)
+    # Use a move
+    player.combat_moves_left = max(0, player.combat_moves_left - 1)
+    await _after_player_action(interaction, db, guild_id, user_id, player, arena,
+                               "💣 You place the bomb and light the fuse! (**5 turns**)")
 
 
 # ── Mine adjacent rock ────────────────────────────────────────────────────────
@@ -7437,8 +7562,14 @@ async def handle_interact(
 
             elif htile.terrain == "b_farmer_npc":
                 return await _open_farmer_shop(interaction, guild_id, user_id, player)
-                return
 
+            elif htile.terrain == "b_armory_npc" and player.house_type == "armory":
+                return await _open_armory_shop(interaction, guild_id, user_id, player)
+
+            elif htile.terrain in ("b_weapons_rack", "b_ammo_shelf") and player.house_type == "armory":
+                grid = await _load_house_grid()
+                msg = "Rows of blades and shields are mounted on the wall." if htile.terrain == "b_weapons_rack" else "Shelves stocked with bombs and flint."
+                content = render_grid(grid, player, msg)
 
             elif htile.terrain == "b_resident":
                 # ── House resident NPC — random gossip ───────────────────────
@@ -8447,9 +8578,47 @@ async def handle_interact(
             else:
                 content = render_grid(grid, player, "🤲 The box is empty.")
 
+        elif cave_tile.terrain == "bomb_lit":
+            # Pick up a lit bomb (danger!)
+            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            content = render_grid(grid, player, "💣 The fuse is already lit! **Move away!**")
+
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            content = render_grid(grid, player, "Nothing to interact with here.")
+            # ── Wayerwood cave attunement ───────────────────────────────────────
+            if getattr(player, "accessory", None) == "wayerwood":
+                stone_row = await db.fetch_one(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='rock'", (user_id,)
+                )
+                has_stone = bool(stone_row and stone_row["quantity"] > 0)
+                if has_stone:
+                    await remove_from_inventory(db, user_id, "rock", 1)
+                    # Find nearest cracked_stone in this cave
+                    cracks = await db.fetch_all(
+                        "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
+                        (player.cave_id,)
+                    )
+                    if cracks:
+                        cx2, cy2 = player.cave_x, player.cave_y
+                        nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx2) + abs(r["local_y"] - cy2))
+                        nx, ny = nearest["local_x"], nearest["local_y"]
+                        dx2, dy2 = nx - cx2, ny - cy2
+                        if abs(dx2) > abs(dy2):
+                            hint = "east" if dx2 > 0 else "west"
+                        else:
+                            hint = "south" if dy2 > 0 else "north"
+                        dist = abs(dx2) + abs(dy2)
+                        content = render_grid(grid, player,
+                            f"🪄 The wayerwood trembles. A weak wall lies to the **{hint}** (~{dist} tiles away). "
+                            f"Blast it open with a bomb.")
+                    else:
+                        content = render_grid(grid, player,
+                            "🪄 The wayerwood quivers, but senses no weak walls in this cave.")
+                else:
+                    content = render_grid(grid, player,
+                        "🪄 The wayerwood feels dormant. It needs a **stone** to attune to the cave walls.")
+            else:
+                content = render_grid(grid, player, "Nothing to interact with here.")
 
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -9117,6 +9286,140 @@ async def handle_use_hand1(
     await _execute_tool_action(interaction, guild_id, user_id, tool, player, db, seed)
 
 
+_BOMB_BLAST_OVERWORLD_DESTROYS = {
+    "forest", "plains", "grass", "sapling", "short_grass", "seedling",
+    "ancient_planted", "ancient_sapling",
+}
+_BOMB_BLAST_OVERWORLD_EXCLUDES = {
+    "mountain", "hills", "snow", "deep_water", "shallow_water", "river",
+    "village", "ruins", "player_house", "harbor",
+    "ancient_tree_top_left", "ancient_tree_top_right",
+    "ancient_tree_bottom_left", "ancient_tree_bottom_right",
+    "dense_forest",
+}
+_BOMB_BLAST_CAVE_DESTROYS = {
+    "cave_rock", "iron_ore_deposit", "gold_ore_deposit", "cracked_stone",
+}
+
+_BOMB_CROSS_OFFSETS = [(0, 0), (0, -1), (0, 1), (-1, 0), (1, 0)]
+
+
+async def _bomb_blast_overworld(
+    client, message_id: int | None, channel_id: int | None,
+    guild_id: int, user_id: int,
+    bx: int, by: int, seed: int, db,
+) -> None:
+    """Fires 4 seconds after a bomb is placed in the overworld."""
+    await asyncio.sleep(4)
+    try:
+        blast_msg_parts: list[str] = ["💥 **BOOM!** The bomb explodes!"]
+        player = await get_or_create_player(db, user_id, "?")
+        # Damage player if still within blast range
+        player_in_blast = any(
+            player.world_x == bx + dx and player.world_y == by + dy
+            for dx, dy in _BOMB_CROSS_OFFSETS
+        )
+        if player_in_blast:
+            dmg = max(1, 15 - player.defense)
+            player.hp = max(0, player.hp - dmg)
+            await update_player_stats(db, user_id, hp=player.hp)
+            blast_msg_parts.append(f"You were caught in the blast! **−{dmg} HP** ({player.hp}/{player.max_hp})")
+        # Blast tiles
+        for dx, dy in _BOMB_CROSS_OFFSETS:
+            tx, ty = bx + dx, by + dy
+            if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
+                continue
+            tile = await load_single_tile(tx, ty, seed, db)
+            t = tile.terrain
+            if t in _BOMB_BLAST_OVERWORLD_DESTROYS:
+                await set_tile_override(db, tx, ty, "dirt")
+            elif t == "bomb_lit":
+                await set_tile_override(db, tx, ty, "dirt")
+        # Remove bomb tile
+        await set_tile_override(db, bx, by, "dirt")
+        # Refresh player's view and edit message
+        if message_id and channel_id:
+            ch = client.get_channel(channel_id)
+            if ch:
+                try:
+                    msg = await ch.fetch_message(message_id)
+                    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+                    view = _game_view(guild_id, user_id, player, grid=grid)
+                    content = render_grid(grid, player, " ".join(blast_msg_parts))
+                    await msg.edit(embed=_embed(content), content=None, view=view)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+async def _bomb_blast_cave(
+    client, message_id: int | None, channel_id: int | None,
+    guild_id: int, user_id: int,
+    cave_id: int, bx: int, by: int, db,
+) -> None:
+    """Fires 4 seconds after a bomb is placed in a cave."""
+    await asyncio.sleep(4)
+    try:
+        blast_msg_parts: list[str] = ["💥 **BOOM!** The bomb explodes!"]
+        player = await get_or_create_player(db, user_id, "?")
+        # Damage player if still within blast range
+        player_in_blast = any(
+            player.cave_x == bx + dx and player.cave_y == by + dy
+            for dx, dy in _BOMB_CROSS_OFFSETS
+        )
+        if player_in_blast and player.in_cave:
+            dmg = max(1, 15 - player.defense)
+            player.hp = max(0, player.hp - dmg)
+            await update_player_stats(db, user_id, hp=player.hp)
+            blast_msg_parts.append(f"You were caught in the blast! **−{dmg} HP** ({player.hp}/{player.max_hp})")
+        # Blast cave tiles in cross pattern
+        for dx, dy in _BOMB_CROSS_OFFSETS:
+            tx, ty = bx + dx, by + dy
+            tile_row = await db.fetch_one(
+                "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, tx, ty)
+            )
+            if not tile_row:
+                continue
+            t = tile_row["tile_type"]
+            if t in _BOMB_BLAST_CAVE_DESTROYS or t == "bomb_lit":
+                if t == "cracked_stone":
+                    # Open up the hidden chamber — just make the cracked tile walkable floor
+                    await db.execute(
+                        "UPDATE cave_tiles SET tile_type='stone_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
+                        (cave_id, tx, ty)
+                    )
+                    blast_msg_parts.append("🪨 A hidden passage is revealed!")
+                else:
+                    # Standard mineable rock: remove it (become floor) + drop items
+                    await db.execute(
+                        "UPDATE cave_tiles SET tile_type='stone_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
+                        (cave_id, tx, ty)
+                    )
+                    if t == "iron_ore_deposit":
+                        await add_to_inventory(db, user_id, "iron_ore", _random.randint(1, 2))
+                    elif t == "gold_ore_deposit":
+                        await add_to_inventory(db, user_id, "gold_ore", 1)
+                    elif t in ("cave_rock", "bomb_lit"):
+                        # Drop rocks on the floor (as ground item; simplified: straight to inventory)
+                        await add_to_inventory(db, user_id, "rock", _random.randint(1, 3))
+        # Edit message
+        if message_id and channel_id and player.in_cave:
+            ch = client.get_channel(channel_id)
+            if ch:
+                try:
+                    msg = await ch.fetch_message(message_id)
+                    cave_grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                    view = await _cave_game_view(guild_id, user_id, player, db, grid=cave_grid)
+                    content = render_grid(cave_grid, player, " ".join(blast_msg_parts))
+                    await msg.edit(embed=_embed(content), content=None, view=view)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 async def _execute_tool_action(
     interaction: discord.Interaction, guild_id: int, user_id: int,
     tool: str, player: "Player", db, seed: int
@@ -9414,6 +9717,59 @@ async def _execute_tool_action(
         else:
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, f"🗺️ You need 5 map fragments to make a treasure map. ({count}/5)")
+
+    # ── Bomb placement ────────────────────────────────────────────────────────
+    elif tool == "bomb":
+        # Check for flint_and_steel in other hand or inventory
+        other_hand = player.hand_2 if tool == player.hand_1 else player.hand_1
+        has_flint = other_hand == "flint_and_steel"
+        if not has_flint:
+            flint_row = await db.fetch_one(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='flint_and_steel'",
+                (user_id,)
+            )
+            has_flint = bool(flint_row and flint_row["quantity"] > 0)
+        if not has_flint:
+            if player.in_cave:
+                cave_grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+                content = render_grid(cave_grid, player, "💣 You need **flint and steel** to light the bomb!")
+                grid = cave_grid
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "💣 You need **flint and steel** to light the bomb!")
+        else:
+            # Remove 1 bomb from inventory/hand
+            await remove_from_inventory(db, user_id, "bomb", 1)
+            await _auto_unequip_depleted(db, user_id, "bomb", player)
+            if player.in_cave:
+                # Place bomb_lit in cave
+                cx, cy = player.cave_x, player.cave_y
+                await db.execute(
+                    "UPDATE cave_tiles SET tile_type='bomb_lit' WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (player.cave_id, cx, cy)
+                )
+                await db.execute(
+                    "INSERT OR IGNORE INTO cave_tiles (cave_id, local_x, local_y, tile_type) VALUES (?,?,?,'bomb_lit')",
+                    (player.cave_id, cx, cy)
+                )
+                cave_grid = await load_cave_viewport(player.cave_id, cx, cy, db)
+                content = render_grid(cave_grid, player, "💣 You light the fuse! **Get clear!** (4 seconds...)")
+                grid = cave_grid
+                # Schedule blast
+                asyncio.create_task(_bomb_blast_cave(
+                    interaction.client, player.message_id, player.channel_id,
+                    guild_id, user_id, player.cave_id, cx, cy, db
+                ))
+            else:
+                # Place bomb_lit tile override on player's position
+                await set_tile_override(db, wx, wy, "bomb_lit")
+                grid = await load_viewport(wx, wy, seed, db)
+                content = render_grid(grid, player, "💣 You light the fuse! **Get clear!** (4 seconds...)")
+                # Schedule blast
+                asyncio.create_task(_bomb_blast_overworld(
+                    interaction.client, player.message_id, player.channel_id,
+                    guild_id, user_id, wx, wy, seed, db
+                ))
 
     # ── Default ───────────────────────────────────────────────────────────────
     else:
@@ -12400,21 +12756,29 @@ async def handle_inv_qty_modal(
 
 # ── Shop helpers ──────────────────────────────────────────────────────────────
 
+def _get_shop_catalog(state: dict) -> list:
+    """Return the correct shop catalog based on ui_state mode flags."""
+    if state.get("tree_city_mode"):
+        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_gc
+        return _TCS_gc
+    elif state.get("tavern_mode"):
+        return TAVERN_MENU
+    elif state.get("farmer_mode"):
+        return FARMER_SHOP
+    elif state.get("armory_mode"):
+        from dwarf_explorer.config import ARMORY_CATALOG as _AC_gc
+        return _AC_gc
+    else:
+        return SHOP_CATALOG
+
+
 def _shop_render(state: dict, player_items: list, equipped: dict,
                  player_gold: int, inv_rows: int, inv_cols: int) -> str:
     """Build shop content string from current state."""
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tree_city_mode"):
-        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS
-        catalog = _TCS
-    elif state.get("tavern_mode"):
-        catalog = TAVERN_MENU
-    elif state.get("farmer_mode"):
-        catalog = FARMER_SHOP
-    else:
-        catalog = SHOP_CATALOG
+    catalog = _get_shop_catalog(state)
     return render_shop(
         catalog, player_items, sel, view_mode, equipped,
         player_gold, inv_rows, inv_cols, ITEM_SELL_PRICES, qty,
@@ -12466,6 +12830,23 @@ async def _open_tavern_shop(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           tavern_mode=True))
+
+
+async def _open_armory_shop(
+    interaction: discord.Interaction, guild_id: int, user_id: int, player: Player,
+) -> None:
+    """Open the armory shop (buy-only, uses ARMORY_CATALOG)."""
+    from dwarf_explorer.config import ARMORY_CATALOG
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    _ui_state[user_id] = {"type": "armory_shop", "selected": 0, "shop_view": "shop",
+                          "qty": 1, "armory_mode": True}
+    content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=ShopView(guild_id, user_id, "shop",
+                                                          armory_mode=True))
 
 
 async def _open_tree_city_villager(
@@ -13180,12 +13561,7 @@ def _shop_nav_bounds(state: dict, player_items: list, inv_rows: int = 1, inv_col
         return max(1, inv_rows * inv_cols)
     else:
         cols = 7
-        if state.get("tree_city_mode"):
-            from dwarf_explorer.config import TREE_CITY_SHOP as _TCS2
-            catalog = _TCS2
-        elif state.get("tavern_mode"): catalog = TAVERN_MENU
-        elif state.get("farmer_mode"): catalog = FARMER_SHOP
-        else: catalog = SHOP_CATALOG
+        catalog = _get_shop_catalog(state)
         cat_len = max(1, len(catalog))
         # Round up to full rows so wrapping aligns with the rendered grid
         return ((cat_len + cols - 1) // cols) * cols
@@ -13218,7 +13594,8 @@ async def _shop_nav(
                                             view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
                                                           farmer_mode=bool(new_state.get("farmer_mode")),
                                                           tavern_mode=bool(new_state.get("tavern_mode")),
-                                                          tree_city_mode=bool(new_state.get("tree_city_mode"))))  
+                                                          tree_city_mode=bool(new_state.get("tree_city_mode")),
+                                                          armory_mode=bool(new_state.get("armory_mode"))))
 
 
 async def handle_shop_nav(
@@ -13251,12 +13628,7 @@ async def handle_shop_qty_inc(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tree_city_mode"):
-        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_inc
-        _catalog = _TCS_inc
-    elif state.get("tavern_mode"): _catalog = TAVERN_MENU
-    elif state.get("farmer_mode"): _catalog = FARMER_SHOP
-    else: _catalog = SHOP_CATALOG
+    _catalog = _get_shop_catalog(state)
     if view_mode == "shop" and sel < len(_catalog):
         max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = (qty % max_qty) + 1
@@ -13275,7 +13647,8 @@ async def handle_shop_qty_inc(
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode")),
                                                           tavern_mode=bool(state.get("tavern_mode")),
-                                                          tree_city_mode=bool(state.get("tree_city_mode"))))
+                                                          tree_city_mode=bool(state.get("tree_city_mode")),
+                                                          armory_mode=bool(state.get("armory_mode"))))
 
 
 async def handle_shop_qty_dec(
@@ -13290,12 +13663,7 @@ async def handle_shop_qty_dec(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     qty = state.get("qty", 1)
-    if state.get("tree_city_mode"):
-        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_dec
-        _catalog = _TCS_dec
-    elif state.get("tavern_mode"): _catalog = TAVERN_MENU
-    elif state.get("farmer_mode"): _catalog = FARMER_SHOP
-    else: _catalog = SHOP_CATALOG
+    _catalog = _get_shop_catalog(state)
     if view_mode == "shop" and sel < len(_catalog):
         max_qty = max(1, player.gold // max(1, _catalog[sel]["price"]))
         new_qty = max_qty if qty <= 1 else qty - 1
@@ -13315,7 +13683,8 @@ async def handle_shop_qty_dec(
                                             view=ShopView(guild_id, user_id, view_mode,
                                                           farmer_mode=bool(state.get("farmer_mode")),
                                                           tavern_mode=bool(state.get("tavern_mode")),
-                                                          tree_city_mode=bool(state.get("tree_city_mode"))))
+                                                          tree_city_mode=bool(state.get("tree_city_mode")),
+                                                          armory_mode=bool(state.get("armory_mode"))))
 
 
 async def handle_shop_buy(
@@ -13332,13 +13701,10 @@ async def handle_shop_buy(
     _farmer = bool(state.get("farmer_mode"))
     _tavern = bool(state.get("tavern_mode"))
     _tree_city = bool(state.get("tree_city_mode"))
-    if _tree_city:
-        from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_buy
-        _catalog = _TCS_buy
-    elif _tavern: _catalog = TAVERN_MENU
-    elif _farmer: _catalog = FARMER_SHOP
-    else: _catalog = SHOP_CATALOG
-    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern, tree_city_mode=_tree_city)
+    _armory = bool(state.get("armory_mode"))
+    _catalog = _get_shop_catalog(state)
+    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern, tree_city_mode=_tree_city,
+                      armory_mode=_armory)
     if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -13420,11 +13786,12 @@ async def handle_shop_switch(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
-    # Farmer/tavern/tree_city shop has no sell tab — treat switch as a no-op
-    if state.get("farmer_mode") or state.get("tavern_mode") or state.get("tree_city_mode"):
+    # Buy-only shops have no sell tab — treat switch as a no-op
+    if state.get("farmer_mode") or state.get("tavern_mode") or state.get("tree_city_mode") or state.get("armory_mode"):
         _sv_kwargs = dict(farmer_mode=bool(state.get("farmer_mode")),
                           tavern_mode=bool(state.get("tavern_mode")),
-                          tree_city_mode=bool(state.get("tree_city_mode")))
+                          tree_city_mode=bool(state.get("tree_city_mode")),
+                          armory_mode=bool(state.get("armory_mode")))
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
@@ -13718,8 +14085,9 @@ async def handle_shop_qty_modal(
     view_mode = state.get("shop_view", "shop")
     sel = state.get("selected", 0)
     inv_rows, inv_cols = _inv_capacity(player)
-    if view_mode == "shop" and sel < len(SHOP_CATALOG):
-        max_qty = max(1, player.gold // max(1, SHOP_CATALOG[sel]["price"]))
+    _catalog_modal = _get_shop_catalog(state)
+    if view_mode == "shop" and sel < len(_catalog_modal):
+        max_qty = max(1, player.gold // max(1, _catalog_modal[sel]["price"]))
     elif view_mode == "player":
         from dwarf_explorer.game.renderer import _build_slot_map
         visible = [it for it in player_items if it["item_id"] != "gold_coin"]
