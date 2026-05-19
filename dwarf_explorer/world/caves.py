@@ -889,38 +889,158 @@ async def populate_chest_loot(chest_id: int, chest_type: str, db, lava_mode: boo
         await add_to_chest(db, chest_id, "gold_coin", rng.randint(20, 60))
 
 
+async def _maybe_regen_cracked_chambers(cave_id: int, db, rng) -> None:
+    """If no cracked_stone tiles remain in the cave, replace any pending
+    cave_crack_breaks records with new cracked_stone chambers at random locations."""
+    # Check pending breaks older than 48h
+    pending = await db.fetch_all(
+        "SELECT id FROM cave_crack_breaks WHERE cave_id=? AND broken_at <= datetime('now', '-48 hours')",
+        (cave_id,),
+    )
+    if not pending:
+        return
+
+    # Check how many cracked_stone tiles currently exist
+    existing = await db.fetch_one(
+        "SELECT COUNT(*) AS cnt FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
+        (cave_id,),
+    )
+    current_count = existing["cnt"] if existing else 0
+    needed = len(pending)  # one new chamber per destroyed one
+
+    if current_count >= needed:
+        # Enough cracks already — just clean up the break records
+        ids = [r["id"] for r in pending]
+        await db.executemany("DELETE FROM cave_crack_breaks WHERE id=?", [(i,) for i in ids])
+        return
+
+    to_place = needed - current_count
+
+    # Find cave_rock tiles adjacent to a floor tile (potential cracked_stone spots)
+    candidates = await db.fetch_all(
+        """
+        SELECT ct.local_x, ct.local_y FROM cave_tiles ct
+        WHERE ct.cave_id = ? AND ct.tile_type = 'cave_rock'
+          AND EXISTS (
+            SELECT 1 FROM cave_tiles adj WHERE adj.cave_id = ct.cave_id
+              AND adj.tile_type IN ('stone_floor','cave_floor','stone_path','rift_floor')
+              AND ((adj.local_x=ct.local_x+1 AND adj.local_y=ct.local_y)
+                OR (adj.local_x=ct.local_x-1 AND adj.local_y=ct.local_y)
+                OR (adj.local_x=ct.local_x AND adj.local_y=ct.local_y+1)
+                OR (adj.local_x=ct.local_x AND adj.local_y=ct.local_y-1))
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM player_houses ph WHERE ph.is_cave=1 AND ph.loc_cave_id=ct.cave_id
+              AND ph.loc_x=ct.local_x AND ph.loc_y=ct.local_y
+          )
+        """,
+        (cave_id,),
+    )
+    if not candidates:
+        return
+
+    candidates = list(candidates)
+    rng.shuffle(candidates)
+    placed = 0
+    for cand in candidates:
+        if placed >= to_place:
+            break
+        cx, cy = cand["local_x"], cand["local_y"]
+        # Find a direction away from the floor (into the wall) to place the chamber
+        for dx, dy in rng.sample([(0, 1), (0, -1), (1, 0), (-1, 0)], 4):
+            nx, ny = cx + dx, cy + dy
+            tile_row = await db.fetch_one(
+                "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                (cave_id, nx, ny),
+            )
+            if tile_row and tile_row["tile_type"] == "cave_rock":
+                # Place cracked_stone at cx,cy and a hidden_chamber at nx,ny
+                await db.execute(
+                    "UPDATE cave_tiles SET tile_type='cracked_stone' WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (cave_id, cx, cy),
+                )
+                await db.execute(
+                    "UPDATE cave_tiles SET tile_type='hidden_chamber' WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (cave_id, nx, ny),
+                )
+                # Place a stone_chest one tile deeper if possible
+                nx2, ny2 = nx + dx, ny + dy
+                deep = await db.fetch_one(
+                    "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (cave_id, nx2, ny2),
+                )
+                if deep and deep["tile_type"] == "cave_rock":
+                    await db.execute(
+                        "UPDATE cave_tiles SET tile_type='stone_chest' WHERE cave_id=? AND local_x=? AND local_y=?",
+                        (cave_id, nx2, ny2),
+                    )
+                else:
+                    # Make the chamber tile itself a chest
+                    await db.execute(
+                        "UPDATE cave_tiles SET tile_type='stone_chest' WHERE cave_id=? AND local_x=? AND local_y=?",
+                        (cave_id, nx, ny),
+                    )
+                placed += 1
+                break
+
+    # Delete the processed break records
+    ids = [r["id"] for r in pending[:to_place]]
+    await db.executemany("DELETE FROM cave_crack_breaks WHERE id=?", [(i,) for i in ids])
+
+
 async def _restore_regenerated_rocks(cave_id: int, db) -> None:
-    """Restore cave_rock tiles broken 48+ hours ago, skipping spots with player houses."""
+    """Restore cave_rock tiles broken 48+ hours ago.
+
+    Skips if any player is inside the cave or any drop items haven't despawned yet.
+    Also regenerates cracked_stone chambers in new random positions if needed.
+    """
+    import random as _r
+
+    # 1. Don't regen while a player is inside
+    occupants = await db.fetch_one(
+        "SELECT 1 FROM players WHERE cave_id=? AND in_cave=1 LIMIT 1", (cave_id,)
+    )
+    if occupants:
+        return
+
+    # 2. Don't regen while any non-expired drops remain
+    active_drops = await db.fetch_one(
+        "SELECT 1 FROM ground_items WHERE cave_id=? AND is_drop=1 LIMIT 1", (cave_id,)
+    )
+    if active_drops:
+        return
+
+    # 3. Restore cave_rock tiles that have been broken 48+ hours
     rows = await db.fetch_all(
         "SELECT local_x, local_y FROM cave_rock_breaks"
         " WHERE cave_id = ? AND broken_at <= datetime('now', '-48 hours')",
         (cave_id,),
     )
-    if not rows:
-        return
-    # Pre-fetch all blocked positions (player-built houses) in one query
-    ph_rows = await db.fetch_all(
-        "SELECT loc_x, loc_y FROM player_houses WHERE is_cave=1 AND loc_cave_id=?",
-        (cave_id,),
-    )
-    blocked = {(r["loc_x"], r["loc_y"]) for r in ph_rows}
-    # Bulk-restore tiles not occupied by a house, then bulk-delete break records
-    to_restore = [
-        (cave_id, r["local_x"], r["local_y"])
-        for r in rows
-        if (r["local_x"], r["local_y"]) not in blocked
-    ]
-    to_delete = [(cave_id, r["local_x"], r["local_y"]) for r in rows]
-    if to_restore:
-        await db.executemany(
-            "UPDATE cave_tiles SET tile_type='cave_rock'"
-            " WHERE cave_id=? AND local_x=? AND local_y=?",
-            to_restore,
+    if rows:
+        ph_rows = await db.fetch_all(
+            "SELECT loc_x, loc_y FROM player_houses WHERE is_cave=1 AND loc_cave_id=?",
+            (cave_id,),
         )
-    await db.executemany(
-        "DELETE FROM cave_rock_breaks WHERE cave_id=? AND local_x=? AND local_y=?",
-        to_delete,
-    )
+        blocked = {(r["loc_x"], r["loc_y"]) for r in ph_rows}
+        to_restore = [
+            (cave_id, r["local_x"], r["local_y"])
+            for r in rows
+            if (r["local_x"], r["local_y"]) not in blocked
+        ]
+        to_delete = [(cave_id, r["local_x"], r["local_y"]) for r in rows]
+        if to_restore:
+            await db.executemany(
+                "UPDATE cave_tiles SET tile_type='cave_rock'"
+                " WHERE cave_id=? AND local_x=? AND local_y=?",
+                to_restore,
+            )
+        await db.executemany(
+            "DELETE FROM cave_rock_breaks WHERE cave_id=? AND local_x=? AND local_y=?",
+            to_delete,
+        )
+
+    # 4. Regenerate cracked_stone chambers if all were destroyed
+    await _maybe_regen_cracked_chambers(cave_id, db, _r)
 
 
 async def load_cave_viewport(
@@ -930,6 +1050,12 @@ async def load_cave_viewport(
     if _now - _last_rock_restore.get(cave_id, 0) > 300:
         _last_rock_restore[cave_id] = _now
         await _restore_regenerated_rocks(cave_id, db)
+        # Also run global drop box cleanup (handles cave items too)
+        try:
+            from dwarf_explorer.database.repositories import cleanup_expired_drop_boxes
+            await cleanup_expired_drop_boxes(db)
+        except Exception:
+            pass
     half  = VIEWPORT_CENTER
     x_min = center_x - half
     y_min = center_y - half
@@ -963,5 +1089,12 @@ async def load_cave_single_tile(cave_id: int, local_x: int, local_y: int, db) ->
         " WHERE cave_id = ? AND local_x = ? AND local_y = ?",
         (cave_id, local_x, local_y),
     )
-    return TileData(terrain=row["tile_type"] if row else "void",
-                    world_x=local_x, world_y=local_y)
+    terrain = row["tile_type"] if row else "void"
+    # Overlay drop box if one exists at this position
+    drop = await db.fetch_one(
+        "SELECT 1 FROM ground_items WHERE cave_id=? AND cave_x=? AND cave_y=? AND is_drop=1 LIMIT 1",
+        (cave_id, local_x, local_y),
+    )
+    if drop:
+        terrain = "drop_box"
+    return TileData(terrain=terrain, world_x=local_x, world_y=local_y)

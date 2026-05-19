@@ -838,6 +838,57 @@ async def get_cave_drop_positions(db: Database, cave_id: int) -> set[tuple[int, 
     return {(r["cave_x"], r["cave_y"]) for r in rows}
 
 
+async def create_village_drop_box(
+    db: Database, village_id: int, village_x: int, village_y: int,
+    items: list[tuple[str, int]]
+) -> None:
+    """Create/extend a drop box inside a village at (village_id, village_x, village_y)."""
+    for item_id, qty in items:
+        existing = await db.fetch_one(
+            "SELECT id, quantity FROM ground_items "
+            "WHERE village_id=? AND village_x=? AND village_y=? AND item_id=? AND is_drop=1",
+            (village_id, village_x, village_y, item_id),
+        )
+        if existing:
+            await db.execute(
+                "UPDATE ground_items SET quantity=quantity+?, spawned_at=datetime('now') WHERE id=?",
+                (qty, existing["id"]),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO ground_items (world_x, world_y, village_id, village_x, village_y, item_id, quantity, is_drop)"
+                " VALUES (0, 0, ?, ?, ?, ?, ?, 1)",
+                (village_id, village_x, village_y, item_id, qty),
+            )
+
+
+async def pickup_village_drop(
+    db: Database, village_id: int, village_x: int, village_y: int, user_id: int
+) -> list[tuple[str, int]]:
+    """Pick up all items in a village drop box. Returns list of (item_id, qty) picked up."""
+    rows = await db.fetch_all(
+        "SELECT id, item_id, quantity FROM ground_items "
+        "WHERE village_id=? AND village_x=? AND village_y=? AND is_drop=1",
+        (village_id, village_x, village_y),
+    )
+    results: list[tuple[str, int]] = []
+    for row in rows:
+        await add_to_inventory(db, user_id, row["item_id"], row["quantity"])
+        await db.execute("DELETE FROM ground_items WHERE id=?", (row["id"],))
+        results.append((row["item_id"], row["quantity"]))
+    return results
+
+
+async def get_village_drop_positions(db: Database, village_id: int) -> set[tuple[int, int]]:
+    """Return set of (village_x, village_y) positions with active drops in this village."""
+    rows = await db.fetch_all(
+        "SELECT DISTINCT village_x, village_y FROM ground_items "
+        "WHERE village_id=? AND is_drop=1",
+        (village_id,),
+    )
+    return {(r["village_x"], r["village_y"]) for r in rows}
+
+
 # --- Gold cap ---
 
 async def add_player_gold(db: Database, user_id: int, delta: int, capacity: int) -> tuple[int, int]:

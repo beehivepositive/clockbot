@@ -379,6 +379,12 @@ def _fmt_slot(item_id: str, qty: int, cursor_on: bool, is_selected: bool) -> str
     digits, with the cursor still at unit 2.
     """
     emoji = _item_emoji(item_id)
+    if qty > 9:  # above stack cap — display as ∞ (admin infinite pool)
+        if cursor_on:
+            return f" {emoji}{_CUR}∞"
+        if is_selected:
+            return f" {emoji}{_SEL}∞"
+        return f" {emoji}{_PAD}∞"
     if qty >= 10:
         # 2-digit qty straddles emoji: tens digit unit 0, ones digit unit 3.
         # Cursor/selection at unit 2 (immediately right of emoji).

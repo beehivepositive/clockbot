@@ -960,6 +960,7 @@ VILLAGE_EMOJI = {
     # Harbor-village specific tiles
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
+    "drop_box":         "\U0001F4E6",        # 📦  player-dropped items
 }
 
 # All building interior tiles use BUILDING_EMOJI
@@ -1053,6 +1054,7 @@ VILLAGE_WALKABLE = {
     "vil_cow", "vil_pig", "vil_chicken", "vil_goat", "vil_sheep",  # animals are walkable
     "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
     "vil_armory",         # enterable armory building
+    "drop_box",           # player-dropped items box — walkable, triggers pickup
     # Note: vil_fence is a solid obstacle (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }
@@ -1710,5 +1712,6 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         if emoji_name in cache:
             ITEM_EMOJI[item_key] = cache[emoji_name]
             _renderer._ITEM_SLOT_EMOJI[item_key] = cache[emoji_name]
+
 
 

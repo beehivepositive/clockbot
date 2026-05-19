@@ -60,7 +60,7 @@ async def _player_grid(player, seed: int, db):
 
 
 async def _ensure_admin_resources(db, player_id: int) -> None:
-    """Top up admin gold to 999999, ensure 81 cooked fish, and give a canoe if missing."""
+    """Top up admin gold to 999999, ensure 999 cooked fish, and give a canoe if missing."""
     await db.execute("UPDATE players SET gold=999999 WHERE user_id=?", (player_id,))
     existing = await db.fetch_one(
         "SELECT id, quantity FROM inventory WHERE user_id=? AND item_id='cooked_fish' ORDER BY slot_index LIMIT 1",
@@ -68,12 +68,12 @@ async def _ensure_admin_resources(db, player_id: int) -> None:
     )
     if not existing:
         await db.execute(
-            "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, 'cooked_fish', 81, 0)",
+            "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, 'cooked_fish', 999, 0)",
             (player_id,)
         )
-    elif existing["quantity"] < 81:
+    elif existing["quantity"] < 999:
         await db.execute(
-            "UPDATE inventory SET quantity=81 WHERE id=?",
+            "UPDATE inventory SET quantity=999 WHERE id=?",
             (existing["id"],)
         )
     # Give admin a canoe for testing if they don't have one

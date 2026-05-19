@@ -511,6 +511,24 @@ class Database:
                         _log.warning("Migration warning (%s): %.120s", e, mig_sql)
                 except Exception as e:
                     _log.error("Migration error (%s): %.120s", e, mig_sql)
+            # ── village drop columns in ground_items ─────────────────────────────
+            gi_cols = {row[1] for row in conn.execute("PRAGMA table_info(ground_items)").fetchall()}
+            if "village_id" not in gi_cols:
+                conn.execute("ALTER TABLE ground_items ADD COLUMN village_id INTEGER")
+                conn.execute("ALTER TABLE ground_items ADD COLUMN village_x INTEGER NOT NULL DEFAULT 0")
+                conn.execute("ALTER TABLE ground_items ADD COLUMN village_y INTEGER NOT NULL DEFAULT 0")
+                conn.commit()
+            # ── cave_crack_breaks table ───────────────────────────────────────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cave_crack_breaks (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cave_id   INTEGER NOT NULL,
+                    broken_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cave_crack_breaks ON cave_crack_breaks(cave_id, broken_at)")
+            conn.commit()
+
             # ── Grove state columns on players ───────────────────────────────────
             _player_cols = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
             for _col, _def in [("in_grove", "0"), ("grove_id", "NULL"), ("grove_x", "0"),

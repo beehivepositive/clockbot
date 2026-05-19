@@ -29,12 +29,18 @@ CREATE TABLE IF NOT EXISTS tile_overrides (
 -- Ground items (is_drop=1 means placed by a player; expires after 1 hour)
 CREATE TABLE IF NOT EXISTS ground_items (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    world_x      INTEGER NOT NULL,
-    world_y      INTEGER NOT NULL,
+    world_x      INTEGER NOT NULL DEFAULT 0,
+    world_y      INTEGER NOT NULL DEFAULT 0,
     item_id      TEXT    NOT NULL,
     quantity     INTEGER NOT NULL DEFAULT 1,
     is_drop      INTEGER NOT NULL DEFAULT 0,
-    spawned_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    spawned_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    cave_id      INTEGER,
+    cave_x       INTEGER NOT NULL DEFAULT 0,
+    cave_y       INTEGER NOT NULL DEFAULT 0,
+    village_id   INTEGER,
+    village_x    INTEGER NOT NULL DEFAULT 0,
+    village_y    INTEGER NOT NULL DEFAULT 0
 );
 
 -- Enemies
@@ -440,3 +446,11 @@ CREATE TABLE IF NOT EXISTS avatar_cache (
     avatar_data BLOB    NOT NULL,
     cached_at   INTEGER NOT NULL
 );
+
+-- Cave crack-chamber destruction log (tracks cracked_stone breaks for later regen)
+CREATE TABLE IF NOT EXISTS cave_crack_breaks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    cave_id    INTEGER NOT NULL,
+    broken_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cave_crack_breaks ON cave_crack_breaks(cave_id, broken_at);

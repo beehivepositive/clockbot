@@ -7784,6 +7784,17 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        elif vtile.terrain == "drop_box":
+            from dwarf_explorer.database.repositories import pickup_village_drop
+            picked = await pickup_village_drop(db, player.village_id, player.village_x, player.village_y, user_id)
+            _invalidate_vp(user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
+            if picked:
+                desc = _pickup_desc(picked)
+                content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
+            else:
+                content = render_grid(grid, player, "🤲 The box is empty.")
+
         elif vtile.terrain in _VIL_SEEDS_TILES:
             # Water seeded farmland
             grid = await _cached_grid(user_id, player, seed, db)
@@ -9423,6 +9434,11 @@ async def _bomb_blast_cave(
             if not tile_row:
                 continue
             t = tile_row["tile_type"]
+            # Destroy any dropped items on this blast tile
+            await db.execute(
+                "DELETE FROM ground_items WHERE cave_id=? AND cave_x=? AND cave_y=? AND is_drop=1",
+                (cave_id, tx, ty),
+            )
             if t in _BOMB_BLAST_CAVE_DESTROYS or t == "bomb_lit":
                 if t == "cracked_stone":
                     # Convert cracked wall to floor
@@ -9450,6 +9466,11 @@ async def _bomb_blast_cave(
                                     (cave_id, nx2, ny2)
                                 )
                                 fq.append((nx2, ny2))
+                    # Record this cracked chamber destruction for later regeneration
+                    await db.execute(
+                        "INSERT INTO cave_crack_breaks (cave_id, broken_at) VALUES (?, datetime('now'))",
+                        (cave_id,),
+                    )
                     blast_msg_parts.append("🪨 A hidden passage is revealed!")
                 else:
                     # Standard mineable rock: remove it (become floor) + drop items as ground tile
@@ -9462,7 +9483,7 @@ async def _bomb_blast_cave(
                         drop_loot = [("iron_ore", _random.randint(1, 2))]
                     elif t == "gold_ore_deposit":
                         drop_loot = [("gold_ore", 1)]
-                    elif t in ("cave_rock", "bomb_lit"):
+                    elif t == "cave_rock":
                         drop_loot = [("rock", _random.randint(1, 3))]
                     if drop_loot:
                         await create_cave_drop_box(db, cave_id, tx, ty, drop_loot)
@@ -12551,8 +12572,8 @@ async def handle_inv_drop(
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
 
-    # Can't drop in caves, villages, buildings, or on the high seas
-    if (player.in_cave or player.in_village or player.in_house or player.in_high_seas
+    # Can't drop in buildings, ships, ocean, or other special locations
+    if (player.in_house or player.in_high_seas
             or player.in_ship or player.in_island or getattr(player, "in_shipwreck", False)):
         content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
                                   inv_rows, inv_cols, state,
@@ -12561,17 +12582,18 @@ async def handle_inv_drop(
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
 
-    # Can't drop on structure tiles
+    # Can't drop on structure tiles (overworld only check)
     seed = await get_or_create_world(db, guild_id)
     wx, wy = player.world_x, player.world_y
-    cur_tile = await load_single_tile(wx, wy, seed, db)
-    if cur_tile.structure is not None:
-        content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
-                                  inv_rows, inv_cols, state,
-                                  "\n*You can't drop items on a structure tile.*",
-                                  gold=player.gold)
-        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-        return
+    if not player.in_cave and not player.in_village:
+        cur_tile = await load_single_tile(wx, wy, seed, db)
+        if cur_tile.structure is not None:
+            content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
+                                      inv_rows, inv_cols, state,
+                                      "\n*You can't drop items on a structure tile.*",
+                                      gold=player.gold)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
     if not selections:
         content, view = _inv_view(guild_id, user_id, items, state.get("selected", 0), equipped,
@@ -12606,9 +12628,17 @@ async def handle_inv_drop(
         await db.execute(
             "UPDATE players SET gold=gold-? WHERE user_id=?", (gold_to_drop, user_id)
         )
-    _is_canoe_drop = any(iid == "canoe" for iid, _ in drop_pairs)
-    _drop_tile_type = "canoe_box" if _is_canoe_drop else "drop_box"
-    await create_drop_box(db, wx, wy, drop_pairs, tile_type=_drop_tile_type)
+
+    if player.in_cave:
+        from dwarf_explorer.database.repositories import create_cave_drop_box
+        await create_cave_drop_box(db, player.cave_id, player.cave_x, player.cave_y, drop_pairs)
+    elif player.in_village:
+        from dwarf_explorer.database.repositories import create_village_drop_box
+        await create_village_drop_box(db, player.village_id, player.village_x, player.village_y, drop_pairs)
+    else:
+        _is_canoe_drop = any(iid == "canoe" for iid, _ in drop_pairs)
+        _drop_tile_type = "canoe_box" if _is_canoe_drop else "drop_box"
+        await create_drop_box(db, wx, wy, drop_pairs, tile_type=_drop_tile_type)
     _invalidate_vp(user_id)  # tile changed without movement — bust cache
 
     _ui_state[user_id] = {**state, "selections": {}}

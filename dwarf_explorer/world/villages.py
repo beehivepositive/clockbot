@@ -1399,6 +1399,12 @@ async def load_village_viewport(
         overrides = await get_player_village_overrides(db, user_id, village_id)
         tile_map.update(overrides)
 
+    # Overlay village drop boxes
+    from dwarf_explorer.database.repositories import get_village_drop_positions
+    drop_positions = await get_village_drop_positions(db, village_id)
+    for (dx, dy) in drop_positions:
+        tile_map[(dx, dy)] = "drop_box"
+
     grid = []
     for local_y in range(VIEWPORT_SIZE):
         row_tiles = []
@@ -1416,7 +1422,15 @@ async def load_village_single_tile(
         "SELECT tile_type FROM village_tiles WHERE village_id = ? AND local_x = ? AND local_y = ?",
         (village_id, local_x, local_y),
     )
-    return TileData(terrain=row["tile_type"] if row else "void", world_x=local_x, world_y=local_y)
+    terrain = row["tile_type"] if row else "void"
+    # Overlay drop box if one exists at this position
+    drop = await db.fetch_one(
+        "SELECT 1 FROM ground_items WHERE village_id=? AND village_x=? AND village_y=? AND is_drop=1 LIMIT 1",
+        (village_id, local_x, local_y),
+    )
+    if drop:
+        terrain = "drop_box"
+    return TileData(terrain=terrain, world_x=local_x, world_y=local_y)
 
 
 async def load_building_viewport(
