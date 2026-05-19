@@ -1516,13 +1516,22 @@ async def scriptimage_cmd(interaction: discord.Interaction, game_state: Optional
     buf = io.BytesIO(output.encode("utf-8"))
     await interaction.followup.send(file=discord.File(buf, filename=f"{safe_name}.json"))
 
-@bot.tree.command(name="getgamejson", description="Scan a game logs channel, read script + grimoire images, return a game state JSON", guild=discord.Object(id=GUILD_ID))
+@bot.tree.command(name="getgamejson", description="Read script + grimoire images and return a clocktower.live game state JSON", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
-    channel="The game logs channel to scan",
-    limit="Max images to inspect before giving up (default 20)",
-    debug="Return the preprocessed grimoire image and raw OCR output for debugging",
+    channel="The game logs channel to scan (not needed if both images are attached directly)",
+    limit="Max images to inspect when scanning a channel (default 20)",
+    debug="Return preprocessed images and raw OCR output for debugging",
+    grimoire_image="Attach the grimoire screenshot directly — skips channel scan for grimoire",
+    script_image="Attach the script image directly — skips channel scan for script",
 )
-async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 20, debug: bool = False):
+async def getgamejson_cmd(
+    interaction: discord.Interaction,
+    channel: Optional[discord.TextChannel] = None,
+    limit: Optional[int] = 20,
+    debug: bool = False,
+    grimoire_image: Optional[discord.Attachment] = None,
+    script_image: Optional[discord.Attachment] = None,
+):
     await interaction.response.defer()
     try:
         from botc_image_reader import classify_image, extract_script_characters, extract_player_names, debug_grimoire, debug_script, TESSERACT_OK
@@ -1532,62 +1541,82 @@ async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.Tex
     if not TESSERACT_OK:
         await interaction.followup.send("Tesseract OCR is not installed on the server. Ask an admin to run:\n```\napt-get install -y tesseract-ocr && pip install pytesseract\n```", ephemeral=True)
         return
+    if channel is None and grimoire_image is None and script_image is None:
+        await interaction.followup.send("Provide a channel to scan, or attach a grimoire/script image directly.", ephemeral=True)
+        return
 
     script_chars = None
     player_names = None
-    script_url = None
-    grim_url = None
     images_seen = 0
-
     IMAGE_EXTS_SET = {".png", ".jpg", ".jpeg", ".webp"}
+
+    async def _use_script(img_bytes):
+        nonlocal script_chars
+        script_chars = extract_script_characters(img_bytes)
+        if debug:
+            dbg_png, dbg_lines = debug_script(img_bytes)
+            await interaction.followup.send(
+                "**Debug: color-masked script image + raw OCR**",
+                files=[
+                    discord.File(io.BytesIO(dbg_png), filename="script_debug.png"),
+                    discord.File(io.BytesIO("\n".join(dbg_lines).encode()), filename="script_ocr.txt"),
+                ],
+            )
+
+    async def _use_grimoire(img_bytes):
+        nonlocal player_names
+        player_names = extract_player_names(img_bytes)
+        if debug:
+            dbg_png, dbg_lines = debug_grimoire(img_bytes)
+            await interaction.followup.send(
+                "**Debug: preprocessed grimoire image + raw OCR**",
+                files=[
+                    discord.File(io.BytesIO(dbg_png), filename="grim_debug.png"),
+                    discord.File(io.BytesIO("\n".join(dbg_lines).encode()), filename="grim_ocr.txt"),
+                ],
+            )
+
     async with aiohttp.ClientSession() as session:
-        async for msg in channel.history(limit=None, oldest_first=True):
-            for att in msg.attachments:
-                if not any(att.filename.lower().endswith(e) for e in IMAGE_EXTS_SET):
-                    continue
-                images_seen += 1
-                try:
-                    async with session.get(att.url) as resp:
-                        if resp.status != 200:
-                            continue
-                        img_bytes = await resp.read()
-                    img_type = classify_image(img_bytes)
-                    if img_type == "script" and script_chars is None:
-                        script_chars = extract_script_characters(img_bytes)
-                        script_url = att.url
-                        if debug:
-                            dbg_png, dbg_lines = debug_script(img_bytes)
-                            dbg_text = "\n".join(dbg_lines)
-                            dbg_txt_buf = io.BytesIO(dbg_text.encode("utf-8"))
-                            dbg_img_buf = io.BytesIO(dbg_png)
-                            await interaction.followup.send(
-                                "**Debug: color-masked script image + raw OCR**",
-                                files=[
-                                    discord.File(dbg_img_buf, filename="script_debug.png"),
-                                    discord.File(dbg_txt_buf, filename="script_ocr.txt"),
-                                ],
-                            )
-                    elif img_type == "grimoire" and player_names is None:
-                        player_names = extract_player_names(img_bytes)
-                        grim_url = att.url
-                        if debug:
-                            dbg_png, dbg_lines = debug_grimoire(img_bytes)
-                            dbg_text = "\n".join(dbg_lines)
-                            dbg_txt_buf = io.BytesIO(dbg_text.encode("utf-8"))
-                            dbg_img_buf = io.BytesIO(dbg_png)
-                            await interaction.followup.send(
-                                "**Debug: preprocessed grimoire image + raw OCR**",
-                                files=[
-                                    discord.File(dbg_img_buf, filename="grim_debug.png"),
-                                    discord.File(dbg_txt_buf, filename="grim_ocr.txt"),
-                                ],
-                            )
-                except Exception:
-                    continue
-            if script_chars is not None and player_names is not None:
-                break
-            if images_seen >= limit:
-                break
+        # Process directly attached images first (type is known, no classification needed)
+        if script_image is not None:
+            try:
+                async with session.get(script_image.url) as resp:
+                    if resp.status == 200:
+                        await _use_script(await resp.read())
+            except Exception:
+                pass
+
+        if grimoire_image is not None:
+            try:
+                async with session.get(grimoire_image.url) as resp:
+                    if resp.status == 200:
+                        await _use_grimoire(await resp.read())
+            except Exception:
+                pass
+
+        # Scan channel for whichever images are still missing
+        if channel is not None and (script_chars is None or player_names is None):
+            async for msg in channel.history(limit=None, oldest_first=True):
+                for att in msg.attachments:
+                    if not any(att.filename.lower().endswith(e) for e in IMAGE_EXTS_SET):
+                        continue
+                    images_seen += 1
+                    try:
+                        async with session.get(att.url) as resp:
+                            if resp.status != 200:
+                                continue
+                            img_bytes = await resp.read()
+                        img_type = classify_image(img_bytes)
+                        if img_type == "script" and script_chars is None:
+                            await _use_script(img_bytes)
+                        elif img_type == "grimoire" and player_names is None:
+                            await _use_grimoire(img_bytes)
+                    except Exception:
+                        continue
+                if script_chars is not None and player_names is not None:
+                    break
+                if images_seen >= limit:
+                    break
 
     if script_chars is None and player_names is None:
         await interaction.followup.send("No recognisable script or grimoire images found in that channel.", ephemeral=True)
