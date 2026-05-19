@@ -242,9 +242,6 @@ def extract_player_names(img_bytes):
     for text, x, y, w, h in items:
         if len(text) < 2:
             continue
-        # Skip anything without a letter (numbers, punctuation, vote counts, "14", etc.)
-        if not re.search(r'[a-zA-Z]', text):
-            continue
         if _norm(text) in _UI_WORDS:
             continue
         if _match_char(text):
