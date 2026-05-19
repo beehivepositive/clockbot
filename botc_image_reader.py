@@ -45,7 +45,7 @@ def _norm(s):
 def _match_char(word):
     """Return canonical BotC character display name, or None."""
     n = _norm(word)
-    if not n or len(n) < 3:
+    if not n or len(n) < 2:
         return None
     if n in BOTC_NORM:
         return BOTC_NORM[n]
@@ -219,18 +219,31 @@ def extract_player_names(img_bytes):
     """
     Return player names from a grimoire circle image, sorted clockwise from the top.
 
-    Uses standard (non-color-masked) OCR on the inverted grimoire image.
-    Discards: BotC character names, pure numbers, single chars, known UI words.
-    Sorts remaining text by angle from image centre (clockwise from 12 o'clock).
+    Player names are always:
+      - The largest text in the image
+      - On the outer ring (never in the centre)
+      - Always contain at least one letter (no pure numbers/punctuation)
     """
     items, img_w, img_h = _ocr_grimoire(img_bytes)
     cx, cy = img_w / 2, img_h / 2
 
+    # Exclude text within ~20 % of the shorter dimension from centre
+    # (the centre has coloured game icons, not player names)
+    inner_r = min(img_w, img_h) * 0.20
+
+    # Player names are always the largest text in the image.
+    # Compute the 65th-percentile height across all OCR items and use 65 % of
+    # that as the minimum — filters vote counts, labels, and other small text.
+    all_heights = sorted(h for _, _, _, _, h in items if h > 0)
+    min_h = (all_heights[int(len(all_heights) * 0.65)] * 0.65) if all_heights else 1
+
     candidates = []
+    seen = set()
     for text, x, y, w, h in items:
         if len(text) < 2:
             continue
-        if text.isdigit():
+        # Skip anything without a letter (numbers, punctuation, vote counts, "14", etc.)
+        if not re.search(r'[a-zA-Z]', text):
             continue
         if _norm(text) in _UI_WORDS:
             continue
@@ -239,6 +252,20 @@ def extract_player_names(img_bytes):
 
         tx = x + w / 2
         ty = y + h / 2
+
+        # Exclude centre zone where game icons live
+        if math.hypot(tx - cx, ty - cy) < inner_r:
+            continue
+
+        # Only keep large text (player names are the biggest text on screen)
+        if h < min_h:
+            continue
+
+        key = _norm(text)
+        if key in seen:
+            continue
+        seen.add(key)
+
         angle = math.atan2(tx - cx, cy - ty) % (2 * math.pi)
         candidates.append((angle, text))
 
