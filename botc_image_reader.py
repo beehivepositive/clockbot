@@ -119,7 +119,7 @@ def _ocr_script(img_bytes):
         raise RuntimeError("pytesseract not installed")
 
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img = _scale_up(img)
+    img = _scale_up(img, min_width=2000)
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
@@ -157,12 +157,14 @@ def _ocr_grimoire(img_bytes):
     if avg < 130:
         img = ImageOps.invert(img)
 
-    gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
-
-    # Two passes: PSM 3 (full-page layout) catches some names, PSM 11 (sparse text)
-    # catches others — neither catches everything, so union them.
-    items_a = _run_ocr(gray, config="--psm 3")
-    items_b = _run_ocr(gray, config="--psm 11")
+    base = img.convert("L")
+    # PSM 3 (full-page) at lower contrast — catches names like Jeff that over-saturate
+    # at high contrast and disappear. PSM 11 (sparse text) at higher contrast catches
+    # names scattered around the ring that PSM 3 misses.
+    gray_lo = ImageEnhance.Contrast(base).enhance(2.0)
+    gray_hi = ImageEnhance.Contrast(base).enhance(3.0)
+    items_a = _run_ocr(gray_lo, config="--psm 3")
+    items_b = _run_ocr(gray_hi, config="--psm 11")
     seen_n = set()
     merged = []
     for item in items_a + items_b:
@@ -202,11 +204,16 @@ def debug_grimoire(img_bytes):
     if inverted:
         img = ImageOps.invert(img)
 
-    gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
+    base = img.convert("L")
+    gray_lo = ImageEnhance.Contrast(base).enhance(2.0)
+    gray_hi = ImageEnhance.Contrast(base).enhance(3.0)
 
     lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}"]
-    for psm in ("--psm 3", "--psm 11"):
-        lines.append(f"\n=== {psm} ===")
+    for label, gray, psm in (
+        ("psm3 contrast=2.0", gray_lo, "--psm 3"),
+        ("psm11 contrast=3.0", gray_hi, "--psm 11"),
+    ):
+        lines.append(f"\n=== {label} ===")
         data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, config=psm)
         for i in range(len(data["text"])):
             t = data["text"][i].strip()
@@ -217,7 +224,7 @@ def debug_grimoire(img_bytes):
             lines.append(f"conf={conf:3d}  '{t}'  at ({x},{y}) size {bw}x{bh}")
 
     buf = io.BytesIO()
-    gray.save(buf, format="PNG")
+    gray_lo.save(buf, format="PNG")
     return buf.getvalue(), lines
 
 
@@ -300,8 +307,13 @@ def extract_player_names(img_bytes):
     # from the image centre — that zone has coloured game icons, not player names.
     inner_r = min(img_w, img_h) * 0.15
 
+    # Cluster radius: if two OCR items are this close, they're the same label.
+    # Keeps e.g. "(bal..." from splitting Butti into two entries.
+    cluster_r = 150
+
     candidates = []
-    seen = set()
+    seen_norm = set()
+    placed = []   # (tx, ty) of accepted items, for position-based dedup
     for text, x, y, w, h in items:
         if len(text) < 3:
             continue
@@ -316,10 +328,15 @@ def extract_player_names(img_bytes):
         if math.hypot(tx - cx, ty - cy) < inner_r:
             continue
 
-        key = _norm(text)
-        if key in seen:
+        # Skip if a nearby item was already accepted (same label, different OCR fragment)
+        if any(math.hypot(tx - px, ty - py) < cluster_r for px, py in placed):
             continue
-        seen.add(key)
+
+        key = _norm(text)
+        if key in seen_norm:
+            continue
+        seen_norm.add(key)
+        placed.append((tx, ty))
 
         angle = math.atan2(tx - cx, cy - ty) % (2 * math.pi)
         candidates.append((angle, text))
