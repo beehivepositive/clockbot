@@ -306,9 +306,15 @@ def extract_script_characters(img_bytes):
     while i < len(texts):
         m = None
         # Try two-word match first ("Town Crier", "Tea Lady", "Snake Charmer", etc.)
+        # Only accept the two-word result if it differs from the single-word result —
+        # i.e. it genuinely needed both tokens. Without this guard, e.g. 'ShabalothPo'
+        # fuzzy-matches 'Shabaloth' (ratio 0.9 > cutoff), consuming 'Po' silently.
         if i + 1 < len(texts):
-            m = (_match_char(texts[i] + texts[i + 1]) or
-                 _match_char(texts[i] + " " + texts[i + 1]))
+            m2 = (_match_char(texts[i] + texts[i + 1]) or
+                  _match_char(texts[i] + " " + texts[i + 1]))
+            m1 = _match_char(texts[i])
+            if m2 and m2 != m1:
+                m = m2
         if m:
             if m not in found:
                 found.append(m)
