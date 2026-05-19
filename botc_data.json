@@ -32,7 +32,7 @@
       "description": "Players close eyes. ST wakes players in canonical night order.",
       "notes": [
         "Canonical night order determines sequence of ability triggers.",
-        "Night order matters mechanically \u2014 earlier abilities can affect later ones.",
+        "Night order matters mechanically — earlier abilities can affect later ones.",
         "First night has separate order for night-1-only roles.",
         "Demon kills one player per night unless prevented."
       ]
@@ -54,7 +54,7 @@
         "Each living player may nominate once per day.",
         "Each player may only be nominated once per day.",
         "Dead players generally cannot nominate.",
-        "Exile is NOT a nomination \u2014 does not trigger Witch etc."
+        "Exile is NOT a nomination — does not trigger Witch etc."
       ],
       "exceptions": [
         "Banshee: if killed by Demon, can nominate twice and vote twice as a dead player."
@@ -64,7 +64,7 @@
       "rules": [
         "Votes needed = ceil(living_players / 2).",
         "E.g. 12 alive = 6 votes, 11 alive = 6 votes (rounds up).",
-        "Dead players retain one ghost vote \u2014 single use, consumed on use.",
+        "Dead players retain one ghost vote — single use, consumed on use.",
         "Ghost votes cannot be used in exile votes.",
         "Player with most votes at day end is executed if threshold met.",
         "Tie unresolved by day end = no execution."
@@ -80,7 +80,7 @@
         "Execution ends the day and triggers night.",
         "Normally occurs at end of day after voting.",
         "Can occur at night via abilities e.g. Cerenovus.",
-        "Travelers cannot be executed via normal nomination \u2014 they are exiled.",
+        "Travelers cannot be executed via normal nomination — they are exiled.",
         "Travelers CAN be executed by abilities, bypassing exile."
       ],
       "exceptions": [
@@ -92,7 +92,7 @@
         "Exile is the mechanic to remove travelers.",
         "Requires votes >= 50% of ALL players (living and dead).",
         "Ghost votes count toward exile threshold but are NOT consumed.",
-        "Exile is NOT a nomination \u2014 does not trigger Witch etc.",
+        "Exile is NOT a nomination — does not trigger Witch etc.",
         "Exile does not count as the day execution.",
         "Exiled traveler is removed from the game."
       ]
@@ -114,18 +114,18 @@
         "Vigormortis: dead Minions retain their abilities.",
         "Sweetheart: when dead, one player becomes permanently drunk.",
         "Moonchild: when dead, can curse a player publicly to die.",
-        "Klutz: when dead, must pick a player publicly \u2014 if evil, good team loses."
+        "Klutz: when dead, must pick a player publicly — if evil, good team loses."
       ]
     },
     "drunk_and_poisoned": {
-      "effect": "The affected player ability cannot affect the game state. The ST is not obligated to give false information \u2014 info may be true or false at ST discretion. The player does not know they are affected.",
+      "effect": "The affected player ability cannot affect the game state. The ST is not obligated to give false information — info may be true or false at ST discretion. The player does not know they are affected.",
       "st_discretion": "ST decides false info given. Can be true, but intent is to harm the affected player team.",
       "drunk_source": "Passive state or own role (e.g. Drunk outsider, Sailor target, Philosopher).",
       "poisoned_source": "Another character actively targeting them (e.g. Poisoner, No Dashii, Vigormortis).",
-      "mechanical_difference": "None \u2014 effect is identical regardless of source.",
+      "mechanical_difference": "None — effect is identical regardless of source.",
       "notes": [
-        "Ability cannot affect game state \u2014 protections do not apply, active effects do not trigger.",
-        "Information given may be true or false \u2014 ST has full discretion, not obligated to make it false.",
+        "Ability cannot affect game state — protections do not apply, active effects do not trigger.",
+        "Information given may be true or false — ST has full discretion, not obligated to make it false.",
         "The player does not know they are drunk or poisoned."
       ],
       "exception": "The Goon still detects when a drunk or poisoned player has chosen them and changes alignment. This is the only known case where a drunk or poisoned ability can trigger a game state change."
@@ -219,7 +219,7 @@
       "notes": [
         "Canonical night order from official scripting tool (updated Oct 2025).",
         "First night and each night have separate orderings.",
-        "Dawn marks the transition \u2014 Leviathan and Vizier act after Dawn on first night; Leviathan after Dawn on other nights.",
+        "Dawn marks the transition — Leviathan and Vizier act after Dawn on first night; Leviathan after Dawn on other nights.",
         "Fabled characters act at Dusk before other characters.",
         "Travellers act early in the order, before Minion/Demon info.",
         "Minion Info and Demon Info/Bluffs are phases, not characters."
@@ -401,7 +401,7 @@
         "[Dawn]",
         "Leviathan"
       ],
-      "trigger_roles": "Some characters are trigger roles \u2014 their ability fires when a specific condition is met (typically death), not at a fixed point in the night order. Their night order entry is a reminder for the ST to handle the pending trigger, not a mechanically significant position. Examples: Barber (fires on death, instantaneous), Ravenkeeper (fires when killed at night). The trigger fires as soon as the condition is met \u2014 in the case of Barber this can interrupt ongoing abilities.",
+      "trigger_roles": "Some characters are trigger roles — their ability fires when a specific condition is met (typically death), not at a fixed point in the night order. Their night order entry is a reminder for the ST to handle the pending trigger, not a mechanically significant position. Examples: Barber (fires on death, instantaneous), Ravenkeeper (fires when killed at night). The trigger fires as soon as the condition is met — in the case of Barber this can interrupt ongoing abilities.",
       "demon_kill_required": "The Demon must kill each night in almost all cases. The Po is the only Demon that can explicitly choose not to kill, using that choice to charge up its ability for a larger kill."
     },
     "setup": {
@@ -427,7 +427,7 @@
           "Lord of Typhon: modifies setup.",
           "Godfather: modifies setup.",
           "Balloonist: modifies setup.",
-          "Others exist \u2014 covered per character."
+          "Others exist — covered per character."
         ],
         "details": {
           "Baron": "Adds 2 outsiders, removes 2 townsfolk from setup.",
@@ -441,7 +441,7 @@
         "demon_bluffs": {
           "count": 3,
           "description": "On night 1 the Demon is shown 3 good character roles not in play. These are intended to help the Demon bluff convincingly.",
-          "not_given_in_small_games": "5-6 player games \u2014 demon does not receive bluffs."
+          "not_given_in_small_games": "5-6 player games — demon does not receive bluffs."
         },
         "minion_bluffs": {
           "description": "Minions do not normally receive bluffs. Some characters grant minions bluff roles.",
@@ -457,7 +457,7 @@
     },
     "registering": {
       "description": "Some characters may register as a different type or alignment to abilities that check them. ST discretion on when to apply.",
-      "key_rule": "For ALL purposes the misregistering character IS the type/alignment they register as to the checking ability. It is not partial \u2014 they fully appear as that type.",
+      "key_rule": "For ALL purposes the misregistering character IS the type/alignment they register as to the checking ability. It is not partial — they fully appear as that type.",
       "known": {
         "Spy": {
           "actual": "minion/evil",
@@ -469,15 +469,15 @@
         }
       },
       "notes": [
-        "Other characters may also misregister \u2014 covered per character.",
+        "Other characters may also misregister — covered per character.",
         "Misregistering affects ability reads only, not game-end mechanics.",
-        "e.g. A Recluse executed does not trigger evil win \u2014 misregistering only affects ability checks."
+        "e.g. A Recluse executed does not trigger evil win — misregistering only affects ability checks."
       ]
     },
     "ability_instances": {
       "description": "Each player running a character holds an instance of that ability with its own internal memory and state.",
       "rules": [
-        "When a player changes character, the old instance ceases to exist and a new one begins \u2014 not a pause, a deletion.",
+        "When a player changes character, the old instance ceases to exist and a new one begins — not a pause, a deletion.",
         "Revival creates a new instance: once-per-game flags reset, starts-knowing info re-delivers, prior target memory clears.",
         "Barber swaps create new instances for both swapped players.",
         "A new instance has no memory of what the previous instance did (e.g. new Pukka has no previously poisoned player).",
@@ -615,7 +615,7 @@
       "notes": [
         "Alternate good win condition: if only 3 players remain alive and no execution occurs that day, good wins immediately.",
         "If the Mayor would die at night, the ST may redirect the kill to another player instead.",
-        "The redirection is not guaranteed \u2014 the ST decides whether it applies.",
+        "The redirection is not guaranteed — the ST decides whether it applies.",
         "A strong late-game character that can win without executing the Demon if protected from night kills."
       ]
     },
@@ -629,7 +629,7 @@
         "The Butler may only vote on a nomination if their master has already voted on that same nomination earlier in the vote count.",
         "If the master does not vote, the Butler cannot vote on that nomination.",
         "The Butler still has a ghost vote when dead, subject to the same master restriction.",
-        "Choosing a dead master is valid but risky \u2014 dead players vote less predictably."
+        "Choosing a dead master is valid but risky — dead players vote less predictably."
       ]
     },
     "Drunk": {
@@ -639,7 +639,7 @@
       "when": "passive",
       "notes": [
         "The Drunk is an Outsider who thinks they are a Townsfolk character.",
-        "The ST can tell the Drunk anything within the parameters of the Townsfolk ability they think they have \u2014 including false information, or even pretending they have changed characters.",
+        "The ST can tell the Drunk anything within the parameters of the Townsfolk ability they think they have — including false information, or even pretending they have changed characters.",
         "The only constraint is that the Drunk must always believe they are a Townsfolk character, never any other type of character.",
         "This is the same logic structure as the Lunatic (thinks they are the Demon) and the Marionette (thinks they are a good character).",
         "The Drunk does not know they are the Drunk."
@@ -651,7 +651,7 @@
       "ability": "You might register as evil and as a Minion or Demon, even if dead.",
       "when": "passive",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "May misregister as evil and as any Minion or Demon for abilities that interact with them.",
         "Misregistration can affect any ability that interacts with the Recluse, including Tea Lady, Empath, Investigator, and Fortune Teller.",
         "ST decides when and whether the Recluse misregisters for each relevant ability.",
@@ -686,7 +686,7 @@
       "ability": "Each night, you see the Grimoire. You might register as good and as a Townsfolk or Outsider, even if dead.",
       "when": "each_night",
       "notes": [
-        "Each night sees the full Grimoire \u2014 all character assignments, tokens, and states.",
+        "Each night sees the full Grimoire — all character assignments, tokens, and states.",
         "Separately, the Spy may misregister as good and as any Townsfolk or Outsider for abilities that interact with them.",
         "These are two distinct parts of the ability: Grimoire access and misregistration.",
         "Misregistration can affect any ability that interacts with the Spy, including Tea Lady, Empath, Investigator, and Undertaker.",
@@ -699,7 +699,7 @@
       "ability": "If there are 5 or more players alive and the Demon dies, you become the Demon.",
       "when": "triggered",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "If there are 5 or more players alive and the Demon dies, the Scarlet Woman immediately becomes that Demon character.",
         "She must be alive and sober at the moment the Demon dies for the transformation to trigger.",
         "This is consistent with the general rule: almost all characters lose their ability when they die unless their own ability or another ability explicitly specifies otherwise.",
@@ -767,7 +767,7 @@
         "If the chosen player is the Demon, the Demon does not act that night (no kill).",
         "The Exorcist does not learn whether they successfully targeted the Demon.",
         "However, the absence of a death that night may allow the Exorcist to infer they hit the Demon.",
-        "Must choose a different player each night \u2014 cannot target the same player on consecutive nights."
+        "Must choose a different player each night — cannot target the same player on consecutive nights."
       ]
     },
     "Innkeeper": {
@@ -890,8 +890,8 @@
       "notes": [
         "Each night, the first player who chooses the Goon for any reason becomes drunk until dusk.",
         "The Goon then becomes that player alignment.",
-        "Crucially, this triggers even if the choosing player is drunk or poisoned \u2014 the Goon is the only known exception where a drunk or poisoned ability can still cause a game state change.",
-        "The Goon does not choose \u2014 they react to being chosen."
+        "Crucially, this triggers even if the choosing player is drunk or poisoned — the Goon is the only known exception where a drunk or poisoned ability can still cause a game state change.",
+        "The Goon does not choose — they react to being chosen."
       ]
     },
     "Lunatic": {
@@ -901,9 +901,9 @@
       "when": "passive",
       "notes": [
         "The Lunatic thinks they are the Demon but is not. The real Demon knows who the Lunatic is.",
-        "Shares the same logic structure as the Drunk and Marionette \u2014 the ST can tell the Lunatic anything within reason that a Demon would be told, as long as they always believe they are the Demon.",
+        "Shares the same logic structure as the Drunk and Marionette — the ST can tell the Lunatic anything within reason that a Demon would be told, as long as they always believe they are the Demon.",
         "The Lunatic can even be told they have a Lunatic themselves.",
-        "Each night the Lunatic goes through the same motions as the Demon \u2014 choosing kills, etc.",
+        "Each night the Lunatic goes through the same motions as the Demon — choosing kills, etc.",
         "The real Demon is told who the Lunatic chose to kill that night.",
         "The Lunatic does not know they are the Lunatic."
       ]
@@ -946,7 +946,7 @@
       "when": "triggered",
       "notes": [
         "If the Demon is executed and the game would normally end with good winning, the Mastermind extends play by 1 extra day.",
-        "If any player is executed on that bonus day, that executed player team loses \u2014 meaning if a good player is executed, evil wins.",
+        "If any player is executed on that bonus day, that executed player team loses — meaning if a good player is executed, evil wins.",
         "If no execution occurs on the bonus day, good wins as normal.",
         "Forces the good team to be extremely careful on the day after executing the Demon.",
         "The evil team will try to bait good into executing a good player on the bonus day."
@@ -1025,7 +1025,7 @@
         "Each night, chooses an alive player.",
         "If the chosen player is the Demon, the Snake Charmer becomes the Demon and the Demon becomes the Snake Charmer, permanently poisoned.",
         "The new Snake Charmer player (former Demon) is permanently poisoned for as long as they remain the Snake Charmer.",
-        "If that player later becomes a different character (e.g. via Pit-Hag), they are no longer poisoned \u2014 the poison is tied to being the Snake Charmer, not a separate lasting effect.",
+        "If that player later becomes a different character (e.g. via Pit-Hag), they are no longer poisoned — the poison is tied to being the Snake Charmer, not a separate lasting effect.",
         "This poison is self-emanating from the Snake Charmer character itself, which is unusual compared to normal game logic where poison comes from an external source.",
         "If the chosen player is not the Demon, nothing happens."
       ]
@@ -1098,11 +1098,11 @@
       "when": "night_once_per_game",
       "notes": [
         "Once per game, chooses a Townsfolk or Outsider character and gains that ability as a sub-instance.",
-        "The word gains means the ability is a permanent fixture of the Philosopher instance \u2014 it does not need constant checks to maintain.",
+        "The word gains means the ability is a permanent fixture of the Philosopher instance — it does not need constant checks to maintain.",
         "If the chosen character is in play, that player becomes drunk for as long as the sub-instance is active.",
-        "If the Philosopher is drunk or poisoned by an external source, this applies to the main instance and consequently the sub-instance \u2014 both malfunction, but the Philosopher still holds the ability.",
+        "If the Philosopher is drunk or poisoned by an external source, this applies to the main instance and consequently the sub-instance — both malfunction, but the Philosopher still holds the ability.",
         "The original character becomes sober again if the Philosopher main instance stops working (drunk/poisoned/dead).",
-        "If the Philosopher dies and is revived, the new instance has no sub-instance \u2014 they would need to use the ability again."
+        "If the Philosopher dies and is revived, the new instance has no sub-instance — they would need to use the ability again."
       ]
     },
     "Artist": {
@@ -1143,7 +1143,7 @@
       "when": "passive",
       "notes": [
         "If the Mutant is mad that they are an Outsider (publicly acting as if they are an Outsider), the ST may execute them.",
-        "The execution is entirely at ST discretion \u2014 the ST can choose not to execute even if the Mutant fulfills madness.",
+        "The execution is entirely at ST discretion — the ST can choose not to execute even if the Mutant fulfills madness.",
         "General philosophy: Outsiders should hurt the good team. A Mutant proving themselves by being executed early can sometimes give good useful information, so the ST should not always execute them.",
         "The ST weighs whether executing the Mutant benefits evil before choosing to act on the madness."
       ]
@@ -1166,9 +1166,9 @@
       "when": "triggered",
       "notes": [
         "When the Barber dies, the Demon may swap two players characters (including themselves).",
-        "The Demon chooses who swaps \u2014 not the Barber.",
+        "The Demon chooses who swaps — not the Barber.",
         "If the Barber dies during the day, the Demon is woken at the earliest opportunity that night to make the swap.",
-        "If the Barber is killed at night by the Demon, the trigger is instantaneous \u2014 it fires immediately, even interrupting ongoing abilities such as Al-Hadikhia.",
+        "If the Barber is killed at night by the Demon, the trigger is instantaneous — it fires immediately, even interrupting ongoing abilities such as Al-Hadikhia.",
         "Barber is a trigger role: the ability fires as soon as it can after death.",
         "Swapped players receive new character instances with fresh state."
       ]
@@ -1193,7 +1193,7 @@
         "Both the Evil Twin and their opposing player (opposite alignment) learn each other on night 1.",
         "Since the Evil Twin is evil, their opposing player is a good player.",
         "If the good player is executed, evil wins immediately.",
-        "Good cannot win while both are alive \u2014 the Evil Twin must be dead for good to win normally.",
+        "Good cannot win while both are alive — the Evil Twin must be dead for good to win normally.",
         "Alchemist interaction: an Alchemist with Evil Twin ability is good, so their opposing player is evil. Executing the Alchemist (the good player) triggers evil win. The Alchemist cannot be safely executed."
       ]
     },
@@ -1223,9 +1223,9 @@
       "ability": "Each night, choose a player and a character: they become that character. If this creates a 2nd Demon, the other Demon dies.",
       "when": "each_night",
       "notes": [
-        "Each night after the first, chooses a player and a script character \u2014 that player becomes that character.",
+        "Each night after the first, chooses a player and a script character — that player becomes that character.",
         "Target character must not already be in play. If it is, nothing happens.",
-        "If a second Demon is created, the old Demon is typically killed. Deaths that night are arbitrary \u2014 ST controls who dies, but cannot undo prior deaths.",
+        "If a second Demon is created, the old Demon is typically killed. Deaths that night are arbitrary — ST controls who dies, but cannot undo prior deaths.",
         "On an arbitrary death night, the ST may let kills go through, block them, or add extra kills. Extra kills are attributed to the Pit-Hag as their source.",
         "Recommended when new Demon created: kill 1 ST-chosen player + old Demon (2 deaths) to signal the change.",
         "If only the Demon type changes (same player, new Demon character), recommended 0 deaths to signal the change.",
@@ -1241,9 +1241,9 @@
         "Kills one player per night.",
         "The first time the Fang Gu would die, it may jump to a living Outsider instead.",
         "Jump requirements: the target Outsider must be able to die (dead players cannot die again and cannot be jumped to). If the Outsider is protected from death in any way, the jump is also prevented.",
-        "The Fang Gu itself must also be able to die for the jump to occur \u2014 if the Fang Gu is protected (e.g. by a Monk), the jump does not happen.",
+        "The Fang Gu itself must also be able to die for the jump to occur — if the Fang Gu is protected (e.g. by a Monk), the jump does not happen.",
         "When the jump occurs: the original Fang Gu player remains the Fang Gu character but is now dead. The Outsider player becomes the new living Fang Gu Demon.",
-        "A jump can only happen once per game \u2014 there are no chain jumps.",
+        "A jump can only happen once per game — there are no chain jumps.",
         "After jumping, the new Fang Gu player kills each night as normal."
       ]
     },
@@ -1254,10 +1254,10 @@
       "when": "each_night_except_first",
       "notes": [
         "Kills one player per night like a standard Demon.",
-        "Minions killed by the Vigormortis retain their ability even in death \u2014 they continue to act.",
-        "Each dead Minion poisons their nearest Townsfolk neighbor (closest in either clockwise or counterclockwise direction \u2014 ST decides which direction, but it must be the nearest in that direction).",
+        "Minions killed by the Vigormortis retain their ability even in death — they continue to act.",
+        "Each dead Minion poisons their nearest Townsfolk neighbor (closest in either clockwise or counterclockwise direction — ST decides which direction, but it must be the nearest in that direction).",
         "The poison ultimately emanates from the Vigormortis, not the dead Minion.",
-        "Dead Minions themselves are not poisoned \u2014 they function normally and simply become a vector for poisoning a Townsfolk.",
+        "Dead Minions themselves are not poisoned — they function normally and simply become a vector for poisoning a Townsfolk.",
         "This creates a persistent poison network that grows as more Minions die."
       ]
     },
@@ -1278,10 +1278,10 @@
       "when": "each_night_except_first",
       "notes": [
         "Kills one player per night.",
-        "All Townsfolk-type characters always receive false information from their abilities \u2014 this is absolute and cannot be undone by other effects.",
-        "Notably, if a Townsfolk is also drunk or poisoned, their information is still false \u2014 the Vortox makes the information false regardless of the source of malfunction.",
+        "All Townsfolk-type characters always receive false information from their abilities — this is absolute and cannot be undone by other effects.",
+        "Notably, if a Townsfolk is also drunk or poisoned, their information is still false — the Vortox makes the information false regardless of the source of malfunction.",
         "Secondary win condition: if no execution occurs on a given day, evil wins immediately.",
-        "This forces the good team to execute someone every day \u2014 even if unsure \u2014 or lose.",
+        "This forces the good team to execute someone every day — even if unsure — or lose.",
         "The combination of forced executions and universally false Townsfolk info makes this Demon exceptionally hard to play against."
       ]
     },
@@ -1296,7 +1296,7 @@
     },
     "Bureaucrat": {
       "type": "traveler",
-      "ability": "Each night choose a player \u2014 their vote counts as 3 votes (or -1 vote).",
+      "ability": "Each night choose a player — their vote counts as 3 votes (or -1 vote).",
       "when": "Each night",
       "notes": [
         "ST-assigned alignment.",
@@ -1315,7 +1315,7 @@
     },
     "Bone Collector": {
       "type": "traveler",
-      "ability": "Once per game at night, choose a dead player \u2014 they regain their ability until dawn.",
+      "ability": "Once per game at night, choose a dead player — they regain their ability until dawn.",
       "when": "Night, once per game",
       "notes": [
         "Ability is lost again at dawn.",
@@ -1324,7 +1324,7 @@
     },
     "Harlot": {
       "type": "traveler",
-      "ability": "Each night choose a living player \u2014 you learn their character but you might die.",
+      "ability": "Each night choose a living player — you learn their character but you might die.",
       "when": "Each night",
       "notes": [
         "Risk of death is ST discretion.",
@@ -1342,7 +1342,7 @@
     },
     "Thief": {
       "type": "traveler",
-      "ability": "Each night choose a player \u2014 their vote counts negatively today.",
+      "ability": "Each night choose a player — their vote counts negatively today.",
       "when": "Each night",
       "notes": [
         "Negative vote counts against the player chosen, not for them.",
@@ -1394,7 +1394,7 @@
       "each_night": false,
       "ability": "All players know you are the Vizier. You cannot die during the day. If good voted, you may choose to execute immediately.",
       "notes": [
-        "All players know who the Vizier is and that they are evil \u2014 no hidden identity.",
+        "All players know who the Vizier is and that they are evil — no hidden identity.",
         "The Vizier cannot be executed during the day (immune to daytime deaths).",
         "They can still die at night via demon kills or other night abilities.",
         "If at least one good player voted on a nomination, the Vizier may choose to immediately execute that nominated player.",
@@ -1425,7 +1425,7 @@
       "ability": "Once per game if another player made a nomination, you may choose to execute or pardon that player immediately.",
       "when": "Day ability, once per game",
       "notes": [
-        "Overrides normal voting \u2014 instant execution or immunity.",
+        "Overrides normal voting — instant execution or immunity.",
         "Triggers on any nomination, not just ones that reach the vote threshold."
       ]
     },
@@ -1463,7 +1463,7 @@
       "notes": [
         "Gains the ability of the most recently killed executee as a sub-instance (fresh state, even if the original player used that ability).",
         "If the executee is evil, the Cannibal is poisoned and does not gain the actual evil ability. The ST wakes them as if they gained the ability of whatever the evil player was bluffing.",
-        "If the evil player misregisters as good (e.g. Spy registering as the Virgin), the Cannibal is NOT poisoned and genuinely gains the misregistered ability \u2014 misregistration is treated as truth by any ability checking it.",
+        "If the evil player misregisters as good (e.g. Spy registering as the Virgin), the Cannibal is NOT poisoned and genuinely gains the misregistered ability — misregistration is treated as truth by any ability checking it.",
         "The sub-instance is replaced each time a new executee dies.",
         "If the executee did not die (e.g. protected), the Cannibal does not gain a new ability.",
         "The recently killed executee means the player must have actually died from execution, not merely been executed."
@@ -1499,7 +1499,7 @@
       "ability": "Each night* choose a living player: they die. Only 1 player may die by night this way.",
       "when": "Each night except first",
       "notes": [
-        "The Lycanthrope kill replaces the Demon kill \u2014 only 1 player dies at night total while the Lycanthrope is alive.",
+        "The Lycanthrope kill replaces the Demon kill — only 1 player dies at night total while the Lycanthrope is alive.",
         "If the Lycanthrope targets a player who would otherwise be protected, no one dies that night.",
         "The Demon still chooses a target but their kill is blocked while Lycanthrope is alive and functioning."
       ]
@@ -1513,7 +1513,7 @@
         "Before death, functions as a normal player.",
         "On being killed by the Demon, all players are publicly informed the Banshee has died.",
         "As a dead player killed by the Demon, can nominate twice per day and vote twice per nomination.",
-        "Crucially, these votes do NOT consume ghost votes \u2014 the Banshee votes freely if killed by the Demon.",
+        "Crucially, these votes do NOT consume ghost votes — the Banshee votes freely if killed by the Demon.",
         "If killed by any other means, the enhanced dead abilities do not apply."
       ]
     },
@@ -1524,7 +1524,7 @@
       "when": "Passive, triggered on death",
       "notes": [
         "Minions do not learn each other or the Demon on night 1 while Poppy Grower is alive.",
-        "The Demon still receives bluff roles on night 1 \u2014 only the Minion/Demon mutual info is blocked.",
+        "The Demon still receives bluff roles on night 1 — only the Minion/Demon mutual info is blocked.",
         "On Poppy Grower death, Minions are woken that same night to learn each other and the Demon."
       ]
     },
@@ -1532,7 +1532,7 @@
       "type": "townsfolk",
       "script": "Experimental",
       "ability": "You have a Minion ability. When using this, the Storyteller may prompt you to choose differently.",
-      "when": "Varies \u2014 depends on which Minion ability is assigned",
+      "when": "Varies — depends on which Minion ability is assigned",
       "notes": [
         "The Alchemist has one of the Minion abilities from the script (not-in-play Minion, chosen at setup).",
         "Functionally works the same as a Minion using that ability, except the ST may redirect choices since it is a good player.",
@@ -1548,7 +1548,7 @@
       "notes": [
         "Can learn any evil player including those misregistering as evil e.g. Recluse.",
         "As a side effect of this ability, 1 Townsfolk in the game is secretly made evil at setup.",
-        "The evil Townsfolk is a genuine drawback \u2014 it adds an extra evil player to compensate for the power of the ability.",
+        "The evil Townsfolk is a genuine drawback — it adds an extra evil player to compensate for the power of the ability.",
         "If the known evil player dies, the Bounty Hunter learns another evil player that night."
       ]
     },
@@ -1559,7 +1559,7 @@
       "when": "Each night",
       "notes": [
         "You are only shown the player, not their character type explicitly.",
-        "The character type shown must be different from the previous night \u2014 cycles through TF, Outsider, Minion, Demon.",
+        "The character type shown must be different from the previous night — cycles through TF, Outsider, Minion, Demon.",
         "Setup: 1 player of each character type is added or removed so each type appears at least once.",
         "Adds 0 or 1 outsiders to setup."
       ]
@@ -1567,7 +1567,7 @@
     "Acrobat": {
       "type": "townsfolk",
       "script": "Experimental",
-      "ability": "Each night* choose a living player \u2014 if they are drunk or poisoned (or the Drunk), you die.",
+      "ability": "Each night* choose a living player — if they are drunk or poisoned (or the Drunk), you die.",
       "when": "Each night except first",
       "notes": [
         "The Acrobat dies if and only if the chosen player is drunk, poisoned, or is the Drunk outsider.",
@@ -1583,7 +1583,7 @@
       "notes": [
         "The ST chooses which Minion ability to gain.",
         "The ST uses this ability as an anonymous extra power in the game.",
-        "Triggers on any death \u2014 execution or night kill."
+        "Triggers on any death — execution or night kill."
       ]
     },
     "Steward": {
@@ -1651,7 +1651,7 @@
       "notes": [
         "ST suggests a player to speak with each night based on game state.",
         "Not necessarily an evil player.",
-        "Depends on ST interpretation \u2014 can be insightful or a subtle nudge."
+        "Depends on ST interpretation — can be insightful or a subtle nudge."
       ]
     },
     "Magician": {
@@ -1663,7 +1663,7 @@
       "each_night": false,
       "ability": "The Demon thinks you are a Minion. Minions think you are the Demon.",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "On night 1 Demon sees Magician as a Minion; Minions see Magician as the Demon.",
         "Creates confusion and distrust within the evil team.",
         "Evil may misidentify teammates or waste bluffs targeting the Magician.",
@@ -1694,11 +1694,11 @@
       "each_night": false,
       "ability": "If you die at night, an alive good player becomes a Farmer.",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "If demon-killed at night, an alive good player is secretly converted to a new Farmer.",
         "The new Farmer has the same ability, creating a chain of replacements.",
         "If executed during the day, no new Farmer is created.",
-        "Only the character token changes \u2014 alignment stays the same."
+        "Only the character token changes — alignment stays the same."
       ]
     },
     "Choirboy": {
@@ -1711,7 +1711,7 @@
       "ability": "If the Demon kills the King, you learn who the Demon is. [You are a Minion if the King is not in play]",
       "setup_modifier": "Becomes a Minion if the King is not in the script.",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "If the Demon kills the King at night, Choirboy wakes and learns the Demon identity.",
         "Evil will avoid demon-killing the King or try to kill the Choirboy first.",
         "Works in tandem with the King as a mutual protection mechanic."
@@ -1776,7 +1776,7 @@
       "notes": [
         "Three players receive the Village Idiot token but 2 are drunk from the start.",
         "Only 1 Village Idiot has a reliably functioning ability.",
-        "All 3 choose a player each night and learn their alignment \u2014 drunk VIs may get false info.",
+        "All 3 choose a player each night and learn their alignment — drunk VIs may get false info.",
         "All 3 must cross-reference readings to determine which one is sober.",
         "All 3 are publicly known as Village Idiots."
       ]
@@ -1806,11 +1806,11 @@
       "each_night": false,
       "ability": "Minions start knowing 3 not-in-play characters.",
       "notes": [
-        "Passive \u2014 no night action for the Snitch.",
+        "Passive — no night action for the Snitch.",
         "On night 1 each Minion is shown 3 extra not-in-play characters as additional bluffs.",
         "Normally Minions get 3 bluffs from Demon setup; Snitch adds 3 more per Minion.",
         "Gives evil many more bluff options making good team deduction harder.",
-        "The Snitch itself does nothing \u2014 its mere presence in play benefits evil."
+        "The Snitch itself does nothing — its mere presence in play benefits evil."
       ]
     },
     "Ogre": {
@@ -1838,7 +1838,7 @@
       "each_night": false,
       "ability": "If you die, the Demon and/or Minions may swap their current character with a spare.",
       "notes": [
-        "Passive \u2014 no night action.",
+        "Passive — no night action.",
         "If the Hatter dies by any means, ST offers the Demon and each Minion the option to swap to a new character.",
         "New character is chosen from not-in-play characters of the same type.",
         "Can significantly change evil character composition mid-game.",
@@ -1857,7 +1857,7 @@
       "setup_modifier": "The Marionette is seated adjacent to the Demon in the circle.",
       "notes": [
         "The Marionette is given any good character token and genuinely believes they are that character.",
-        "They can be given any good role \u2014 Townsfolk, Outsider, or otherwise.",
+        "They can be given any good role — Townsfolk, Outsider, or otherwise.",
         "Never woken with other Minions and does not know they are evil.",
         "On night 1 the Demon is shown who the Marionette is.",
         "The ST prompts the Marionette as if they have their fake role ability, but the information given is arbitrary.",
@@ -1873,7 +1873,7 @@
       "each_night": false,
       "ability": "On the 3rd night, choose a player and a Demon type: that player becomes that Demon type.",
       "notes": [
-        "Standard Minion info on night 1 \u2014 learns the Demon and other Minions.",
+        "Standard Minion info on night 1 — learns the Demon and other Minions.",
         "On night 3 specifically, the Summoner chooses a player and a Demon type.",
         "That player becomes the chosen Demon; the previous Demon may become a Minion or Townsfolk.",
         "Allows evil to introduce a new Demon mid-game potentially confusing the good team.",
@@ -1892,7 +1892,7 @@
         "One-use ability usable on any night.",
         "The Mezepheles knows a secret word (typically a common word like yes).",
         "If a player publicly says this word and the Mezepheles targets them that night, that player turns evil.",
-        "The converted player does not die \u2014 they switch alignment and win with evil.",
+        "The converted player does not die — they switch alignment and win with evil.",
         "Converted players retain their original character and abilities.",
         "Evil can manufacture opportunities by getting targets to say the trigger word."
       ]
@@ -1908,7 +1908,7 @@
       "notes": [
         "Each night the Fearmonger selects a player.",
         "If the same player is chosen two consecutive nights, they are publicly executed at the start of the following day.",
-        "One-use effect \u2014 after the execution triggers, no further ability.",
+        "One-use effect — after the execution triggers, no further ability.",
         "Allows evil to eliminate a powerful good player without a vote.",
         "If the Fearmonger dies before triggering, no execution occurs."
       ]
@@ -1941,7 +1941,7 @@
         "On night 1 the Widow sees the full Grimoire (all character assignments and states).",
         "After viewing, chooses a player who is permanently poisoned.",
         "The poisoned players ability malfunctions for the rest of the game (or until Widow dies).",
-        "One good player is told at game start that a Widow is in play \u2014 the only hint given.",
+        "One good player is told at game start that a Widow is in play — the only hint given.",
         "Extremely powerful: full Grimoire information plus a permanent poison.",
         "The evil team must protect the Widow to maintain the poison."
       ]
@@ -1988,7 +1988,7 @@
       "each_night": true,
       "ability": "All players keep their eyes closed when voting and the vote tally is secret. Each night, choose if you are drunk until dusk.",
       "notes": [
-        "Voting is always secret while the Organ Grinder is alive \u2014 no one can see who voted or the running tally.",
+        "Voting is always secret while the Organ Grinder is alive — no one can see who voted or the running tally.",
         "Each night the Organ Grinder chooses whether their own ability is active or whether they are drunk until the following dusk.",
         "Choosing to be drunk disables their secret voting effect for the next day, which may help them appear to be a good player.",
         "Secret voting removes a key source of public information the good team relies on for deduction."
@@ -2042,7 +2042,7 @@
         "Instead of choosing a player by seat, the Ojo chooses a character by name.",
         "If the chosen character is in play, that player dies.",
         "If the character is not in play nothing happens.",
-        "The Ojo cannot be certain a character is in play \u2014 bluffs may mislead.",
+        "The Ojo cannot be certain a character is in play — bluffs may mislead.",
         "Forces the evil team to track which characters are in play to target effectively."
       ]
     },
@@ -2055,10 +2055,10 @@
       "each_night": true,
       "ability": "Each night*, you may choose 3 players (all players learn who): each silently chooses to live or die, but if all live, all die.",
       "notes": [
-        "The 3 chosen players are publicly announced \u2014 all players see who was selected.",
+        "The 3 chosen players are publicly announced — all players see who was selected.",
         "Each chosen player then silently and independently decides to live or die.",
         "If all 3 choose to live, all 3 die anyway.",
-        "If at least one chooses to die, only those who chose die \u2014 those who chose live survive.",
+        "If at least one chooses to die, only those who chose die — those who chose live survive.",
         "Creates a prisoners dilemma: choosing to die guarantees your death but may save others; choosing to live is only safe if someone else sacrifices.",
         "The Al-Hadikhia may choose not to use the ability on a given night."
       ]
@@ -2074,7 +2074,7 @@
       "setup_modifier": "Kazali chooses which players become Minions on night 1, overriding normal setup.",
       "notes": [
         "On night 1 the Kazali selects any number of players and assigns each a Minion character.",
-        "This replaces normal Minion assignment \u2014 the Kazali hand-picks their evil team.",
+        "This replaces normal Minion assignment — the Kazali hand-picks their evil team.",
         "Must have at least 1 Minion; setup adjusts accordingly.",
         "Converted players receive Minion tokens and are woken with the Kazali on subsequent nights.",
         "Townsfolk or Outsider players who are converted lose their original abilities.",
@@ -2092,7 +2092,7 @@
       "notes": [
         "On night 1 the Yaggababble is given 5 secret phrases.",
         "Whenever any of these phrases are spoken publicly during the day, the ST may kill a player.",
-        "Deaths are not guaranteed \u2014 at ST discretion, typically triggered to cause chaos.",
+        "Deaths are not guaranteed — at ST discretion, typically triggered to cause chaos.",
         "Players do not know which phrases are dangerous.",
         "The Yaggababble must speak phrases naturally without revealing them as special.",
         "Phrases are typically common words or expressions that could arise in normal conversation.",
@@ -2113,7 +2113,7 @@
         "Each night the ST may kill a player.",
         "Execution threshold: 50% or more of ALL players (alive and dead combined) must vote for an execution to succeed.",
         "Dead players ghost votes count toward this threshold.",
-        "Additionally, at least 1 good player must vote for any execution to pass \u2014 if only evil players vote, the execution fails regardless of vote count.",
+        "Additionally, at least 1 good player must vote for any execution to pass — if only evil players vote, the execution fails regardless of vote count.",
         "Legion registers as Townsfolk, Outsider, or Minion to blend into any role claim.",
         "Any Legion player counts as the Demon for win condition purposes.",
         "Good players must identify that Legion is in play and secure enough good votes to push through an execution."
@@ -2161,7 +2161,7 @@
       "ability": "Each night, learn which team the Storyteller thinks is currently winning: good, evil, or neither.",
       "notes": [
         "Receives a meta-assessment each night from the ST about the current game state.",
-        "ST uses their judgment \u2014 not a precise calculation, but an honest evaluation.",
+        "ST uses their judgment — not a precise calculation, but an honest evaluation.",
         "Helps the good team calibrate urgency and execution decisions.",
         "Drunk or poisoned General may receive false information."
       ]
@@ -2193,12 +2193,12 @@
       "ability": "If more than 1 good player is executed, evil wins. All players know you are in play. After day 5, evil wins.",
       "setup_modifier": "No Minions in play. All players know the Leviathan is in play from game start.",
       "notes": [
-        "The Leviathan does not kill at night \u2014 no evil night kills.",
+        "The Leviathan does not kill at night — no evil night kills.",
         "Evil wins immediately if more than 1 good player is executed across the game.",
         "Evil also wins automatically after day 5 regardless of player count.",
         "Good must execute the Leviathan on day 1-5 without executing more than 1 other good player.",
         "All players knowing it is in play creates a very different information environment.",
-        "No Minions means the Leviathan operates alone \u2014 unique pressure on good to act quickly and correctly."
+        "No Minions means the Leviathan operates alone — unique pressure on good to act quickly and correctly."
       ]
     },
     "Wizard": {
@@ -2213,7 +2213,7 @@
         "One-use ability usable on any night.",
         "The chosen player privately states a wish to the ST.",
         "The ST decides whether and how to grant the wish at their discretion.",
-        "Wishes can range from learning information to changing game state \u2014 ST interprets and resolves.",
+        "Wishes can range from learning information to changing game state — ST interprets and resolves.",
         "The Wizard player does not know what was wished for or whether it was granted."
       ]
     },
@@ -2227,7 +2227,7 @@
       "ability": "Each day, before nominations, you may publicly choose a player: they die. If executed, you only die if you lose roshambo.",
       "notes": [
         "Each day before nominations open, the Psychopath may publicly choose a player who dies immediately.",
-        "This is optional \u2014 they do not have to kill.",
+        "This is optional — they do not have to kill.",
         "If the Psychopath is executed, they only die if they lose roshambo (rock-paper-scissors) against the ST.",
         "If they win or tie roshambo, they survive the execution and the game continues.",
         "The kill happens before nominations so it affects who can nominate that day."
@@ -2251,6 +2251,13 @@
       "script": "Custom",
       "type": "outsider",
       "when": "each_night"
+    },
+    "Alsaahir": {
+      "type": "townsfolk",
+      "script": "Experimental",
+      "ability": "Each night*, choose a player: they are poisoned tonight and tomorrow day.",
+      "when": "each_night",
+      "notes": []
     }
   }
 }

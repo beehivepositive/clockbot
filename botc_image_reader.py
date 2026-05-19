@@ -379,9 +379,10 @@ def extract_player_names(img_bytes):
     items, img_w, img_h = _ocr_grimoire(img_bytes)
     cx, cy = img_w / 2, img_h / 2
 
-    # Exclude text whose centre is within ~15 % of the shorter image dimension
-    # from the image centre — that zone has coloured game icons, not player names.
-    inner_r = min(img_w, img_h) * 0.15
+    # Exclude text within 25 % of the shorter image dimension from the centre.
+    # Real player names sit on the outer ring (≥33 % of min-dim from centre);
+    # game icons and noise from textured backgrounds cluster inside that zone.
+    inner_r = min(img_w, img_h) * 0.25
 
     # Cluster radius: if two OCR items are this close, they're the same label.
     # Keeps e.g. "(bal..." from splitting Butti into two entries.
