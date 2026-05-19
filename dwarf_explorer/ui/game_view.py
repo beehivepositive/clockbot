@@ -275,6 +275,10 @@ _PUZZLE_STATES: dict[tuple[int, int], dict] = {}
 # Keyed by player's location state; invalidated explicitly after tile changes.
 _VP_CACHE: dict[int, tuple[tuple, list]] = {}
 
+# Stores the tile type that was under a bomb before placement so it can be restored after blast.
+# Key: (cave_id, local_x, local_y).  Values are consumed by _bomb_blast_cave.
+_bomb_original_tiles: dict[tuple[int, int, int], str] = {}
+
 
 def _vp_cache_key(player) -> tuple:
     """Return a tuple that uniquely identifies the viewport the player currently sees."""
@@ -3166,7 +3170,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             _ct = grid[4][4] if len(grid) > 4 and len(grid[4]) > 4 else None
             if _ct:
                 _t = _ct.terrain
-                _WATER_TILES = {"sapling", "ancient_planted", "ancient_sapling", "short_grass", "seedling",
+                _WATER_TILES = {"sapling", "pinecone_planted", "ancient_planted", "ancient_sapling", "short_grass", "seedling",
                                 "crop_planted", "crop_sprout"}
                 _SHOVEL_TILES = {"sapling", "dirt", "grass", "plains", "sand", "short_grass"}
                 _FILL_WATER = {"river", "bridge", "shallow_water", "deep_water",
@@ -5930,6 +5934,7 @@ class PlantOverworldView(discord.ui.View):
     """Choose what to plant on an overworld dirt tile (sapling, ancient_seed, or ancient_sapling)."""
 
     _LABELS = {
+        "pinecone":         ("🌲", "Pinecone"),
         "sapling":          ("🌱", "Sapling"),
         "ancient_seed":     ("🌱", "Ancient Seed"),
         "ancient_sapling":  ("🌳", "Ancient Sapling"),
@@ -5996,13 +6001,15 @@ async def handle_plant(
         has_sapling = any(it["item_id"] == "sapling" and it["quantity"] > 0 for it in inv)
         has_ancient = any(it["item_id"] == "ancient_seed" and it["quantity"] > 0 for it in inv)
         has_ancient_sapling = any(it["item_id"] == "ancient_sapling" and it["quantity"] > 0 for it in inv)
+        has_pinecone = any(it["item_id"] == "pinecone" and it["quantity"] > 0 for it in inv)
         choices = ([item for item, flag in [
+            ("pinecone", has_pinecone),
             ("sapling", has_sapling),
             ("ancient_seed", has_ancient),
             ("ancient_sapling", has_ancient_sapling),
         ] if flag])
         if not choices:
-            content = render_grid(grid, player, "🌱 You have no saplings or ancient seeds to plant.")
+            content = render_grid(grid, player, "🌱 You have no saplings, pinecones, or ancient seeds to plant.")
             await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
             return
         if len(choices) == 1:
@@ -6109,7 +6116,10 @@ async def _plant_overworld_item(
     """Plant a sapling, ancient_seed, or ancient_sapling item on the player's current dirt tile."""
     seed_w = await get_or_create_world(db, guild_id)
     wx, wy = player.world_x, player.world_y
-    if item_id == "ancient_seed":
+    if item_id == "pinecone":
+        tile_type = "pinecone_planted"
+        msg = "🌲 You press the pinecone into the dirt. Water it to sprout a sapling!"
+    elif item_id == "ancient_seed":
         tile_type = "ancient_planted"
         msg = "🌱 You plant the ancient seed in the dirt. Water it to sprout a sapling!"
     elif item_id == "ancient_sapling":
@@ -9440,7 +9450,16 @@ async def _bomb_blast_cave(
                 (cave_id, tx, ty),
             )
             if t in _BOMB_BLAST_CAVE_DESTROYS or t == "bomb_lit":
-                if t == "cracked_stone":
+                if t == "bomb_lit":
+                    # Restore the tile that was under the bomb before placement
+                    _MINEABLE = {"cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"}
+                    _orig_t = _bomb_original_tiles.pop((cave_id, tx, ty), "stone_floor")
+                    restore_t = "stone_floor" if _orig_t in _MINEABLE else _orig_t
+                    await db.execute(
+                        "UPDATE cave_tiles SET tile_type=? WHERE cave_id=? AND local_x=? AND local_y=?",
+                        (restore_t, cave_id, tx, ty)
+                    )
+                elif t == "cracked_stone":
                     # Convert cracked wall to floor
                     await db.execute(
                         "UPDATE cave_tiles SET tile_type='stone_floor' WHERE cave_id=? AND local_x=? AND local_y=?",
@@ -9520,6 +9539,13 @@ async def _execute_tool_action(
         if player.watering_can_uses <= 0:
             grid = await load_viewport(wx, wy, seed, db)
             content = render_grid(grid, player, "🪣 Your watering can is empty! Fill it next to a water source.")
+        elif terrain == "pinecone_planted":
+            await set_tile_override(db, wx, wy, "sapling")
+            player.watering_can_uses = max(0, player.watering_can_uses - 1)
+            await db.execute("UPDATE players SET watering_can_uses=? WHERE user_id=?", (player.watering_can_uses, user_id))
+            _invalidate_vp(user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
+            content = render_grid(grid, player, "🌱 You water the pinecone. A tiny sapling sprouts! Water it again to grow a tree.")
         elif terrain == "sapling":
             await set_tile_override(db, wx, wy, "forest")
             player.watering_can_uses = max(0, player.watering_can_uses - 1)
@@ -9683,7 +9709,7 @@ async def _execute_tool_action(
         if terrain in ("forest", "dense_forest"):
             # Chop the tree you're standing on — highest priority
             rng = _random.Random()
-            await set_tile_override(db, wx, wy, "sapling")
+            await set_tile_override(db, wx, wy, "dirt")
             await add_to_inventory(db, user_id, "log", 1)
             extras = []
             if rng.random() < 0.66:
@@ -9692,9 +9718,14 @@ async def _execute_tool_action(
             if rng.random() < 0.33:
                 await add_to_inventory(db, user_id, "resin", 1)
                 extras.append("some resin")
+            pinecone_count = rng.randint(0, 3)
+            if pinecone_count > 0:
+                await add_to_inventory(db, user_id, "pinecone", pinecone_count)
+                cone_str = f"{pinecone_count} pinecone{'s' if pinecone_count > 1 else ''}"
+                extras.append(cone_str)
             extra_str = (", " + ", ".join(extras)) if extras else ""
             grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player, f"🪓 You chop down the tree! Got a log{extra_str}. A sapling remains.")
+            content = render_grid(grid, player, f"🪓 You chop down the tree! Got a log{extra_str}.")
         else:
             # No forest underfoot — check adjacent tiles for an ancient tree (up > down > left > right)
             _adj_dir = None
@@ -9826,8 +9857,15 @@ async def _execute_tool_action(
             await remove_from_inventory(db, user_id, "bomb", 1)
             await _auto_unequip_depleted(db, user_id, "bomb", player)
             if player.in_cave:
-                # Place bomb_lit in cave
+                # Place bomb_lit in cave, remembering the original tile so it can be restored
                 cx, cy = player.cave_x, player.cave_y
+                _orig_row = await db.fetch_one(
+                    "SELECT tile_type FROM cave_tiles WHERE cave_id=? AND local_x=? AND local_y=?",
+                    (player.cave_id, cx, cy),
+                )
+                _bomb_original_tiles[(player.cave_id, cx, cy)] = (
+                    _orig_row["tile_type"] if _orig_row else "stone_floor"
+                )
                 await db.execute(
                     "UPDATE cave_tiles SET tile_type='bomb_lit' WHERE cave_id=? AND local_x=? AND local_y=?",
                     (player.cave_id, cx, cy)

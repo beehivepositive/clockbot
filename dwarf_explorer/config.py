@@ -50,6 +50,7 @@ TERRAIN_EMOJI = {
     "crop_ripe":    "\U0001F33B",    # 🌻 sunflower
     # Player-modifiable terrain
     "sapling":          "\U0001F331",    # 🌱
+    "pinecone_planted": "\U0001F331",    # 🌱 planted pinecone (water to grow into sapling)
     "ancient_planted":  "\U0001F331",    # 🌱 planted ancient seed (water to grow into sapling)
     "ancient_sapling":  "\U0001F331",    # 🌱 planted ancient sapling (water to grow into 2×2 tree)
     "short_grass":      "\U0001F7E9",    # 🟩  short grass
@@ -166,6 +167,7 @@ ITEM_EMOJI = {
     "plant_fiber": "\U0001F9F5",     # 🧵
     "dry_grass": "\U0001F33E",       # 🌾
     "seed": "\U0001F330",            # 🌰
+    "pinecone": "\U0001F332",        # 🌲 pinecone (plantable, grows into sapling)
     "sapling": "\U0001F331",         # 🌱
     "flint": "\U0001FAA8",           # 🪨
     "iron_ore": "\U0001F7EB",        # 🟫
@@ -266,7 +268,7 @@ FARM_CROPS: dict[str, dict] = {
 WALKABLE_TILES = {
     "sand", "plains", "grass", "forest", "hills", "path",
     "village", "ruins", "ruins_looted", "shrine", "cave", "bridge",
-    "sapling", "ancient_planted", "ancient_sapling", "short_grass", "seedling", "dirt",
+    "sapling", "pinecone_planted", "ancient_planted", "ancient_sapling", "short_grass", "seedling", "dirt",
     "farmland", "crop_planted", "crop_sprout", "crop_ripe",
     "player_house",  # player-built house — walkable (enter on interact)
     "harbor",        # harbor dock — walkable
