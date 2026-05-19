@@ -7269,6 +7269,63 @@ async def _complete_delivery_quests_for_village(
     return " ".join(msgs)
 
 
+# ── Wayerwood attunement helper ───────────────────────────────────────────────
+
+async def _try_wayerwood_attune(player, user_id: int, db) -> str | None:
+    """Hot/cold wayerwood attunement signal.
+
+    Returns a flavour-text string when wayerwood is equipped (whether or not a
+    stone is available), so the caller can surface it instead of the generic
+    "Nothing to interact with" message.  Returns None when the wayerwood is not
+    equipped so the caller falls through to its default message.
+
+    Compares the current distance to the nearest cracked_stone against the
+    distance recorded on the *previous* attunement attempt for this user,
+    mirroring the forest "pulses / dims / hums" mechanic.
+    """
+    if getattr(player, "accessory", None) != "wayerwood":
+        return None
+
+    # No stone → dormant message (no stone consumed)
+    stone_row = await db.fetch_one(
+        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='rock'", (user_id,)
+    )
+    if not stone_row or stone_row["quantity"] < 1:
+        return "🪄 *The wayerwood feels dormant. It needs a **stone** to attune.*"
+
+    # Consume the stone
+    await remove_from_inventory(db, user_id, "rock", 1)
+
+    # Outside a cave → lifeless flavour
+    if not getattr(player, "in_cave", False):
+        return "🪄 *The wayerwood feels lifeless here. It only stirs in the depths of the earth.*"
+
+    # In cave — find nearest cracked_stone
+    cracks = await db.fetch_all(
+        "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
+        (player.cave_id,)
+    )
+    if not cracks:
+        return "🪄 *The wayerwood hums quietly. No hidden passages stir within these walls.*"
+
+    cx, cy = player.cave_x, player.cave_y
+    nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx) + abs(r["local_y"] - cy))
+    dist_now = abs(nearest["local_x"] - cx) + abs(nearest["local_y"] - cy)
+
+    # Compare against last recorded distance for this user
+    last_dist = _ui_state.get(user_id, {}).get("ww_last_dist")
+    _ui_state.setdefault(user_id, {})["ww_last_dist"] = dist_now
+
+    if last_dist is None:
+        return "🪄 *The wayerwood pulses faintly. Something stirs within these walls...*"
+    elif dist_now < last_dist:
+        return "🪄 *The wayerwood pulses... pulling you forward.*"
+    elif dist_now > last_dist:
+        return "🪄 *The wayerwood dims... you've veered away.*"
+    else:
+        return "🪄 *The wayerwood hums steadily.*"
+
+
 # ── Interact ──────────────────────────────────────────────────────────────────
 
 async def handle_interact(
@@ -7780,7 +7837,8 @@ async def handle_interact(
 
         else:
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-            content = render_grid(grid, player, "Nothing to interact with here.")
+            _ww_msg = await _try_wayerwood_attune(player, user_id, db)
+            content = render_grid(grid, player, _ww_msg if _ww_msg else "Nothing to interact with here.")
 
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -8585,40 +8643,8 @@ async def handle_interact(
 
         else:
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-            # ── Wayerwood cave attunement ───────────────────────────────────────
-            if getattr(player, "accessory", None) == "wayerwood":
-                stone_row = await db.fetch_one(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='rock'", (user_id,)
-                )
-                has_stone = bool(stone_row and stone_row["quantity"] > 0)
-                if has_stone:
-                    await remove_from_inventory(db, user_id, "rock", 1)
-                    # Find nearest cracked_stone in this cave
-                    cracks = await db.fetch_all(
-                        "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
-                        (player.cave_id,)
-                    )
-                    if cracks:
-                        cx2, cy2 = player.cave_x, player.cave_y
-                        nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx2) + abs(r["local_y"] - cy2))
-                        nx, ny = nearest["local_x"], nearest["local_y"]
-                        dx2, dy2 = nx - cx2, ny - cy2
-                        if abs(dx2) > abs(dy2):
-                            hint = "east" if dx2 > 0 else "west"
-                        else:
-                            hint = "south" if dy2 > 0 else "north"
-                        dist = abs(dx2) + abs(dy2)
-                        content = render_grid(grid, player,
-                            f"🪄 The wayerwood trembles. A weak wall lies to the **{hint}** (~{dist} tiles away). "
-                            f"Blast it open with a bomb.")
-                    else:
-                        content = render_grid(grid, player,
-                            "🪄 The wayerwood quivers, but senses no weak walls in this cave.")
-                else:
-                    content = render_grid(grid, player,
-                        "🪄 The wayerwood feels dormant. It needs a **stone** to attune to the cave walls.")
-            else:
-                content = render_grid(grid, player, "Nothing to interact with here.")
+            _ww_msg = await _try_wayerwood_attune(player, user_id, db)
+            content = render_grid(grid, player, _ww_msg if _ww_msg else "Nothing to interact with here.")
 
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -10094,7 +10120,8 @@ async def handle_action(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
-        content = render_grid(grid, player, "Nothing to interact with nearby.")
+        _ww_msg = await _try_wayerwood_attune(player, user_id, db)
+        content = render_grid(grid, player, _ww_msg if _ww_msg else "Nothing to interact with nearby.")
         view = _game_view(guild_id, user_id, player, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
         return
@@ -10490,7 +10517,8 @@ async def handle_action(
 
     # Fallback
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    content = render_grid(grid, player, "Nothing to interact with nearby.")
+    _ww_msg = await _try_wayerwood_attune(player, user_id, db)
+    content = render_grid(grid, player, _ww_msg if _ww_msg else "Nothing to interact with nearby.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
