@@ -930,6 +930,7 @@ VILLAGE_EMOJI = {
     "vil_guard":        "\U0001F482",        # 💂  guard NPC
     "vil_lumber_mill":  "\U0001FA9A",  # 🪚  waterwheel lumber mill
     "vil_farmhouse":    "🏡",        # 🏡  farmhouse
+    "vil_armory":       "\U0001F6E1️",  # 🛡️  armory
     "vil_fence":        "🟫",        # 🟫  fence post (overridable with :fence:)
     "vil_fence_gate":   "🚪",        # 🚪  fence gate — walkable (overridable with :fence_gate:)
     # Farmland tiles

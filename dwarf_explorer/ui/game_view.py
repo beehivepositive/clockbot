@@ -2910,7 +2910,7 @@ def _compute_context_labels(
             center_label, center_enabled = "🚪", True
         elif t in ("vil_house", "vil_church", "vil_bank", "vil_shop",
                     "vil_blacksmith", "vil_tavern", "vil_hospital",
-                    "vil_lumber_mill", "vil_farmhouse"):
+                    "vil_lumber_mill", "vil_farmhouse", "vil_armory"):
             center_label, center_enabled = "🚪", True
         elif t == "vil_villager":
             center_label, center_enabled = "💬 Talk", True
@@ -7673,7 +7673,7 @@ async def handle_interact(
 
         if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
                               "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill",
-                              "vil_lumber_mill", "vil_farmhouse"):
+                              "vil_lumber_mill", "vil_farmhouse", "vil_armory"):
             result = await get_building_at(player.village_id, player.village_x, player.village_y, db)
             if result:
                 house_id, btype, hx, hy = result
@@ -7693,6 +7693,7 @@ async def handle_interact(
                     "shop": "shop", "blacksmith": "blacksmith",
                     "tavern": "tavern", "hospital": "hospital", "mill": "mill",
                     "lumber_mill": "lumber mill", "farmhouse": "farmhouse",
+                    "armory": "armory",
                 }
                 grid = await load_building_viewport(house_id, hx, hy, db)
                 content = render_grid(grid, player, f"You enter the {labels.get(btype, 'building')}.")
