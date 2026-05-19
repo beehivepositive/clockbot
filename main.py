@@ -1519,10 +1519,10 @@ async def scriptimage_cmd(interaction: discord.Interaction, game_state: Optional
 @bot.tree.command(name="getgamejson", description="Scan a game logs channel, read script + grimoire images, return a game state JSON", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     channel="The game logs channel to scan",
-    limit="How many recent messages to look through (default 150)",
+    limit="Max images to inspect before giving up (default 20)",
     debug="Return the preprocessed grimoire image and raw OCR output for debugging",
 )
-async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 150, debug: bool = False):
+async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.TextChannel, limit: Optional[int] = 20, debug: bool = False):
     await interaction.response.defer()
     try:
         from botc_image_reader import classify_image, extract_script_characters, extract_player_names, debug_grimoire, debug_script, TESSERACT_OK
@@ -1537,13 +1537,15 @@ async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.Tex
     player_names = None
     script_url = None
     grim_url = None
+    images_seen = 0
 
     IMAGE_EXTS_SET = {".png", ".jpg", ".jpeg", ".webp"}
     async with aiohttp.ClientSession() as session:
-        async for msg in channel.history(limit=limit, oldest_first=True):
+        async for msg in channel.history(limit=None, oldest_first=True):
             for att in msg.attachments:
                 if not any(att.filename.lower().endswith(e) for e in IMAGE_EXTS_SET):
                     continue
+                images_seen += 1
                 try:
                     async with session.get(att.url) as resp:
                         if resp.status != 200:
@@ -1583,6 +1585,8 @@ async def getgamejson_cmd(interaction: discord.Interaction, channel: discord.Tex
                 except Exception:
                     continue
             if script_chars is not None and player_names is not None:
+                break
+            if images_seen >= limit:
                 break
 
     if script_chars is None and player_names is None:
