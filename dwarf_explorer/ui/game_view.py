@@ -5516,6 +5516,7 @@ async def handle_mine(
     interaction: discord.Interaction, guild_id: int, user_id: int, direction: str
 ) -> None:
     db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)  # free — cached in memory
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if not player.in_cave:
@@ -5526,7 +5527,7 @@ async def handle_mine(
 
     hand_items: set[str] = {player.hand_1, player.hand_2} - {None}
     if "pickaxe" not in hand_items:
-        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "You need a pickaxe to mine that rock.")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -5534,7 +5535,7 @@ async def handle_mine(
 
     tile = await load_cave_single_tile(player.cave_id, nx, ny, db)
     if tile.terrain not in ("cave_rock", "iron_ore_deposit", "gold_ore_deposit", "rift_deposit"):
-        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "That rock has already been mined.")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
         await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -5546,14 +5547,14 @@ async def handle_mine(
             "SELECT boss_defeated FROM caves WHERE cave_id=?", (player.cave_id,)
         )
         if not cave_meta or not cave_meta["boss_defeated"]:
-            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+            grid = await _cached_grid(user_id, player, seed, db)
             content = render_grid(grid, player,
                 "💠 This Chronolite formation is protected by the Echo's power. "
                 "Defeat the Temporal Echo first.")
             view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
-        # Mine the deposit
+        # Mine the deposit — tile is modified, bust cache then reload fresh
         rng_rift = _random.Random(hash((user_id, nx, ny, "rift")))
         ore_count = rng_rift.randint(2, 4) + (1 if player.accessory == "ring_of_luck" else 0)
         await db.execute(
@@ -5563,7 +5564,8 @@ async def handle_mine(
         gained, drop_msg = await _give_items_or_drop(db, guild_id, user_id, player,
                                                       [("chronolite", ore_count)])
         loot_str = ", ".join(gained) if gained else "nothing"
-        grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        _invalidate_vp(user_id)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player,
             f"💠 You shatter the deposit! Got: {loot_str}.{drop_msg}")
         view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
@@ -5613,7 +5615,9 @@ async def handle_mine(
     gained, drop_msg = await _give_items_or_drop(db, guild_id, user_id, player, raw_loot)
     loot_str = ", ".join(gained) if gained else "nothing"
 
-    grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+    # Tile was modified — bust cache so next press sees the cleared rock
+    _invalidate_vp(user_id)
+    grid = await _cached_grid(user_id, player, seed, db)
     content = render_grid(grid, player, f"You mine the rock! Got: {loot_str}.{drop_msg}")
     view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -5637,7 +5641,6 @@ async def handle_sprint(
 
     status = "Sprint ON \U0001F3C3" if player.sprinting else "Sprint OFF"
     # Use the canonical helpers so every interior type gets the right grid and view.
-    _invalidate_vp(user_id)
     grid = await _cached_grid(user_id, player, seed, db)
     view = await _build_player_view(guild_id, user_id, player, db, grid)
     _nav = _ui_state.get(user_id, {}).get("nav_target")
@@ -5976,13 +5979,13 @@ async def handle_plant(
 ) -> None:
     """Bottom-left plant button: plant seeds on vil_farmland OR saplings/ancient seeds on overworld dirt."""
     db = await get_database(guild_id)
+    seed_w = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     # ── Overworld: plant sapling / ancient_seed on dirt ──────────────────────
     if not player.in_village and not player.in_house and not player.in_cave:
-        seed_w = await get_or_create_world(db, guild_id)
         wx, wy = player.world_x, player.world_y
-        grid = await load_viewport(wx, wy, seed_w, db)
+        grid = await _cached_grid(user_id, player, seed_w, db)
         vc_ = 4
         center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
         if center_t != "dirt":
@@ -6013,7 +6016,7 @@ async def handle_plant(
     if not player.in_village or player.in_house:
         return
 
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    grid = await _cached_grid(user_id, player, seed_w, db)
     vc_ = 4  # VIEWPORT_CENTER
     center_t = grid[vc_][vc_].terrain if len(grid) > vc_ and len(grid[vc_]) > vc_ else None
     if center_t != "vil_farmland":
@@ -6033,12 +6036,13 @@ async def handle_plant(
         return
 
     if len(seed_types_held) == 1:
-        # Plant directly
+        # Plant directly — tile modified, invalidate then reload fresh
         stype = seed_types_held[0]
         crop = FARM_CROPS[stype]
         await remove_from_inventory(db, user_id, stype, 1)
         await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        _invalidate_vp(user_id)
+        grid = await _cached_grid(user_id, player, seed_w, db)
         content = render_grid(grid, player, f"🌱 You plant {stype.replace('_',' ')} in the soil. Water it to grow!")
         await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
         return
@@ -6054,12 +6058,13 @@ async def handle_plant_choice(
 ) -> None:
     """Confirm a specific seed choice from PlantSeedView."""
     db = await get_database(guild_id)
+    seed_w = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     if not player.in_village or player.in_house:
         return
 
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    grid = await _cached_grid(user_id, player, seed_w, db)
     crop = FARM_CROPS.get(seed_type)
     if not crop:
         content = render_grid(grid, player, "Unknown seed type.")
@@ -6078,7 +6083,8 @@ async def handle_plant_choice(
     else:
         await remove_from_inventory(db, user_id, seed_type, 1)
         await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop["planted"])
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        _invalidate_vp(user_id)
+        grid = await _cached_grid(user_id, player, seed_w, db)
         content = render_grid(grid, player, f"🌱 You plant {seed_type.replace('_',' ')} in the soil. Water it to grow!")
 
     await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
@@ -6089,12 +6095,9 @@ async def handle_plant_cancel(
 ) -> None:
     """Cancel seed selection."""
     db = await get_database(guild_id)
+    seed_w = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    if player.in_village and not player.in_house:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-    else:
-        seed_w = await get_or_create_world(db, guild_id)
-        grid = await load_viewport(player.world_x, player.world_y, seed_w, db)
+    grid = await _cached_grid(user_id, player, seed_w, db)
     content = render_grid(grid, player, "Planting cancelled.")
     await interaction.response.edit_message(embed=_embed(content), content=None, view=_game_view(guild_id, user_id, player, grid=grid))
 
@@ -7783,7 +7786,7 @@ async def handle_interact(
 
         elif vtile.terrain in _VIL_SEEDS_TILES:
             # Water seeded farmland
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
             hand_items_v = {h for h in (player.hand_1, player.hand_2) if h}
             if "watering_can" not in hand_items_v:
                 content = render_grid(grid, player, "🌱 Equip your watering can to water these seeds.")
@@ -7795,7 +7798,8 @@ async def handle_interact(
                 )
                 if crop_info:
                     await set_village_tile(db, player.village_id, player.village_x, player.village_y, crop_info["mature"])
-                    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                    _invalidate_vp(user_id)
+                    grid = await _cached_grid(user_id, player, seed, db)
                     content = render_grid(grid, player, f"💧 You water the seeds. A {crop_info['emoji']} crop sprouts!")
                 else:
                     content = render_grid(grid, player, "💧 You water the soil.")
@@ -7804,7 +7808,7 @@ async def handle_interact(
 
         elif vtile.terrain in _VIL_CROP_TILES:
             # Harvest ripe crop
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
             crop_info = next(
                 (c for c in FARM_CROPS.values() if c["mature"] == vtile.terrain), None
             )
@@ -7818,7 +7822,8 @@ async def handle_interact(
                 if seed_item:
                     seed_qty = _random.randint(1, crop_info.get("seed_drop_max", 2))
                     await add_to_inventory(db, user_id, seed_item, seed_qty)
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                _invalidate_vp(user_id)
+                grid = await _cached_grid(user_id, player, seed, db)
                 seed_suffix = f" + {seed_qty}× 🌰 seed" if seed_qty else ""
                 content = render_grid(grid, player, f"🌾 You harvest the crop! Got {qty}× {crop_info['emoji']} {crop_info['yield']}{seed_suffix}.")
             else:
@@ -7826,17 +7831,18 @@ async def handle_interact(
 
         elif vtile.terrain == "vil_grass":
             # Till grass into farmland (requires hoe)
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
             hand_items_v = {h for h in (player.hand_1, player.hand_2) if h}
             if "hoe" in hand_items_v:
                 await set_village_tile(db, player.village_id, player.village_x, player.village_y, "vil_farmland")
-                grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+                _invalidate_vp(user_id)
+                grid = await _cached_grid(user_id, player, seed, db)
                 content = render_grid(grid, player, "🟤 You till the soil into farmland.")
             else:
                 content = render_grid(grid, player, "Nothing to interact with here.")
 
         else:
-            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            grid = await _cached_grid(user_id, player, seed, db)
             _ww_msg = await _try_wayerwood_attune(player, user_id, db)
             content = render_grid(grid, player, _ww_msg if _ww_msg else "Nothing to interact with here.")
 
@@ -9820,7 +9826,8 @@ async def _execute_tool_action(
             else:
                 # Place bomb_lit tile override on player's position
                 await set_tile_override(db, wx, wy, "bomb_lit")
-                grid = await load_viewport(wx, wy, seed, db)
+                _invalidate_vp(user_id)
+                grid = await _cached_grid(user_id, player, seed, db)
                 content = render_grid(grid, player, "💣 You light the fuse! **Get clear!** (4 seconds...)")
                 # Schedule blast
                 asyncio.create_task(_bomb_blast_overworld(
@@ -9884,7 +9891,7 @@ async def _execute_tool_action(
         content = render_grid(grid, player, f"Can't use {tool.replace('_', ' ')} here.")
 
     if grid is None:
-        grid = await load_viewport(wx, wy, seed, db)
+        grid = await _cached_grid(user_id, player, seed, db)
     if content is None:
         content = render_grid(grid, player, "Nothing happened.")
 
@@ -9940,7 +9947,7 @@ async def handle_swap_hands(
 
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     h1_name = h2.replace("_", " ") if h2 else "empty"
-    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    grid = await _cached_grid(user_id, player, seed, db)
     content = render_grid(grid, player, f"↔️ Swapped hands. Main hand: **{h1_name}**.")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -9975,10 +9982,10 @@ async def handle_interact2(
             heal = min(heal_amt, player.max_hp - player.hp)
             player.hp += heal
             await update_player_stats(db, user_id, hp=player.hp)
-            grid = await load_viewport(wx, wy, seed, db)
+            grid = await _cached_grid(user_id, player, seed, db)
             content = render_grid(grid, player, f"🍗 You eat the {food_id.replace('_', ' ')}. Restored **{heal}** HP. ({player.hp}/{player.max_hp})")
         else:
-            grid = await load_viewport(wx, wy, seed, db)
+            grid = await _cached_grid(user_id, player, seed, db)
             content = render_grid(grid, player, "Nothing to eat here.")
     elif "map_fragment" in hand_items:
         frag_row = await db.fetch_one(
@@ -9987,7 +9994,7 @@ async def handle_interact2(
         if frag_row and frag_row["quantity"] >= 5:
             existing = await get_treasure_map(db, user_id)
             if existing:
-                grid = await load_viewport(wx, wy, seed, db)
+                grid = await _cached_grid(user_id, player, seed, db)
                 content = render_grid(grid, player, "🗺️ You already have an active treasure map.")
                 view = _game_view(guild_id, user_id, player, grid=grid)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -9997,14 +10004,14 @@ async def handle_interact2(
             tx, ty = await _find_treasure_location(user_id, seed, db)
             await set_treasure_map(db, user_id, tx, ty)
             await add_to_inventory(db, user_id, "treasure_map", 1)
-            grid = await load_viewport(wx, wy, seed, db)
+            grid = await _cached_grid(user_id, player, seed, db)
             content = render_grid(grid, player, "🗺️ You assemble 5 map fragments into a **treasure map**! Check your inventory.")
         else:
-            grid = await load_viewport(wx, wy, seed, db)
+            grid = await _cached_grid(user_id, player, seed, db)
             count = frag_row["quantity"] if frag_row else 0
             content = render_grid(grid, player, f"🗺️ You need 5 map fragments to make a treasure map. ({count}/5)")
     else:
-        grid = await load_viewport(wx, wy, seed, db)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "Nothing to do here.")
 
     view = _game_view(guild_id, user_id, player, grid=grid)
@@ -10734,7 +10741,8 @@ async def handle_house_delete(
         await update_player_cave_state(db, user_id, True, loc_cave_id, loc_x, loc_y)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         player = await get_or_create_player(db, user_id, interaction.user.display_name)
-        grid = await load_cave_viewport(loc_cave_id, loc_x, loc_y, db)
+        _invalidate_vp(user_id)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "🗑️ House demolished.")
     else:
         # Restore overworld tile structure override (remove player_house)
@@ -10747,7 +10755,8 @@ async def handle_house_delete(
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         player = await get_or_create_player(db, user_id, interaction.user.display_name)
-        grid = await load_viewport(loc_x, loc_y, seed, db)
+        _invalidate_vp(user_id)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "🗑️ House demolished.")
 
     _ui_state[user_id] = {}
@@ -16055,10 +16064,11 @@ async def handle_village_recruit_confirm(
 ) -> None:
     """Player confirmed recruiting a village NPC."""
     db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.pop(user_id, {})
     if state.get("type") != "village_recruit_npc":
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "Something went wrong.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
@@ -16066,7 +16076,7 @@ async def handle_village_recruit_confirm(
 
     crew = await get_ship_crew(db, user_id)
     if len(crew) >= MAX_CREW_SIZE:
-        grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        grid = await _cached_grid(user_id, player, seed, db)
         content = render_grid(grid, player, "Your crew is already full!")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
@@ -16093,7 +16103,8 @@ async def handle_village_recruit_confirm(
     if rep_pos is not None:
         await set_player_village_override(db, user_id, village_id, rep_pos[0], rep_pos[1], "vil_villager")
 
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    _invalidate_vp(user_id)
+    grid = await _cached_grid(user_id, player, seed, db)
     content = render_grid(grid, player,
         f"⚓ **{npc_name}** joins your crew! (slot {slot}) "
         f"Assign them tasks from the ship's below deck.")
@@ -16106,9 +16117,10 @@ async def handle_village_recruit_cancel(
 ) -> None:
     """Player cancelled recruiting a village NPC."""
     db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     _ui_state.pop(user_id, None)
-    grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+    grid = await _cached_grid(user_id, player, seed, db)
     content = render_grid(grid, player, "\"Safe travels, stranger.\"")
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=_game_view(guild_id, user_id, player, grid=grid))

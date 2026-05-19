@@ -520,32 +520,43 @@ async def add_to_inventory(
         return 0  # canoes always fit (no stack limit applies)
 
     remaining = quantity
-    # Fill existing stacks that have room
+    # Fill existing stacks that have room — batch all UPDATEs into one executemany
     rows = await db.fetch_all(
         "SELECT id, quantity FROM inventory WHERE user_id = ? AND item_id = ? ORDER BY slot_index, id",
         (user_id, item_id),
     )
+    fill_updates: list[tuple] = []
     for row in rows:
         if remaining <= 0:
             break
         space = MAX_STACK_SIZE - row["quantity"]
         if space > 0:
             add = min(space, remaining)
-            await db.execute("UPDATE inventory SET quantity = quantity + ? WHERE id = ?", (add, row["id"]))
+            fill_updates.append((add, row["id"]))
             remaining -= add
-    # Create new slots for any overflow, respecting the slot cap
-    while remaining > 0:
-        if max_slots is not None:
-            used = await get_inventory_slot_count(db, user_id)
-            if used >= max_slots:
-                break   # inventory full — return whatever is left
-        add = min(MAX_STACK_SIZE, remaining)
-        next_idx = await _next_slot_index(db, user_id)
-        await db.execute(
-            "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, ?, ?, ?)",
-            (user_id, item_id, add, next_idx),
+    if fill_updates:
+        await db.executemany(
+            "UPDATE inventory SET quantity = quantity + ? WHERE id = ?", fill_updates
         )
-        remaining -= add
+
+    # Create new slots for overflow — compute next_idx once, batch INSERTs
+    if remaining > 0:
+        # Fetch slot count once (not per-iteration)
+        used = await get_inventory_slot_count(db, user_id) if max_slots is not None else 0
+        next_idx = await _next_slot_index(db, user_id)
+        inserts: list[tuple] = []
+        while remaining > 0:
+            if max_slots is not None and (used + len(inserts)) >= max_slots:
+                break
+            add = min(MAX_STACK_SIZE, remaining)
+            inserts.append((user_id, item_id, add, next_idx))
+            next_idx += 1
+            remaining -= add
+        if inserts:
+            await db.executemany(
+                "INSERT INTO inventory (user_id, item_id, quantity, slot_index) VALUES (?, ?, ?, ?)",
+                inserts,
+            )
     return remaining  # 0 means everything fit
 
 
@@ -579,16 +590,19 @@ async def _compact_slot_index(db: Database, user_id: int) -> None:
     Canoe rows occupy TWO visual slots (the DB row is slot N, the virtual
     canoe_right lives at slot N+1).  After compacting we must leave that
     gap so the right half is never overwritten by the next item.
+    Uses a single executemany call instead of N individual UPDATEs.
     """
     rows = await db.fetch_all(
         "SELECT id, item_id FROM inventory WHERE user_id = ? ORDER BY slot_index, id",
         (user_id,),
     )
+    updates: list[tuple] = []
     new_idx = 0
     for row in rows:
-        await db.execute("UPDATE inventory SET slot_index = ? WHERE id = ?", (new_idx, row["id"]))
-        # Canoe uses two visual slots — advance by 2 so the right half slot stays free
+        updates.append((new_idx, row["id"]))
         new_idx += 2 if row["item_id"] == "canoe" else 1
+    if updates:
+        await db.executemany("UPDATE inventory SET slot_index = ? WHERE id = ?", updates)
 
 
 async def swap_inventory_slots(db: Database, user_id: int, slot_a: int, slot_b: int) -> None:

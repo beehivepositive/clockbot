@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import time
 from dataclasses import dataclass
 
@@ -107,19 +108,24 @@ async def load_viewport(center_x: int, center_y: int, seed: int, db=None) -> lis
     Out-of-bounds tiles use terrain="void".
     """
     half = VIEWPORT_CENTER
-    grid: list[list[TileData]] = []
 
-    for local_y in range(VIEWPORT_SIZE):
-        row: list[TileData] = []
-        for local_x in range(VIEWPORT_SIZE):
-            wx = center_x - half + local_x
-            wy = center_y - half + local_y
-            if not (0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE):
-                row.append(TileData(terrain="void", world_x=wx, world_y=wy))
-            else:
-                biome = get_biome(wx, wy, seed)
-                row.append(TileData(terrain=biome, world_x=wx, world_y=wy))
-        grid.append(row)
+    # Terrain generation (fBm noise per tile) is CPU-bound — run in a thread
+    # so it doesn't block the event loop for other users.
+    def _gen_terrain() -> list[list[TileData]]:
+        _grid: list[list[TileData]] = []
+        for local_y in range(VIEWPORT_SIZE):
+            _row: list[TileData] = []
+            for local_x in range(VIEWPORT_SIZE):
+                wx = center_x - half + local_x
+                wy = center_y - half + local_y
+                if not (0 <= wx < WORLD_SIZE and 0 <= wy < WORLD_SIZE):
+                    _row.append(TileData(terrain="void", world_x=wx, world_y=wy))
+                else:
+                    _row.append(TileData(terrain=get_biome(wx, wy, seed), world_x=wx, world_y=wy))
+            _grid.append(_row)
+        return _grid
+
+    grid = await asyncio.to_thread(_gen_terrain)
 
     if db is not None:
         x_min = center_x - half
