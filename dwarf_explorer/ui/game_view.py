@@ -9329,7 +9329,10 @@ async def _bomb_blast_overworld(
     bx: int, by: int, seed: int, db,
 ) -> None:
     """Fires 4 seconds after a bomb is placed in the overworld."""
+    import logging as _bbo
+    _bbo_log = _bbo.getLogger(__name__)
     await asyncio.sleep(4)
+    db = await get_database(guild_id)
     try:
         blast_msg_parts: list[str] = ["💥 **BOOM!** The bomb explodes!"]
         player = await get_or_create_player(db, user_id, "?")
@@ -9366,10 +9369,11 @@ async def _bomb_blast_overworld(
                     view = _game_view(guild_id, user_id, player, grid=grid)
                     content = render_grid(grid, player, " ".join(blast_msg_parts))
                     await msg.edit(embed=_embed(content), content=None, view=view)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as _msg_err2:
+                    _bbo_log.warning("bomb blast overworld: message edit failed: %s", _msg_err2)
+    except Exception as _blast_err2:
+        _bbo_log.exception("bomb blast overworld error (guild=%s user=%s): %s",
+                           guild_id, user_id, _blast_err2)
 
 
 async def _bomb_blast_cave(
@@ -9378,7 +9382,11 @@ async def _bomb_blast_cave(
     cave_id: int, bx: int, by: int, db,
 ) -> None:
     """Fires 4 seconds after a bomb is placed in a cave."""
+    import logging as _bbl
+    _bbl_log = _bbl.getLogger(__name__)
     await asyncio.sleep(4)
+    # Re-fetch db in case the reference has gone stale over 4 seconds
+    db = await get_database(guild_id)
     try:
         blast_msg_parts: list[str] = ["💥 **BOOM!** The bomb explodes!"]
         player = await get_or_create_player(db, user_id, "?")
@@ -9453,10 +9461,11 @@ async def _bomb_blast_cave(
                     view = await _cave_game_view(guild_id, user_id, player, db, grid=cave_grid)
                     content = render_grid(cave_grid, player, " ".join(blast_msg_parts))
                     await msg.edit(embed=_embed(content), content=None, view=view)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as _msg_err:
+                    _bbl_log.warning("bomb blast cave: message edit failed: %s", _msg_err)
+    except Exception as _blast_err:
+        _bbl_log.exception("bomb blast cave error (guild=%s user=%s cave=%s): %s",
+                           guild_id, user_id, cave_id, _blast_err)
 
 
 async def _execute_tool_action(
