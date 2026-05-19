@@ -825,13 +825,23 @@ class InventoryView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, "inv_move_cancel"), row=0,
             ))
         elif cursor_selected:
-            # Cursor is ON a selected item — show only Unselect + Unselect All
+            # Cursor is ON a selected item — Unselect, Craft (if recipe matches), Unselect All
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger,
                 label="◎ Unselect",
                 custom_id=_custom_id(guild_id, user_id, "inv_select"),
                 row=0,
             ))
+            if selections:
+                sel_set = frozenset((k, v) for k, v in selections.items())
+                if sel_set in CRAFT_RECIPES:
+                    recipe = CRAFT_RECIPES[sel_set]
+                    self.add_item(discord.ui.Button(
+                        style=discord.ButtonStyle.success,
+                        label=recipe["label"],
+                        custom_id=_custom_id(guild_id, user_id, "inv_craft"),
+                        row=0,
+                    ))
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger, label="◎ All",
                 custom_id=_custom_id(guild_id, user_id, "inv_unselect_all"), row=0,
