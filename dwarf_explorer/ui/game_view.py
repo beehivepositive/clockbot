@@ -3156,6 +3156,10 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             h1_action_enabled = True
         if h2_item == "bomb":
             h2_action_enabled = True
+        if h1_item == "wayerwood":
+            h1_action_enabled = True
+        if h2_item == "wayerwood":
+            h2_action_enabled = True
 
         # ── H1 / H2 tool-on-tile action ───────────────────────────────────
         if not player.in_cave and not player.in_ship:
@@ -3195,7 +3199,8 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         or item in ("cooked_fish", "fish")
                         or item == "map_fragment"
                         or item == "shovel"  # treasure dig fallback
-                        or item == "bomb"    # bomb always enabled when in hand (handler checks for flint_and_steel)
+                        or item == "bomb"       # bomb always enabled when in hand (handler checks for flint_and_steel)
+                        or item == "wayerwood"  # wayerwood always enabled; handler checks for rock
                     )
 
                 h1_action_enabled = _tool_action_enabled(h1_item)
@@ -4060,7 +4065,7 @@ async def _move_steps(
             if not ok:
                 # Wayerwood secret passage
                 if (target.terrain == "fst_tree"
-                        and getattr(player, "accessory", None) == "wayerwood"):
+                        and (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")):
                     from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt2
                     _ww_tgt = await _gwwt2(player.forest_id, db)
                     if _ww_tgt and nx == _ww_tgt[0] and ny == _ww_tgt[1]:
@@ -4248,7 +4253,7 @@ async def _move_steps(
         _ww_status_hint = ""
         if (getattr(player, "in_forest", False)
                 and not getattr(player, "in_grove", False)
-                and getattr(player, "accessory", None) == "wayerwood"):
+                and (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")):
             from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt
             _ww_target = await _gwwt(player.forest_id, db)
             if _ww_target:
@@ -7293,7 +7298,7 @@ async def _try_wayerwood_attune(player, user_id: int, db) -> str | None:
     distance recorded on the *previous* attunement attempt for this user,
     mirroring the forest "pulses / dims / hums" mechanic.
     """
-    if getattr(player, "accessory", None) != "wayerwood":
+    if player.hand_1 != "wayerwood" and player.hand_2 != "wayerwood":
         return None
 
     # No stone → dormant message (no stone consumed)
@@ -9807,6 +9812,20 @@ async def _execute_tool_action(
                     interaction.client, player.message_id, player.channel_id,
                     guild_id, user_id, wx, wy, seed, db
                 ))
+
+    # ── Wayerwood ─────────────────────────────────────────────────────────────
+    elif tool == "wayerwood":
+        ww_msg = await _try_wayerwood_attune(player, user_id, db)
+        if ww_msg is None:
+            ww_msg = "🪄 *The wayerwood feels dormant. It needs a **stone** to attune.*"
+        if player.in_cave:
+            grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
+        elif player.in_village:
+            from dwarf_explorer.world.villages import load_village_viewport as _lvvp_ww
+            grid = await _lvvp_ww(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+        else:
+            grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player, ww_msg)
 
     # ── Default ───────────────────────────────────────────────────────────────
     else:
