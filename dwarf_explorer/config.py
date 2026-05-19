@@ -160,7 +160,8 @@ ITEM_EMOJI = {
     "log": "\U0001FAB5",             # 🪵
     "stick": "\U0001F38B",           # 🎋
     "xyphem": "\U0001F3F5",          # 🏵️ rosette crystal
-    "wayerwood": "\U0001FA84",       # 🪄 magical divining rod
+    "wayerwood":          "\U0001FA84",       # 🪄 magical divining rod (unattuned)
+    "attuned_wayerwood":  "\U0001FA84",       # 🪄 attuned divining rod (crafted with rock)
     "resin": "\U0001F7E1",           # 🟡
     "plant_fiber": "\U0001F9F5",     # 🧵
     "dry_grass": "\U0001F33E",       # 🌾
@@ -514,6 +515,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     # Sky temple gears
     frozenset({("iron_ingot", 2)}):                              {"result": "small_gear",        "qty": 1, "label": "⚙️ Forge Small Gear"},
     frozenset({("iron_ingot", 3)}):                              {"result": "large_gear",         "qty": 1, "label": "🔩 Forge Large Gear"},
+    # Wayerwood attunement — press a stone into the rod to awaken it
+    frozenset({("wayerwood", 1), ("rock", 1)}):                  {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Attune"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -1237,6 +1240,7 @@ ITEM_EQUIP_SLOTS = {
     "ring_of_sight":       "accessory",
     "ring_of_luck":        "accessory",
     "wayerwood":           "hand",
+    "attuned_wayerwood":   "hand",
     "flint_and_steel":     "hand",
     "bomb":                "hand",
     "hoe":                 "hand",

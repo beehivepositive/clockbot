@@ -3156,9 +3156,9 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             h1_action_enabled = True
         if h2_item == "bomb":
             h2_action_enabled = True
-        if h1_item == "wayerwood":
+        if h1_item in ("wayerwood", "attuned_wayerwood"):
             h1_action_enabled = True
-        if h2_item == "wayerwood":
+        if h2_item in ("wayerwood", "attuned_wayerwood"):
             h2_action_enabled = True
 
         # ── H1 / H2 tool-on-tile action ───────────────────────────────────
@@ -3200,7 +3200,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         or item == "map_fragment"
                         or item == "shovel"  # treasure dig fallback
                         or item == "bomb"       # bomb always enabled when in hand (handler checks for flint_and_steel)
-                        or item == "wayerwood"  # wayerwood always enabled; handler checks for rock
+                        or item in ("wayerwood", "attuned_wayerwood")  # always enabled
                     )
 
                 h1_action_enabled = _tool_action_enabled(h1_item)
@@ -4065,7 +4065,7 @@ async def _move_steps(
             if not ok:
                 # Wayerwood secret passage
                 if (target.terrain == "fst_tree"
-                        and (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")):
+                        and (player.hand_1 == "attuned_wayerwood" or player.hand_2 == "attuned_wayerwood")):
                     from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt2
                     _ww_tgt = await _gwwt2(player.forest_id, db)
                     if _ww_tgt and nx == _ww_tgt[0] and ny == _ww_tgt[1]:
@@ -4249,24 +4249,7 @@ async def _move_steps(
                 return content, view
 
         grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
-        # Wayerwood hint (if equipped and in forest)
-        _ww_status_hint = ""
-        if (getattr(player, "in_forest", False)
-                and not getattr(player, "in_grove", False)
-                and (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")):
-            from dwarf_explorer.world.forest import get_wayerwood_target as _gwwt
-            _ww_target = await _gwwt(player.forest_id, db)
-            if _ww_target:
-                _ww_tx2, _ww_ty2 = _ww_target
-                _dist_now  = abs(player.forest_x - _ww_tx2) + abs(player.forest_y - _ww_ty2)
-                _dist_prev = abs((player.forest_x - dx) - _ww_tx2) + abs((player.forest_y - dy) - _ww_ty2)
-                if _dist_now < _dist_prev:
-                    _ww_status_hint = "🪄 *The wayerwood pulses... pulling you forward.*"
-                elif _dist_now > _dist_prev:
-                    _ww_status_hint = "🪄 *The wayerwood dims... you've veered away.*"
-                else:
-                    _ww_status_hint = "🪄 *The wayerwood hums steadily.*"
-        return render_grid(grid, player, _ww_status_hint or None), _game_view(guild_id, user_id, player, grid=grid)
+        return render_grid(grid, player, None), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import (
@@ -7284,32 +7267,32 @@ async def _complete_delivery_quests_for_village(
     return " ".join(msgs)
 
 
-# ── Wayerwood attunement helper ───────────────────────────────────────────────
+# ── Wayerwood signal helper ───────────────────────────────────────────────────
+
+def _wayerwood_signal(user_id: int, dist_now: int) -> str:
+    """Return the hot/cold flavour string by comparing dist_now to the last
+    stored reading.  Always updates the stored value after comparing."""
+    last_dist = _ui_state.get(user_id, {}).get("ww_last_dist")
+    _ui_state.setdefault(user_id, {})["ww_last_dist"] = dist_now
+    if last_dist is None:
+        return "🪄 *The wayerwood pulses faintly. Something stirs within these walls...*"
+    elif dist_now < last_dist:
+        return "🪄 *The wayerwood pulses... pulling you forward.*"
+    elif dist_now > last_dist:
+        return "🪄 *The wayerwood dims... you've veered away.*"
+    else:
+        return "🪄 *The wayerwood hums steadily.*"
+
 
 async def _try_wayerwood_attune(player, user_id: int, db) -> str | None:
-    """Hot/cold wayerwood attunement signal.
+    """Hot/cold cave signal for an attuned wayerwood held in hand.
 
-    Returns a flavour-text string when wayerwood is equipped (whether or not a
-    stone is available), so the caller can surface it instead of the generic
-    "Nothing to interact with" message.  Returns None when the wayerwood is not
-    equipped so the caller falls through to its default message.
-
-    Compares the current distance to the nearest cracked_stone against the
-    distance recorded on the *previous* attunement attempt for this user,
-    mirroring the forest "pulses / dims / hums" mechanic.
+    Returns a flavour-text string when attuned_wayerwood is in hand.
+    Returns None otherwise (caller falls through to default message).
+    No resources consumed — attunement already happened during crafting.
     """
-    if player.hand_1 != "wayerwood" and player.hand_2 != "wayerwood":
+    if player.hand_1 != "attuned_wayerwood" and player.hand_2 != "attuned_wayerwood":
         return None
-
-    # No stone → dormant message (no stone consumed)
-    stone_row = await db.fetch_one(
-        "SELECT quantity FROM inventory WHERE user_id=? AND item_id='rock'", (user_id,)
-    )
-    if not stone_row or stone_row["quantity"] < 1:
-        return "🪄 *The wayerwood feels dormant. It needs a **stone** to attune.*"
-
-    # Consume the stone
-    await remove_from_inventory(db, user_id, "rock", 1)
 
     # Outside a cave → lifeless flavour
     if not getattr(player, "in_cave", False):
@@ -7326,19 +7309,7 @@ async def _try_wayerwood_attune(player, user_id: int, db) -> str | None:
     cx, cy = player.cave_x, player.cave_y
     nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx) + abs(r["local_y"] - cy))
     dist_now = abs(nearest["local_x"] - cx) + abs(nearest["local_y"] - cy)
-
-    # Compare against last recorded distance for this user
-    last_dist = _ui_state.get(user_id, {}).get("ww_last_dist")
-    _ui_state.setdefault(user_id, {})["ww_last_dist"] = dist_now
-
-    if last_dist is None:
-        return "🪄 *The wayerwood pulses faintly. Something stirs within these walls...*"
-    elif dist_now < last_dist:
-        return "🪄 *The wayerwood pulses... pulling you forward.*"
-    elif dist_now > last_dist:
-        return "🪄 *The wayerwood dims... you've veered away.*"
-    else:
-        return "🪄 *The wayerwood hums steadily.*"
+    return _wayerwood_signal(user_id, dist_now)
 
 
 # ── Interact ──────────────────────────────────────────────────────────────────
@@ -9813,18 +9784,44 @@ async def _execute_tool_action(
                     guild_id, user_id, wx, wy, seed, db
                 ))
 
-    # ── Wayerwood ─────────────────────────────────────────────────────────────
+    # ── Wayerwood (unattuned) ─────────────────────────────────────────────────
     elif tool == "wayerwood":
-        ww_msg = await _try_wayerwood_attune(player, user_id, db)
-        if ww_msg is None:
-            ww_msg = "🪄 *The wayerwood feels dormant. It needs a **stone** to attune.*"
+        grid = await load_viewport(wx, wy, seed, db)
+        content = render_grid(grid, player,
+            "🪄 *The wayerwood feels inert. Combine it with a **rock** in your inventory to attune it.*")
+
+    # ── Attuned wayerwood ────────────────────────────────────────────────────
+    elif tool == "attuned_wayerwood":
         if player.in_cave:
+            # Cave: hot/cold signal toward nearest cracked_stone
             grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        elif player.in_village:
-            from dwarf_explorer.world.villages import load_village_viewport as _lvvp_ww
-            grid = await _lvvp_ww(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            cracks = await db.fetch_all(
+                "SELECT local_x, local_y FROM cave_tiles WHERE cave_id=? AND tile_type='cracked_stone'",
+                (player.cave_id,)
+            )
+            if not cracks:
+                ww_msg = "🪄 *The wayerwood hums quietly. No hidden passages stir within these walls.*"
+            else:
+                cx, cy = player.cave_x, player.cave_y
+                nearest = min(cracks, key=lambda r: abs(r["local_x"] - cx) + abs(r["local_y"] - cy))
+                dist_now = abs(nearest["local_x"] - cx) + abs(nearest["local_y"] - cy)
+                ww_msg = _wayerwood_signal(user_id, dist_now)
+        elif getattr(player, "in_forest", False) and not getattr(player, "in_grove", False):
+            # Forest: hot/cold signal toward the wayerwood target grove tile
+            from dwarf_explorer.world.forest import (
+                get_wayerwood_target as _gwwt_ex,
+                load_forest_viewport as _lfv_ex,
+            )
+            grid = await _lfv_ex(player.forest_id, player.forest_x, player.forest_y, db)
+            _ww_tgt = await _gwwt_ex(player.forest_id, db)
+            if _ww_tgt:
+                dist_now = abs(player.forest_x - _ww_tgt[0]) + abs(player.forest_y - _ww_tgt[1])
+                ww_msg = _wayerwood_signal(user_id, dist_now)
+            else:
+                ww_msg = "🪄 *The wayerwood hums quietly.*"
         else:
             grid = await load_viewport(wx, wy, seed, db)
+            ww_msg = "🪄 *The wayerwood feels lifeless here. It only stirs underground or in the deep forest.*"
         content = render_grid(grid, player, ww_msg)
 
     # ── Default ───────────────────────────────────────────────────────────────
