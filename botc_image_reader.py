@@ -16,13 +16,6 @@ try:
 except ImportError:
     TESSERACT_OK = False
 
-# Words that appear constantly in ability text and would false-match character names
-_ABILITY_NOISE = {
-    "drunk", "dead", "alive", "kill", "die", "dies", "good", "evil",
-    "night", "day", "vote", "player", "town", "game", "fool", "recluse",
-    "spy", "baron", "imp", "slayer", "virgin", "monk", "soldier", "mayor",
-}
-
 
 def _load_chars():
     for path in ["/home/discord-bot/botc_data.json", "botc_data.json"]:
@@ -39,10 +32,9 @@ def _load_chars():
 
 BOTC_CHARS, BOTC_NORM = _load_chars()
 
-# Common non-name words to exclude from player list
 _UI_WORDS = {
-    "day", "night", "vote", "votes", "chat", "dawn", "dusk", "alive",
-    "dead", "the", "and", "for", "you", "are", "not", "can",
+    "day", "night", "vote", "votes", "chat", "dawn", "dusk",
+    "alive", "dead", "the", "and", "for", "you", "are", "not", "can",
 }
 
 
@@ -51,70 +43,111 @@ def _norm(s):
 
 
 def _match_char(word):
-    """
-    Return the canonical BotC character display name for a word, or None.
-
-    Uses exact match first, then fuzzy with a high cutoff.
-    Requires the first letter to match — prevents 'night' → 'Knight' etc.
-    Skips words that are common ability-text noise.
-    """
+    """Return canonical BotC character display name, or None."""
     n = _norm(word)
     if not n or len(n) < 3:
         return None
-    # Skip words that are almost always from ability text, not character names
-    if n in _ABILITY_NOISE:
-        return None
     if n in BOTC_NORM:
         return BOTC_NORM[n]
-    # Fuzzy match: require high ratio AND same first letter
     close = difflib.get_close_matches(n, BOTC_NORM.keys(), n=1, cutoff=0.88)
     if close and close[0][0] == n[0]:
         return BOTC_NORM[close[0]]
     return None
 
 
-def _preprocess(img_bytes):
-    """Open and preprocess an image for OCR. Returns (PIL.Image, width, height)."""
+# ---------------------------------------------------------------------------
+# Color-based mask (script images only)
+# ---------------------------------------------------------------------------
+
+def _apply_color_mask(img_rgb):
+    """
+    Return a copy of img_rgb with non-colored pixels replaced by white.
+
+    Script images use color for character names (blue for good, red for evil)
+    and gray/black for ability text and headers. Masking non-colored pixels
+    leaves only the character name text visible for OCR.
+
+    A pixel is 'colored' if its saturation > 0.30 and it isn't nearly black.
+    """
+    pixels = list(img_rgb.getdata())
+    out = []
+    for r, g, b in pixels:
+        mx = max(r, g, b)
+        mn = min(r, g, b)
+        sat = (mx - mn) / mx if mx > 0 else 0.0
+        # Keep if clearly colored (not gray/black/white)
+        if sat > 0.30 and mx > 50:
+            out.append((r, g, b))
+        else:
+            out.append((255, 255, 255))
+    masked = img_rgb.copy()
+    masked.putdata(out)
+    return masked
+
+
+# ---------------------------------------------------------------------------
+# OCR helpers
+# ---------------------------------------------------------------------------
+
+def _run_ocr(pil_img):
+    """Run Tesseract on a preprocessed PIL image. Returns list of (text, x, y, w, h)."""
+    data = pytesseract.image_to_data(pil_img, output_type=pytesseract.Output.DICT)
+    items = []
+    for i in range(len(data["text"])):
+        t = data["text"][i].strip()
+        if t and int(data["conf"][i]) > 20:
+            items.append((t, data["left"][i], data["top"][i],
+                          data["width"][i], data["height"][i]))
+    return items
+
+
+def _scale_up(img, min_width=1400):
+    w, h = img.size
+    if w < min_width:
+        scale = min_width / w
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    return img
+
+
+def _ocr_script(img_bytes):
+    """
+    OCR a script image using the color mask.
+    Only colored text (character names) survives the mask — ability text is gone.
+    Returns (items, img_w, img_h).
+    """
+    if not TESSERACT_OK:
+        raise RuntimeError("pytesseract not installed")
+
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = _scale_up(img)
+    masked = _apply_color_mask(img)
+    gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
+    w, h = img.size
+    return _run_ocr(gray), w, h
+
+
+def _ocr_grimoire(img_bytes):
+    """
+    OCR a grimoire screenshot (dark background).
+    Inverts the image so white player-name text becomes dark-on-light.
+    Returns (items, img_w, img_h).
+    """
+    if not TESSERACT_OK:
+        raise RuntimeError("pytesseract not installed")
+
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = _scale_up(img)
     w, h = img.size
 
-    # Scale up small images — helps OCR on low-res screenshots
-    if w < 1400:
-        scale = 1400 / w
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        w, h = img.size
-
-    # Detect dark-background images (grimoire screenshots) by sampling the centre
+    # Detect dark background by sampling the image centre
     cx, cy = w // 2, h // 2
     sample = list(img.crop((cx - 100, cy - 100, cx + 100, cy + 100)).getdata())
     avg = sum(r + g + b for r, g, b in sample) / (3 * len(sample))
     if avg < 110:
         img = ImageOps.invert(img)
 
-    img = img.convert("L")
-    img = ImageEnhance.Contrast(img).enhance(2.0)
-    return img, w, h
-
-
-def _ocr_boxes(img_bytes):
-    """
-    Run Tesseract on img_bytes.
-    Returns (items, img_w, img_h) where items = list of (text, x, y, w, h).
-    """
-    if not TESSERACT_OK:
-        raise RuntimeError("pytesseract not installed — run: pip install pytesseract")
-
-    proc, img_w, img_h = _preprocess(img_bytes)
-    data = pytesseract.image_to_data(proc, output_type=pytesseract.Output.DICT)
-
-    items = []
-    for i in range(len(data["text"])):
-        t = data["text"][i].strip()
-        conf = int(data["conf"][i])
-        if t and conf > 30:
-            items.append((t, data["left"][i], data["top"][i],
-                          data["width"][i], data["height"][i]))
-    return items, img_w, img_h
+    gray = ImageEnhance.Contrast(img.convert("L")).enhance(2.0)
+    return _run_ocr(gray), w, h
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +155,16 @@ def _ocr_boxes(img_bytes):
 # ---------------------------------------------------------------------------
 
 def classify_image(img_bytes):
-    """Return 'script' or 'grimoire'. Script images contain many BotC character names."""
-    items, _, _ = _ocr_boxes(img_bytes)
-    texts = [t for t, *_ in items]
+    """
+    Return 'script' or 'grimoire'.
+    Tries script OCR (color-masked); if it finds 4+ BotC character names → script.
+    """
+    try:
+        items, _, _ = _ocr_script(img_bytes)
+    except Exception:
+        return "grimoire"
 
+    texts = [t for t, *_ in items]
     matches = 0
     for i, t in enumerate(texts):
         if _match_char(t):
@@ -133,7 +172,7 @@ def classify_image(img_bytes):
         elif i + 1 < len(texts) and _match_char(t + texts[i + 1]):
             matches += 1
 
-    return "script" if matches >= 4 else "grimoire"
+    return "script" if matches >= 3 else "grimoire"
 
 
 # ---------------------------------------------------------------------------
@@ -144,12 +183,10 @@ def extract_script_characters(img_bytes):
     """
     Return ordered list of BotC character display names found in a script image.
 
-    Scans OCR words (and adjacent pairs for two-word names) against the known
-    character list. Uses strict matching to avoid ability-text false positives.
-    Deduplicates: each character counted once regardless of how many times the
-    name appears in ability text.
+    Uses color-masked OCR so only the colored character-name text is visible.
+    No ability text survives the mask, eliminating false positives entirely.
     """
-    items, _, _ = _ocr_boxes(img_bytes)
+    items, _, _ = _ocr_script(img_bytes)
     texts = [t for t, *_ in items]
 
     found = []
@@ -182,21 +219,15 @@ def extract_player_names(img_bytes):
     """
     Return player names from a grimoire circle image, sorted clockwise from the top.
 
-    Strategy:
-    - Get all OCR text with positions.
-    - Discard: BotC character names, pure numbers, UI words, single chars.
-    - Compute angle of each remaining item from the image centre.
-    - Sort clockwise (angle 0 = 12 o'clock).
-
-    The ring-distance filter is intentionally removed — UI panels in screenshots
-    can shift the circle off-centre, making distance-based filtering unreliable.
+    Uses standard (non-color-masked) OCR on the inverted grimoire image.
+    Discards: BotC character names, pure numbers, single chars, known UI words.
+    Sorts remaining text by angle from image centre (clockwise from 12 o'clock).
     """
-    items, img_w, img_h = _ocr_boxes(img_bytes)
+    items, img_w, img_h = _ocr_grimoire(img_bytes)
     cx, cy = img_w / 2, img_h / 2
 
     candidates = []
     for text, x, y, w, h in items:
-        # Skip short tokens, pure numbers, known UI words, BotC character names
         if len(text) < 2:
             continue
         if text.isdigit():
@@ -205,7 +236,7 @@ def extract_player_names(img_bytes):
             continue
         if _match_char(text):
             continue
-        # Skip two-word combos that match a character (e.g. "Town Crier")
+
         tx = x + w / 2
         ty = y + h / 2
         angle = math.atan2(tx - cx, cy - ty) % (2 * math.pi)
