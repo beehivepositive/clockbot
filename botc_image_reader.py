@@ -123,10 +123,10 @@ def _ocr_script(img_bytes):
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
-    # Low confidence floor — color masking already eliminates false positives,
-    # so short names like "Po" that Tesseract reads with low confidence still count.
-    # --psm 11: sparse text, suits character names scattered down a script page.
-    return _run_ocr(gray, min_conf=5, config="--psm 11"), w, h
+    # Confidence floor of -1 (accept everything including conf=0) — color masking
+    # already eliminates false positives, so even a barely-read short name like "Po"
+    # gets through. --psm 11: sparse text suits names scattered down a script page.
+    return _run_ocr(gray, min_conf=-1, config="--psm 11"), w, h
 
 
 def _ocr_grimoire(img_bytes):
@@ -158,8 +158,19 @@ def _ocr_grimoire(img_bytes):
         img = ImageOps.invert(img)
 
     gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
-    # --psm 11: sparse text — find text scattered in any order (suits the circle layout)
-    return _run_ocr(gray, config="--psm 11"), w, h
+
+    # Two passes: PSM 3 (full-page layout) catches some names, PSM 11 (sparse text)
+    # catches others — neither catches everything, so union them.
+    items_a = _run_ocr(gray, config="--psm 3")
+    items_b = _run_ocr(gray, config="--psm 11")
+    seen_n = set()
+    merged = []
+    for item in items_a + items_b:
+        n = re.sub(r"[^a-z0-9]", "", item[0].lower())
+        if n and n not in seen_n:
+            seen_n.add(n)
+            merged.append(item)
+    return merged, w, h
 
 
 # ---------------------------------------------------------------------------
@@ -193,15 +204,17 @@ def debug_grimoire(img_bytes):
 
     gray = ImageEnhance.Contrast(img.convert("L")).enhance(3.0)
 
-    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, config="--psm 11")
-    lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}  psm=11"]
-    for i in range(len(data["text"])):
-        t = data["text"][i].strip()
-        if not t:
-            continue
-        conf = int(data["conf"][i])
-        x, y, bw, bh = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
-        lines.append(f"conf={conf:3d}  '{t}'  at ({x},{y}) size {bw}x{bh}")
+    lines = [f"corner_avg={avg:.1f}  inverted={inverted}  size={w}x{h}"]
+    for psm in ("--psm 3", "--psm 11"):
+        lines.append(f"\n=== {psm} ===")
+        data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT, config=psm)
+        for i in range(len(data["text"])):
+            t = data["text"][i].strip()
+            if not t:
+                continue
+            conf = int(data["conf"][i])
+            x, y, bw, bh = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+            lines.append(f"conf={conf:3d}  '{t}'  at ({x},{y}) size {bw}x{bh}")
 
     buf = io.BytesIO()
     gray.save(buf, format="PNG")
@@ -290,7 +303,7 @@ def extract_player_names(img_bytes):
     candidates = []
     seen = set()
     for text, x, y, w, h in items:
-        if len(text) < 2:
+        if len(text) < 3:
             continue
         if _norm(text) in _UI_WORDS:
             continue
