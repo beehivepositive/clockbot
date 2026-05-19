@@ -89,13 +89,13 @@ def _apply_color_mask(img_rgb):
 # OCR helpers
 # ---------------------------------------------------------------------------
 
-def _run_ocr(pil_img):
+def _run_ocr(pil_img, min_conf=20):
     """Run Tesseract on a preprocessed PIL image. Returns list of (text, x, y, w, h)."""
     data = pytesseract.image_to_data(pil_img, output_type=pytesseract.Output.DICT)
     items = []
     for i in range(len(data["text"])):
         t = data["text"][i].strip()
-        if t and int(data["conf"][i]) > 20:
+        if t and int(data["conf"][i]) > min_conf:
             items.append((t, data["left"][i], data["top"][i],
                           data["width"][i], data["height"][i]))
     return items
@@ -123,7 +123,9 @@ def _ocr_script(img_bytes):
     masked = _apply_color_mask(img)
     gray = ImageEnhance.Contrast(masked.convert("L")).enhance(2.5)
     w, h = img.size
-    return _run_ocr(gray), w, h
+    # Lower confidence threshold — color masking already eliminates false positives,
+    # so short names like "Po" that Tesseract reads with low confidence still count.
+    return _run_ocr(gray, min_conf=5), w, h
 
 
 def _ocr_grimoire(img_bytes):
@@ -139,11 +141,19 @@ def _ocr_grimoire(img_bytes):
     img = _scale_up(img)
     w, h = img.size
 
-    # Detect dark background by sampling the image centre
-    cx, cy = w // 2, h // 2
-    sample = list(img.crop((cx - 100, cy - 100, cx + 100, cy + 100)).getdata())
-    avg = sum(r + g + b for r, g, b in sample) / (3 * len(sample))
-    if avg < 110:
+    # Detect dark background by sampling the four corners — NOT the centre.
+    # The grimoire centre has bright coloured icons (character tokens, votes, etc.)
+    # which inflate the average and can fool a centre-based check.
+    # Corners are pure background: dark for grimoire screenshots, light for other images.
+    cs = min(150, w // 6, h // 6)
+    corner_pixels = (
+        list(img.crop((0,     0,     cs,     cs)).getdata()) +
+        list(img.crop((w-cs,  0,     w,      cs)).getdata()) +
+        list(img.crop((0,     h-cs,  cs,     h )).getdata()) +
+        list(img.crop((w-cs,  h-cs,  w,      h )).getdata())
+    )
+    avg = sum(r + g + b for r, g, b in corner_pixels) / (3 * len(corner_pixels))
+    if avg < 130:
         img = ImageOps.invert(img)
 
     gray = ImageEnhance.Contrast(img.convert("L")).enhance(2.0)
@@ -219,23 +229,15 @@ def extract_player_names(img_bytes):
     """
     Return player names from a grimoire circle image, sorted clockwise from the top.
 
-    Player names are always:
-      - The largest text in the image
-      - On the outer ring (never in the centre)
-      - Always contain at least one letter (no pure numbers/punctuation)
+    Player names sit on the outer ring (never the centre).
+    Filters: BotC character names, known UI words, text inside the inner exclusion zone.
     """
     items, img_w, img_h = _ocr_grimoire(img_bytes)
     cx, cy = img_w / 2, img_h / 2
 
-    # Exclude text within ~20 % of the shorter dimension from centre
-    # (the centre has coloured game icons, not player names)
-    inner_r = min(img_w, img_h) * 0.20
-
-    # Player names are always the largest text in the image.
-    # Compute the 65th-percentile height across all OCR items and use 65 % of
-    # that as the minimum — filters vote counts, labels, and other small text.
-    all_heights = sorted(h for _, _, _, _, h in items if h > 0)
-    min_h = (all_heights[int(len(all_heights) * 0.65)] * 0.65) if all_heights else 1
+    # Exclude text whose centre is within ~15 % of the shorter image dimension
+    # from the image centre — that zone has coloured game icons, not player names.
+    inner_r = min(img_w, img_h) * 0.15
 
     candidates = []
     seen = set()
@@ -250,12 +252,7 @@ def extract_player_names(img_bytes):
         tx = x + w / 2
         ty = y + h / 2
 
-        # Exclude centre zone where game icons live
         if math.hypot(tx - cx, ty - cy) < inner_r:
-            continue
-
-        # Only keep large text (player names are the biggest text on screen)
-        if h < min_h:
             continue
 
         key = _norm(text)
