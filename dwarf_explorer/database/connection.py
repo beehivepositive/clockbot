@@ -999,6 +999,75 @@ class Database:
             except Exception as e:
                 _log.warning("Canoe slot-gap migration warning: %s", e)
 
+            # ── Forest Quest Zone migration ────────────────────────────────────
+            try:
+                fq_cols = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+                for col, dflt in [
+                    ("in_forest_quest", "0"),
+                    ("fq_area_id",      "NULL"),
+                    ("fq_x",            "0"),
+                    ("fq_y",            "0"),
+                    ("fq_quest_stage",  "'none'"),
+                ]:
+                    if col not in fq_cols:
+                        conn.execute(f"ALTER TABLE players ADD COLUMN {col} TEXT NOT NULL DEFAULT {dflt}")
+                conn.commit()
+            except Exception as e:
+                _log.warning("Forest quest player column migration warning: %s", e)
+
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS forest_quest_areas (
+                        fq_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guild_id INTEGER NOT NULL UNIQUE,
+                        width    INTEGER NOT NULL DEFAULT 21,
+                        height   INTEGER NOT NULL DEFAULT 42,
+                        solved   INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS forest_quest_tiles (
+                        fq_id     INTEGER NOT NULL,
+                        local_x   INTEGER NOT NULL,
+                        local_y   INTEGER NOT NULL,
+                        tile_type TEXT    NOT NULL,
+                        PRIMARY KEY (fq_id, local_x, local_y)
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS fq_puzzle_logs (
+                        fq_id    INTEGER NOT NULL,
+                        log_idx  INTEGER NOT NULL,
+                        cur_x    INTEGER NOT NULL,
+                        cur_y    INTEGER NOT NULL,
+                        start_x  INTEGER NOT NULL,
+                        start_y  INTEGER NOT NULL,
+                        PRIMARY KEY (fq_id, log_idx)
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS fq_ents (
+                        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fq_id    INTEGER NOT NULL,
+                        local_x  INTEGER NOT NULL,
+                        local_y  INTEGER NOT NULL,
+                        alive    INTEGER NOT NULL DEFAULT 1
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_fq_tiles ON forest_quest_tiles(fq_id, local_x, local_y)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_fq_ents  ON fq_ents(fq_id, alive)")
+                # Add entry columns if missing (upgrade path for older DBs)
+                _fqa_cols = {row[1] for row in conn.execute("PRAGMA table_info(forest_quest_areas)").fetchall()}
+                if "entry_forest_id" not in _fqa_cols:
+                    conn.execute("ALTER TABLE forest_quest_areas ADD COLUMN entry_forest_id INTEGER")
+                if "entry_fx" not in _fqa_cols:
+                    conn.execute("ALTER TABLE forest_quest_areas ADD COLUMN entry_fx INTEGER DEFAULT 0")
+                if "entry_fy" not in _fqa_cols:
+                    conn.execute("ALTER TABLE forest_quest_areas ADD COLUMN entry_fy INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception as e:
+                _log.warning("Forest quest table migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

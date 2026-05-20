@@ -10,6 +10,7 @@ from dwarf_explorer.config import (
     FOREST_WALKABLE, MAZE_WALKABLE,
     GROVE_WALKABLE,
     BANDIT_CAMP_WALKABLE,
+    FQ_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -146,6 +147,12 @@ class Player:
     watering_can_uses: int = 0  # 0 = empty, 1-9 = uses remaining
     # Warp crystal state
     has_warp_crystal: bool = False
+    # Forest Quest zone state
+    in_forest_quest: bool = False
+    fq_area_id: int | None = None
+    fq_x: int = 0
+    fq_y: int = 0
+    fq_quest_stage: str = "none"  # "none"|"seek_hermit"|"hermit_met"|"map_marked"|"puzzle_solved"
     # Bandit camp interior state
     in_bandit_camp: bool = False
     bandit_camp_id: int | None = None  # DB id from bandit_camps table
@@ -219,6 +226,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_grove(target_tile)
     if getattr(player, "in_bandit_camp", False):
         return can_move_bandit_camp(target_tile)
+    if getattr(player, "in_forest_quest", False):
+        return can_move_forest_quest(target_tile)
 
     terrain = target_tile.structure or target_tile.terrain
 
@@ -318,5 +327,22 @@ def can_move_grove(target_tile: TileData) -> tuple[bool, str]:
     if t == "grove_wall":
         return False, "🌳 Ancient trees bar your path."
     if t not in GROVE_WALKABLE:
+        return False, "You can't go that way."
+    return True, ""
+
+
+def can_move_forest_quest(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside the forest quest zone."""
+    t = target_tile.terrain
+    if t == "fq_wall":
+        return False, "🌳 Dense ancient forest bars your path."
+    if t == "fq_stream":
+        return False, "🌊 The stream is too swift to wade — you need a way across."
+    if t == "fq_obstacle":
+        return False, "🪨 Something solid blocks the way."
+    if t == "fq_log":
+        # Handled separately as a push attempt — caller checks this before can_move
+        return False, "🪵 A heavy log is in the way."
+    if t not in FQ_WALKABLE:
         return False, "You can't go that way."
     return True, ""

@@ -61,6 +61,18 @@ TERRAIN_EMOJI = {
     "ancient_tree_top_right":    "\U0001F332",
     "ancient_tree_bottom_left":  "\U0001F332",
     "ancient_tree_bottom_right": "\U0001F332",
+    # Forest Quest zone tiles
+    "fq_floor":        "\U0001F7EB",  # 🟫 earthy corridor/chamber floor
+    "fq_wall":         "\U0001F333",  # 🌳 dense ancient forest wall
+    "fq_stream":       "\U0001F30A",  # 🌊 impassable stream
+    "fq_stream_ford":  "\U0001FAB5",  # 🪵 log bridge — passable ford
+    "fq_puzzle_floor": "\U00002B1B",  # ⬛ sunken dark earth puzzle floor
+    "fq_obstacle":     "\U0001FAA8",  # 🪨 immovable mossy rock/stump
+    "fq_log":          "\U0001FAB5",  # 🪵 pushable log
+    "fq_log_target":   "\U0001F7E7",  # 🟧 target notch at stream edge
+    "fq_reset":        "\U0001FAA8",  # 🪨 ancient reset stone
+    "fq_exit":         "\U0001F332",  # 🌲 forest exit marker
+    "fq_grove_exit":   "\U00002728",  # ✨ hidden grove entrance
 }
 
 STRUCTURE_EMOJI = {
@@ -98,6 +110,9 @@ ENTITY_EMOJI = {
     "temporal_echo": "\U0001F47B",   # 👻 ghostly temporal apparition
     # Surface
     "bandit": "\U0001F9B9",          # 🦹 villain/bandit
+    # Forest Quest enemies
+    "ent":             "\U0001F333",  # 🌳 ent (disguised as dense_forest until it moves)
+    "snake":           "\U0001F40D",  # 🐍 forest snake
     # Forest enemies
     "forest_sprite":   "\U0001F9DA",  # 🧚 fairy-like mischievous spirit
     "vine_creeper":    "\U0001F40D",  # 🐍 snake-like vine monster
@@ -396,6 +411,83 @@ ARENA_EMOJI = {
 }
 
 FOOD_HP_RESTORE = {"fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20}
+
+# ── Forest Quest Zone ──────────────────────────────────────────────────────────
+
+# Zone layout constants
+FQ_WIDTH  = 21
+FQ_HEIGHT = 42
+
+FQ_CORRIDOR_X0 = 8    # corridor occupies x = 8..12 (5 wide)
+FQ_CORRIDOR_X1 = 12
+FQ_CORRIDOR_Y0 = 0
+FQ_CORRIDOR_Y1 = 15   # corridor ends at y=15; chamber begins at y=16
+
+FQ_CHAMBER_Y0  = 16
+FQ_STREAM_Y    = 30   # impassable stream row
+
+FQ_PUZZLE_X0   = 5    # sunken Sokoban area x = 5..15 (11 wide)
+FQ_PUZZLE_X1   = 15
+FQ_PUZZLE_Y0   = 18   # sunken area y = 18..28 (11 tall)
+FQ_PUZZLE_Y1   = 28
+
+FQ_FORD_XA     = 9    # stream ford tiles (activated when both logs on targets)
+FQ_FORD_XB     = 10
+
+FQ_ENTRY_X     = 10   # player enters the zone here (top of corridor)
+FQ_ENTRY_Y     = 0
+FQ_RESET_X     = 3    # reset stone position (in chamber, left of puzzle)
+FQ_RESET_Y     = 22
+FQ_GROVE_EXIT_X = 10  # post-stream exit tile
+FQ_GROVE_EXIT_Y = 41
+
+# Puzzle log starting positions (zone-absolute coords)
+FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 2)   # zone (6, 20)
+FQ_LOG_B_START = (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 2)   # zone (14, 20)
+
+# Target positions where logs must rest to bridge the stream (zone-absolute)
+FQ_TARGET_A = (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y1)           # zone (9, 28)
+FQ_TARGET_B = (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y1)           # zone (10, 28)
+
+# Immovable obstacles inside the puzzle (zone-absolute coords)
+FQ_PUZZLE_OBSTACLES = frozenset({
+    (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 4),   # (9,  22)
+    (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 4),   # (11, 22)
+    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 6),   # (7,  24)
+    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 6),   # (13, 24)
+    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 7),   # (10, 25)
+    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 9),   # (8,  27)
+    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 9),   # (12, 27)
+})
+
+# Ent starting positions in corridor (zone-absolute coords)
+FQ_ENT_STARTS = [
+    (9,  4),
+    (11, 8),
+    (8,  12),
+    (12, 5),
+]
+
+# Walkable tile types inside the FQ zone
+FQ_WALKABLE = frozenset({
+    "fq_floor",
+    "fq_puzzle_floor",
+    "fq_stream_ford",
+    "fq_log_target",   # target marker — walkable when no log is on it
+    "fq_reset",        # stepping on it resets the puzzle logs
+    "fq_grove_exit",
+    "fq_exit",         # entry/exit tile at top of corridor
+})
+
+# Enemy stats — ent and snake for the FQ corridor
+ENEMY_STATS.update({
+    "ent":   (55, 18, 6, 40, 20),   # disguised as a tree; heavy, slow
+    "snake": (18,  9, 0, 12,  6),   # fast, low HP
+})
+ENEMY_ABILITIES.update({
+    "ent":   {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
+    "snake": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False, "ranged": False},
+})
 
 # Consumable items: shown in combat food menu
 # "escape": True  → guaranteed combat escape with no parting blow (e.g. Coward's Ale)

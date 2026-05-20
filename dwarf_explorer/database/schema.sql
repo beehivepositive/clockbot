@@ -454,3 +454,47 @@ CREATE TABLE IF NOT EXISTS cave_crack_breaks (
     broken_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_cave_crack_breaks ON cave_crack_breaks(cave_id, broken_at);
+
+-- ── Forest Quest Zone ──────────────────────────────────────────────────────────
+-- One zone per world (shared across all players on the guild).
+CREATE TABLE IF NOT EXISTS forest_quest_areas (
+    fq_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id        INTEGER NOT NULL UNIQUE,
+    width           INTEGER NOT NULL DEFAULT 21,
+    height          INTEGER NOT NULL DEFAULT 42,
+    solved          INTEGER NOT NULL DEFAULT 0,   -- 1 once the stream ford is permanent
+    entry_forest_id INTEGER,          -- forest_id the entrance tile belongs to
+    entry_fx        INTEGER DEFAULT 0, -- local_x in that forest
+    entry_fy        INTEGER DEFAULT 0  -- local_y in that forest
+);
+
+CREATE TABLE IF NOT EXISTS forest_quest_tiles (
+    fq_id     INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (fq_id, local_x, local_y)
+);
+
+-- Sokoban log positions (2 logs per zone, reset when player leaves chamber)
+CREATE TABLE IF NOT EXISTS fq_puzzle_logs (
+    fq_id    INTEGER NOT NULL,
+    log_idx  INTEGER NOT NULL,   -- 0 = log A, 1 = log B
+    cur_x    INTEGER NOT NULL,
+    cur_y    INTEGER NOT NULL,
+    start_x  INTEGER NOT NULL,
+    start_y  INTEGER NOT NULL,
+    PRIMARY KEY (fq_id, log_idx)
+);
+
+-- Ent positions in the corridor (alive=1 until defeated)
+CREATE TABLE IF NOT EXISTS fq_ents (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    fq_id    INTEGER NOT NULL,
+    local_x  INTEGER NOT NULL,
+    local_y  INTEGER NOT NULL,
+    alive    INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_fq_tiles ON forest_quest_tiles(fq_id, local_x, local_y);
+CREATE INDEX IF NOT EXISTS idx_fq_ents  ON fq_ents(fq_id, alive);

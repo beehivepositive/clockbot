@@ -307,6 +307,8 @@ def _vp_cache_key(player) -> tuple:
         return ("forest", getattr(player, "forest_id", 0), getattr(player, "forest_x", 0), getattr(player, "forest_y", 0))
     if getattr(player, "in_bandit_camp", False):
         return ("bandit_camp", getattr(player, "bandit_camp_id", 0), getattr(player, "bc_x", 0), getattr(player, "bc_y", 0))
+    if getattr(player, "in_forest_quest", False):
+        return ("forest_quest", getattr(player, "fq_area_id", 0), getattr(player, "fq_x", 0), getattr(player, "fq_y", 0))
     return ("world", player.world_x, player.world_y)
 
 
@@ -362,6 +364,9 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
             grid = _lbcv_cache(player.bc_x, player.bc_y, int(_bc_row_cache["world_x"]), int(_bc_row_cache["world_y"]))
         else:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    elif getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_cache
+        grid = await _lfqv_cache(player.fq_area_id, player.fq_x, player.fq_y, db)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -4062,6 +4067,164 @@ async def _move_steps(
         content = render_grid(grove_grid3, player)
         return content, _game_view(guild_id, user_id, player, grid=grove_grid3)
 
+    elif getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.world.forest_quest import (
+            load_fq_viewport as _lfqv,
+            load_fq_single_tile as _lfqst,
+            move_fq_log as _mfql,
+            reset_fq_logs as _rfql,
+            check_and_solve_puzzle as _cfqp,
+            step_ents_toward_player as _setp,
+        )
+        from dwarf_explorer.game.player import can_move_forest_quest as _cmfq
+        from dwarf_explorer.config import (
+            FQ_CHAMBER_Y0 as _FQ_CY0,
+            FQ_PUZZLE_X0 as _FQ_PX0, FQ_PUZZLE_X1 as _FQ_PX1,
+            FQ_PUZZLE_Y0 as _FQ_PY0, FQ_PUZZLE_Y1 as _FQ_PY1,
+            FQ_STREAM_Y as _FQ_SY,
+            FQ_RESET_X as _FQ_RX, FQ_RESET_Y as _FQ_RY,
+            FQ_GROVE_EXIT_X as _FQ_GEX, FQ_GROVE_EXIT_Y as _FQ_GEY,
+            FQ_ENTRY_X as _FQ_EX, FQ_ENTRY_Y as _FQ_EY,
+        )
+        fq_id = player.fq_area_id
+        nx_fq, ny_fq = player.fq_x + dx, player.fq_y + dy
+
+        # Peek at target tile
+        target_fq = await _lfqst(fq_id, nx_fq, ny_fq, db)
+
+        # ── Zone exit (top of corridor) ──────────────────────────────────
+        if target_fq.terrain == "fq_exit":
+            player.in_forest_quest = False
+            player.fq_area_id = None
+            player.fq_x = player.fq_y = 0
+            await db.execute(
+                "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
+                "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fq
+            forest_grid_fq = await _lfv_fq(player.forest_id, player.forest_x, player.forest_y, db)
+            content = render_grid(forest_grid_fq, player,
+                "🌲 You push back through the ancient wall into the forest.")
+            return content, _game_view(guild_id, user_id, player, grid=forest_grid_fq)
+
+        # ── Grove exit (post-stream area) ────────────────────────────────
+        if target_fq.terrain == "fq_grove_exit":
+            # For now: show a message and stay; grove area TBD
+            fq_grid_ge = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            content = render_grid(fq_grid_ge, player,
+                "✨ *A golden light spills from the hidden grove. "
+                "The ancient trees seem to welcome you… but the path ahead is not yet revealed.*")
+            return content, _game_view(guild_id, user_id, player, grid=fq_grid_ge)
+
+        # ── Reset stone ──────────────────────────────────────────────────
+        if target_fq.terrain == "fq_reset":
+            await _rfql(db, fq_id)
+            player.fq_x, player.fq_y = nx_fq, ny_fq
+            await db.execute(
+                "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                (nx_fq, ny_fq, user_id)
+            )
+            fq_grid_rst = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            content = render_grid(fq_grid_rst, player,
+                "🪨 *The ancient stone hums. The logs roll back to their starting positions.*")
+            return content, _game_view(guild_id, user_id, player, grid=fq_grid_rst)
+
+        # ── Log push mechanic ────────────────────────────────────────────
+        if target_fq.terrain == "fq_log":
+            # Tile beyond the log in the same direction
+            beyond_x, beyond_y = nx_fq + dx, ny_fq + dy
+            beyond = await _lfqst(fq_id, beyond_x, beyond_y, db)
+            # Log can only be pushed into puzzle floor or onto a target tile
+            if beyond.terrain in ("fq_puzzle_floor", "fq_log_target"):
+                # Move log from (nx_fq, ny_fq) → (beyond_x, beyond_y)
+                await _mfql(db, fq_id, nx_fq, ny_fq, beyond_x, beyond_y)
+                # Player steps into the log's old position
+                player.fq_x, player.fq_y = nx_fq, ny_fq
+                await db.execute(
+                    "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                    (nx_fq, ny_fq, user_id)
+                )
+                # Check puzzle completion
+                solved = await _cfqp(db, fq_id)
+                fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                if solved:
+                    content = render_grid(fq_grid_push, player,
+                        "🪵 *The log thuds into place over the stream! "
+                        "Ancient stepping stones rise — the way across is open.*")
+                else:
+                    content = render_grid(fq_grid_push, player,
+                        "🪵 You heave the log forward.")
+                return content, _game_view(guild_id, user_id, player, grid=fq_grid_push)
+            else:
+                # Can't push in this direction
+                fq_grid_nb = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                _ledge_msg = (
+                    "🪵 The ledge is too steep — the log can't roll that way."
+                    if beyond.terrain in ("fq_wall", "fq_obstacle", "fq_floor", "fq_stream",
+                                          "fq_stream_ford", "fq_log")
+                    else "🪵 Something blocks the log from moving that way."
+                )
+                return render_grid(fq_grid_nb, player, _ledge_msg), \
+                       _game_view(guild_id, user_id, player, grid=fq_grid_nb)
+
+        # ── Normal movement ──────────────────────────────────────────────
+        ok_fq, block_fq = _cmfq(target_fq)
+        if not ok_fq:
+            fq_grid_blk = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            return render_grid(fq_grid_blk, player, block_fq), \
+                   _game_view(guild_id, user_id, player, grid=fq_grid_blk)
+
+        _was_in_chamber = (player.fq_y >= _FQ_CY0)
+        _entering_chamber = (ny_fq >= _FQ_CY0) and not _was_in_chamber
+
+        player.fq_x, player.fq_y = nx_fq, ny_fq
+        await db.execute(
+            "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+            (nx_fq, ny_fq, user_id)
+        )
+
+        # Reset logs when player re-enters the chamber from the corridor
+        _extra_fq_msg = ""
+        if _entering_chamber:
+            await _rfql(db, fq_id)
+            _extra_fq_msg = ("🌿 *You step into the ancient hollow. "
+                             "The chamber hums and the logs roll back to their resting places…*\n")
+
+        # Step ents toward player (only in corridor)
+        if player.fq_y < _FQ_CY0:
+            combat_tiles = await _setp(db, fq_id, player.fq_x, player.fq_y)
+            if combat_tiles:
+                # Ent reached player — trigger combat
+                from dwarf_explorer.game.combat import build_arena_from_viewport
+                fq_grid_c = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                _ent_arena_rng = _random.Random(
+                    hash((user_id, player.fq_x, player.fq_y, "ent_combat"))
+                )
+                arena_ent, _eex, _eey = build_arena_from_viewport(fq_grid_c, "ent", _ent_arena_rng)
+                _ui_state[user_id] = {"type": "combat", "arena": arena_ent}
+                player.in_combat = True
+                player.combat_enemy_type = "ent"
+                player.combat_enemy_hp = ENEMY_STATS["ent"][0]
+                player.combat_enemy_x = _eex
+                player.combat_enemy_y = _eey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                    1 if player.accessory == "ring_of_time" else 0
+                )
+                await save_combat_state(db, user_id, player)
+                from dwarf_explorer.game.combat import render_arena as _ra_ent
+                content_ent = _ra_ent(arena_ent, player)
+                view_ent = CombatView(guild_id, user_id,
+                                      trapped=arena_ent["player_trapped"],
+                                      moves_left=player.combat_moves_left,
+                                      enemy_type="ent")
+                return content_ent, view_ent
+
+        fq_grid_mv = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+        content = render_grid(fq_grid_mv, player, _extra_fq_msg or None)
+        return content, _game_view(guild_id, user_id, player, grid=fq_grid_mv)
+
     elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
         _for_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.forest import (
@@ -4106,6 +4269,41 @@ async def _move_steps(
                                 "You step through into a hidden grove.",
                             ),
                             _game_view(guild_id, user_id, player, grid=_grove_grid),
+                        )
+                # Forest Quest entrance: passable when map is marked
+                if (target.terrain == "fst_tree"
+                        and getattr(player, "fq_quest_stage", "none") in ("map_marked", "puzzle_solved")):
+                    from dwarf_explorer.world.forest_quest import (
+                        get_fq_entry_info as _gfqei,
+                        get_or_create_fq_area as _gfqa,
+                        load_fq_viewport as _lfqv_entry,
+                    )
+                    _fq_efid, _fq_efx, _fq_efy = await _gfqei(db, guild_id)
+                    if (_fq_efid == player.forest_id
+                            and nx == _fq_efx and ny == _fq_efy):
+                        fq_id_entry = await _gfqa(
+                            db, guild_id, player.forest_id, nx, ny
+                        )
+                        from dwarf_explorer.config import FQ_ENTRY_X as _FQEntX, FQ_ENTRY_Y as _FQEntY
+                        player.in_forest_quest = True
+                        player.fq_area_id = fq_id_entry
+                        player.fq_x = _FQEntX
+                        player.fq_y = _FQEntY + 1   # one step inside (exit tile is at 0)
+                        player.forest_x, player.forest_y = nx, ny  # remember re-entry tile
+                        await db.execute(
+                            "UPDATE players SET in_forest_quest=1, fq_area_id=?, "
+                            "fq_x=?, fq_y=?, forest_x=?, forest_y=? WHERE user_id=?",
+                            (fq_id_entry, player.fq_x, player.fq_y,
+                             nx, ny, user_id),
+                        )
+                        _fq_entry_grid = await _lfqv_entry(fq_id_entry, player.fq_x, player.fq_y, db)
+                        return (
+                            render_grid(
+                                _fq_entry_grid, player,
+                                "🌳 *A gap in the ancient wall — just as the hermit described. "
+                                "You push through into the unknown.*",
+                            ),
+                            _game_view(guild_id, user_id, player, grid=_fq_entry_grid),
                         )
                 grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
@@ -4784,6 +4982,26 @@ async def _finish_combat(
         except Exception:
             pass
 
+    # Ent defeated — mark it dead in the fq_ents table
+    if won and player.combat_enemy_type == "ent" and getattr(player, "in_forest_quest", False):
+        try:
+            # The ent that reached the player's tile — mark any alive ent at that position dead
+            await db.execute(
+                "UPDATE fq_ents SET alive=0 "
+                "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1",
+                (player.fq_area_id, player.fq_x, player.fq_y),
+            )
+            await db.commit()
+        except Exception:
+            pass
+        drop_rng_ent = _random.Random(hash((user_id, player.fq_x, player.fq_y, "ent_drop")))
+        if drop_rng_ent.random() < 0.60:
+            await add_to_inventory(db, user_id, "log", 1)
+            extra_msg += " 🪵 The ent crumbles into a **Log**!"
+        if drop_rng_ent.random() < 0.40:
+            await add_to_inventory(db, user_id, "stick", 1)
+            extra_msg += " 🪵 It also drops a **Stick**!"
+
     # Sky enemy drops on victory
     if won and player.combat_enemy_type == "wind_wisp":
         drop_rng = _random.Random(hash((user_id, getattr(player, "sky_x", 0), getattr(player, "sky_y", 0), "wisp_drop")))
@@ -4915,12 +5133,19 @@ async def _finish_combat(
         player.temple_id = None
         player.temple_x = player.temple_y = 0
         player.temple_wx = player.temple_wy = 0
+        player.in_forest_quest = False
+        player.fq_area_id = None
+        player.fq_x = player.fq_y = 0
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
         await update_player_sky_state(db, user_id, False, None, 0, 0)
         await update_player_temple_state(db, user_id, False, None, 0, 0)
+        await db.execute(
+            "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
+            "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+        )
         # Respawn in the nearest village at full health
         death_x, death_y = player.world_x, player.world_y
         nearest = await find_nearest_village(seed, db, death_x, death_y)
@@ -8217,6 +8442,47 @@ async def handle_interact(
         content = render_grid(grid, player, "🌳 Dense forest walls surround the path. Keep exploring.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    elif getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.world.forest_quest import (
+            load_fq_viewport as _lfqv_i,
+            load_fq_single_tile as _lfqst_i,
+            reset_fq_logs as _rfql_i,
+        )
+        fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+        fq_tile_i = await _lfqst_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+
+        if fq_tile_i.terrain == "fq_exit":
+            # Exit zone back to forest
+            player.in_forest_quest = False
+            player.fq_area_id = None
+            player.fq_x = player.fq_y = 0
+            await db.execute(
+                "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
+                "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fqi
+            forest_grid_fqi = await _lfv_fqi(player.forest_id, player.forest_x, player.forest_y, db)
+            content = render_grid(forest_grid_fqi, player,
+                "🌲 You push back through the ancient wall into the forest.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=forest_grid_fqi))
+            return
+
+        if fq_tile_i.terrain == "fq_reset":
+            await _rfql_i(db, player.fq_area_id)
+            _invalidate_vp(user_id)
+            fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+            content = render_grid(fq_grid_i, player,
+                "🪨 *The ancient stone hums. The logs roll back to their starting positions.*")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        content = render_grid(fq_grid_i, player, "Nothing to interact with here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
         return
 
     elif getattr(player, "in_grove", False):
@@ -13401,6 +13667,9 @@ async def _execute_warp(
         player.in_cave = player.in_village = player.in_house = False
         player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
         player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+        player.in_forest_quest = False
+        player.fq_area_id = None
+        player.fq_x = player.fq_y = 0
         player.world_x, player.world_y = SPAWN_X, SPAWN_Y
         grid = await load_viewport(SPAWN_X, SPAWN_Y, seed, db)
         msg = f"🌍 **Warp: {WAYPOINTS['spawn']['name']}**\nYou dissolve into a shimmer of light and reappear at the World's Navel."
@@ -13424,6 +13693,9 @@ async def _execute_warp(
             player.in_cave = player.in_village = player.in_house = False
             player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
             player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.in_forest_quest = False
+            player.fq_area_id = None
+            player.fq_x = player.fq_y = 0
             player.world_x, player.world_y = wx, wy
             grid = await load_viewport(wx, wy, seed, db)
             msg = f"🌲 **Warp: {WAYPOINTS['forest']['name']}**\nYou step through a curtain of light and arrive at the forest's edge."
