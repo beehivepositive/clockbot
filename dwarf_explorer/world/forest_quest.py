@@ -50,6 +50,24 @@ from dwarf_explorer.config import (
     FQ_BOSS_DOOR_X, FQ_BOSS_DOOR_Y,
     FQ_BOSS_CHEST_X, FQ_BOSS_CHEST_Y,
     FQ_POST_BOSS_Y0, FQ_POST_BOSS_Y1,
+    # Y-fork
+    FQ_FORK_Y0, FQ_FORK_LOBBY_Y,
+    FQ_FORK_BRANCH_Y0, FQ_FORK_BRANCH_Y1, FQ_FORK_Y1,
+    FQ_FORK_LEFT_WALL_X, FQ_FORK_RIGHT_WALL_X,
+    FQ_FORK_CHEST_L, FQ_FORK_CHEST_R,
+    # Canal puzzle
+    FQ_CANAL_Y0, FQ_CANAL_ROOM_Y0, FQ_CANAL_ROOM_Y1,
+    FQ_CANAL_TARGET_A, FQ_CANAL_TARGET_B,
+    FQ_CANAL_BLOCK_A_START, FQ_CANAL_BLOCK_B_START,
+    FQ_CANAL_GATE_X, FQ_CANAL_GATE_Y,
+    FQ_CANAL_RESET_X, FQ_CANAL_RESET_Y,
+    FQ_CANAL_Y1,
+    # Final room
+    FQ_FINAL_Y0, FQ_FINAL_ROOM_Y0, FQ_FINAL_Y1,
+    FQ_ANCIENT_TREE_X, FQ_ANCIENT_TREE_Y,
+    FQ_ANCIENT_TREE_CHEST_X, FQ_ANCIENT_TREE_CHEST_Y,
+    FQ_ANCIENT_ENT_1, FQ_ANCIENT_ENT_2, FQ_ANCIENT_ENT_POSITIONS,
+    FQ_FINAL_EXIT_X, FQ_FINAL_EXIT_Y,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -158,22 +176,33 @@ async def _generate_fq_zone(db, fq_id: int) -> None:
         tiles,
     )
 
-    # Puzzle logs
+    # Sokoban puzzle logs (indices 0, 1)
     ax, ay = FQ_LOG_A_START
     bx, by = FQ_LOG_B_START
+    # Canal puzzle logs (indices 2, 3)
+    cax, cay = FQ_CANAL_BLOCK_A_START
+    cbx, cby = FQ_CANAL_BLOCK_B_START
     await db.executemany(
         "INSERT INTO fq_puzzle_logs (fq_id, log_idx, cur_x, cur_y, start_x, start_y) "
         "VALUES (?,?,?,?,?,?)",
         [
-            (fq_id, 0, ax, ay, ax, ay),
-            (fq_id, 1, bx, by, bx, by),
+            (fq_id, 0, ax,  ay,  ax,  ay),
+            (fq_id, 1, bx,  by,  bx,  by),
+            (fq_id, 2, cax, cay, cax, cay),
+            (fq_id, 3, cbx, cby, cbx, cby),
         ],
     )
 
-    # Ents (stored separately; rendered as fq_wall overlay until they move)
+    # Regular ents in corridor (rendered as fq_wall overlay until they move)
     await db.executemany(
-        "INSERT INTO fq_ents (fq_id, local_x, local_y, alive) VALUES (?,?,?,1)",
+        "INSERT INTO fq_ents (fq_id, local_x, local_y, alive, ent_type) VALUES (?,?,?,1,'regular')",
         [(fq_id, x, y) for x, y in FQ_ENT_STARTS],
+    )
+
+    # Ancient ents in final room
+    await db.executemany(
+        "INSERT INTO fq_ents (fq_id, local_x, local_y, alive, ent_type) VALUES (?,?,?,1,'ancient')",
+        [(fq_id, x, y) for x, y in FQ_ANCIENT_ENT_POSITIONS],
     )
 
     await db.commit()
@@ -265,7 +294,83 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
             return "fq_floor"
         return "fq_wall"
 
-    # Everything else: wall (future sections not yet built)
+    # ── Y-fork gauntlet (y 88-108) ────────────────────────────────────────
+    if FQ_FORK_Y0 <= y <= FQ_FORK_Y1:
+        if y < FQ_FORK_LOBBY_Y:
+            # Approach corridor (x=7-13)
+            if 7 <= x <= 13:
+                return "fq_floor"
+            return "fq_wall"
+        if y == FQ_FORK_LOBBY_Y:
+            # Wide lobby — all of x=2-18 open so all branches are visible
+            if 2 <= x <= 18:
+                return "fq_floor"
+            return "fq_wall"
+        if FQ_FORK_BRANCH_Y0 <= y <= FQ_FORK_BRANCH_Y1:
+            # Three distinct branches separated by single-tile dividers
+            if x == FQ_FORK_LEFT_WALL_X or x == FQ_FORK_RIGHT_WALL_X:
+                return "fq_wall"
+            if 2 <= x <= 5:   # left branch
+                if (x, y) == FQ_FORK_CHEST_L:
+                    return "fq_fork_chest"
+                return "fq_floor"
+            if 7 <= x <= 13:  # centre branch (continues straight through)
+                return "fq_floor"
+            if 15 <= x <= 18: # right branch
+                if (x, y) == FQ_FORK_CHEST_R:
+                    return "fq_fork_chest"
+                return "fq_floor"
+            return "fq_wall"
+        # y > FQ_FORK_BRANCH_Y1: centre corridor resumes (x=7-13)
+        if 7 <= x <= 13:
+            return "fq_floor"
+        return "fq_wall"
+
+    # ── Canal puzzle (y 109-152) ──────────────────────────────────────────
+    if FQ_CANAL_Y0 <= y <= FQ_CANAL_Y1:
+        if y < FQ_CANAL_ROOM_Y0:
+            # Approach corridor (x=7-13)
+            if 7 <= x <= 13:
+                return "fq_floor"
+            return "fq_wall"
+        if FQ_CANAL_ROOM_Y0 <= y <= FQ_CANAL_ROOM_Y1:
+            # Wide puzzle room (x=2-18 open interior)
+            if 2 <= x <= 18:
+                if x == FQ_CANAL_RESET_X and y == FQ_CANAL_RESET_Y:
+                    return "fq_canal_reset"
+                if (x, y) == FQ_CANAL_TARGET_A or (x, y) == FQ_CANAL_TARGET_B:
+                    return "fq_canal_target"
+                return "fq_canal_floor"
+            return "fq_wall"
+        if y == FQ_CANAL_GATE_Y:
+            # Single-tile chokepoint row — only x=10 passable (as the gate)
+            if x == FQ_CANAL_GATE_X:
+                return "fq_canal_gate"
+            return "fq_wall"
+        # y > FQ_CANAL_GATE_Y: exit corridor (x=7-13)
+        if 7 <= x <= 13:
+            return "fq_canal_floor"
+        return "fq_wall"
+
+    # ── Final room (y 153-180) ────────────────────────────────────────────
+    if FQ_FINAL_Y0 <= y <= FQ_FINAL_Y1:
+        if y < FQ_FINAL_ROOM_Y0:
+            # Transition corridor (x=7-13)
+            if 7 <= x <= 13:
+                return "fq_canal_floor"
+            return "fq_wall"
+        # Wide final room (x=1-19)
+        if 1 <= x <= FQ_WIDTH - 2:
+            if x == FQ_ANCIENT_TREE_X and y == FQ_ANCIENT_TREE_Y:
+                return "fq_ancient_tree"
+            if x == FQ_ANCIENT_TREE_CHEST_X and y == FQ_ANCIENT_TREE_CHEST_Y:
+                return "fq_ancient_chest"
+            if x == FQ_FINAL_EXIT_X and y == FQ_FINAL_EXIT_Y:
+                return "fq_exit"
+            return "fq_floor"
+        return "fq_wall"
+
+    # Everything else: wall
     return "fq_wall"
 
 
@@ -310,11 +415,13 @@ async def load_fq_viewport(
     )
     log_positions: set[tuple[int, int]] = {(r["cur_x"], r["cur_y"]) for r in log_rows}
 
-    # Overlay alive ent positions
+    # Overlay alive ent positions (regular = disguised wall; ancient = darker tree)
     ent_rows = await db.fetch_all(
-        "SELECT local_x, local_y FROM fq_ents WHERE fq_id=? AND alive=1", (fq_id,)
+        "SELECT local_x, local_y, ent_type FROM fq_ents WHERE fq_id=? AND alive=1", (fq_id,)
     )
-    ent_positions: set[tuple[int, int]] = {(r["local_x"], r["local_y"]) for r in ent_rows}
+    ent_positions: dict[tuple[int, int], str] = {
+        (r["local_x"], r["local_y"]): r["ent_type"] for r in ent_rows
+    }
 
     grid: list[list[TileData]] = []
     for gy in range(VIEWPORT_SIZE):
@@ -328,7 +435,8 @@ async def load_fq_viewport(
             if (wx, wy) in log_positions:
                 t = "fq_log"
             elif (wx, wy) in ent_positions:
-                t = "fq_wall"  # disguised trees
+                # Regular ents disguised as trees; ancient ents look slightly different
+                t = "fq_ancient_ent" if ent_positions[(wx, wy)] == "ancient" else "fq_wall"
 
             # Boss-state eye overlays
             elif boss_state and (wx, wy) in FQ_WARDEN_EYE_BY_POS:
@@ -397,9 +505,10 @@ async def move_fq_log(db, fq_id: int, from_x: int, from_y: int,
 
 
 async def reset_fq_logs(db, fq_id: int) -> None:
-    """Return all logs to their starting positions."""
+    """Return Sokoban logs (indices 0, 1) to their starting positions."""
     await db.execute(
-        "UPDATE fq_puzzle_logs SET cur_x=start_x, cur_y=start_y WHERE fq_id=?",
+        "UPDATE fq_puzzle_logs SET cur_x=start_x, cur_y=start_y "
+        "WHERE fq_id=? AND log_idx IN (0, 1)",
         (fq_id,),
     )
     await db.commit()
@@ -432,12 +541,12 @@ async def step_ents_toward_player(
     db, fq_id: int, player_x: int, player_y: int
 ) -> list[tuple[int, int]]:
     """
-    Move each alive ent one step closer to the player (Manhattan, no diagonal).
+    Move each alive *regular* ent one step closer to the player (Manhattan, no diagonal).
     Ents are blocked by walls, obstacles, other ents, and cannot enter the chamber.
     Returns a list of (x, y) positions where an ent reached the player's tile.
     """
     ents = await db.fetch_all(
-        "SELECT id, local_x, local_y FROM fq_ents WHERE fq_id=? AND alive=1",
+        "SELECT id, local_x, local_y FROM fq_ents WHERE fq_id=? AND alive=1 AND ent_type='regular'",
         (fq_id,),
     )
     ent_pos_set: set[tuple[int, int]] = {(e["local_x"], e["local_y"]) for e in ents}
@@ -467,6 +576,118 @@ async def step_ents_toward_player(
         for sdx, sdy in candidates:
             nx, ny = ex + sdx, ey + sdy
             if ny >= FQ_CHAMBER_Y0:
+                continue
+            if (nx, ny) in ent_pos_set:
+                continue
+            tile = await load_fq_single_tile(fq_id, nx, ny, db)
+            if tile.terrain in _ENT_BLOCKED:
+                continue
+            ent_pos_set.discard((ex, ey))
+            ent_pos_set.add((nx, ny))
+            await db.execute(
+                "UPDATE fq_ents SET local_x=?, local_y=? WHERE id=?",
+                (nx, ny, eid),
+            )
+            ex, ey = nx, ny
+            break
+
+        if ex == player_x and ey == player_y:
+            combat_triggers.append((ex, ey))
+
+    await db.commit()
+    return combat_triggers
+
+
+# ── Canal puzzle helpers ──────────────────────────────────────────────────────
+
+async def check_and_solve_canal(db, fq_id: int) -> bool:
+    """Return True if both canal logs are on their targets and open the gate."""
+    # Already solved?
+    row = await db.fetch_one(
+        "SELECT canal_solved FROM forest_quest_areas WHERE fq_id=?", (fq_id,)
+    )
+    if row and row["canal_solved"]:
+        return True
+
+    logs = await db.fetch_all(
+        "SELECT cur_x, cur_y FROM fq_puzzle_logs WHERE fq_id=?", (fq_id,)
+    )
+    positions = {(r["cur_x"], r["cur_y"]) for r in logs}
+    if FQ_CANAL_TARGET_A not in positions or FQ_CANAL_TARGET_B not in positions:
+        return False
+
+    # Open the gate
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_canal_gate_open' "
+        "WHERE fq_id=? AND local_x=? AND local_y=?",
+        (fq_id, FQ_CANAL_GATE_X, FQ_CANAL_GATE_Y),
+    )
+    await db.execute(
+        "UPDATE forest_quest_areas SET canal_solved=1 WHERE fq_id=?", (fq_id,)
+    )
+    await db.commit()
+    return True
+
+
+async def reset_canal_logs(db, fq_id: int) -> None:
+    """Return canal logs (indices 2, 3) to starting positions and re-close the gate."""
+    await db.execute(
+        "UPDATE fq_puzzle_logs SET cur_x=start_x, cur_y=start_y "
+        "WHERE fq_id=? AND log_idx IN (2, 3)",
+        (fq_id,),
+    )
+    # Re-close the gate tile if it was opened
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_canal_gate' "
+        "WHERE fq_id=? AND local_x=? AND local_y=? AND tile_type='fq_canal_gate_open'",
+        (fq_id, FQ_CANAL_GATE_X, FQ_CANAL_GATE_Y),
+    )
+    await db.execute(
+        "UPDATE forest_quest_areas SET canal_solved=0 WHERE fq_id=?", (fq_id,)
+    )
+    await db.commit()
+
+
+# ── Ancient ent helpers ───────────────────────────────────────────────────────
+
+async def step_ancient_ents(
+    db, fq_id: int, player_x: int, player_y: int
+) -> list[tuple[int, int]]:
+    """
+    Move each alive ancient ent one step closer to the player (Manhattan, no diagonal).
+    Ancient ents roam only within y >= FQ_FINAL_ROOM_Y0.
+    Returns a list of (x, y) positions where an ent reached the player's tile.
+    """
+    ents = await db.fetch_all(
+        "SELECT id, local_x, local_y FROM fq_ents "
+        "WHERE fq_id=? AND alive=1 AND ent_type='ancient'",
+        (fq_id,),
+    )
+    ent_pos_set: set[tuple[int, int]] = {(e["local_x"], e["local_y"]) for e in ents}
+    combat_triggers: list[tuple[int, int]] = []
+
+    for ent in ents:
+        eid, ex, ey = ent["id"], ent["local_x"], ent["local_y"]
+
+        dx = player_x - ex
+        dy = player_y - ey
+
+        candidates: list[tuple[int, int]] = []
+        if abs(dx) >= abs(dy):
+            if dx != 0:
+                candidates.append((1 if dx > 0 else -1, 0))
+            if dy != 0:
+                candidates.append((0, 1 if dy > 0 else -1))
+        else:
+            if dy != 0:
+                candidates.append((0, 1 if dy > 0 else -1))
+            if dx != 0:
+                candidates.append((1 if dx > 0 else -1, 0))
+
+        for sdx, sdy in candidates:
+            nx, ny = ex + sdx, ey + sdy
+            # Keep ancient ents within the final room
+            if ny < FQ_FINAL_ROOM_Y0:
                 continue
             if (nx, ny) in ent_pos_set:
                 continue

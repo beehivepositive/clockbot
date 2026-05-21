@@ -4091,8 +4091,11 @@ async def _move_steps(
             load_fq_single_tile as _lfqst,
             move_fq_log as _mfql,
             reset_fq_logs as _rfql,
+            reset_canal_logs as _rcanal,
             check_and_solve_puzzle as _cfqp,
+            check_and_solve_canal as _cfqc,
             step_ents_toward_player as _setp,
+            step_ancient_ents as _step_anc,
             get_warden_defeated as _gwdef,
             defeat_warden as _dfwarden,
         )
@@ -4109,6 +4112,7 @@ async def _move_steps(
             FQ_WARDEN_THORN_DAMAGE_MIN as _FQ_DMIN,
             FQ_WARDEN_THORN_DAMAGE_MAX as _FQ_DMAX,
             FQ_ENT_CORE_DROP_ENT as _FQ_ECDE,
+            FQ_FINAL_ROOM_Y0 as _FQ_FINAL_Y0,
         )
         fq_id = player.fq_area_id
 
@@ -4184,33 +4188,84 @@ async def _move_steps(
                 "🪨 *The ancient stone hums. The logs roll back to their starting positions.*")
             return content, _game_view(guild_id, user_id, player, grid=fq_grid_rst)
 
-        # ── Log push mechanic ────────────────────────────────────────────
+        # ── Canal gate (locked until puzzle solved) ──────────────────────
+        if target_fq.terrain == "fq_canal_gate":
+            fq_grid_cg = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            return (render_grid(fq_grid_cg, player,
+                    "🔒 The canal gate is sealed. Push both blocks onto their ⭕ targets to open it."),
+                    _game_view(guild_id, user_id, player, grid=fq_grid_cg))
+
+        # ── Canal reset stone (step-on resets canal blocks) ──────────────
+        if target_fq.terrain == "fq_canal_reset":
+            await _rcanal(db, fq_id)
+            player.fq_x, player.fq_y = nx_fq, ny_fq
+            await db.execute(
+                "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                (nx_fq, ny_fq, user_id)
+            )
+            fq_grid_cr = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            content = render_grid(fq_grid_cr, player,
+                "🪨 *The reset stone hums. The canal blocks slide back to their starting positions.*")
+            return content, _game_view(guild_id, user_id, player, grid=fq_grid_cr)
+
+        # ── Log / canal-block push mechanic ──────────────────────────────
         if target_fq.terrain == "fq_log":
             beyond_x, beyond_y = nx_fq + dx, ny_fq + dy
             beyond = await _lfqst(fq_id, beyond_x, beyond_y, db)
-            if beyond.terrain in ("fq_puzzle_floor", "fq_log_target"):
+            _sokoban_valid = ("fq_puzzle_floor", "fq_log_target")
+            _canal_valid   = ("fq_canal_floor",  "fq_canal_target")
+            if beyond.terrain in _sokoban_valid + _canal_valid:
                 await _mfql(db, fq_id, nx_fq, ny_fq, beyond_x, beyond_y)
                 player.fq_x, player.fq_y = nx_fq, ny_fq
                 await db.execute(
                     "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
                     (nx_fq, ny_fq, user_id)
                 )
-                solved = await _cfqp(db, fq_id)
-                fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
-                if solved:
-                    content = render_grid(fq_grid_push, player,
-                        "🪵 *The log thuds into place over the stream! "
-                        "Ancient stepping stones rise — the way across is open.*")
+                if beyond.terrain == "fq_log_target":
+                    solved = await _cfqp(db, fq_id)
+                    if solved:
+                        # Advance quest stage if needed
+                        if getattr(player, "fq_quest_stage", "none") == "map_marked":
+                            player.fq_quest_stage = "puzzle_solved"
+                            await db.execute(
+                                "UPDATE players SET fq_quest_stage='puzzle_solved' WHERE user_id=?",
+                                (user_id,)
+                            )
+                        fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        content = render_grid(fq_grid_push, player,
+                            "🪵 *The log thuds into place over the stream! "
+                            "Ancient stepping stones rise — the way across is open.*")
+                    else:
+                        fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        content = render_grid(fq_grid_push, player, "🪵 You heave the log forward.")
+                elif beyond.terrain == "fq_canal_target":
+                    canal_solved = await _cfqc(db, fq_id)
+                    if canal_solved:
+                        _cstage = getattr(player, "fq_quest_stage", "none")
+                        if _cstage not in ("canal_solved", "quest_complete"):
+                            player.fq_quest_stage = "canal_solved"
+                            await db.execute(
+                                "UPDATE players SET fq_quest_stage='canal_solved' WHERE user_id=?",
+                                (user_id,)
+                            )
+                        fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        content = render_grid(fq_grid_push, player,
+                            "💧 *Both canal blocks slot into place. A deep rumble echoes — "
+                            "the 🔓 canal gate grinds open!*")
+                    else:
+                        fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        content = render_grid(fq_grid_push, player,
+                            "💧 The block splashes into the canal channel.")
                 else:
-                    content = render_grid(fq_grid_push, player,
-                        "🪵 You heave the log forward.")
+                    fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                    content = render_grid(fq_grid_push, player, "🪵 You heave the block forward.")
                 return content, _game_view(guild_id, user_id, player, grid=fq_grid_push)
             else:
                 fq_grid_nb = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 _ledge_msg = (
-                    "🪵 The ledge is too steep — the log can't roll that way."
-                    if beyond.terrain in ("fq_wall", "fq_obstacle", "fq_floor", "fq_stream",
-                                          "fq_stream_ford", "fq_log")
+                    "🪵 The ledge is too steep — the block can't go that way."
+                    if beyond.terrain in ("fq_wall", "fq_obstacle", "fq_floor", "fq_canal_floor",
+                                          "fq_stream", "fq_stream_ford", "fq_log")
                     else "🪵 Something blocks the log from moving that way."
                 )
                 return render_grid(fq_grid_nb, player, _ledge_msg), \
@@ -4267,7 +4322,7 @@ async def _move_steps(
                     "🎯 Equip your slingshot and shoot an eye **just before it opens** to destroy it!"
                 )
 
-        # Step ents (only in corridor section)
+        # Step regular ents (corridor section only)
         if player.fq_y < _FQ_CY0:
             combat_tiles = await _setp(db, fq_id, player.fq_x, player.fq_y)
             if combat_tiles:
@@ -4296,6 +4351,38 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left,
                                       enemy_type="ent")
                 return content_ent, view_ent
+
+        # Step ancient ents (final room only)
+        if player.fq_y >= _FQ_FINAL_Y0:
+            anc_combat_tiles = await _step_anc(db, fq_id, player.fq_x, player.fq_y)
+            if anc_combat_tiles:
+                from dwarf_explorer.game.combat import build_arena_from_viewport
+                fq_grid_ac = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                _anc_rng = _random.Random(
+                    hash((user_id, player.fq_x, player.fq_y, "ancient_ent_combat"))
+                )
+                arena_anc, _aex, _aey = build_arena_from_viewport(
+                    fq_grid_ac, "ancient_ent", _anc_rng
+                )
+                _ui_state[user_id] = {"type": "combat", "arena": arena_anc}
+                player.in_combat = True
+                player.combat_enemy_type = "ancient_ent"
+                player.combat_enemy_hp = ENEMY_STATS["ancient_ent"][0]
+                player.combat_enemy_x = _aex
+                player.combat_enemy_y = _aey
+                player.combat_player_x = ARENA_SIZE // 2
+                player.combat_player_y = ARENA_SIZE // 2
+                player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                    1 if player.accessory == "ring_of_time" else 0
+                )
+                await save_combat_state(db, user_id, player)
+                from dwarf_explorer.game.combat import render_arena as _ra_anc
+                content_anc = _ra_anc(arena_anc, player)
+                view_anc = CombatView(guild_id, user_id,
+                                      trapped=arena_anc["player_trapped"],
+                                      moves_left=player.combat_moves_left,
+                                      enemy_type="ancient_ent")
+                return content_anc, view_anc
 
         # Warden turn processing (after every move in boss combat)
         _warn_eye_mv = None
@@ -4410,12 +4497,14 @@ async def _move_steps(
                 # also works for worlds generated before the tile type existed.
                 _fq_stage_now = getattr(player, "fq_quest_stage", "none")
                 _is_fq_entrance_tile = target.terrain == "fst_fq_entrance"
-                _is_fq_entry_eligible = _is_fq_entrance_tile and _fq_stage_now in (
-                    "hermit_met", "map_marked", "puzzle_solved"
+                _FQ_VALID_ENTRY_STAGES = (
+                    "hermit_met", "map_marked", "puzzle_solved",
+                    "warden_defeated", "canal_solved", "quest_complete",
                 )
+                _is_fq_entry_eligible = _is_fq_entrance_tile and _fq_stage_now in _FQ_VALID_ENTRY_STAGES
                 if not _is_fq_entry_eligible and target.terrain == "fst_tree":
                     # Legacy coordinate-based check (worlds where entrance is a plain tree)
-                    if _fq_stage_now in ("map_marked", "puzzle_solved"):
+                    if _fq_stage_now in _FQ_VALID_ENTRY_STAGES:
                         from dwarf_explorer.world.forest_quest import get_fq_entry_info as _gfqei_leg
                         _fq_efid_l, _fq_efx_l, _fq_efy_l = await _gfqei_leg(db, guild_id)
                         if (_fq_efid_l == player.forest_id
@@ -5142,10 +5231,9 @@ async def _finish_combat(
     # Ent defeated — mark it dead in the fq_ents table
     if won and player.combat_enemy_type == "ent" and getattr(player, "in_forest_quest", False):
         try:
-            # The ent that reached the player's tile — mark any alive ent at that position dead
             await db.execute(
                 "UPDATE fq_ents SET alive=0 "
-                "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1",
+                "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1 AND ent_type='regular'",
                 (player.fq_area_id, player.fq_x, player.fq_y),
             )
             await db.commit()
@@ -5158,6 +5246,27 @@ async def _finish_combat(
         if drop_rng_ent.random() < 0.40:
             await add_to_inventory(db, user_id, "stick", 1)
             extra_msg += " 🪵 It also drops a **Stick**!"
+        # Ent core drop
+        await add_to_inventory(db, user_id, "ent_core", _FQ_ECDE)
+        extra_msg += f" 🟢 **Ent Core** × {_FQ_ECDE}!"
+
+    # Ancient ent defeated — mark it dead, drop ent_core × 2
+    if won and player.combat_enemy_type == "ancient_ent" and getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.config import FQ_ENT_CORE_DROP_ANCIENT as _FQ_ECDA
+        try:
+            await db.execute(
+                "UPDATE fq_ents SET alive=0 "
+                "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1 AND ent_type='ancient'",
+                (player.fq_area_id, player.fq_x, player.fq_y),
+            )
+            await db.commit()
+        except Exception:
+            pass
+        await add_to_inventory(db, user_id, "ent_core", _FQ_ECDA)
+        extra_msg += (
+            f" 🌲 The ancient guardian dissolves into bark and shadow...\n"
+            f"🟢 **Ent Core** × {_FQ_ECDA}!"
+        )
 
     # Sky enemy drops on victory
     if won and player.combat_enemy_type == "wind_wisp":
@@ -8707,6 +8816,133 @@ async def handle_interact(
                 f"📦 **Thornwarden's Hoard!**\n"
                 f"🟢 {_wdrp}× Ent Core — *for crafting the Forest Heart Amulet*\n"
                 f"🪙 {_warden_gold} gold")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        if fq_tile_i.terrain == "fq_fork_chest":
+            # Side-branch reward chest — daily loot
+            import datetime as _dt_fork
+            _fork_day = _dt_fork.date.today().toordinal()
+            _fork_already = await db.fetch_one(
+                "SELECT 1 FROM player_forest_chest_loots "
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _fork_day),
+            )
+            if _fork_already:
+                content = render_grid(fq_grid_i, player,
+                    "🎁 The chest is empty — already claimed today.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+                return
+            from dwarf_explorer.database.repositories import add_to_inventory as _ati_fork
+            _fork_gold = _random.randint(15, 35)
+            await _ati_fork(db, user_id, "log", 2)
+            await _ati_fork(db, user_id, "stick", 3)
+            player.gold = min(player.gold + _fork_gold,
+                              getattr(player, "coin_purse_cap", 9999))
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+            await db.execute(
+                "INSERT OR IGNORE INTO player_forest_chest_loots"
+                "(user_id, forest_id, local_x, local_y, loot_day) VALUES(?,?,?,?,?)",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _fork_day),
+            )
+            await db.commit()
+            content = render_grid(fq_grid_i, player,
+                f"🎁 **Fork Cache!**\n"
+                f"🪵 2× Log  🪵 3× Stick\n"
+                f"🪙 {_fork_gold} gold\n"
+                f"*Someone stashed supplies on this dead-end path.*")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        if fq_tile_i.terrain in ("fq_ancient_tree", "fq_ancient_tree_done"):
+            # Ancient heart tree — quest completion
+            _anc_alive = await db.fetch_one(
+                "SELECT COUNT(*) AS cnt FROM fq_ents "
+                "WHERE fq_id=? AND ent_type='ancient' AND alive=1",
+                (player.fq_area_id,),
+            )
+            if _anc_alive and _anc_alive["cnt"] > 0:
+                content = render_grid(fq_grid_i, player,
+                    "🌳 The ancient tree radiates immense power — "
+                    "but the corrupted guardians still block your approach.\n"
+                    "*Defeat the ancient ents first.*")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+                return
+            _cur_stage = getattr(player, "fq_quest_stage", "none")
+            if _cur_stage != "quest_complete":
+                player.fq_quest_stage = "quest_complete"
+                await db.execute(
+                    "UPDATE players SET fq_quest_stage='quest_complete' WHERE user_id=?",
+                    (user_id,)
+                )
+                # Mark tree tile as activated
+                await db.execute(
+                    "UPDATE forest_quest_tiles SET tile_type='fq_ancient_tree_done' "
+                    "WHERE fq_id=? AND local_x=? AND local_y=?",
+                    (player.fq_area_id, player.fq_x, player.fq_y),
+                )
+                await db.commit()
+                _invalidate_vp(user_id)
+                fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+                content = render_grid(fq_grid_i, player,
+                    "✨ **FOREST DEPTHS — QUEST COMPLETE!**\n\n"
+                    "The ancient tree pulses with warm golden light. "
+                    "Its roots shudder, reaching toward you...\n\n"
+                    "*'You have cleansed the darkness from these depths. "
+                    "The forest breathes again.'*\n\n"
+                    "🌳 The ancient heart tree awakens. "
+                    "Return to the hermit to complete your journey — or claim the chest nearby.")
+            else:
+                content = render_grid(fq_grid_i, player,
+                    "✨ The ancient heart tree pulses with warm golden light.\n"
+                    "*The forest breathes easily in this place.*")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        if fq_tile_i.terrain == "fq_ancient_chest":
+            # Final room reward chest — daily loot
+            import datetime as _dt_anc
+            _anc_day = _dt_anc.date.today().toordinal()
+            _anc_already = await db.fetch_one(
+                "SELECT 1 FROM player_forest_chest_loots "
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _anc_day),
+            )
+            if _anc_already:
+                content = render_grid(fq_grid_i, player,
+                    "📦 The ancient chest is empty — already claimed today.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+                return
+            from dwarf_explorer.database.repositories import add_to_inventory as _ati_anc
+            from dwarf_explorer.config import FQ_ENT_CORE_DROP_ANCIENT as _FQECDA
+            _anc_gold = _random.randint(80, 150)
+            _anc_cores = _FQECDA * 2   # double the ancient ent drop
+            await _ati_anc(db, user_id, "ent_core", _anc_cores)
+            await _ati_anc(db, user_id, "living_root", 2)
+            player.gold = min(player.gold + _anc_gold,
+                              getattr(player, "coin_purse_cap", 9999))
+            await db.execute("UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id))
+            await db.execute(
+                "INSERT OR IGNORE INTO player_forest_chest_loots"
+                "(user_id, forest_id, local_x, local_y, loot_day) VALUES(?,?,?,?,?)",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _anc_day),
+            )
+            await db.commit()
+            content = render_grid(fq_grid_i, player,
+                f"📦 **Ancient Hoard!**\n"
+                f"🟢 {_anc_cores}× Ent Core  🌿 2× Living Root\n"
+                f"🪙 {_anc_gold} gold\n"
+                f"*Craft these into the **Forest Heart Amulet** (+15 max HP).*")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
             return
@@ -13295,6 +13531,14 @@ async def handle_fq_boss_shoot(
             if player.fq_boss_eyes.count("1") == 0:
                 await _dfw(db, player.fq_area_id)
                 player.in_fq_boss_combat = False
+                # Advance quest stage
+                _ws = getattr(player, "fq_quest_stage", "none")
+                if _ws not in ("warden_defeated", "canal_solved", "quest_complete"):
+                    player.fq_quest_stage = "warden_defeated"
+                    await db.execute(
+                        "UPDATE players SET fq_quest_stage='warden_defeated' WHERE user_id=?",
+                        (user_id,)
+                    )
                 msg += (
                     "\n\n🌿 **THE THORNWARDEN COLLAPSES!**\n"
                     "Ancient brambles crash to the earth. "
@@ -13971,10 +14215,13 @@ async def _open_tree_city_elder(
         grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
         _fq_stage = getattr(player, "fq_quest_stage", "seek_hermit") or "seek_hermit"
         _fq_hint = {
-            "seek_hermit": "Find the hermit in the other forest — the tracker shows the way.",
-            "hermit_met":  "You've spoken with the hermit. Find the gap he marked in the wall.",
-            "map_marked":  "You're inside the Forest Depths. Push the logs to bridge the stream.",
-            "puzzle_solved": "The stream is bridged. Press deeper into the Forest Depths.",
+            "seek_hermit":      "Find the hermit in the other forest — the tracker shows the way.",
+            "hermit_met":       "You've spoken with the hermit. Find the gap he marked in the wall.",
+            "map_marked":       "You're inside the Forest Depths. Push the logs to bridge the stream.",
+            "puzzle_solved":    "The stream is bridged. Defeat the Thornwarden further in.",
+            "warden_defeated":  "The Thornwarden is slain. Navigate the fork and solve the canal.",
+            "canal_solved":     "The canal is open. Enter the final chamber ahead.",
+            "quest_complete":   "Quest complete! Return to the hermit — or continue exploring.",
         }.get(_fq_stage, "Keep following the trail.")
         stick_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
         xyphem_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,))

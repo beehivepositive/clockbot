@@ -469,6 +469,7 @@ CREATE TABLE IF NOT EXISTS forest_quest_areas (
     height           INTEGER NOT NULL DEFAULT 200,
     solved           INTEGER NOT NULL DEFAULT 0,   -- 1 once the stream ford is permanent
     warden_defeated  INTEGER NOT NULL DEFAULT 0,   -- 1 once all 4 eyes are destroyed
+    canal_solved     INTEGER NOT NULL DEFAULT 0,   -- 1 once canal puzzle gate opens
     entry_forest_id  INTEGER,          -- forest_id the entrance tile belongs to
     entry_fx         INTEGER DEFAULT 0, -- local_x in that forest
     entry_fy         INTEGER DEFAULT 0  -- local_y in that forest
@@ -493,13 +494,14 @@ CREATE TABLE IF NOT EXISTS fq_puzzle_logs (
     PRIMARY KEY (fq_id, log_idx)
 );
 
--- Ent positions in the corridor (alive=1 until defeated)
+-- Ent positions in the corridor and final room (alive=1 until defeated)
 CREATE TABLE IF NOT EXISTS fq_ents (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    fq_id    INTEGER NOT NULL,
-    local_x  INTEGER NOT NULL,
-    local_y  INTEGER NOT NULL,
-    alive    INTEGER NOT NULL DEFAULT 1
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    fq_id     INTEGER NOT NULL,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    alive     INTEGER NOT NULL DEFAULT 1,
+    ent_type  TEXT    NOT NULL DEFAULT 'regular'  -- 'regular' or 'ancient'
 );
 
 CREATE INDEX IF NOT EXISTS idx_fq_tiles ON forest_quest_tiles(fq_id, local_x, local_y);

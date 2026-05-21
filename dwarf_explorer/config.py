@@ -87,6 +87,17 @@ TERRAIN_EMOJI = {
     "fq_boss_door_open":   "\U0001F6AA",  # 🚪 open exit door (walkable)
     "fq_boss_chest":       "\U0001F4E6",  # 📦 loot chest spawned after warden dies
     "fq_aim_cursor":       "\U0001F3AF",  # 🎯 slingshot aim cursor overlay
+    # Forest Quest — Y-fork, canal puzzle, final room
+    "fq_fork_chest":        "\U0001F381",  # 🎁 side-branch reward chest
+    "fq_canal_floor":       "\U0001F4A7",  # 💧 wet canal floor (aesthetic)
+    "fq_canal_target":      "\U00002B55",  # ⭕ canal block target slot
+    "fq_canal_gate":        "\U0001F512",  # 🔒 locked canal gate
+    "fq_canal_gate_open":   "\U0001F513",  # 🔓 opened canal gate (walkable)
+    "fq_canal_reset":       "\U0001FAA8",  # 🪨 canal reset stone
+    "fq_ancient_ent":       "\U0001F332",  # 🌲 ancient ent guardian (alive, darker tree)
+    "fq_ancient_tree":      "\U0001F333",  # 🌳 the ancient heart tree (interactable)
+    "fq_ancient_tree_done": "\U00002728",  # ✨ ancient tree — quest activated
+    "fq_ancient_chest":     "\U0001F4E6",  # 📦 final room reward chest
     # Hermit zone tiles
     "fst_hermit_house": "\U0001F6D6",  # 🛖 hermit's hut
     "fst_fq_entrance":  "\U0001F333",  # 🌳 looks like a tree wall (FQ zone entrance marker)
@@ -513,6 +524,45 @@ FQ_BOSS_CHEST_Y = 66
 FQ_POST_BOSS_Y0 = 80
 FQ_POST_BOSS_Y1 = 87
 
+# ── Y-fork gauntlet (y 88-108) ───────────────────────────────────────────────
+FQ_FORK_Y0          = 88
+FQ_FORK_LOBBY_Y     = 93    # wide 17-tile opening — all branches visible
+FQ_FORK_BRANCH_Y0   = 94    # inner dividers appear; three distinct lanes
+FQ_FORK_BRANCH_Y1   = 102   # side branches dead-end (chest at terminal tile)
+FQ_FORK_Y1          = 108
+FQ_FORK_LEFT_WALL_X  = 6    # wall col separating left branch from centre
+FQ_FORK_RIGHT_WALL_X = 14   # wall col separating centre from right branch
+FQ_FORK_CHEST_L = (4,  102)  # left branch dead-end reward chest
+FQ_FORK_CHEST_R = (16, 102)  # right branch dead-end reward chest
+
+# ── Canal puzzle (y 109-152) ─────────────────────────────────────────────────
+FQ_CANAL_Y0          = 109
+FQ_CANAL_ROOM_Y0     = 116   # wide puzzle room starts
+FQ_CANAL_ROOM_Y1     = 143   # wide puzzle room ends
+FQ_CANAL_TARGET_A    = (5,  121)  # left canal-block target (⭕)
+FQ_CANAL_TARGET_B    = (15, 121)  # right canal-block target (⭕)
+FQ_CANAL_BLOCK_A_START = (5,  135)  # canal block A initial position
+FQ_CANAL_BLOCK_B_START = (15, 135)  # canal block B initial position
+FQ_CANAL_GATE_X      = 10
+FQ_CANAL_GATE_Y      = 144   # single-tile chokepoint gate (y=144 is x=10 only)
+FQ_CANAL_RESET_X     = 10
+FQ_CANAL_RESET_Y     = 116   # reset stone at canal room entrance
+FQ_CANAL_Y1          = 152
+
+# ── Final room (y 153-180) ───────────────────────────────────────────────────
+FQ_FINAL_Y0             = 153
+FQ_FINAL_ROOM_Y0        = 156   # wide final room starts (x=1-19)
+FQ_ANCIENT_TREE_X       = 10
+FQ_ANCIENT_TREE_Y       = 166
+FQ_ANCIENT_TREE_CHEST_X = 10
+FQ_ANCIENT_TREE_CHEST_Y = 169
+FQ_ANCIENT_ENT_1        = (7,  161)
+FQ_ANCIENT_ENT_2        = (13, 161)
+FQ_ANCIENT_ENT_POSITIONS = [FQ_ANCIENT_ENT_1, FQ_ANCIENT_ENT_2]
+FQ_FINAL_EXIT_X         = 10
+FQ_FINAL_EXIT_Y         = 177
+FQ_FINAL_Y1             = 180
+
 # Puzzle log starting positions (zone-absolute coords)
 FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 2)   # zone (6, 20)
 FQ_LOG_B_START = (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 2)   # zone (14, 20)
@@ -545,24 +595,35 @@ FQ_WALKABLE = frozenset({
     "fq_floor",
     "fq_puzzle_floor",
     "fq_stream_ford",
-    "fq_log_target",      # target marker — walkable when no log is on it
-    "fq_reset",           # stepping on it resets the puzzle logs
+    "fq_log_target",        # Sokoban target marker
+    "fq_reset",             # Sokoban reset stone
     "fq_grove_exit",
-    "fq_exit",            # entry/exit tile at top of corridor
-    "fq_shopkeeper",      # walk to shopkeeper; interact opens shop
-    "fq_warden_dead",     # collapsed warden rubble (walkable after boss death)
-    "fq_boss_door_open",  # open exit door from boss chamber
-    "fq_boss_chest",      # loot chest — walkable; interact opens it
+    "fq_exit",              # zone entry/exit
+    "fq_shopkeeper",        # walk to shopkeeper; interact opens shop
+    "fq_warden_dead",       # collapsed warden rubble (walkable after boss death)
+    "fq_boss_door_open",    # open exit door from boss chamber
+    "fq_boss_chest",        # loot chest — walkable; interact opens it
+    # Fork, canal, final room
+    "fq_fork_chest",        # side-branch reward chest — walkable; interact loots it
+    "fq_canal_floor",       # canal-aesthetic walkable floor
+    "fq_canal_target",      # canal block target slot — walkable when no block on it
+    "fq_canal_gate_open",   # opened canal gate
+    "fq_canal_reset",       # canal reset stone
+    "fq_ancient_tree",      # the ancient heart tree (interactable)
+    "fq_ancient_tree_done", # post-activation state
+    "fq_ancient_chest",     # final room reward chest
 })
 
-# Enemy stats — ent and snake for the FQ corridor
+# Enemy stats — ent, snake, and ancient ent for the FQ zone
 ENEMY_STATS.update({
-    "ent":   (55, 18, 6, 40, 20),   # disguised as a tree; heavy, slow
-    "snake": (18,  9, 0, 12,  6),   # fast, low HP
+    "ent":         (55, 18,  6, 40, 20),   # disguised as a tree; heavy, slow
+    "snake":       (18,  9,  0, 12,  6),   # fast, low HP
+    "ancient_ent": (90, 24, 10,  0,  0),   # ancient guardian; no gold, drops ent_core ×2
 })
 ENEMY_ABILITIES.update({
-    "ent":   {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
-    "snake": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False, "ranged": False},
+    "ent":         {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
+    "snake":       {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False, "ranged": False},
+    "ancient_ent": {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
 })
 
 # Thornwarden miniboss — defeated via slingshot (eye mechanic), not standard combat

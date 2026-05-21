@@ -1088,6 +1088,16 @@ class Database:
                     conn.execute(
                         "ALTER TABLE forest_quest_areas ADD COLUMN warden_defeated INTEGER NOT NULL DEFAULT 0"
                     )
+                if "canal_solved" not in _fqa_cols:
+                    conn.execute(
+                        "ALTER TABLE forest_quest_areas ADD COLUMN canal_solved INTEGER NOT NULL DEFAULT 0"
+                    )
+                # fq_ents: add ent_type column if missing
+                _fe_cols = {row[1] for row in conn.execute("PRAGMA table_info(fq_ents)").fetchall()}
+                if "ent_type" not in _fe_cols:
+                    conn.execute(
+                        "ALTER TABLE fq_ents ADD COLUMN ent_type TEXT NOT NULL DEFAULT 'regular'"
+                    )
                 conn.commit()
             except Exception as e:
                 _log.warning("Forest quest table migration warning: %s", e)
