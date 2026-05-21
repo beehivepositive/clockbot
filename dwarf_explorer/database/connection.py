@@ -1018,15 +1018,19 @@ class Database:
             # ── Forest Quest Zone migration ────────────────────────────────────
             try:
                 fq_cols = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
-                for col, dflt in [
-                    ("in_forest_quest", "0"),
-                    ("fq_area_id",      "NULL"),
-                    ("fq_x",            "0"),
-                    ("fq_y",            "0"),
-                    ("fq_quest_stage",  "'none'"),
+                # Nullable column (no NOT NULL — SQLite can't ALTER ADD NOT NULL DEFAULT NULL)
+                if "fq_area_id" not in fq_cols:
+                    conn.execute("ALTER TABLE players ADD COLUMN fq_area_id INTEGER")
+                for col, col_type, dflt in [
+                    ("in_forest_quest", "INTEGER", "0"),
+                    ("fq_x",            "INTEGER", "0"),
+                    ("fq_y",            "INTEGER", "0"),
+                    ("fq_quest_stage",  "TEXT",    "'none'"),
                 ]:
                     if col not in fq_cols:
-                        conn.execute(f"ALTER TABLE players ADD COLUMN {col} TEXT NOT NULL DEFAULT {dflt}")
+                        conn.execute(
+                            f"ALTER TABLE players ADD COLUMN {col} {col_type} NOT NULL DEFAULT {dflt}"
+                        )
                 conn.commit()
             except Exception as e:
                 _log.warning("Forest quest player column migration warning: %s", e)
