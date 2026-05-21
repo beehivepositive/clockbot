@@ -463,14 +463,15 @@ CREATE INDEX IF NOT EXISTS idx_cave_crack_breaks ON cave_crack_breaks(cave_id, b
 -- ── Forest Quest Zone ──────────────────────────────────────────────────────────
 -- One zone per world (shared across all players on the guild).
 CREATE TABLE IF NOT EXISTS forest_quest_areas (
-    fq_id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id        INTEGER NOT NULL UNIQUE,
-    width           INTEGER NOT NULL DEFAULT 21,
-    height          INTEGER NOT NULL DEFAULT 42,
-    solved          INTEGER NOT NULL DEFAULT 0,   -- 1 once the stream ford is permanent
-    entry_forest_id INTEGER,          -- forest_id the entrance tile belongs to
-    entry_fx        INTEGER DEFAULT 0, -- local_x in that forest
-    entry_fy        INTEGER DEFAULT 0  -- local_y in that forest
+    fq_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id         INTEGER NOT NULL UNIQUE,
+    width            INTEGER NOT NULL DEFAULT 21,
+    height           INTEGER NOT NULL DEFAULT 200,
+    solved           INTEGER NOT NULL DEFAULT 0,   -- 1 once the stream ford is permanent
+    warden_defeated  INTEGER NOT NULL DEFAULT 0,   -- 1 once all 4 eyes are destroyed
+    entry_forest_id  INTEGER,          -- forest_id the entrance tile belongs to
+    entry_fx         INTEGER DEFAULT 0, -- local_x in that forest
+    entry_fy         INTEGER DEFAULT 0  -- local_y in that forest
 );
 
 CREATE TABLE IF NOT EXISTS forest_quest_tiles (

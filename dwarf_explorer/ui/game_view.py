@@ -366,7 +366,14 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
     elif getattr(player, "in_forest_quest", False):
         from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_cache
-        grid = await _lfqv_cache(player.fq_area_id, player.fq_x, player.fq_y, db)
+        _bst_cache = ({"eyes": getattr(player, "fq_boss_eyes", "1111"),
+                       "warn_eye": None, "open_eye": None}
+                      if getattr(player, "in_fq_boss_combat", False) else None)
+        _ac_cache = None
+        if getattr(player, "fq_boss_aim_mode", False):
+            _ac_cache = (player.fq_boss_aim_x, player.fq_boss_aim_y)
+        grid = await _lfqv_cache(player.fq_area_id, player.fq_x, player.fq_y, db,
+                                  boss_state=_bst_cache, aim_cursor=_ac_cache)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -3245,6 +3252,17 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         _chopd.add(_dn)
             chop_dirs = frozenset(_chopd)
 
+    # ── Thornwarden boss fight: inject slingshot aim buttons ─────────────────
+    if getattr(player, "in_fq_boss_combat", False):
+        _has_sling = (player.hand_1 == "slingshot" or player.hand_2 == "slingshot")
+        if getattr(player, "fq_boss_aim_mode", False):
+            # In aim mode: action = Fire, interact2 = Cancel
+            action_label, action_enabled = "🪨 Fire", True
+            interact2_label, interact2_enabled = "❌ Cancel Aim", True
+        elif _has_sling:
+            # Has slingshot but not aiming: show Aim button via action2
+            action2_label, action2_enabled, action2_id = "🎯 Aim", True, "fq_aim"
+
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
                     sprinting=player.sprinting,
@@ -4075,31 +4093,61 @@ async def _move_steps(
             reset_fq_logs as _rfql,
             check_and_solve_puzzle as _cfqp,
             step_ents_toward_player as _setp,
+            get_warden_defeated as _gwdef,
+            defeat_warden as _dfwarden,
         )
         from dwarf_explorer.game.player import can_move_forest_quest as _cmfq
         from dwarf_explorer.config import (
             FQ_CHAMBER_Y0 as _FQ_CY0,
-            FQ_PUZZLE_X0 as _FQ_PX0, FQ_PUZZLE_X1 as _FQ_PX1,
-            FQ_PUZZLE_Y0 as _FQ_PY0, FQ_PUZZLE_Y1 as _FQ_PY1,
             FQ_STREAM_Y as _FQ_SY,
-            FQ_RESET_X as _FQ_RX, FQ_RESET_Y as _FQ_RY,
-            FQ_GROVE_EXIT_X as _FQ_GEX, FQ_GROVE_EXIT_Y as _FQ_GEY,
             FQ_ENTRY_X as _FQ_EX, FQ_ENTRY_Y as _FQ_EY,
+            FQ_BOSS_CHAMBER_Y0 as _FQ_BCY0, FQ_BOSS_CHAMBER_Y1 as _FQ_BCY1,
+            FQ_WARDEN_EYE_CYCLE as _FQ_WEC,
+            FQ_WARDEN_EYE_POSITIONS as _FQ_WEP,
+            FQ_WARDEN_WARN_TURN as _FQ_WARN, FQ_WARDEN_OPEN_TURN as _FQ_OPEN,
+            FQ_WARDEN_CYCLE_LEN as _FQ_CYCLEN,
+            FQ_WARDEN_THORN_DAMAGE_MIN as _FQ_DMIN,
+            FQ_WARDEN_THORN_DAMAGE_MAX as _FQ_DMAX,
+            FQ_ENT_CORE_DROP_ENT as _FQ_ECDE,
         )
         fq_id = player.fq_area_id
-        nx_fq, ny_fq = player.fq_x + dx, player.fq_y + dy
 
-        # Peek at target tile
+        # ── Aim mode: arrows move slingshot cursor, not player ────────────
+        if getattr(player, "fq_boss_aim_mode", False):
+            new_aim_x = player.fq_boss_aim_x + dx
+            new_aim_y = player.fq_boss_aim_y + dy
+            # Clamp aim cursor within zone bounds
+            new_aim_x = max(0, min(FQ_WIDTH - 1, new_aim_x))
+            new_aim_y = max(0, min(FQ_HEIGHT - 1, new_aim_y))
+            player.fq_boss_aim_x = new_aim_x
+            player.fq_boss_aim_y = new_aim_y
+            await db.execute(
+                "UPDATE players SET fq_boss_aim_x=?, fq_boss_aim_y=? WHERE user_id=?",
+                (new_aim_x, new_aim_y, user_id),
+            )
+            _bs_aim = {
+                "eyes": player.fq_boss_eyes,
+                "warn_eye": None, "open_eye": None,
+            }
+            _ac = (new_aim_x, new_aim_y)
+            fq_grid_aim = await _lfqv(fq_id, player.fq_x, player.fq_y, db,
+                                      boss_state=_bs_aim, aim_cursor=_ac)
+            content = render_grid(fq_grid_aim, player,
+                f"🎯 Aim cursor: ({new_aim_x}, {new_aim_y}) — press 🪨 Fire to shoot or ❌ Cancel")
+            return content, _game_view(guild_id, user_id, player, grid=fq_grid_aim)
+
+        nx_fq, ny_fq = player.fq_x + dx, player.fq_y + dy
         target_fq = await _lfqst(fq_id, nx_fq, ny_fq, db)
 
         # ── Zone exit (top of corridor) ──────────────────────────────────
         if target_fq.terrain == "fq_exit":
             player.in_forest_quest = False
+            player.in_fq_boss_combat = False
             player.fq_area_id = None
             player.fq_x = player.fq_y = 0
             await db.execute(
-                "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
-                "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+                "UPDATE players SET in_forest_quest=0, in_fq_boss_combat=0, "
+                "fq_area_id=NULL, fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fq
             forest_grid_fq = await _lfv_fq(player.forest_id, player.forest_x, player.forest_y, db)
@@ -4107,14 +4155,21 @@ async def _move_steps(
                 "🌲 You push back through the ancient wall into the forest.")
             return content, _game_view(guild_id, user_id, player, grid=forest_grid_fq)
 
-        # ── Grove exit (post-stream area) ────────────────────────────────
+        # ── Grove exit (post-stream area — placeholder) ───────────────────
         if target_fq.terrain == "fq_grove_exit":
-            # For now: show a message and stay; grove area TBD
             fq_grid_ge = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
             content = render_grid(fq_grid_ge, player,
                 "✨ *A golden light spills from the hidden grove. "
                 "The ancient trees seem to welcome you… but the path ahead is not yet revealed.*")
             return content, _game_view(guild_id, user_id, player, grid=fq_grid_ge)
+
+        # ── Boss door (locked) ─────────────────────────────────────────────
+        if target_fq.terrain == "fq_boss_door":
+            _bst = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+            fq_grid_bd = await _lfqv(fq_id, player.fq_x, player.fq_y, db, boss_state=_bst)
+            return (render_grid(fq_grid_bd, player,
+                    "🚧 The iron-briar gate is sealed. Destroy the Thornwarden to open it."),
+                    _game_view(guild_id, user_id, player, grid=fq_grid_bd))
 
         # ── Reset stone ──────────────────────────────────────────────────
         if target_fq.terrain == "fq_reset":
@@ -4131,20 +4186,15 @@ async def _move_steps(
 
         # ── Log push mechanic ────────────────────────────────────────────
         if target_fq.terrain == "fq_log":
-            # Tile beyond the log in the same direction
             beyond_x, beyond_y = nx_fq + dx, ny_fq + dy
             beyond = await _lfqst(fq_id, beyond_x, beyond_y, db)
-            # Log can only be pushed into puzzle floor or onto a target tile
             if beyond.terrain in ("fq_puzzle_floor", "fq_log_target"):
-                # Move log from (nx_fq, ny_fq) → (beyond_x, beyond_y)
                 await _mfql(db, fq_id, nx_fq, ny_fq, beyond_x, beyond_y)
-                # Player steps into the log's old position
                 player.fq_x, player.fq_y = nx_fq, ny_fq
                 await db.execute(
                     "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
                     (nx_fq, ny_fq, user_id)
                 )
-                # Check puzzle completion
                 solved = await _cfqp(db, fq_id)
                 fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 if solved:
@@ -4156,7 +4206,6 @@ async def _move_steps(
                         "🪵 You heave the log forward.")
                 return content, _game_view(guild_id, user_id, player, grid=fq_grid_push)
             else:
-                # Can't push in this direction
                 fq_grid_nb = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 _ledge_msg = (
                     "🪵 The ledge is too steep — the log can't roll that way."
@@ -4170,12 +4219,17 @@ async def _move_steps(
         # ── Normal movement ──────────────────────────────────────────────
         ok_fq, block_fq = _cmfq(target_fq)
         if not ok_fq:
-            fq_grid_blk = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+            _bst_blk = ({"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+                        if getattr(player, "in_fq_boss_combat", False) else None)
+            fq_grid_blk = await _lfqv(fq_id, player.fq_x, player.fq_y, db, boss_state=_bst_blk)
             return render_grid(fq_grid_blk, player, block_fq), \
                    _game_view(guild_id, user_id, player, grid=fq_grid_blk)
 
         _was_in_chamber = (player.fq_y >= _FQ_CY0)
         _entering_chamber = (ny_fq >= _FQ_CY0) and not _was_in_chamber
+        _was_in_boss     = (player.fq_y >= _FQ_BCY0)
+        _entering_boss   = (ny_fq >= _FQ_BCY0) and not _was_in_boss \
+                           and not getattr(player, "in_fq_boss_combat", False)
 
         player.fq_x, player.fq_y = nx_fq, ny_fq
         await db.execute(
@@ -4183,18 +4237,40 @@ async def _move_steps(
             (nx_fq, ny_fq, user_id)
         )
 
-        # Reset logs when player re-enters the chamber from the corridor
+        # Reset Sokoban logs when player re-enters the puzzle chamber
         _extra_fq_msg = ""
         if _entering_chamber:
             await _rfql(db, fq_id)
             _extra_fq_msg = ("🌿 *You step into the ancient hollow. "
                              "The chamber hums and the logs roll back to their resting places…*\n")
 
-        # Step ents toward player (only in corridor)
+        # Boss chamber entry — initialise Thornwarden combat
+        if _entering_boss:
+            _warden_already_dead = await _gwdef(db, fq_id)
+            if not _warden_already_dead:
+                player.in_fq_boss_combat = True
+                player.fq_boss_turn = 0
+                player.fq_boss_eye_idx = 0
+                player.fq_boss_eyes = "1111"
+                player.fq_boss_aim_mode = False
+                player.fq_boss_aim_x = player.fq_x
+                player.fq_boss_aim_y = player.fq_y
+                await db.execute(
+                    "UPDATE players SET in_fq_boss_combat=1, fq_boss_turn=0, "
+                    "fq_boss_eye_idx=0, fq_boss_eyes='1111', fq_boss_aim_mode=0, "
+                    "fq_boss_aim_x=?, fq_boss_aim_y=? WHERE user_id=?",
+                    (player.fq_x, player.fq_y, user_id),
+                )
+                _extra_fq_msg = (
+                    "🌿 *The air grows thick with briars. Something vast stirs in the dark...*\n\n"
+                    "**THE THORNWARDEN AWAKENS!** 🟤🟤🟤🟤 Four dormant eyes pulse with cold light.\n"
+                    "🎯 Equip your slingshot and shoot an eye **just before it opens** to destroy it!"
+                )
+
+        # Step ents (only in corridor section)
         if player.fq_y < _FQ_CY0:
             combat_tiles = await _setp(db, fq_id, player.fq_x, player.fq_y)
             if combat_tiles:
-                # Ent reached player — trigger combat
                 from dwarf_explorer.game.combat import build_arena_from_viewport
                 fq_grid_c = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 _ent_arena_rng = _random.Random(
@@ -4221,7 +4297,66 @@ async def _move_steps(
                                       enemy_type="ent")
                 return content_ent, view_ent
 
-        fq_grid_mv = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+        # Warden turn processing (after every move in boss combat)
+        _warn_eye_mv = None
+        _open_eye_mv = None
+        if getattr(player, "in_fq_boss_combat", False) and not _entering_boss:
+            player.fq_boss_turn = (player.fq_boss_turn + 1) % _FQ_CYCLEN
+
+            if player.fq_boss_turn == _FQ_WARN:
+                # Find next alive eye
+                for _wi in range(4):
+                    _widx = (player.fq_boss_eye_idx + _wi) % 4
+                    if player.fq_boss_eyes[_widx] == "1":
+                        _warn_eye_mv = _FQ_WEC[_widx]
+                        player.fq_boss_eye_idx = _widx
+                        _wpos = _FQ_WEP[_warn_eye_mv]
+                        _extra_fq_msg = (
+                            f"⚠️ *The Thornwarden's **{_warn_eye_mv}** eye begins to glow…* "
+                            f"Position: ({_wpos[0]}, {_wpos[1]})\n"
+                            "🎯 Aim your slingshot at it NOW before it opens!"
+                        )
+                        break
+                await db.execute(
+                    "UPDATE players SET fq_boss_turn=?, fq_boss_eye_idx=? WHERE user_id=?",
+                    (player.fq_boss_turn, player.fq_boss_eye_idx, user_id),
+                )
+
+            elif player.fq_boss_turn == _FQ_OPEN:
+                _open_eye_mv = _FQ_WEC[player.fq_boss_eye_idx]
+                _thorn_dmg = _random.randint(_FQ_DMIN, _FQ_DMAX)
+                player.hp = max(0, player.hp - _thorn_dmg)
+                _extra_fq_msg = (
+                    f"🔴 *The **{_open_eye_mv}** eye snaps open — thorns lash out!*\n"
+                    f"💥 You take **{_thorn_dmg} damage**! ({player.hp}/{player.max_hp} HP)"
+                )
+                # Advance to next alive eye and reset turn
+                player.fq_boss_turn = 0
+                for _ni in range(1, 5):
+                    _nidx = (player.fq_boss_eye_idx + _ni) % 4
+                    if player.fq_boss_eyes[_nidx] == "1":
+                        player.fq_boss_eye_idx = _nidx
+                        break
+                await db.execute(
+                    "UPDATE players SET hp=?, fq_boss_turn=?, fq_boss_eye_idx=? WHERE user_id=?",
+                    (player.hp, player.fq_boss_turn, player.fq_boss_eye_idx, user_id),
+                )
+                if player.hp <= 0:
+                    # Player died — handled by caller; return death state
+                    fq_grid_d = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                    return (render_grid(fq_grid_d, player,
+                            "💀 The thorns pierce deep. Darkness claims you..."),
+                            _game_view(guild_id, user_id, player, grid=fq_grid_d))
+            else:
+                await db.execute(
+                    "UPDATE players SET fq_boss_turn=? WHERE user_id=?",
+                    (player.fq_boss_turn, user_id),
+                )
+
+        _bst_mv = ({"eyes": player.fq_boss_eyes,
+                    "warn_eye": _warn_eye_mv, "open_eye": _open_eye_mv}
+                   if getattr(player, "in_fq_boss_combat", False) else None)
+        fq_grid_mv = await _lfqv(fq_id, player.fq_x, player.fq_y, db, boss_state=_bst_mv)
         content = render_grid(fq_grid_mv, player, _extra_fq_msg or None)
         return content, _game_view(guild_id, user_id, player, grid=fq_grid_mv)
 
@@ -8472,17 +8607,20 @@ async def handle_interact(
             load_fq_single_tile as _lfqst_i,
             reset_fq_logs as _rfql_i,
         )
-        fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+        _fq_bst_i = ({"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+                     if getattr(player, "in_fq_boss_combat", False) else None)
+        fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db,
+                                   boss_state=_fq_bst_i)
         fq_tile_i = await _lfqst_i(player.fq_area_id, player.fq_x, player.fq_y, db)
 
         if fq_tile_i.terrain == "fq_exit":
-            # Exit zone back to forest
             player.in_forest_quest = False
+            player.in_fq_boss_combat = False
             player.fq_area_id = None
             player.fq_x = player.fq_y = 0
             await db.execute(
-                "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
-                "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+                "UPDATE players SET in_forest_quest=0, in_fq_boss_combat=0, "
+                "fq_area_id=NULL, fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fqi
             forest_grid_fqi = await _lfv_fqi(player.forest_id, player.forest_x, player.forest_y, db)
@@ -8502,7 +8640,78 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
             return
 
-        content = render_grid(fq_grid_i, player, "Nothing to interact with here.")
+        if fq_tile_i.terrain == "fq_shopkeeper":
+            # Forest shopkeeper — sells basic supplies
+            _fq_shop_items = [
+                {"item_id": "forest_nut",   "name": "Forest Nut",   "price": 8,
+                 "desc": "Restores 3 HP. Gathered from the ancient canopy."},
+                {"item_id": "rock",         "name": "Rock",          "price": 4,
+                 "desc": "Smooth stone — good for a slingshot."},
+                {"item_id": "forest_nut",   "name": "Forest Nut ×3", "price": 20,
+                 "desc": "Three nuts bundled together. Bulk discount."},
+            ]
+            _ui_state[user_id] = {
+                "type": "fq_shop",
+                "items": _fq_shop_items,
+                "selected": 0,
+            }
+            _shop_lines = "\n".join(
+                f"**{it['name']}** — {it['price']}🪙  _{it['desc']}_"
+                for it in _fq_shop_items
+            )
+            content = render_grid(fq_grid_i, player,
+                "🧙 *A hunched figure peers out from beneath a mossy hood.*\n\n"
+                "*'Lost, are ya? Things get worse ahead. Buy something.'*\n\n"
+                + _shop_lines +
+                "\n\n*Use the shop interface to purchase.*")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        if fq_tile_i.terrain == "fq_boss_chest":
+            # Loot chest after Thornwarden defeat
+            import datetime as _dt_fqbc
+            _fqbc_day = _dt_fqbc.date.today().toordinal()
+            _fqbc_already = await db.fetch_one(
+                "SELECT 1 FROM player_forest_chest_loots "
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _fqbc_day),
+            )
+            if _fqbc_already:
+                content = render_grid(fq_grid_i, player,
+                    "📦 The chest is empty — already claimed today.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+                return
+            from dwarf_explorer.config import (
+                FQ_ENT_CORE_DROP_WARDEN as _wdrp,
+                FQ_WARDEN_EYE_CYCLE as _wec_drop,
+            )
+            from dwarf_explorer.database.repositories import add_to_inventory as _ati
+            _warden_gold = _random.randint(60, 120)
+            await _ati(db, user_id, "ent_core", _wdrp)
+            player.gold = min(player.gold + _warden_gold,
+                              getattr(player, "coin_purse_cap", 9999))
+            await db.execute(
+                "UPDATE players SET gold=? WHERE user_id=?", (player.gold, user_id)
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO player_forest_chest_loots"
+                "(user_id, forest_id, local_x, local_y, loot_day) VALUES(?,?,?,?,?)",
+                (user_id, -(player.fq_area_id or 0),
+                 player.fq_x, player.fq_y, _fqbc_day),
+            )
+            await db.commit()
+            content = render_grid(fq_grid_i, player,
+                f"📦 **Thornwarden's Hoard!**\n"
+                f"🟢 {_wdrp}× Ent Core — *for crafting the Forest Heart Amulet*\n"
+                f"🪙 {_warden_gold} gold")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        content = render_grid(fq_grid_i, player, "🌿 Nothing to interact with here in the depths.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
         return
@@ -10380,6 +10589,11 @@ async def handle_interact2(
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
+    # Boss aim mode overrides: interact2 = Cancel Aim
+    if getattr(player, "fq_boss_aim_mode", False):
+        await handle_fq_boss_aim_cancel(interaction, guild_id, user_id)
+        return
+
     hand_items: set[str] = set()
     if player.hand_1:
         hand_items.add(player.hand_1)
@@ -10445,6 +10659,11 @@ async def handle_action(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    # Boss aim mode overrides: action = Fire slingshot
+    if getattr(player, "fq_boss_aim_mode", False):
+        await handle_fq_boss_shoot(interaction, guild_id, user_id)
+        return
 
     hand_items: set[str] = set()
     if player.hand_1:
@@ -12955,6 +13174,169 @@ async def handle_inv_sel_dec(
                               inv_rows, inv_cols, _ui_state[user_id], msg,
                               gold=player.gold)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+async def handle_fq_enter_aim_mode(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Toggle slingshot aim mode in the Thornwarden boss fight."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not getattr(player, "in_fq_boss_combat", False):
+        await interaction.response.defer()
+        return
+    # Has slingshot?
+    if player.hand_1 != "slingshot" and player.hand_2 != "slingshot":
+        from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_aim
+        _bst_chk = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+        grid = await _lfqv_aim(player.fq_area_id, player.fq_x, player.fq_y, db, boss_state=_bst_chk)
+        content = render_grid(grid, player, "🎯 You need a **Slingshot** equipped to aim.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+    player.fq_boss_aim_mode = True
+    player.fq_boss_aim_x = player.fq_x
+    player.fq_boss_aim_y = player.fq_y
+    await db.execute(
+        "UPDATE players SET fq_boss_aim_mode=1, fq_boss_aim_x=?, fq_boss_aim_y=? WHERE user_id=?",
+        (player.fq_x, player.fq_y, user_id),
+    )
+    from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_aim2
+    _bst_a = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+    _ac = (player.fq_boss_aim_x, player.fq_boss_aim_y)
+    grid = await _lfqv_aim2(player.fq_area_id, player.fq_x, player.fq_y, db,
+                            boss_state=_bst_a, aim_cursor=_ac)
+    content = render_grid(grid, player,
+        "🎯 **Aim mode** — use arrow buttons to move the cursor, then press 🪨 Fire!\n"
+        f"Cursor: ({player.fq_boss_aim_x}, {player.fq_boss_aim_y})")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_fq_boss_shoot(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Fire the slingshot at the current aim cursor position in the boss fight."""
+    import random as _rand_shoot
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    if not getattr(player, "in_fq_boss_combat", False):
+        await interaction.response.defer()
+        return
+
+    from dwarf_explorer.world.forest_quest import (
+        load_fq_viewport as _lfqv_shoot,
+        defeat_warden as _dfw,
+    )
+    from dwarf_explorer.config import (
+        FQ_WARDEN_EYE_CYCLE as _wec_s,
+        FQ_WARDEN_EYE_POSITIONS as _wep_s,
+        FQ_WARDEN_WARN_TURN as _fq_warn_s,
+        FQ_ENT_CORE_DROP_WARDEN as _wdrp_s,
+    )
+    from dwarf_explorer.database.repositories import (
+        remove_from_inventory as _rfi_s,
+    )
+
+    cx, cy = player.fq_boss_aim_x, player.fq_boss_aim_y
+
+    # Exit aim mode regardless of outcome
+    player.fq_boss_aim_mode = False
+    await db.execute(
+        "UPDATE players SET fq_boss_aim_mode=0 WHERE user_id=?", (user_id,)
+    )
+
+    # Check rock availability
+    _rock_row = await db.fetch_one(
+        "SELECT COALESCE(SUM(quantity),0) AS q FROM inventory WHERE user_id=? AND item_id='rock'",
+        (user_id,),
+    )
+    _rock_qty = int(_rock_row["q"]) if _rock_row else 0
+    if _rock_qty < 1:
+        _bst_nr = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+        grid = await _lfqv_shoot(player.fq_area_id, player.fq_x, player.fq_y, db, boss_state=_bst_nr)
+        content = render_grid(grid, player,
+            "🪨 You have no rocks! Buy some from the shopkeeper further back.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    await _rfi_s(db, user_id, "rock", 1)
+
+    # Is this the warning-phase eye?
+    msg = ""
+    if player.fq_boss_turn == _fq_warn_s:
+        _cur_eye = _wec_s[player.fq_boss_eye_idx]
+        _eye_pos = _wep_s[_cur_eye]
+        if (cx, cy) == _eye_pos:
+            # HIT — destroy this eye
+            _eyes_list = list(player.fq_boss_eyes)
+            _eyes_list[player.fq_boss_eye_idx] = "0"
+            player.fq_boss_eyes = "".join(_eyes_list)
+            # Update DB tile to dead
+            await db.execute(
+                "UPDATE forest_quest_tiles SET tile_type='fq_warden_dead' "
+                "WHERE fq_id=? AND local_x=? AND local_y=?",
+                (player.fq_area_id, cx, cy),
+            )
+            # Interrupt attack: reset turn counter
+            player.fq_boss_turn = 0
+            # Advance eye index to next alive eye
+            for _ni in range(1, 5):
+                _nidx = (player.fq_boss_eye_idx + _ni) % 4
+                if player.fq_boss_eyes[_nidx] == "1":
+                    player.fq_boss_eye_idx = _nidx
+                    break
+            msg = (
+                f"🎯 **DIRECT HIT!** The **{_cur_eye}** eye shatters in a burst of light!\n"
+                f"*Eyes remaining: {player.fq_boss_eyes.count('1')}/4*"
+            )
+            # Check all eyes dead
+            if player.fq_boss_eyes.count("1") == 0:
+                await _dfw(db, player.fq_area_id)
+                player.in_fq_boss_combat = False
+                msg += (
+                    "\n\n🌿 **THE THORNWARDEN COLLAPSES!**\n"
+                    "Ancient brambles crash to the earth. "
+                    "A heavy gate grinds open at the far end of the chamber...\n"
+                    "📦 A chest lies in the rubble."
+                )
+            await db.execute(
+                "UPDATE players SET fq_boss_eyes=?, fq_boss_turn=?, fq_boss_eye_idx=?, "
+                "in_fq_boss_combat=? WHERE user_id=?",
+                (player.fq_boss_eyes, player.fq_boss_turn, player.fq_boss_eye_idx,
+                 1 if player.in_fq_boss_combat else 0, user_id),
+            )
+        else:
+            msg = f"🪨 The rock skips off the bark — missed the **{_cur_eye}** eye at ({_eye_pos[0]},{_eye_pos[1]})."
+    else:
+        _phase = "open" if player.fq_boss_turn > _fq_warn_s else "dormant"
+        msg = (f"🪨 Rock flies wide. The eye is **{_phase}** — only shoot during the ⚠️ warning phase!")
+
+    await db.commit()
+    _bst_sh = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+    grid = await _lfqv_shoot(player.fq_area_id, player.fq_x, player.fq_y, db, boss_state=_bst_sh)
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def handle_fq_boss_aim_cancel(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cancel slingshot aim mode without firing."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    player.fq_boss_aim_mode = False
+    await db.execute(
+        "UPDATE players SET fq_boss_aim_mode=0 WHERE user_id=?", (user_id,)
+    )
+    from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_ac
+    _bst_ac = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
+    grid = await _lfqv_ac(player.fq_area_id, player.fq_x, player.fq_y, db, boss_state=_bst_ac)
+    content = render_grid(grid, player, "🎯 Aim cancelled.")
+    await interaction.response.edit_message(embed=_embed(content), content=None,
+                                            view=_game_view(guild_id, user_id, player, grid=grid))
 
 
 async def handle_inv_drop(

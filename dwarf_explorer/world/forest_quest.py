@@ -1,11 +1,19 @@
 """
-Forest Quest zone: ent corridor → chamber → Sokoban log puzzle → hidden grove.
+Forest Quest zone: ent corridor → Sokoban chamber → stream → post-stream corridor →
+shop section → Thornwarden boss chamber → (Y-fork / puzzle gauntlet / final room — TBD).
 
-Zone layout (21 wide × 42 tall):
-  y  0-15  : corridor (5 tiles wide at x=8-12); ents disguised as fq_wall
-  y 16-29  : chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
-  y 30     : stream (impassable fq_stream; fords at x=9,10 once puzzle solved)
-  y 31-41  : post-stream area; grove exit at (10, 41)
+Zone layout (21 wide × 200 tall):
+  y   0-15  : corridor (5 wide at x=8-12); ents disguised as fq_wall
+  y  16-29  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
+  y  30     : stream (impassable fq_stream; fords at x=9,10 once puzzle solved)
+  y  31-40  : post-stream corridor (9 wide at x=6-14)
+  y  41-53  : shop section (7 wide at x=7-13; shopkeeper at x=10, y=47)
+  y  54-57  : boss approach (corridor widens to full room width)
+  y  58-79  : Thornwarden boss chamber (19 wide at x=1-19)
+               Warden body: x=8-12, y=65-67; eyes at corners
+               Boss door at (10, 79) — locked until warden defeated
+  y  80-87  : post-boss corridor (7 wide at x=7-13)
+  y  88+    : future sections (Y-fork, puzzle gauntlet, final room)
 """
 from __future__ import annotations
 
@@ -22,12 +30,26 @@ from dwarf_explorer.config import (
     FQ_FORD_XA, FQ_FORD_XB,
     FQ_ENTRY_X, FQ_ENTRY_Y,
     FQ_RESET_X, FQ_RESET_Y,
-    FQ_GROVE_EXIT_X, FQ_GROVE_EXIT_Y,
     FQ_LOG_A_START, FQ_LOG_B_START,
     FQ_TARGET_A, FQ_TARGET_B,
     FQ_PUZZLE_OBSTACLES,
     FQ_ENT_STARTS,
     FQ_WALKABLE,
+    # Post-stream / shop
+    FQ_POST_STREAM_X0, FQ_POST_STREAM_X1,
+    FQ_SHOP_Y0, FQ_SHOP_Y1,
+    FQ_SHOPKEEPER_X, FQ_SHOPKEEPER_Y,
+    # Boss approach + chamber
+    FQ_BOSS_APPROACH_Y0, FQ_BOSS_APPROACH_Y1,
+    FQ_BOSS_CHAMBER_Y0, FQ_BOSS_CHAMBER_Y1,
+    FQ_WARDEN_X0, FQ_WARDEN_X1,
+    FQ_WARDEN_Y0, FQ_WARDEN_Y1,
+    FQ_WARDEN_EYE_NW, FQ_WARDEN_EYE_NE,
+    FQ_WARDEN_EYE_SW, FQ_WARDEN_EYE_SE,
+    FQ_WARDEN_EYE_POSITIONS, FQ_WARDEN_EYE_BY_POS, FQ_WARDEN_EYE_CYCLE,
+    FQ_BOSS_DOOR_X, FQ_BOSS_DOOR_Y,
+    FQ_BOSS_CHEST_X, FQ_BOSS_CHEST_Y,
+    FQ_POST_BOSS_Y0, FQ_POST_BOSS_Y1,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -45,11 +67,7 @@ async def get_or_create_fq_area(
     entry_fx: int = 0,
     entry_fy: int = 0,
 ) -> int:
-    """Return the fq_id for this guild, generating the zone on first call.
-
-    If this is the first call, entry_forest_id / entry_fx / entry_fy pin the
-    forest tile that acts as the entrance.
-    """
+    """Return the fq_id for this guild, generating the zone on first call."""
     row = await db.fetch_one(
         "SELECT fq_id FROM forest_quest_areas WHERE guild_id=?", (guild_id,)
     )
@@ -69,10 +87,7 @@ async def get_or_create_fq_area(
 async def get_fq_entry_info(
     db, guild_id: int
 ) -> tuple[int | None, int, int]:
-    """Return (entry_forest_id, entry_fx, entry_fy) for this guild's FQ zone.
-
-    Returns (None, 0, 0) if no area has been created yet.
-    """
+    """Return (entry_forest_id, entry_fx, entry_fy) for this guild's FQ zone."""
     row = await db.fetch_one(
         "SELECT entry_forest_id, entry_fx, entry_fy FROM forest_quest_areas WHERE guild_id=?",
         (guild_id,),
@@ -82,12 +97,57 @@ async def get_fq_entry_info(
     return (row["entry_forest_id"], row["entry_fx"] or 0, row["entry_fy"] or 0)
 
 
+async def get_warden_defeated(db, fq_id: int) -> bool:
+    """Return True if the Thornwarden has been defeated in this zone."""
+    row = await db.fetch_one(
+        "SELECT warden_defeated FROM forest_quest_areas WHERE fq_id=?", (fq_id,)
+    )
+    return bool(row and row["warden_defeated"])
+
+
+async def defeat_warden(db, fq_id: int) -> None:
+    """
+    Called when all 4 eyes are destroyed.
+    - Collapses remaining warden tiles to fq_warden_dead
+    - Opens the boss door
+    - Spawns a loot chest at the chamber centre
+    - Marks warden_defeated = 1
+    """
+    # Collapse all living warden tiles
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_warden_dead' "
+        "WHERE fq_id=? AND tile_type IN "
+        "('fq_warden_body','fq_warden_eye_nw','fq_warden_eye_ne',"
+        "'fq_warden_eye_sw','fq_warden_eye_se')",
+        (fq_id,),
+    )
+    # Open the boss door
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_boss_door_open' "
+        "WHERE fq_id=? AND tile_type='fq_boss_door'",
+        (fq_id,),
+    )
+    # Spawn chest at centre (replace the fq_warden_dead tile there with chest)
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_boss_chest' "
+        "WHERE fq_id=? AND local_x=? AND local_y=?",
+        (fq_id, FQ_BOSS_CHEST_X, FQ_BOSS_CHEST_Y),
+    )
+    # Mark zone
+    await db.execute(
+        "UPDATE forest_quest_areas SET warden_defeated=1 WHERE fq_id=?", (fq_id,)
+    )
+    await db.commit()
+    _log.info("Thornwarden defeated in fq_id=%d", fq_id)
+
+
+# ── Zone tile generation ───────────────────────────────────────────────────────
+
 async def _generate_fq_zone(db, fq_id: int) -> None:
     """Populate forest_quest_tiles, fq_puzzle_logs, and fq_ents for a new zone."""
-    tiles: list[tuple] = []
-
     log_positions = {FQ_LOG_A_START, FQ_LOG_B_START}
 
+    tiles: list[tuple] = []
     for y in range(FQ_HEIGHT):
         for x in range(FQ_WIDTH):
             t = _tile_for(x, y, log_positions)
@@ -110,7 +170,7 @@ async def _generate_fq_zone(db, fq_id: int) -> None:
         ],
     )
 
-    # Ents (stored separately; rendered as fq_wall overlay in viewport)
+    # Ents (stored separately; rendered as fq_wall overlay until they move)
     await db.executemany(
         "INSERT INTO fq_ents (fq_id, local_x, local_y, alive) VALUES (?,?,?,1)",
         [(fq_id, x, y) for x, y in FQ_ENT_STARTS],
@@ -122,7 +182,8 @@ async def _generate_fq_zone(db, fq_id: int) -> None:
 
 def _tile_for(x: int, y: int, _log_positions) -> str:
     """Return the base tile type for zone coordinate (x, y)."""
-    # Corridor section
+
+    # ── Corridor (y 0-15) ──────────────────────────────────────────────────
     if FQ_CORRIDOR_Y0 <= y <= FQ_CORRIDOR_Y1:
         if FQ_CORRIDOR_X0 <= x <= FQ_CORRIDOR_X1:
             if x == FQ_ENTRY_X and y == FQ_ENTRY_Y:
@@ -130,43 +191,104 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
             return "fq_floor"
         return "fq_wall"
 
-    # Stream row
+    # ── Sokoban chamber (y 16-29) ──────────────────────────────────────────
+    if FQ_CHAMBER_Y0 <= y < FQ_STREAM_Y:
+        if 1 <= x <= FQ_WIDTH - 2:
+            if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1 and FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1:
+                if (x, y) in FQ_PUZZLE_OBSTACLES:
+                    return "fq_obstacle"
+                if (x, y) == FQ_TARGET_A or (x, y) == FQ_TARGET_B:
+                    return "fq_log_target"
+                return "fq_puzzle_floor"
+            if x == FQ_RESET_X and y == FQ_RESET_Y:
+                return "fq_reset"
+            return "fq_floor"
+        return "fq_wall"
+
+    # ── Stream row (y 30) ──────────────────────────────────────────────────
     if y == FQ_STREAM_Y:
         if 1 <= x <= FQ_WIDTH - 2:
             return "fq_stream"
         return "fq_wall"
 
-    # Post-stream
-    if y > FQ_STREAM_Y:
-        if 1 <= x <= FQ_WIDTH - 2:
-            if x == FQ_GROVE_EXIT_X and y == FQ_GROVE_EXIT_Y:
-                return "fq_grove_exit"
+    # ── Post-stream corridor (y 31-40) ────────────────────────────────────
+    if FQ_STREAM_Y < y <= 40:
+        if FQ_POST_STREAM_X0 <= x <= FQ_POST_STREAM_X1:
             return "fq_floor"
         return "fq_wall"
 
-    # Chamber (FQ_CHAMBER_Y0 <= y < FQ_STREAM_Y)
-    if 1 <= x <= FQ_WIDTH - 2:
-        # Puzzle sunken area
-        if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1 and FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1:
-            if (x, y) in FQ_PUZZLE_OBSTACLES:
-                return "fq_obstacle"
-            if (x, y) == FQ_TARGET_A or (x, y) == FQ_TARGET_B:
-                return "fq_log_target"
-            return "fq_puzzle_floor"
-        # Reset stone
-        if x == FQ_RESET_X and y == FQ_RESET_Y:
-            return "fq_reset"
-        return "fq_floor"
+    # ── Shop section (y 41-53) ────────────────────────────────────────────
+    if FQ_SHOP_Y0 <= y <= FQ_SHOP_Y1:
+        # Main corridor: x 7-13 (7 wide)
+        if 7 <= x <= 13:
+            if x == FQ_SHOPKEEPER_X and y == FQ_SHOPKEEPER_Y:
+                return "fq_shopkeeper"
+            return "fq_floor"
+        # Left alcove for flavour (open floor, reachable via corridor)
+        if 1 <= x <= 6:
+            return "fq_floor"
+        return "fq_wall"
 
+    # ── Boss approach (y 54-57): corridor widens ──────────────────────────
+    if FQ_BOSS_APPROACH_Y0 <= y <= FQ_BOSS_APPROACH_Y1:
+        span = FQ_BOSS_APPROACH_Y1 - FQ_BOSS_APPROACH_Y0 + 1
+        step = y - FQ_BOSS_APPROACH_Y0          # 0 → (span-1)
+        x0 = max(1, 7 - (step * 6 // (span - 1)) if span > 1 else 1)
+        x1 = min(FQ_WIDTH - 2, 13 + (step * 6 // (span - 1)) if span > 1 else FQ_WIDTH - 2)
+        if x0 <= x <= x1:
+            return "fq_floor"
+        return "fq_wall"
+
+    # ── Boss chamber (y 58-79) ────────────────────────────────────────────
+    if FQ_BOSS_CHAMBER_Y0 <= y <= FQ_BOSS_CHAMBER_Y1:
+        if 1 <= x <= FQ_WIDTH - 2:
+            # Warden body region
+            if FQ_WARDEN_X0 <= x <= FQ_WARDEN_X1 and FQ_WARDEN_Y0 <= y <= FQ_WARDEN_Y1:
+                if (x, y) == FQ_WARDEN_EYE_NW:
+                    return "fq_warden_eye_nw"
+                if (x, y) == FQ_WARDEN_EYE_NE:
+                    return "fq_warden_eye_ne"
+                if (x, y) == FQ_WARDEN_EYE_SW:
+                    return "fq_warden_eye_sw"
+                if (x, y) == FQ_WARDEN_EYE_SE:
+                    return "fq_warden_eye_se"
+                return "fq_warden_body"
+            # Boss door at south end
+            if x == FQ_BOSS_DOOR_X and y == FQ_BOSS_DOOR_Y:
+                return "fq_boss_door"
+            return "fq_floor"
+        return "fq_wall"
+
+    # ── Post-boss corridor (y 80-87) ──────────────────────────────────────
+    if FQ_POST_BOSS_Y0 <= y <= FQ_POST_BOSS_Y1:
+        if 7 <= x <= 13:
+            return "fq_floor"
+        return "fq_wall"
+
+    # Everything else: wall (future sections not yet built)
     return "fq_wall"
 
 
 # ── Viewport loading ──────────────────────────────────────────────────────────
 
 async def load_fq_viewport(
-    fq_id: int, player_x: int, player_y: int, db
+    fq_id: int,
+    player_x: int,
+    player_y: int,
+    db,
+    boss_state: dict | None = None,
+    aim_cursor: tuple[int, int] | None = None,
 ) -> list[list[TileData]]:
-    """Return a 9×9 TileData grid centred on (player_x, player_y)."""
+    """
+    Return a 9×9 TileData grid centred on (player_x, player_y).
+
+    boss_state (optional) dict keys:
+      "eyes"     : str e.g. "1011" (NW|NE|SE|SW alive mask)
+      "warn_eye" : str|None  e.g. "NW" — the eye currently in warning phase
+      "open_eye" : str|None  e.g. "NW" — the eye currently open/attacking
+
+    aim_cursor (optional): (cx, cy) zone position for the slingshot aim overlay.
+    """
     half = VIEWPORT_SIZE // 2
     x_min = player_x - half
     y_min = player_y - half
@@ -188,7 +310,7 @@ async def load_fq_viewport(
     )
     log_positions: set[tuple[int, int]] = {(r["cur_x"], r["cur_y"]) for r in log_rows}
 
-    # Overlay alive ent positions (render as fq_wall — disguised trees)
+    # Overlay alive ent positions
     ent_rows = await db.fetch_all(
         "SELECT local_x, local_y FROM fq_ents WHERE fq_id=? AND alive=1", (fq_id,)
     )
@@ -201,10 +323,30 @@ async def load_fq_viewport(
             wx = x_min + gx
             wy = y_min + gy
             t = tile_map.get((wx, wy), "fq_wall")
+
+            # Log / ent overlays
             if (wx, wy) in log_positions:
                 t = "fq_log"
             elif (wx, wy) in ent_positions:
-                t = "fq_wall"  # ents look like dense-forest walls until they move
+                t = "fq_wall"  # disguised trees
+
+            # Boss-state eye overlays
+            elif boss_state and (wx, wy) in FQ_WARDEN_EYE_BY_POS:
+                eye_name = FQ_WARDEN_EYE_BY_POS[(wx, wy)]
+                eye_idx  = FQ_WARDEN_EYE_CYCLE.index(eye_name)
+                eyes_mask = boss_state.get("eyes", "1111")
+                if eye_idx < len(eyes_mask) and eyes_mask[eye_idx] == "0":
+                    t = "fq_warden_dead"
+                elif eye_name == boss_state.get("warn_eye"):
+                    t = "fq_warden_eye_warn"
+                elif eye_name == boss_state.get("open_eye"):
+                    t = "fq_warden_eye_open"
+                # else: keep the stored tile type (closed eye)
+
+            # Aim cursor overlay (drawn on top of everything)
+            if aim_cursor and (wx, wy) == aim_cursor:
+                t = "fq_aim_cursor"
+
             row.append(TileData(terrain=t, walkable=(t in FQ_WALKABLE), structure=None))
         grid.append(row)
     return grid
@@ -212,7 +354,6 @@ async def load_fq_viewport(
 
 async def load_fq_single_tile(fq_id: int, x: int, y: int, db) -> TileData:
     """Load a single tile with log/ent overlays applied."""
-    # Log overlay
     lrow = await db.fetch_one(
         "SELECT 1 FROM fq_puzzle_logs WHERE fq_id=? AND cur_x=? AND cur_y=?",
         (fq_id, x, y),
@@ -220,7 +361,6 @@ async def load_fq_single_tile(fq_id: int, x: int, y: int, db) -> TileData:
     if lrow:
         return TileData(terrain="fq_log", walkable=False, structure=None)
 
-    # Ent overlay
     erow = await db.fetch_one(
         "SELECT 1 FROM fq_ents WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1",
         (fq_id, x, y),
@@ -272,7 +412,6 @@ async def check_and_solve_puzzle(db, fq_id: int) -> bool:
     )
     positions = {(r["cur_x"], r["cur_y"]) for r in logs}
     if FQ_TARGET_A in positions and FQ_TARGET_B in positions:
-        # Activate fords
         for fx in (FQ_FORD_XA, FQ_FORD_XB):
             await db.execute(
                 "UPDATE forest_quest_tiles SET tile_type='fq_stream_ford' "
@@ -295,28 +434,24 @@ async def step_ents_toward_player(
     """
     Move each alive ent one step closer to the player (Manhattan, no diagonal).
     Ents are blocked by walls, obstacles, other ents, and cannot enter the chamber.
-    Returns a list of (x, y) positions where an ent reached the player's tile
-    (= combat triggers).
+    Returns a list of (x, y) positions where an ent reached the player's tile.
     """
     ents = await db.fetch_all(
         "SELECT id, local_x, local_y FROM fq_ents WHERE fq_id=? AND alive=1",
         (fq_id,),
     )
-    # Collect all current ent positions to avoid collisions
     ent_pos_set: set[tuple[int, int]] = {(e["local_x"], e["local_y"]) for e in ents}
     combat_triggers: list[tuple[int, int]] = []
 
     for ent in ents:
         eid, ex, ey = ent["id"], ent["local_x"], ent["local_y"]
 
-        # Ents never enter the chamber (y >= FQ_CHAMBER_Y0)
         if ey >= FQ_CHAMBER_Y0:
             continue
 
         dx = player_x - ex
         dy = player_y - ey
 
-        # Prefer the axis with the larger gap; ties go to x
         candidates: list[tuple[int, int]] = []
         if abs(dx) >= abs(dy):
             if dx != 0:
@@ -329,7 +464,6 @@ async def step_ents_toward_player(
             if dx != 0:
                 candidates.append((1 if dx > 0 else -1, 0))
 
-        moved = False
         for sdx, sdy in candidates:
             nx, ny = ex + sdx, ey + sdy
             if ny >= FQ_CHAMBER_Y0:
@@ -339,7 +473,6 @@ async def step_ents_toward_player(
             tile = await load_fq_single_tile(fq_id, nx, ny, db)
             if tile.terrain in _ENT_BLOCKED:
                 continue
-            # Move ent
             ent_pos_set.discard((ex, ey))
             ent_pos_set.add((nx, ny))
             await db.execute(
@@ -347,7 +480,6 @@ async def step_ents_toward_player(
                 (nx, ny, eid),
             )
             ex, ey = nx, ny
-            moved = True
             break
 
         if ex == player_x and ey == player_y:

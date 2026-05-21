@@ -89,6 +89,9 @@ from dwarf_explorer.ui.game_view import (
     handle_inv_sel_inc, handle_inv_sel_dec,
     handle_inv_drop,
     handle_inv_move, handle_inv_move_confirm, handle_inv_move_cancel,
+    handle_fq_enter_aim_mode,
+    handle_fq_boss_shoot,
+    handle_fq_boss_aim_cancel,
     handle_inv_move_qty_inc, handle_inv_move_qty_dec,
     handle_inv_qty_modal,
     handle_inv_unequip,
@@ -544,6 +547,13 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
             # Inventory drop
             elif act == "inv_drop":
                 await handle_inv_drop(interaction, gid, uid)
+            # Thornwarden boss fight — slingshot aim
+            elif act == "fq_aim":
+                await handle_fq_enter_aim_mode(interaction, gid, uid)
+            elif act == "fq_shoot":
+                await handle_fq_boss_shoot(interaction, gid, uid)
+            elif act == "fq_aim_cancel":
+                await handle_fq_boss_aim_cancel(interaction, gid, uid)
             # Inventory move mode
             elif act == "inv_move":
                 await handle_inv_move(interaction, gid, uid)

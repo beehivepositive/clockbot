@@ -153,6 +153,14 @@ class Player:
     fq_x: int = 0
     fq_y: int = 0
     fq_quest_stage: str = "none"  # "none"|"seek_hermit"|"hermit_met"|"map_marked"|"puzzle_solved"
+    # Thornwarden boss combat state (active while player is fighting the Warden)
+    in_fq_boss_combat: bool = False
+    fq_boss_turn: int = 0        # 0-3 cycling; 2=warning, 3=eye-opens-attacks
+    fq_boss_eye_idx: int = 0     # index into FQ_WARDEN_EYE_CYCLE for the next eye
+    fq_boss_eyes: str = "1111"   # alive mask NW|NE|SE|SW; "1"=alive "0"=destroyed
+    fq_boss_aim_mode: bool = False
+    fq_boss_aim_x: int = 10
+    fq_boss_aim_y: int = 66      # default aim position (center of boss chamber)
     # Bandit camp interior state
     in_bandit_camp: bool = False
     bandit_camp_id: int | None = None  # DB id from bandit_camps table

@@ -1084,9 +1084,33 @@ class Database:
                     conn.execute("ALTER TABLE forest_quest_areas ADD COLUMN entry_fx INTEGER DEFAULT 0")
                 if "entry_fy" not in _fqa_cols:
                     conn.execute("ALTER TABLE forest_quest_areas ADD COLUMN entry_fy INTEGER DEFAULT 0")
+                if "warden_defeated" not in _fqa_cols:
+                    conn.execute(
+                        "ALTER TABLE forest_quest_areas ADD COLUMN warden_defeated INTEGER NOT NULL DEFAULT 0"
+                    )
                 conn.commit()
             except Exception as e:
                 _log.warning("Forest quest table migration warning: %s", e)
+
+            # ── Thornwarden boss combat player fields ──────────────────────────
+            try:
+                _bsc = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+                for _bc, _bt, _bd in [
+                    ("in_fq_boss_combat", "INTEGER", "0"),
+                    ("fq_boss_turn",      "INTEGER", "0"),
+                    ("fq_boss_eye_idx",   "INTEGER", "0"),
+                    ("fq_boss_eyes",      "TEXT",    "'1111'"),
+                    ("fq_boss_aim_mode",  "INTEGER", "0"),
+                    ("fq_boss_aim_x",     "INTEGER", "10"),
+                    ("fq_boss_aim_y",     "INTEGER", "66"),
+                ]:
+                    if _bc not in _bsc:
+                        conn.execute(
+                            f"ALTER TABLE players ADD COLUMN {_bc} {_bt} NOT NULL DEFAULT {_bd}"
+                        )
+                conn.commit()
+            except Exception as e:
+                _log.warning("Thornwarden boss migration warning: %s", e)
 
         await asyncio.to_thread(_migrate)
 

@@ -73,6 +73,20 @@ TERRAIN_EMOJI = {
     "fq_reset":        "\U0001FAA8",  # 🪨 ancient reset stone
     "fq_exit":         "\U0001F332",  # 🌲 forest exit marker
     "fq_grove_exit":   "\U00002728",  # ✨ hidden grove entrance
+    # Forest Quest — shop & boss tiles
+    "fq_shopkeeper":       "\U0001F9D9",  # 🧙 forest merchant
+    "fq_warden_body":      "\U0001F33F",  # 🌿 Thornwarden briar body (impassable)
+    "fq_warden_eye_nw":    "\U0001F7A4",  # 🟤 dormant NW eye
+    "fq_warden_eye_ne":    "\U0001F7A4",  # 🟤 dormant NE eye
+    "fq_warden_eye_sw":    "\U0001F7A4",  # 🟤 dormant SW eye
+    "fq_warden_eye_se":    "\U0001F7A4",  # 🟤 dormant SE eye
+    "fq_warden_eye_warn":  "\U0001F7E1",  # 🟡 eye about to open (warning)
+    "fq_warden_eye_open":  "\U0001F534",  # 🔴 eye open / attacking
+    "fq_warden_dead":      "\U0001F7EB",  # 🟫 collapsed rubble (walkable)
+    "fq_boss_door":        "\U0001F6A7",  # 🚧 locked exit from boss chamber
+    "fq_boss_door_open":   "\U0001F6AA",  # 🚪 open exit door (walkable)
+    "fq_boss_chest":       "\U0001F4E6",  # 📦 loot chest spawned after warden dies
+    "fq_aim_cursor":       "\U0001F3AF",  # 🎯 slingshot aim cursor overlay
     # Hermit zone tiles
     "fst_hermit_house": "\U0001F6D6",  # 🛖 hermit's hut
     "fst_fq_entrance":  "\U0001F333",  # 🌳 looks like a tree wall (FQ zone entrance marker)
@@ -260,6 +274,9 @@ ITEM_EMOJI = {
     "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
     "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
     "ancient_sapling":"\U0001F331",           # 🌱 planted ancient sapling (same as sapling)
+    # Forest Quest boss drops
+    "ent_core":              "\U0001F7E2",    # 🟢 compressed life-orb from a slain ent
+    "forest_heart_amulet":   "\U0001F49A",    # 💚 amulet crafted from ent cores (+15 max HP)
     # Bomb system
     "bomb":           "\U0001F4A3",           # 💣 throwable explosive
 }
@@ -419,7 +436,7 @@ FOOD_HP_RESTORE = {"fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20}
 
 # Zone layout constants
 FQ_WIDTH  = 21
-FQ_HEIGHT = 42
+FQ_HEIGHT = 200   # expanded to accommodate shop, boss, Y-fork, puzzle, final room
 
 FQ_CORRIDOR_X0 = 8    # corridor occupies x = 8..12 (5 wide)
 FQ_CORRIDOR_X1 = 12
@@ -441,8 +458,60 @@ FQ_ENTRY_X     = 10   # player enters the zone here (top of corridor)
 FQ_ENTRY_Y     = 0
 FQ_RESET_X     = 3    # reset stone position (in chamber, left of puzzle)
 FQ_RESET_Y     = 22
-FQ_GROVE_EXIT_X = 10  # post-stream exit tile
-FQ_GROVE_EXIT_Y = 41
+FQ_GROVE_EXIT_X = 10  # kept for backward compat; no longer used in tile gen
+FQ_GROVE_EXIT_Y = 999  # moved beyond active zone
+
+# Post-stream corridor (y 31-40)
+FQ_POST_STREAM_X0 = 6
+FQ_POST_STREAM_X1 = 14
+
+# Shop section (y 41-53): main corridor + left alcove
+FQ_SHOP_Y0         = 41
+FQ_SHOP_Y1         = 53
+FQ_SHOPKEEPER_X    = 10   # shopkeeper stands in the main corridor
+FQ_SHOPKEEPER_Y    = 47
+
+# Boss approach (y 54-57): corridor widens toward boss chamber
+FQ_BOSS_APPROACH_Y0 = 54
+FQ_BOSS_APPROACH_Y1 = 57
+
+# Boss chamber (y 58-79, full 19-wide room)
+FQ_BOSS_CHAMBER_Y0  = 58
+FQ_BOSS_CHAMBER_Y1  = 79
+
+# Thornwarden body: 5-wide × 3-tall block at x 8-12, y 65-67
+FQ_WARDEN_X0 = 8
+FQ_WARDEN_X1 = 12
+FQ_WARDEN_Y0 = 65
+FQ_WARDEN_Y1 = 67
+
+# Warden eye positions (zone-absolute coords)
+FQ_WARDEN_EYE_NW = (FQ_WARDEN_X0, FQ_WARDEN_Y0)  # (8,  65)
+FQ_WARDEN_EYE_NE = (FQ_WARDEN_X1, FQ_WARDEN_Y0)  # (12, 65)
+FQ_WARDEN_EYE_SW = (FQ_WARDEN_X0, FQ_WARDEN_Y1)  # (8,  67)
+FQ_WARDEN_EYE_SE = (FQ_WARDEN_X1, FQ_WARDEN_Y1)  # (12, 67)
+FQ_WARDEN_EYE_POSITIONS: dict[str, tuple[int, int]] = {
+    "NW": FQ_WARDEN_EYE_NW,
+    "NE": FQ_WARDEN_EYE_NE,
+    "SE": FQ_WARDEN_EYE_SE,
+    "SW": FQ_WARDEN_EYE_SW,
+}
+FQ_WARDEN_EYE_CYCLE: tuple[str, ...] = ("NW", "NE", "SE", "SW")  # clockwise rotation
+FQ_WARDEN_EYE_BY_POS: dict[tuple[int, int], str] = {
+    v: k for k, v in FQ_WARDEN_EYE_POSITIONS.items()
+}
+
+# Boss door (locked exit at south end of chamber, opens on warden death)
+FQ_BOSS_DOOR_X = 10
+FQ_BOSS_DOOR_Y = FQ_BOSS_CHAMBER_Y1   # (10, 79)
+
+# Warden loot chest (spawns at chamber centre after death)
+FQ_BOSS_CHEST_X = 10
+FQ_BOSS_CHEST_Y = 66
+
+# Post-boss corridor to Y-fork (y 80-87)
+FQ_POST_BOSS_Y0 = 80
+FQ_POST_BOSS_Y1 = 87
 
 # Puzzle log starting positions (zone-absolute coords)
 FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 2)   # zone (6, 20)
@@ -476,10 +545,14 @@ FQ_WALKABLE = frozenset({
     "fq_floor",
     "fq_puzzle_floor",
     "fq_stream_ford",
-    "fq_log_target",   # target marker — walkable when no log is on it
-    "fq_reset",        # stepping on it resets the puzzle logs
+    "fq_log_target",      # target marker — walkable when no log is on it
+    "fq_reset",           # stepping on it resets the puzzle logs
     "fq_grove_exit",
-    "fq_exit",         # entry/exit tile at top of corridor
+    "fq_exit",            # entry/exit tile at top of corridor
+    "fq_shopkeeper",      # walk to shopkeeper; interact opens shop
+    "fq_warden_dead",     # collapsed warden rubble (walkable after boss death)
+    "fq_boss_door_open",  # open exit door from boss chamber
+    "fq_boss_chest",      # loot chest — walkable; interact opens it
 })
 
 # Enemy stats — ent and snake for the FQ corridor
@@ -491,6 +564,19 @@ ENEMY_ABILITIES.update({
     "ent":   {"cobweb": False, "poison": False, "hit_run": False, "roar": True,  "slam": True,  "ranged": False},
     "snake": {"cobweb": False, "poison": True,  "hit_run": True,  "roar": False, "slam": False, "ranged": False},
 })
+
+# Thornwarden miniboss — defeated via slingshot (eye mechanic), not standard combat
+# These stats are used only if melee fallback damage is needed
+FQ_WARDEN_THORN_DAMAGE_MIN = 8   # damage per eye attack when not interrupted
+FQ_WARDEN_THORN_DAMAGE_MAX = 12
+FQ_WARDEN_WARN_TURN = 2           # turn count at which warning fires
+FQ_WARDEN_OPEN_TURN = 3           # turn count at which eye opens and attacks
+FQ_WARDEN_CYCLE_LEN = 4           # total turns per eye cycle (0-3)
+
+# Ent Core drop quantities
+FQ_ENT_CORE_DROP_ENT      = 1   # regular ent drops
+FQ_ENT_CORE_DROP_WARDEN   = 4   # Thornwarden drops
+FQ_ENT_CORE_DROP_ANCIENT  = 2   # ancient ents in the final room
 
 # Consumable items: shown in combat food menu
 # "escape": True  → guaranteed combat escape with no parting blow (e.g. Coward's Ale)
@@ -614,6 +700,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("iron_ingot", 3)}):                              {"result": "large_gear",         "qty": 1, "label": "🔩 Forge Large Gear"},
     # Wayerwood attunement — press a stone into the rod to awaken it
     frozenset({("wayerwood", 1), ("rock", 1)}):                  {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Attune"},
+    # Forest Heart Amulet — compressed ent life-force woven into a charm
+    frozenset({("ent_core", 4), ("living_root", 2)}):            {"result": "forest_heart_amulet", "qty": 1, "label": "💚 Forest Heart Amulet"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -1350,6 +1438,7 @@ ITEM_EQUIP_SLOTS = {
     "hoe":                 "hand",
     "hammer":              "hand",
     "bark_shield":         "hand",
+    "forest_heart_amulet": "accessory",
 }
 
 # Items that occupy both hand slots
@@ -1396,6 +1485,7 @@ EQUIP_BONUSES = {
     "arrow":               {},
     "hoe":                 {},
     "bark_shield":         {"defense": 3},
+    "forest_heart_amulet": {"max_hp": 15},
 }
 
 # Pouch inventory sizes: (rows, cols) — default 1×7 when no pouch equipped
@@ -1540,10 +1630,12 @@ ITEM_SELL_PRICES = {
     "gold_coin":         1,
     "seaweed":           3,
     # Forest items
-    "forest_nut":        3,
-    "living_root":       10,
-    "bark_shield":       48,
-    "ancient_seed":      25,
+    "forest_nut":             3,
+    "living_root":            10,
+    "bark_shield":            48,
+    "ancient_seed":           25,
+    "ent_core":               28,
+    "forest_heart_amulet":    380,
 }
 
 # --- World Map Image ---
