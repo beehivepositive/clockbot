@@ -4270,41 +4270,63 @@ async def _move_steps(
                             ),
                             _game_view(guild_id, user_id, player, grid=_grove_grid),
                         )
-                # Forest Quest entrance: passable when map is marked
-                if (target.terrain == "fst_tree"
-                        and getattr(player, "fq_quest_stage", "none") in ("map_marked", "puzzle_solved")):
+                # Forest Quest entrance: fst_fq_entrance tile is passable when
+                # quest is hermit_met or further; fst_tree coordinate fallback
+                # also works for worlds generated before the tile type existed.
+                _fq_stage_now = getattr(player, "fq_quest_stage", "none")
+                _is_fq_entrance_tile = target.terrain == "fst_fq_entrance"
+                _is_fq_entry_eligible = _is_fq_entrance_tile and _fq_stage_now in (
+                    "hermit_met", "map_marked", "puzzle_solved"
+                )
+                if not _is_fq_entry_eligible and target.terrain == "fst_tree":
+                    # Legacy coordinate-based check (worlds where entrance is a plain tree)
+                    if _fq_stage_now in ("map_marked", "puzzle_solved"):
+                        from dwarf_explorer.world.forest_quest import get_fq_entry_info as _gfqei_leg
+                        _fq_efid_l, _fq_efx_l, _fq_efy_l = await _gfqei_leg(db, guild_id)
+                        if (_fq_efid_l == player.forest_id
+                                and nx == _fq_efx_l and ny == _fq_efy_l):
+                            _is_fq_entry_eligible = True
+                if _is_fq_entry_eligible:
                     from dwarf_explorer.world.forest_quest import (
                         get_fq_entry_info as _gfqei,
                         get_or_create_fq_area as _gfqa,
                         load_fq_viewport as _lfqv_entry,
                     )
-                    _fq_efid, _fq_efx, _fq_efy = await _gfqei(db, guild_id)
-                    if (_fq_efid == player.forest_id
-                            and nx == _fq_efx and ny == _fq_efy):
-                        fq_id_entry = await _gfqa(
-                            db, guild_id, player.forest_id, nx, ny
+                    fq_id_entry = await _gfqa(
+                        db, guild_id, player.forest_id, nx, ny
+                    )
+                    from dwarf_explorer.config import FQ_ENTRY_X as _FQEntX, FQ_ENTRY_Y as _FQEntY
+                    player.in_forest_quest = True
+                    player.fq_area_id = fq_id_entry
+                    player.fq_x = _FQEntX
+                    player.fq_y = _FQEntY + 1   # one step inside (exit tile is at 0)
+                    player.forest_x, player.forest_y = nx, ny  # remember re-entry tile
+                    # Advance quest stage: hermit_met → map_marked on first entry
+                    _fq_new_stage = _fq_stage_now
+                    if _fq_stage_now == "hermit_met":
+                        _fq_new_stage = "map_marked"
+                        player.fq_quest_stage = "map_marked"
+                        from dwarf_explorer.game.quests import (
+                            update_forest_depths_quest_target as _ufdqt_entry,
                         )
-                        from dwarf_explorer.config import FQ_ENTRY_X as _FQEntX, FQ_ENTRY_Y as _FQEntY
-                        player.in_forest_quest = True
-                        player.fq_area_id = fq_id_entry
-                        player.fq_x = _FQEntX
-                        player.fq_y = _FQEntY + 1   # one step inside (exit tile is at 0)
-                        player.forest_x, player.forest_y = nx, ny  # remember re-entry tile
-                        await db.execute(
-                            "UPDATE players SET in_forest_quest=1, fq_area_id=?, "
-                            "fq_x=?, fq_y=?, forest_x=?, forest_y=? WHERE user_id=?",
-                            (fq_id_entry, player.fq_x, player.fq_y,
-                             nx, ny, user_id),
-                        )
-                        _fq_entry_grid = await _lfqv_entry(fq_id_entry, player.fq_x, player.fq_y, db)
-                        return (
-                            render_grid(
-                                _fq_entry_grid, player,
-                                "🌳 *A gap in the ancient wall — just as the hermit described. "
-                                "You push through into the unknown.*",
-                            ),
-                            _game_view(guild_id, user_id, player, grid=_fq_entry_grid),
-                        )
+                        # Null out tracker — player is inside now, no overworld marker needed
+                        await _ufdqt_entry(db, user_id, None, None)
+                    await db.execute(
+                        "UPDATE players SET in_forest_quest=1, fq_area_id=?, "
+                        "fq_x=?, fq_y=?, forest_x=?, forest_y=?, fq_quest_stage=? "
+                        "WHERE user_id=?",
+                        (fq_id_entry, player.fq_x, player.fq_y,
+                         nx, ny, _fq_new_stage, user_id),
+                    )
+                    _fq_entry_grid = await _lfqv_entry(fq_id_entry, player.fq_x, player.fq_y, db)
+                    return (
+                        render_grid(
+                            _fq_entry_grid, player,
+                            "🌳 *A gap in the ancient wall — just as the hermit described. "
+                            "You push through into the unknown.*",
+                        ),
+                        _game_view(guild_id, user_id, player, grid=_fq_entry_grid),
+                    )
                 grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
                 return render_grid(grid, player, reason), _game_view(guild_id, user_id, player, grid=grid)
 
@@ -8727,6 +8749,77 @@ async def handle_interact(
                               trapped=arena["player_trapped"],
                               moves_left=player.combat_moves_left)
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif ftile.terrain == "fst_hermit_house":
+            # ── Hermit dialog ────────────────────────────────────────────────
+            from dwarf_explorer.world.forest import get_hermit_forest_info as _ghfi
+            from dwarf_explorer.game.quests import update_forest_depths_quest_target as _ufdqt
+            _stage = getattr(player, "fq_quest_stage", "none")
+
+            if _stage == "none":
+                # Player hasn't started the quest — hermit just greets them
+                msg = (
+                    "🛖 An old man sits outside a weathered hut, whittling a branch.\n\n"
+                    "*'These woods have many secrets, traveller. But you don't look ready for them yet.'*"
+                )
+            elif _stage == "seek_hermit":
+                # Check if player has the local map for this forest
+                _fmap = await db.fetch_one(
+                    "SELECT 1 FROM player_map_collection "
+                    "WHERE user_id=? AND map_type='forest' AND ref_id=?",
+                    (user_id, player.forest_id),
+                )
+                if not _fmap:
+                    msg = (
+                        "🛖 The hermit squints at you from beneath a wild brow.\n\n"
+                        "*'You're looking for something deeper in these woods? "
+                        "You'll need a proper map of this forest first — "
+                        "find the hidden cache nearby. It holds a chart of the grounds.'*\n\n"
+                        "🗺️ *Explore the forest for a hidden chest with a **Forest Map**.*"
+                    )
+                else:
+                    # Has map → advance quest to hermit_met, redirect tracker to FQ entrance
+                    _hinfo = await _ghfi(db)
+                    _new_wx = _hinfo["world_x"] if _hinfo else None
+                    _new_wy = _hinfo["world_y"] if _hinfo else None
+                    player.fq_quest_stage = "hermit_met"
+                    await db.execute(
+                        "UPDATE players SET fq_quest_stage='hermit_met' WHERE user_id=?",
+                        (user_id,),
+                    )
+                    # Point quest tracker at the FQ entrance tile in the overworld
+                    if _new_wx is not None:
+                        await _ufdqt(db, user_id, _new_wx, _new_wy)
+                    msg = (
+                        "🛖 The old man's eyes widen as he sees your forest chart.\n\n"
+                        "*'Ah — you've mapped this place. Good. Then you're ready to hear it.'*\n\n"
+                        "He leans forward, voice dropping to a murmur:\n"
+                        "*'There is an entrance deeper in the forest — looks just like any other tree. "
+                        "I've marked it on your chart. Beyond it lies something ancient. "
+                        "Something that predates even the Tree City.'*\n\n"
+                        "*'Head to the entrance the next time you're ready. And bring your wits.'*\n\n"
+                        "📍 *Quest updated — the marker now points to the Forest Depths entrance.*"
+                    )
+            elif _stage == "hermit_met":
+                msg = (
+                    "🛖 The hermit nods slowly as you approach.\n\n"
+                    "*'You haven't gone in yet? The entrance is marked on your map. "
+                    "Look for it at the edge of this forest — it blends in with the trees.'*\n\n"
+                    "*'Once you pass through, you'll be in the old growth. Mind the roots — "
+                    "and the things that move in the dark.'*"
+                )
+            else:
+                # map_marked or puzzle_solved
+                msg = (
+                    "🛖 The hermit looks up from his work with a knowing smile.\n\n"
+                    "*'So you've ventured inside. I can see it in your eyes. "
+                    "Whatever you find in there — trust the forest. It has a pattern.'*"
+                )
+
+            content = render_grid(grid, player, msg)
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
         elif ftile.terrain == "fst_tree_city":
@@ -13380,12 +13473,13 @@ async def _open_tree_city_villager(
 async def _open_tree_city_elder(
     interaction: discord.Interaction, guild_id: int, user_id: int, player,
 ) -> None:
-    """Floor 4 elder NPC — offers and completes The Wayerwood main quest."""
+    """Floor 4 elder NPC — offers and completes The Wayerwood and Forest Depths main quests."""
     from dwarf_explorer.game.quests import (
         create_wayerwood_quest, has_wayerwood_quest, get_active_quests,
+        has_forest_depths_quest, accept_forest_depths_quest, create_forest_depths_quest,
     )
     from dwarf_explorer.ui.quest_view import QuestOfferView, render_quest_offer
-    from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_eld
+    from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_eld, get_hermit_forest_info
     db = await get_database(guild_id)
 
     # Check if player already has the quest
@@ -13448,7 +13542,78 @@ async def _open_tree_city_elder(
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
-    # Offer the quest for the first time
+    # ── Has Wayerwood quest but not Forest Depths → offer Forest Depths ──────
+    already_has_fq = await has_forest_depths_quest(db, user_id)
+    if already_has and not already_has_fq:
+        # Wayerwood quest active; now steer player toward the hermit
+        _hf_info = await get_hermit_forest_info(db)
+        if _hf_info is None:
+            grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+            content = render_grid(
+                grid, player,
+                "🌿 *\"There is more for you to discover, traveller. "
+                "Bring me a Stick and 5 Xyphem and we shall craft your Wayerwood. "
+                "But know that another quest awaits — when you are ready.\"*",
+            )
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+        _hf_wx, _hf_wy = _hf_info["world_x"], _hf_info["world_y"]
+        fq_quest_id = await create_forest_depths_quest(db)
+        fq_row = await db.fetch_one(
+            "SELECT id, quest_type, quest_subtype, title, description, target_id, target_count, "
+            "reward_gold, reward_xp, reward_item FROM quests WHERE id=?",
+            (fq_quest_id,),
+        )
+        if not fq_row:
+            return
+        _ui_state[user_id] = {
+            "type": "quest_offer", "quest_id": fq_quest_id, "is_main_quest": True,
+            "fq_hermit_wx": _hf_wx, "fq_hermit_wy": _hf_wy,
+        }
+        content = (
+            "🌿 *\"There is something else. Deeper in the wilds lives a hermit — "
+            "an old keeper of the forest's secrets. He will not come to the city. "
+            "Seek him in the other forest, far from here. "
+            "The tracker will guide your way.\"*\n\n"
+            + render_quest_offer(dict(fq_row), "Elder of the Grove")
+        )
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=QuestOfferView(guild_id, user_id),
+        )
+        return
+
+    if already_has_fq and already_has:
+        # Both quests active — give combined status
+        grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+        _fq_stage = getattr(player, "fq_quest_stage", "seek_hermit") or "seek_hermit"
+        _fq_hint = {
+            "seek_hermit": "Find the hermit in the other forest — the tracker shows the way.",
+            "hermit_met":  "You've spoken with the hermit. Find the gap he marked in the wall.",
+            "map_marked":  "You're inside the Forest Depths. Push the logs to bridge the stream.",
+            "puzzle_solved": "The stream is bridged. Press deeper into the Forest Depths.",
+        }.get(_fq_stage, "Keep following the trail.")
+        stick_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
+        xyphem_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,))
+        stick_count  = sum(r["quantity"] for r in stick_rows)
+        xyphem_count = sum(r["quantity"] for r in xyphem_rows)
+        content = render_grid(
+            grid, player,
+            f"🌿 *\"Walk carefully, traveller.\"*\n\n"
+            f"**Wayerwood:** {'✅' if stick_count >= 1 else '❌'} Stick ({stick_count}/1)  "
+            f"{'✅' if xyphem_count >= 5 else '❌'} Xyphem ({xyphem_count}/5)\n"
+            f"**Forest Depths:** {_fq_hint}",
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
+
+    if already_has_fq and not already_has:
+        # Has Forest Depths but not Wayerwood — offer Wayerwood too
+        pass  # falls through to offer Wayerwood below
+
+    # Offer the Wayerwood quest for the first time
     quest_id = await create_wayerwood_quest(db)
     quest_row = await db.fetch_one(
         "SELECT id, quest_type, quest_subtype, title, description, target_id, target_count, "
@@ -13460,7 +13625,9 @@ async def _open_tree_city_elder(
     q_dict = dict(quest_row)
     _ui_state[user_id] = {"type": "quest_offer", "quest_id": quest_id, "is_main_quest": True}
     content = (
-        "🌿 *\"Traveller... you have reached the heart of the tree. Good.\"*\n\n"
+        "🌿 *\"Traveller... you have reached the heart of the tree. Good. "
+        "There is much the forest wishes to share with you — "
+        "but first, you must earn its trust.\"*\n\n"
         + render_quest_offer(q_dict, "Elder of the Grove")
     )
     await interaction.response.edit_message(
@@ -16518,8 +16685,17 @@ async def handle_quest_offer_accept(
         from dwarf_explorer.game.quests import accept_quest
         quest_id = state["quest_id"]
         _is_main = state.get("is_main_quest", False)
+        _fq_hwx  = state.get("fq_hermit_wx")
+        _fq_hwy  = state.get("fq_hermit_wy")
         accepted = await accept_quest(db, user_id, quest_id, source_type="tree_city_elder",
-                                      is_main_quest=_is_main)
+                                      is_main_quest=_is_main,
+                                      bounty_wx=_fq_hwx, bounty_wy=_fq_hwy)
+        # If this was the Forest Depths quest, also set fq_quest_stage → seek_hermit
+        if accepted and _fq_hwx is not None:
+            player.fq_quest_stage = "seek_hermit"
+            await db.execute(
+                "UPDATE players SET fq_quest_stage='seek_hermit' WHERE user_id=?", (user_id,)
+            )
         _ui_state.pop(user_id, None)
         seed = await get_or_create_world(db, guild_id)
         grid = await load_viewport(player.world_x, player.world_y, seed, db)

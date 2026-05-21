@@ -568,6 +568,22 @@ class Database:
                 except Exception as e:
                     _log.warning("wayerwood_tx migration warning: %s", e)
 
+            # ── hermit / FQ entrance columns on forest_areas ─────────────────────
+            try:
+                _fa_cols = {row[1] for row in conn.execute("PRAGMA table_info(forest_areas)").fetchall()}
+                for _fa_col, _fa_default in [
+                    ("hermit_tx", "NULL"),
+                    ("hermit_ty", "NULL"),
+                    ("fq_entrance_tx", "NULL"),
+                    ("fq_entrance_ty", "NULL"),
+                    ("has_hermit", "0"),
+                ]:
+                    if _fa_col not in _fa_cols:
+                        conn.execute(f"ALTER TABLE forest_areas ADD COLUMN {_fa_col} INTEGER DEFAULT {_fa_default}")
+                conn.commit()
+            except Exception as e:
+                _log.warning("forest_areas column migration warning: %s", e)
+
             # ── Inventory table rebuild (remove UNIQUE, add slot_index) ──────────
             inv_cols = {row[1] for row in conn.execute("PRAGMA table_info(inventory)").fetchall()}
             if "slot_index" not in inv_cols:

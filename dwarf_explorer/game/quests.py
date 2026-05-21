@@ -1380,7 +1380,113 @@ async def get_main_quests(db, user_id: int) -> list[dict]:
         "ORDER BY pq.accepted_at",
         (user_id,),
     )
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    # Dynamically override Forest Depths description based on player's quest stage
+    _fq_descs = _FQ_STAGE_DESCRIPTIONS
+    for q in result:
+        if q.get("title") == "The Forest Depths":
+            p_row = await db.fetch_one(
+                "SELECT fq_quest_stage FROM players WHERE user_id=?", (user_id,)
+            )
+            stage = (p_row["fq_quest_stage"] if p_row else None) or "seek_hermit"
+            q["description"] = _fq_descs.get(stage, q["description"])
+    return result
+
+
+# ── Forest Depths main quest ──────────────────────────────────────────────────
+
+_FQ_STAGE_DESCRIPTIONS: dict[str, str] = {
+    "seek_hermit": (
+        "The Tree City elder has told you of a **hermit** — a reclusive sage who knows the "
+        "ancient woodland paths. He lives alone in **a different forest**, far from the city's noise. "
+        "The quest tracker will guide you to the forest entrance. Seek him out; "
+        "he holds the knowledge you need."
+    ),
+    "hermit_met": (
+        "The hermit has marked your map with the location of a hidden gap in the ancient wall — "
+        "the entrance to a place locals call the *Forest Depths*. Travel to his forest and find "
+        "the marked tile. **Ents** lurk within, moving silently through the trees."
+    ),
+    "map_marked": (
+        "You've entered the ancient corridor. **Ents** roam the passage — avoid or fight them. "
+        "Beyond the corridor lies a sunken chamber with an **impassable stream**. "
+        "Push the heavy logs into place to bridge the crossing. "
+        "*(Interact with the 🪨 reset stone to restore logs to their starting positions.)*"
+    ),
+    "puzzle_solved": (
+        "The logs bridge the stream. The Forest Depths open before you — "
+        "a hidden corridor leads further in. What secrets lie beyond the crossing?"
+    ),
+}
+
+
+async def create_forest_depths_quest(db) -> int:
+    """Get or create the Forest Depths main quest row. Returns quest_id."""
+    row = await db.fetch_one(
+        "SELECT id FROM quests WHERE title='The Forest Depths' LIMIT 1"
+    )
+    if row:
+        return row["id"]
+    cur = await db.execute(
+        "INSERT INTO quests "
+        "(quest_type, quest_subtype, title, description, target_id, target_count, "
+        " reward_gold, reward_xp, reward_item, source_type) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "main", "exploration",
+            "The Forest Depths",
+            _FQ_STAGE_DESCRIPTIONS["seek_hermit"],  # default; overridden dynamically
+            "hermit", 1,
+            0, 500, None,
+            "tree_city_elder",
+        ),
+    )
+    return cur.lastrowid
+
+
+async def has_forest_depths_quest(db, user_id: int) -> bool:
+    """Return True if player already has The Forest Depths quest active."""
+    row = await db.fetch_one(
+        "SELECT 1 FROM player_quests pq "
+        "JOIN quests q ON pq.quest_id = q.id "
+        "WHERE pq.user_id=? AND q.title='The Forest Depths' AND pq.status='active'",
+        (user_id,),
+    )
+    return bool(row)
+
+
+async def accept_forest_depths_quest(
+    db, user_id: int,
+    hermit_forest_wx: int, hermit_forest_wy: int,
+) -> None:
+    """Activate The Forest Depths quest for the player, pointing tracker at hermit's forest."""
+    quest_id = await create_forest_depths_quest(db)
+    already = await has_forest_depths_quest(db, user_id)
+    if already:
+        return
+    await db.execute(
+        "INSERT INTO player_quests "
+        "(user_id, quest_id, progress, status, accepted_at, bounty_wx, bounty_wy, "
+        "source_type, is_main_quest) "
+        "VALUES (?, ?, 0, 'active', datetime('now'), ?, ?, 'tree_city_elder', 1)",
+        (user_id, quest_id, hermit_forest_wx, hermit_forest_wy),
+    )
+    await db.commit()
+
+
+async def update_forest_depths_quest_target(
+    db, user_id: int,
+    new_wx: int | None, new_wy: int | None,
+) -> None:
+    """Update the quest tracker target (bounty_wx/wy) for the Forest Depths quest."""
+    await db.execute(
+        "UPDATE player_quests SET bounty_wx=?, bounty_wy=? "
+        "WHERE user_id=? AND quest_id=("
+        "  SELECT id FROM quests WHERE title='The Forest Depths' LIMIT 1"
+        ")",
+        (new_wx, new_wy, user_id),
+    )
+    await db.commit()
 
 
 async def create_wayerwood_quest(db) -> int:

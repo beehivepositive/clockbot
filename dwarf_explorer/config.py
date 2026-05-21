@@ -73,6 +73,9 @@ TERRAIN_EMOJI = {
     "fq_reset":        "\U0001FAA8",  # 🪨 ancient reset stone
     "fq_exit":         "\U0001F332",  # 🌲 forest exit marker
     "fq_grove_exit":   "\U00002728",  # ✨ hidden grove entrance
+    # Hermit zone tiles
+    "fst_hermit_house": "\U0001F6D6",  # 🛖 hermit's hut
+    "fst_fq_entrance":  "\U0001F333",  # 🌳 looks like a tree wall (FQ zone entrance marker)
 }
 
 STRUCTURE_EMOJI = {
@@ -783,6 +786,7 @@ FOREST_EMOJI: dict[str, str] = {
 FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
     "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
+    "fst_hermit_house",
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({

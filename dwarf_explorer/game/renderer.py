@@ -101,6 +101,12 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "maze"
     elif getattr(player, "in_forest", False):
         location = "forest"
+    elif getattr(player, "in_grove", False):
+        location = "grove"
+    elif getattr(player, "in_bandit_camp", False):
+        location = "bandit_camp"
+    elif getattr(player, "in_forest_quest", False):
+        location = "forest_quest"
     else:
         location = "wilderness"
 
@@ -254,6 +260,18 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
         fname = floor_names.get(player.tc_floor, f"Upper Hall")
         pos = f"🌲 Tree City — {fname} (Fl. {player.tc_floor})  ({player.tc_x},{player.tc_y})"
+    elif getattr(player, "in_maze", False):
+        pos = "🌀 Forest Maze"   # deliberately no coordinates
+    elif getattr(player, "in_grove", False):
+        pos = "🌿 Hidden Grove"
+    elif getattr(player, "in_forest_quest", False):
+        pos = "🌳 Forest Depths"   # deliberately no coordinates
+    elif getattr(player, "in_temple", False):
+        pos = f"⛩️ Temple ({getattr(player, 'temple_x', 0)},{getattr(player, 'temple_y', 0)})"
+    elif getattr(player, "in_forest", False):
+        pos = f"🌲 Forest ({getattr(player, 'forest_x', 0)},{getattr(player, 'forest_y', 0)})"
+    elif getattr(player, "in_bandit_camp", False):
+        pos = f"⛺ Bandit Camp ({getattr(player, 'bc_x', 0)},{getattr(player, 'bc_y', 0)})"
     elif getattr(player, "in_sky", False):
         pos = f"☁️ Sky ({getattr(player, 'sky_x', 0)},{getattr(player, 'sky_y', 0)})"
     elif getattr(player, "in_high_seas", False) or getattr(player, "in_ocean", False):

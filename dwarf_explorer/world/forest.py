@@ -150,8 +150,8 @@ def _branch_off(
 
 def _generate_forest_interior(
     forest_id: int, seed: int, world_x: int, world_y: int, num_exits: int = 1,
-    has_city: bool = True,
-) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]], tuple[int, int]]:
+    has_city: bool = True, has_hermit: bool = False,
+) -> tuple[int, int, list[tuple[int, int, str]], list[tuple[int, int]], tuple[int, int], tuple[int, int] | None, tuple[int, int] | None]:
     """Generate a forest interior as a bead-chain of clearings.
 
     Design:
@@ -356,7 +356,40 @@ def _generate_forest_interior(
             break
     wayerwood_target = (_ww_tx, _ww_ty)
 
-    return W, H, tiles, exits, wayerwood_target
+    # ── 6. Hermit house + FQ entrance (secondary/hermit forests only) ────────────
+    hermit_pos: tuple[int, int] | None = None
+    fq_entrance_pos: tuple[int, int] | None = None
+    if has_hermit and remaining:
+        # Hermit house: pick from remaining dead-ends (not already used by chest/map/ancient)
+        _hermit_candidates = [d for d in dead_ends if d not in specials]
+        # Pick one somewhat far from center for "hidden" feel
+        _hermit_candidates.sort(key=lambda p: -(abs(p[0] - center_x) + abs(p[1] - center_y)))
+        if _hermit_candidates:
+            hx, hy = _hermit_candidates[0]
+            grid[hy][hx] = "fst_hermit_house"
+            specials.add((hx, hy))
+            hermit_pos = (hx, hy)
+
+        # FQ entrance: a tile on the forest boundary (always fst_tree there)
+        # Pick a border position that's not already an exit tile
+        _fq_angle = _math.radians((forest_id * 137 + seed * 53) % 360)
+        _fqex = max(1, min(W - 2, int(W // 2 + (W // 2 - 2) * _math.cos(_fq_angle))))
+        _fqey = max(1, min(H - 2, int(H // 2 + (H // 2 - 2) * _math.sin(_fq_angle))))
+        # Try positions until we find one that's fst_tree and not an exit
+        for _fq_da in range(0, 360, 15):
+            _fq_r2 = _math.radians(_fq_da)
+            _fqcx = max(1, min(W - 2, int(W // 2 + (W // 2 - 3) * _math.cos(_fq_r2))))
+            _fqcy = max(1, min(H - 2, int(H // 2 + (H // 2 - 3) * _math.sin(_fq_r2))))
+            if grid[_fqcy][_fqcx] == "fst_tree" and (_fqcx, _fqcy) not in specials:
+                grid[_fqcy][_fqcx] = "fst_fq_entrance"
+                _fqex, _fqey = _fqcx, _fqcy
+                break
+        fq_entrance_pos = (_fqex, _fqey)
+
+    # Rebuild tile list including hermit/entrance modifications
+    tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
+
+    return W, H, tiles, exits, wayerwood_target, hermit_pos, fq_entrance_pos
 
 
 # ── Maze generation (kept for legacy forests) ────────────────────────────────────
@@ -472,6 +505,7 @@ async def create_forest_area(
     overworld_positions: list[tuple[int, int]],
     db,
     has_city: bool = True,
+    has_hermit: bool = False,
 ) -> None:
     """Create one forest interior linked to overworld_positions entrances.
 
@@ -494,10 +528,11 @@ async def create_forest_area(
     forest_id = cur.lastrowid
 
     # Generate forest grid in a thread (CPU-heavy)
-    width, height, forest_tiles, exit_positions, wayerwood_target = await asyncio.to_thread(
+    width, height, forest_tiles, exit_positions, wayerwood_target, hermit_pos, fq_entrance_pos = await asyncio.to_thread(
         _generate_forest_interior,
         forest_id, seed, overworld_positions[0][0], overworld_positions[0][1], n,
         has_city,
+        has_hermit,
     )
 
     await db.execute(
@@ -511,6 +546,21 @@ async def create_forest_area(
         "UPDATE forest_areas SET wayerwood_tx=?, wayerwood_ty=? WHERE forest_id=?",
         (_ww_tx_store, _ww_ty_store, forest_id),
     )
+    if has_hermit:
+        await db.execute(
+            "UPDATE forest_areas SET has_hermit=1 WHERE forest_id=?",
+            (forest_id,),
+        )
+    if hermit_pos:
+        await db.execute(
+            "UPDATE forest_areas SET hermit_tx=?, hermit_ty=? WHERE forest_id=?",
+            (hermit_pos[0], hermit_pos[1], forest_id),
+        )
+    if fq_entrance_pos:
+        await db.execute(
+            "UPDATE forest_areas SET fq_entrance_tx=?, fq_entrance_ty=? WHERE forest_id=?",
+            (fq_entrance_pos[0], fq_entrance_pos[1], forest_id),
+        )
     await db.executemany(
         "INSERT OR IGNORE INTO forest_tiles (forest_id, local_x, local_y, tile_type)"
         " VALUES (?, ?, ?, ?)",
@@ -581,7 +631,9 @@ async def place_forest_areas(seed: int, db) -> None:
         if already:
             continue
 
-        await create_forest_area(seed, ow_entrances, db, has_city=(idx == 0))
+        await create_forest_area(seed, ow_entrances, db,
+                                 has_city=(idx == 0),
+                                 has_hermit=(idx == 1))
 
 
 async def ensure_forests_placed(seed: int, db) -> None:
@@ -625,6 +677,25 @@ async def get_forest_exit_world(
         (forest_id,),
     )
     return (row["world_x"], row["world_y"]) if row else None
+
+
+async def get_hermit_forest_info(db) -> dict | None:
+    """Return info about the hermit's forest (the has_hermit forest).
+
+    Returns dict with keys: forest_id, hermit_tx, hermit_ty, fq_entrance_tx,
+    fq_entrance_ty, world_x, world_y (overworld entrance tile).
+    Returns None if not yet generated.
+    """
+    row = await db.fetch_one(
+        "SELECT fa.forest_id, fa.hermit_tx, fa.hermit_ty, "
+        "fa.fq_entrance_tx, fa.fq_entrance_ty, "
+        "fe.world_x, fe.world_y "
+        "FROM forest_areas fa "
+        "JOIN forest_entrances fe ON fe.forest_id = fa.forest_id "
+        "WHERE fa.has_hermit = 1 "
+        "LIMIT 1"
+    )
+    return dict(row) if row else None
 
 
 async def get_maze_for_forest(db, forest_id: int) -> int | None:

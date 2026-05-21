@@ -321,9 +321,14 @@ CREATE INDEX IF NOT EXISTS idx_sky_portals_pos ON sky_portals(world_x, world_y);
 
 -- Forest interior areas
 CREATE TABLE IF NOT EXISTS forest_areas (
-    forest_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    width     INTEGER NOT NULL,
-    height    INTEGER NOT NULL
+    forest_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    width          INTEGER NOT NULL,
+    height         INTEGER NOT NULL,
+    hermit_tx      INTEGER,       -- local_x of hermit house tile
+    hermit_ty      INTEGER,       -- local_y of hermit house tile
+    fq_entrance_tx INTEGER,       -- local_x of FQ zone entrance tile
+    fq_entrance_ty INTEGER,       -- local_y of FQ zone entrance tile
+    has_hermit     INTEGER NOT NULL DEFAULT 0   -- 1 for the secondary hermit forest
 );
 
 -- Forest interior tiles
