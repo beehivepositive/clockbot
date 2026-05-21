@@ -265,6 +265,8 @@ class DwarfExplorer(commands.Cog):
                 in_house=0, house_id=NULL, house_x=0, house_y=0, house_vx=0, house_vy=0, house_type='house',
                 in_forest=0, forest_id=NULL, forest_x=0, forest_y=0,
                 forest_wx=0, forest_wy=0,
+                in_tree_city=0, tc_forest_id=NULL, tc_floor=1, tc_x=0, tc_y=0,
+                in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0,
                 in_maze=0, maze_id=NULL, maze_x=0, maze_y=0,
                 in_sky=0, sky_id=NULL, sky_x=0, sky_y=0,
                 in_temple=0, temple_id=NULL, temple_x=0, temple_y=0,
@@ -278,10 +280,14 @@ class DwarfExplorer(commands.Cog):
         )
         player.world_x, player.world_y = sx, sy
         player.in_cave = player.in_village = player.in_house = False
-        player.in_forest = getattr(player, "in_forest", False) and False
-        player.in_maze = getattr(player, "in_maze", False) and False
-        player.in_sky = getattr(player, "in_sky", False) and False
-        player.in_temple = getattr(player, "in_temple", False) and False
+        player.in_forest = False
+        player.in_tree_city = False
+        player.tc_forest_id = None
+        player.tc_floor = 1
+        player.in_forest_quest = False
+        player.in_maze = False
+        player.in_sky = False
+        player.in_temple = False
         player.in_ocean = player.in_canoe = player.in_combat = False
 
         grid = await load_viewport(sx, sy, seed, db)

@@ -2801,6 +2801,8 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌲 Enter", True
             elif t == "fst_maze_door":
                 center_label, center_enabled = "🌀 Enter", True
+            elif t == "fst_hermit_house":
+                center_label, center_enabled = "🛖 Talk", True
             elif t in ("fst_chest", "fst_mimic", "fst_map_chest"):
                 # fst_mimic and fst_map_chest look identical to fst_chest
                 from dwarf_explorer.config import FOREST_EMOJI as _FE

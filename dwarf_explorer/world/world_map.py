@@ -401,13 +401,6 @@ def _composite_players_sync(
     img  = Image.open(io.BytesIO(base_png)).copy()
     draw = ImageDraw.Draw(img)
 
-    # Overworld quest markers — red diamonds (use _world_to_pixel_y for flipped coords)
-    if quest_markers:
-        for qx, qy, _ in quest_markers:
-            cx_q = qx * scale + scale // 2
-            cy_q = _world_to_pixel_y(qy) + scale // 2
-            _draw_icon(draw, cx_q, cy_q, "filled_diamond", (220, 30, 30), r=6)
-
     # Ocean quest edge markers — arrow + diamond at the ocean-facing edge
     if ocean_quest_markers:
         _ac = (255, 140, 0)
@@ -452,6 +445,13 @@ def _composite_players_sync(
         else:
             draw.ellipse([cx_o - 4, cy_o - 4, cx_o + 4, cy_o + 4],
                          fill=(60, 120, 255), outline=(255, 255, 255))
+
+    # Quest markers — red diamonds on top of other-player dots but below current player
+    if quest_markers:
+        for qx, qy, _ in quest_markers:
+            cx_q = qx * scale + scale // 2
+            cy_q = _world_to_pixel_y(qy) + scale // 2
+            _draw_icon(draw, cx_q, cy_q, "filled_diamond", (220, 30, 30), r=6)
 
     # Current player — avatar (20 px) or red dot fallback
     cx_p = player_x * scale + scale // 2

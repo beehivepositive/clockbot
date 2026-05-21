@@ -1579,7 +1579,7 @@ async def claim_puzzle_reward(db: Database, user_id: int) -> bool:
 
 
 async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int, int, str]]:
-    """Return [(world_x, world_y, enemy_type)] for all active bounty quests with markers."""
+    """Return [(world_x, world_y, label)] for all active quests with overworld markers."""
     rows = await db.fetch_all(
         "SELECT pq.bounty_wx, pq.bounty_wy, q.target_id, q.location_x, q.location_y, "
         "q.quest_subtype, q.location_type "
@@ -1590,7 +1590,7 @@ async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int
     )
     markers = []
     for r in rows:
-        # Bounty quests: use personal bounty_wx/wy, fall back to quest location
+        # Kill bounties: use personal bounty_wx/wy, fall back to quest location
         if r["quest_subtype"] == "kill" and r["location_type"] == "overworld":
             wx = r["bounty_wx"] if r["bounty_wx"] is not None else r["location_x"]
             wy = r["bounty_wy"] if r["bounty_wy"] is not None else r["location_y"]
@@ -1599,6 +1599,10 @@ async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int
         elif r["quest_subtype"] in ("investigation", "delivery"):
             if r["location_x"] is not None and r["location_y"] is not None:
                 markers.append((r["location_x"], r["location_y"], r["quest_subtype"]))
+        elif r["quest_subtype"] == "exploration":
+            # Main exploration quests use bounty_wx/wy as a waypoint tracker
+            if r["bounty_wx"] is not None and r["bounty_wy"] is not None:
+                markers.append((r["bounty_wx"], r["bounty_wy"], "exploration"))
     return markers
 
 
