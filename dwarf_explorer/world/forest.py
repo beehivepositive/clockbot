@@ -82,21 +82,63 @@ def _carve_blob(
 def _carve_path(
     grid: list[list[str]], x1: int, y1: int, x2: int, y2: int, W: int, H: int
 ) -> None:
-    """Carve a 1-tile-wide L-shaped corridor including both endpoints."""
+    """Carve a 1-tile-wide L-shaped corridor including both endpoints (legacy)."""
     x, y = x1, y1
-    # Set starting tile
     if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
         grid[y][x] = "fst_floor"
-    # Horizontal leg
     while x != x2:
         x += 1 if x < x2 else -1
         if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
             grid[y][x] = "fst_floor"
-    # Vertical leg
     while y != y2:
         y += 1 if y < y2 else -1
         if 0 <= x < W and 0 <= y < H and grid[y][x] == "fst_tree":
             grid[y][x] = "fst_floor"
+
+
+def _carve_wide_path(
+    grid: list[list[str]], x1: int, y1: int, x2: int, y2: int,
+    W: int, H: int, rng: random.Random | None = None,
+) -> None:
+    """Carve a 2-tile-wide diagonal-capable corridor with optional meandering.
+
+    Uses a Bresenham line with a 2×2 brush so corridors are noticeably wider
+    than the old 1-tile L-shape, and diagonal movement is supported naturally.
+    When rng is provided and the path is long enough, one meander waypoint is
+    inserted at the midpoint with a random offset.
+    """
+    waypoints: list[tuple[int, int]] = [(x1, y1)]
+    dist = abs(x2 - x1) + abs(y2 - y1)
+    if dist > 14 and rng is not None:
+        mx = (x1 + x2) // 2 + rng.randint(-8, 8)
+        my = (y1 + y2) // 2 + rng.randint(-8, 8)
+        waypoints.append((max(2, min(W - 3, mx)), max(2, min(H - 3, my))))
+    waypoints.append((x2, y2))
+
+    for i in range(len(waypoints) - 1):
+        ax, ay = waypoints[i]
+        bx, by = waypoints[i + 1]
+        # Bresenham line — draw a 2×2 brush at each step
+        dx = abs(bx - ax)
+        dy_v = abs(by - ay)
+        sx = 1 if ax < bx else -1
+        sy = 1 if ay < by else -1
+        err = dx - dy_v
+        cx, cy = ax, ay
+        while True:
+            for bry in range(cy, cy + 2):
+                for brx in range(cx, cx + 2):
+                    if 1 <= brx < W - 1 and 1 <= bry < H - 1 and grid[bry][brx] == "fst_tree":
+                        grid[bry][brx] = "fst_floor"
+            if cx == bx and cy == by:
+                break
+            e2 = 2 * err
+            if e2 > -dy_v:
+                err -= dy_v
+                cx += sx
+            if e2 < dx:
+                err += dx
+                cy += sy
 
 
 def _meander(
@@ -137,7 +179,7 @@ def _branch_off(
     ty = max(PAD, min(H - PAD - 1, parent_y + int(math.sin(angle) * step)))
 
     _carve_blob(grid, tx, ty, _CLEARING_R, W, H, rng)
-    _carve_path(grid, parent_x, parent_y, tx, ty, W, H)
+    _carve_wide_path(grid, parent_x, parent_y, tx, ty, W, H, rng)
 
     dead_ends: list[tuple[int, int]] = [(tx, ty)]
     if depth < max_depth and rng.random() < 0.55:
@@ -176,9 +218,21 @@ def _generate_forest_interior(
 
     center_x, center_y = W // 2, H // 2
 
+    # Track placed clearing circles to prevent intersections: (cx, cy, radius)
+    placed_clearings: list[tuple[int, int, int]] = []
+
+    def _clearing_fits(cx: int, cy: int, r: int, min_gap: int = 3) -> bool:
+        """Return True if a new clearing at (cx,cy) with radius r doesn't overlap any placed one."""
+        for px, py, pr in placed_clearings:
+            dist = math.sqrt((cx - px) ** 2 + (cy - py) ** 2)
+            if dist < r + pr + min_gap:
+                return False
+        return True
+
     # ── 1. Central clearing (only for city forests) ──────────────────────────────
     if has_city:
         _carve_circ(grid, center_x, center_y, _CENTRAL_R, W, H)
+        placed_clearings.append((center_x, center_y, _CENTRAL_R))
 
     # ── 2. Determine exit positions (on the map boundary) ────────────────────────
     edges = ["top", "bottom", "left", "right"]
@@ -219,9 +273,11 @@ def _generate_forest_interior(
         inner   = inners[i]
         first_c = first_clears[i]
 
-        # Narrow corridor from boundary inner-point to first clearing
-        _carve_path(grid, inner[0], inner[1], first_c[0], first_c[1], W, H)
-        _carve_blob(grid, first_c[0], first_c[1], _CLEARING_R, W, H, rng)
+        # Wide corridor from boundary inner-point to first clearing
+        _carve_wide_path(grid, inner[0], inner[1], first_c[0], first_c[1], W, H, rng)
+        if _clearing_fits(first_c[0], first_c[1], _CLEARING_R):
+            _carve_blob(grid, first_c[0], first_c[1], _CLEARING_R, W, H, rng)
+            placed_clearings.append((first_c[0], first_c[1], _CLEARING_R))
 
         # Intermediate beads meandering toward center
         # Aim slightly off-center so two chains don't perfectly overlap
@@ -236,12 +292,14 @@ def _generate_forest_interior(
         # Carve each intermediate bead and the corridor from its predecessor
         for j, (bx, by) in enumerate(mid_beads):
             prev = chain[j]   # chain[0]=first_c, chain[1]=mid_beads[0], …
-            _carve_blob(grid, bx, by, _CLEARING_R, W, H, rng)
-            _carve_path(grid, prev[0], prev[1], bx, by, W, H)
+            if _clearing_fits(bx, by, _CLEARING_R):
+                _carve_blob(grid, bx, by, _CLEARING_R, W, H, rng)
+                placed_clearings.append((bx, by, _CLEARING_R))
+            _carve_wide_path(grid, prev[0], prev[1], bx, by, W, H, rng)
 
         # Connect last bead to central clearing
         last = mid_beads[-1] if mid_beads else first_c
-        _carve_path(grid, last[0], last[1], center_x, center_y, W, H)
+        _carve_wide_path(grid, last[0], last[1], center_x, center_y, W, H, rng)
 
         all_chain_beads.append(chain)
 
@@ -677,6 +735,25 @@ async def get_forest_exit_world(
         (forest_id,),
     )
     return (row["world_x"], row["world_y"]) if row else None
+
+
+async def get_city_forest_info(db) -> dict | None:
+    """Return info about the primary (has_city) forest.
+
+    Returns dict with keys: forest_id, city_x, city_y, world_x, world_y.
+    city_x/city_y is the local position of the fst_tree_city tile.
+    Returns None if not yet generated.
+    """
+    row = await db.fetch_one(
+        "SELECT fa.forest_id, "
+        "ft.local_x AS city_x, ft.local_y AS city_y, "
+        "fe.world_x, fe.world_y "
+        "FROM forest_areas fa "
+        "JOIN forest_tiles ft ON ft.forest_id = fa.forest_id AND ft.tile_type = 'fst_tree_city' "
+        "JOIN forest_entrances fe ON fe.forest_id = fa.forest_id "
+        "LIMIT 1"
+    )
+    return dict(row) if row else None
 
 
 async def get_hermit_forest_info(db) -> dict | None:

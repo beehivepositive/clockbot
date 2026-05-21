@@ -17,6 +17,7 @@ from dwarf_explorer.database.repositories import (
 )
 from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn, find_nearest_village
 from dwarf_explorer.world.villages import load_village_viewport
+from dwarf_explorer.world.forest import get_city_forest_info, get_hermit_forest_info, load_forest_viewport
 from dwarf_explorer.game.renderer import render_grid
 from dwarf_explorer.ui.game_view import GameView
 from dwarf_explorer.ui.dynamic_buttons import GameButton
@@ -556,9 +557,16 @@ class DwarfExplorer(commands.Cog):
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
-    @app_commands.command(name="tp", description="Teleport admin character to overworld coordinates.")
-    @app_commands.describe(x="World X coordinate (0–447)", y="World Y coordinate (0–447)")
-    async def tp(self, interaction: discord.Interaction, x: int, y: int) -> None:
+    @app_commands.command(name="tp", description="Teleport admin character to overworld coordinates or a named location.")
+    @app_commands.describe(
+        x="World X coordinate (0–447)",
+        y="World Y coordinate (0–447)",
+        location="Named location: 'forestcity' or 'hermit' (overrides x/y when provided)",
+    )
+    async def tp(
+        self, interaction: discord.Interaction,
+        x: int = 0, y: int = 0, location: str = "",
+    ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
                 "This command can only be used in a server.", ephemeral=True
@@ -570,17 +578,77 @@ class DwarfExplorer(commands.Cog):
             )
             return
 
-        # Clamp to world bounds
-        x = max(0, min(WORLD_SIZE - 1, x))
-        # Y=0 is displayed at the south (bottom); flip so user coords match the world map
-        y = WORLD_SIZE - 1 - max(0, min(WORLD_SIZE - 1, y))
-
         guild_id = interaction.guild.id
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
         await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
-
         await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
+
+        loc = location.strip().lower()
+
+        # ── Named forest locations ────────────────────────────────────────────────
+        if loc in ("forestcity", "hermit"):
+            if loc == "forestcity":
+                info = await get_city_forest_info(db)
+                if not info:
+                    await interaction.response.send_message(
+                        "⚠️ Forest city not yet generated — explore a dense forest first.",
+                        ephemeral=True
+                    )
+                    return
+                fid  = info["forest_id"]
+                fx   = info["city_x"]
+                fy   = info["city_y"]
+                label = "🌲 Forest City"
+            else:  # hermit
+                info = await get_hermit_forest_info(db)
+                if not info:
+                    await interaction.response.send_message(
+                        "⚠️ Hermit's forest not yet generated — explore more of the world first.",
+                        ephemeral=True
+                    )
+                    return
+                fid  = info["forest_id"]
+                fx   = info.get("hermit_tx") or (info.get("city_x", 60))
+                fy   = info.get("hermit_ty") or (info.get("city_y", 60))
+                label = "🏚️ Hermit's House"
+
+            # Clear all overworld/sub-location state and place in forest
+            await update_player_stats(
+                db, ADMIN_PLAYER_ID,
+                in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+                in_village=0, village_id=None,
+                in_house=0, house_id=None,
+                in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+            )
+            await db.execute(
+                "UPDATE players SET "
+                "in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
+                "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
+                "in_forest=1, forest_id=?, forest_x=?, forest_y=?, "
+                "in_tree_city=0, in_forest_quest=0 "
+                "WHERE user_id=?",
+                (fid, fx, fy, ADMIN_PLAYER_ID)
+            )
+            await db.commit()
+
+            player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+            player.gold = 999999
+            grid = await load_forest_viewport(fid, fx, fy, db)
+            content = render_grid(grid, player, f"🗺️ Teleported to {label}.")
+            view = GameView(guild_id, ADMIN_PLAYER_ID)
+            await interaction.response.send_message(
+                embed=discord.Embed(description=content), view=view
+            )
+            msg = await interaction.original_response()
+            await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+            return
+
+        # ── Overworld coordinate teleport ─────────────────────────────────────────
+        # Clamp to world bounds
+        x = max(0, min(WORLD_SIZE - 1, x))
+        # Y=0 is displayed at the south (bottom); flip so user coords match the world map
+        y = WORLD_SIZE - 1 - max(0, min(WORLD_SIZE - 1, y))
 
         # Reset all sub-location state and place admin at overworld coordinates
         await update_player_stats(
@@ -591,10 +659,11 @@ class DwarfExplorer(commands.Cog):
             in_house=0, house_id=None,
             in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
         )
-        # Clear sky/temple state directly (not all in update_player_stats signature)
+        # Clear sky/temple/forest state directly
         await db.execute(
             "UPDATE players SET in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
-            "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0 WHERE user_id=?",
+            "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
+            "in_forest=0, forest_id=NULL WHERE user_id=?",
             (ADMIN_PLAYER_ID,)
         )
 

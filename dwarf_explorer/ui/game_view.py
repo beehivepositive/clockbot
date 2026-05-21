@@ -4031,8 +4031,7 @@ async def _move_steps(
                 1 if player.accessory == "ring_of_time" else 0
             )
             await save_combat_state(db, user_id, player)
-            from dwarf_explorer.game.combat import render_arena as _ra_bc
-            content_bc = _ra_bc(arena_bc, player)
+            content_bc = render_arena(arena_bc, player)
             view_bc = CombatView(guild_id, user_id,
                                  trapped=arena_bc["player_trapped"],
                                  moves_left=player.combat_moves_left,
@@ -4326,7 +4325,6 @@ async def _move_steps(
         if player.fq_y < _FQ_CY0:
             combat_tiles = await _setp(db, fq_id, player.fq_x, player.fq_y)
             if combat_tiles:
-                from dwarf_explorer.game.combat import build_arena_from_viewport
                 fq_grid_c = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 _ent_arena_rng = _random.Random(
                     hash((user_id, player.fq_x, player.fq_y, "ent_combat"))
@@ -4344,8 +4342,7 @@ async def _move_steps(
                     1 if player.accessory == "ring_of_time" else 0
                 )
                 await save_combat_state(db, user_id, player)
-                from dwarf_explorer.game.combat import render_arena as _ra_ent
-                content_ent = _ra_ent(arena_ent, player)
+                content_ent = render_arena(arena_ent, player)
                 view_ent = CombatView(guild_id, user_id,
                                       trapped=arena_ent["player_trapped"],
                                       moves_left=player.combat_moves_left,
@@ -4356,7 +4353,6 @@ async def _move_steps(
         if player.fq_y >= _FQ_FINAL_Y0:
             anc_combat_tiles = await _step_anc(db, fq_id, player.fq_x, player.fq_y)
             if anc_combat_tiles:
-                from dwarf_explorer.game.combat import build_arena_from_viewport
                 fq_grid_ac = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
                 _anc_rng = _random.Random(
                     hash((user_id, player.fq_x, player.fq_y, "ancient_ent_combat"))
@@ -4376,8 +4372,7 @@ async def _move_steps(
                     1 if player.accessory == "ring_of_time" else 0
                 )
                 await save_combat_state(db, user_id, player)
-                from dwarf_explorer.game.combat import render_arena as _ra_anc
-                content_anc = _ra_anc(arena_anc, player)
+                content_anc = render_arena(arena_anc, player)
                 view_anc = CombatView(guild_id, user_id,
                                       trapped=arena_anc["player_trapped"],
                                       moves_left=player.combat_moves_left,
