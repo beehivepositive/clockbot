@@ -262,7 +262,7 @@ class DwarfExplorer(commands.Cog):
                 world_x=?, world_y=?,
                 in_cave=0,  cave_id=NULL,  cave_x=0,  cave_y=0,
                 in_village=0, village_id=NULL, village_x=0, village_y=0,
-                in_house=0, house_id=NULL, house_x=0, house_y=0, house_vx=0, house_vy=0, house_type=NULL,
+                in_house=0, house_id=NULL, house_x=0, house_y=0, house_vx=0, house_vy=0, house_type='house',
                 in_forest=0, forest_id=NULL, forest_x=0, forest_y=0,
                 forest_wx=0, forest_wy=0,
                 in_maze=0, maze_id=NULL, maze_x=0, maze_y=0,
