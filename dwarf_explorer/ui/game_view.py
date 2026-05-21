@@ -16637,6 +16637,7 @@ async def handle_npc_talk(
                     adj_npc[tile.terrain] = (getattr(tile, "local_x", 0), getattr(tile, "local_y", 0))
 
         npc_name, lore_text, pool, context = "Tree Dweller", "...", [], "tree_city"
+        _elder_mq_label = ""  # set only for tc_elder
         # Stable hash for this NPC position — used for quest phrase, rumors, and
         # villager lore regardless of which NPC type is being spoken to.
         _hv = _hash(f"tcv{player.tc_forest_id}{player.tc_x}{player.tc_y}")
@@ -16651,7 +16652,29 @@ async def handle_npc_talk(
             ]
             _eh = _hash(f"tc_elder{player.tc_forest_id}{player.tc_floor}")
             lore_text = _elder_lore[_eh % len(_elder_lore)]
-            # Elder quest on floor 4
+            # Determine main quest label based on current stage
+            from dwarf_explorer.game.quests import has_wayerwood_quest as _hwq, has_forest_depths_quest as _hfdq
+            _has_ww  = await _hwq(db, user_id)
+            _has_fq  = await _hfdq(db, user_id)
+            _fq_stg  = getattr(player, "fq_quest_stage", "none") or "none"
+            if not _has_ww:
+                _mq_label = "⚔️ I seek purpose (Main Quest)"
+            elif _fq_stg == "quest_complete":
+                _mq_label = "✅ Forest Depths: Complete"
+            elif _has_fq:
+                _mq_label = "⚔️ Forest Depths: Progress"
+            else:
+                # Has Wayerwood quest; check materials
+                _stick_n  = sum(r["quantity"] for r in await db.fetch_all(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)))
+                _xyphem_n = sum(r["quantity"] for r in await db.fetch_all(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,)))
+                if _stick_n >= 1 and _xyphem_n >= 5:
+                    _mq_label = "🪄 Craft the Wayerwood (ready!)"
+                else:
+                    _mq_label = f"📋 Wayerwood: {_stick_n}/1 stick, {_xyphem_n}/5 xyphem"
+            _elder_mq_label = _mq_label
+            # Elder side-quest pool on floor 4
             if getattr(player, "tc_floor", 1) == 4:
                 from dwarf_explorer.game.quests import get_or_refresh_village_pool as _gvp_tc
                 # Use tc_forest_id as a pseudo-village so pool is stable per forest
@@ -16705,6 +16728,9 @@ async def handle_npc_talk(
         ]
         tc_rumors_text = _tc_rumors[_hv % len(_tc_rumors)]
         options = [{"label": "Tell me about yourself", "action": "lore"}]
+        # Main quest option — only for the elder
+        if "tc_elder" in adj_npc:
+            options.append({"label": _elder_mq_label or "⚔️ Main Quest", "action": "elder_main_quest"})
         if pool:
             options.append({"label": f"📋 {_tc_qp_label} (Quest)", "action": "quest_pool"})
         options.append({"label": "Heard any rumors?", "action": "rumors"})
@@ -17663,6 +17689,11 @@ async def handle_dialogue_confirm(
         # Open bribe modal — opens BribeModal but in camp context
         _ui_state.pop(user_id, None)
         await interaction.response.send_modal(_BandtCampBribeModal(guild_id, user_id))
+        return
+
+    if action == "elder_main_quest":
+        _ui_state.pop(user_id, None)
+        await _open_tree_city_elder(interaction, guild_id, user_id, player)
         return
 
     if action == "quest_pool":
