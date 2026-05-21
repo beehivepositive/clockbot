@@ -630,7 +630,6 @@ class DwarfExplorer(commands.Cog):
                 "WHERE user_id=?",
                 (fid, fx, fy, ADMIN_PLAYER_ID)
             )
-            await db.commit()
 
             player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
             player.gold = 999999
