@@ -16372,12 +16372,18 @@ async def handle_quest_cancel(
 async def handle_quest_abandon(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Show confirmation prompt before abandoning."""
+    """Show confirmation prompt before abandoning (side quests only)."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     state = _ui_state.get(user_id, {})
     tab = state.get("tab", "side")
     idx = state.get("quest_index", 0)
+    if tab == "main":
+        # Main quests cannot be abandoned — silently re-render without confirm flag
+        _ui_state[user_id] = {**state, "type": "quest_log"}
+        await _render_quest_view(interaction, guild_id, user_id, db, player, tab, idx,
+                                 extra_msg="ℹ️ Main quests cannot be abandoned.")
+        return
     _ui_state[user_id] = {**state, "type": "quest_log"}
     await _render_quest_view(
         interaction, guild_id, user_id, db, player, tab, idx,
@@ -16401,6 +16407,13 @@ async def handle_quest_abandon_confirm(
     state = _ui_state.get(user_id, {})
     tab = state.get("tab", "side")
     idx = state.get("quest_index", 0)
+    # Guard: main quests cannot be abandoned — the button shouldn't appear, but
+    # protect in case an old button is clicked.
+    if tab == "main":
+        _ui_state[user_id] = {**state, "type": "quest_log"}
+        await _render_quest_view(interaction, guild_id, user_id, db, player, tab, idx,
+                                 extra_msg="ℹ️ Main quests cannot be abandoned.")
+        return
     from dwarf_explorer.game.quests import get_active_quests, cancel_quest
     quests = await get_active_quests(db, user_id)
     if quests and idx < len(quests):
@@ -16413,8 +16426,8 @@ async def handle_quest_abandon_confirm(
     else:
         new_idx = 0
         extra = "No quest to abandon."
-    _ui_state[user_id] = {**state, "type": "quest_log", "tab": tab, "quest_index": new_idx}
-    await _render_quest_view(interaction, guild_id, user_id, db, player, tab, new_idx,
+    _ui_state[user_id] = {**state, "type": "quest_log", "tab": "side", "quest_index": new_idx}
+    await _render_quest_view(interaction, guild_id, user_id, db, player, "side", new_idx,
                              extra_msg=extra)
 
 

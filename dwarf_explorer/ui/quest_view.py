@@ -58,9 +58,11 @@ class QuestView(discord.ui.View):
         confirm_abandon: bool = False,
         no_quests: bool = False,
         trackable: bool = True,
+        is_main_tab: bool = False,
     ):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
+        is_main_tab = is_main_tab or (tab == "main")
 
         # ── Row 0: [spacer] ⬆️ [spacer] — centred over the middle action button ─
         self.add_item(_sp(gid, uid, "up_l", 0))
@@ -122,8 +124,11 @@ class QuestView(discord.ui.View):
         ))
         self.add_item(_sp(gid, uid, "dn_r", 2))
 
-        # ── Row 3: Abandon / Confirm / Keep | Close (no spacer) ───────────────
-        if confirm_abandon:
+        # ── Row 3: Abandon / Confirm / Keep | Close ───────────────────────────
+        # Main quests cannot be abandoned — hide the button entirely on that tab.
+        if is_main_tab:
+            self.add_item(_sp(gid, uid, "abn_main", 3))
+        elif confirm_abandon:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.danger,
                 label="✖ Confirm Abandon",

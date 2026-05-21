@@ -365,6 +365,15 @@ class DwarfExplorer(commands.Cog):
             except Exception:
                 pass
         await db.execute("DELETE FROM players WHERE user_id != ?", (ADMIN_PLAYER_ID,))
+        # Also wipe admin's main quests — they reference world-specific content that
+        # no longer exists after a world reset (side quests are kept).
+        try:
+            await db.execute(
+                "DELETE FROM player_quests WHERE user_id = ? AND is_main_quest = 1",
+                (ADMIN_PLAYER_ID,)
+            )
+        except Exception:
+            pass
 
         # ── 4. Generate new world ─────────────────────────────────────────────
         seed = await reset_world_seed(db)
