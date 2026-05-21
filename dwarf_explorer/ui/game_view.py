@@ -16637,6 +16637,10 @@ async def handle_npc_talk(
                     adj_npc[tile.terrain] = (getattr(tile, "local_x", 0), getattr(tile, "local_y", 0))
 
         npc_name, lore_text, pool, context = "Tree Dweller", "...", [], "tree_city"
+        # Stable hash for this NPC position — used for quest phrase, rumors, and
+        # villager lore regardless of which NPC type is being spoken to.
+        _hv = _hash(f"tcv{player.tc_forest_id}{player.tc_x}{player.tc_y}")
+
         if "tc_elder" in adj_npc:
             npc_name = "Tree Elder"
             _elder_lore = [
@@ -16669,7 +16673,6 @@ async def handle_npc_talk(
                 )
         elif "tc_villager" in adj_npc:
             npc_name = "Tree Dweller"
-            _hv = _hash(f"tcv{player.tc_forest_id}{player.tc_x}{player.tc_y}")
             tc_lore = [
                 "High up in the canopy the wind sounds different. Like breathing.",
                 "We rarely go to the ground anymore. The forest floor is not safe at night.",
