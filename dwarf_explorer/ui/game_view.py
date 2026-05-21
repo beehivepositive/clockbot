@@ -4493,7 +4493,8 @@ async def _move_steps(
                 _fq_stage_now = getattr(player, "fq_quest_stage", "none")
                 _is_fq_entrance_tile = target.terrain == "fst_fq_entrance"
                 _FQ_VALID_ENTRY_STAGES = (
-                    "hermit_met", "map_marked", "puzzle_solved",
+                    "hermit_met", "wayerwood_crafted",
+                    "map_marked", "puzzle_solved",
                     "warden_defeated", "canal_solved", "quest_complete",
                 )
                 _is_fq_entry_eligible = _is_fq_entrance_tile and _fq_stage_now in _FQ_VALID_ENTRY_STAGES
@@ -4520,9 +4521,9 @@ async def _move_steps(
                     player.fq_x = _FQEntX
                     player.fq_y = _FQEntY + 1   # one step inside (exit tile is at 0)
                     player.forest_x, player.forest_y = nx, ny  # remember re-entry tile
-                    # Advance quest stage: hermit_met → map_marked on first entry
+                    # Advance quest stage: hermit_met/wayerwood_crafted → map_marked on first entry
                     _fq_new_stage = _fq_stage_now
-                    if _fq_stage_now == "hermit_met":
+                    if _fq_stage_now in ("hermit_met", "wayerwood_crafted"):
                         _fq_new_stage = "map_marked"
                         player.fq_quest_stage = "map_marked"
                         from dwarf_explorer.game.quests import (
@@ -14094,151 +14095,146 @@ async def _open_tree_city_villager(
 async def _open_tree_city_elder(
     interaction: discord.Interaction, guild_id: int, user_id: int, player,
 ) -> None:
-    """Floor 4 elder NPC — offers and completes The Wayerwood and Forest Depths main quests."""
+    """Floor 4 elder NPC — single main quest: The Forest Depths (stage-driven)."""
     from dwarf_explorer.game.quests import (
-        create_wayerwood_quest, has_wayerwood_quest, get_active_quests,
-        has_forest_depths_quest, accept_forest_depths_quest, create_forest_depths_quest,
+        has_forest_depths_quest, create_forest_depths_quest,
+        update_forest_depths_quest_target,
     )
     from dwarf_explorer.ui.quest_view import QuestOfferView, render_quest_offer
     from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_eld, get_hermit_forest_info
     db = await get_database(guild_id)
 
-    # Check if player already has the quest
-    already_has = await has_wayerwood_quest(db, user_id)
+    already_has = await has_forest_depths_quest(db, user_id)
+    _stage = getattr(player, "fq_quest_stage", "none") or "none"
 
+    grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+
+    # ── Player has the quest ──────────────────────────────────────────────────
     if already_has:
-        # Check if they have the crafting materials
-        stick_rows = await db.fetch_all(
-            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
-        )
-        xyphem_rows = await db.fetch_all(
-            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,)
-        )
-        stick_count  = sum(r["quantity"] for r in stick_rows)
-        xyphem_count = sum(r["quantity"] for r in xyphem_rows)
 
-        if stick_count >= 1 and xyphem_count >= 5:
-            # Craft the wayerwood!
-            from dwarf_explorer.database.repositories import remove_from_inventory, add_to_inventory
-            await remove_from_inventory(db, user_id, "stick",  1)
-            await remove_from_inventory(db, user_id, "xyphem", 5)
-            await add_to_inventory(db, user_id, "wayerwood", 1)
-            # Complete the quest
-            row = await db.fetch_one(
+        # Quest fully complete — award XP and mark done
+        if _stage == "quest_complete":
+            pq_row = await db.fetch_one(
                 "SELECT pq.id FROM player_quests pq JOIN quests q ON pq.quest_id=q.id "
-                "WHERE pq.user_id=? AND q.title='The Wayerwood' AND pq.status='active'",
+                "WHERE pq.user_id=? AND q.title='The Forest Depths' AND pq.status='active'",
                 (user_id,),
             )
-            if row:
+            if pq_row:
                 await db.execute(
                     "UPDATE player_quests SET status='completed', completed_at=datetime('now') "
-                    "WHERE id=?", (row["id"],)
+                    "WHERE id=?", (pq_row["id"],)
                 )
-                await db.execute("UPDATE players SET xp=xp+200 WHERE user_id=?", (user_id,))
-            grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+                await db.execute("UPDATE players SET xp=xp+500 WHERE user_id=?", (user_id,))
+                player.fq_quest_stage = "rewarded"
+                await db.execute(
+                    "UPDATE players SET fq_quest_stage='rewarded' WHERE user_id=?", (user_id,)
+                )
+                content = render_grid(
+                    grid, player,
+                    "🌳 *\"You have walked the depths and returned. The forest remembers.\"*\n\n"
+                    "⚔️ **Quest Completed: The Forest Depths** — +500 XP\n\n"
+                    "The elder nods slowly, as if this outcome was never in doubt.",
+                )
+            else:
+                content = render_grid(
+                    grid, player,
+                    "🌳 *\"You have done what few dare. The forest is grateful.\"*",
+                )
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        # Already rewarded
+        if _stage == "rewarded":
             content = render_grid(
                 grid, player,
-                "🪄 *\"The wood takes shape...\"*\n\n"
-                "The elder weaves the xyphem into the stick. A soft glow pulses through it.\n"
-                "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n\n"
-                "*(⚔️ Quest Completed: The Wayerwood — +200 XP)*",
+                "🌳 *\"The forest depths hold more secrets still — but you have earned your rest.\"*",
             )
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
-        # Has quest, missing materials
-        grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-        need_stick  = max(0, 1 - stick_count)
-        need_xyphem = max(0, 5 - xyphem_count)
-        content = render_grid(
-            grid, player,
-            f"🌿 *\"Not yet ready. You still need:\"*\n\n"
-            f"{'✅' if need_stick == 0 else '❌'} **1 Stick** "
-            f"({stick_count}/1)\n"
-            f"{'✅' if need_xyphem == 0 else '❌'} **5 Xyphem** "
-            f"({xyphem_count}/5) — found in forest chests (🏵️)",
-        )
-        await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                view=_game_view(guild_id, user_id, player, grid=grid))
-        return
-
-    # ── Has Wayerwood quest but not Forest Depths → offer Forest Depths ──────
-    already_has_fq = await has_forest_depths_quest(db, user_id)
-    if already_has and not already_has_fq:
-        # Wayerwood quest active; now steer player toward the hermit
-        _hf_info = await get_hermit_forest_info(db)
-        if _hf_info is None:
-            grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+        # Seek hermit first — player hasn't visited the hermit yet
+        if _stage == "seek_hermit":
             content = render_grid(
                 grid, player,
-                "🌿 *\"There is more for you to discover, traveller. "
-                "Bring me a Stick and 5 Xyphem and we shall craft your Wayerwood. "
-                "But know that another quest awaits — when you are ready.\"*",
+                "🌿 *\"The hermit holds the knowledge you need. Find him — "
+                "the tracker will guide you to his forest. Return once you have spoken with him.\"*",
             )
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
-        _hf_wx, _hf_wy = _hf_info["world_x"], _hf_info["world_y"]
-        fq_quest_id = await create_forest_depths_quest(db)
-        fq_row = await db.fetch_one(
-            "SELECT id, quest_type, quest_subtype, title, description, target_id, target_count, "
-            "reward_gold, reward_xp, reward_item FROM quests WHERE id=?",
-            (fq_quest_id,),
-        )
-        if not fq_row:
+
+        # Hermit has been met — craft the Wayerwood
+        if _stage == "hermit_met":
+            stick_rows  = await db.fetch_all(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
+            xyphem_rows = await db.fetch_all(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,))
+            stick_count  = sum(r["quantity"] for r in stick_rows)
+            xyphem_count = sum(r["quantity"] for r in xyphem_rows)
+
+            if stick_count >= 1 and xyphem_count >= 5:
+                # Forge the Wayerwood and advance the quest stage
+                await remove_from_inventory(db, user_id, "stick",  1)
+                await remove_from_inventory(db, user_id, "xyphem", 5)
+                await add_to_inventory(db, user_id, "wayerwood", 1)
+                player.fq_quest_stage = "wayerwood_crafted"
+                await db.execute(
+                    "UPDATE players SET fq_quest_stage='wayerwood_crafted' WHERE user_id=?",
+                    (user_id,),
+                )
+                content = render_grid(
+                    grid, player,
+                    "🪄 *\"The wood takes shape...\"*\n\n"
+                    "The elder weaves the xyphem into the stick. A faint glow pulses through it.\n"
+                    "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n\n"
+                    "The hermit already marked the **Forest Depths entrance** on your tracker. "
+                    "Head there when you are ready.",
+                )
+            else:
+                content = render_grid(
+                    grid, player,
+                    f"🌿 *\"The hermit's recipe requires:\"*\n\n"
+                    f"{'✅' if stick_count >= 1 else '❌'} **1 Stick** ({stick_count}/1)\n"
+                    f"{'✅' if xyphem_count >= 5 else '❌'} **5 Xyphem** ({xyphem_count}/5) "
+                    f"— found in forest chests (🏵️)\n\n"
+                    f"Gather the materials and return.",
+                )
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
             return
-        _ui_state[user_id] = {
-            "type": "quest_offer", "quest_id": fq_quest_id, "is_main_quest": True,
-            "fq_hermit_wx": _hf_wx, "fq_hermit_wy": _hf_wy,
+
+        # Any active in-depths stage — give a concise hint
+        _hints = {
+            "wayerwood_crafted": "Head to the **Forest Depths entrance** — the hermit's mark is on your tracker.",
+            "map_marked":        "You're inside the Forest Depths. Push the **heavy logs** to bridge the stream.",
+            "puzzle_solved":     "The stream is bridged. Press deeper — something waits beyond.",
+            "warden_defeated":   "The Thornwarden is slain. Navigate the fork and **solve the canal** ahead.",
+            "canal_solved":      "The canal is open. The **final chamber** awaits.",
         }
-        content = (
-            "🌿 *\"There is something else. Deeper in the wilds lives a hermit — "
-            "an old keeper of the forest's secrets. He will not come to the city. "
-            "Seek him in the other forest, far from here. "
-            "The tracker will guide your way.\"*\n\n"
-            + render_quest_offer(dict(fq_row), "Elder of the Grove")
-        )
-        await interaction.response.edit_message(
-            embed=_embed(content), content=None,
-            view=QuestOfferView(guild_id, user_id),
-        )
-        return
-
-    if already_has_fq and already_has:
-        # Both quests active — give combined status
-        grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
-        _fq_stage = getattr(player, "fq_quest_stage", "seek_hermit") or "seek_hermit"
-        _fq_hint = {
-            "seek_hermit":      "Find the hermit in the other forest — the tracker shows the way.",
-            "hermit_met":       "You've spoken with the hermit. Find the gap he marked in the wall.",
-            "map_marked":       "You're inside the Forest Depths. Push the logs to bridge the stream.",
-            "puzzle_solved":    "The stream is bridged. Defeat the Thornwarden further in.",
-            "warden_defeated":  "The Thornwarden is slain. Navigate the fork and solve the canal.",
-            "canal_solved":     "The canal is open. Enter the final chamber ahead.",
-            "quest_complete":   "Quest complete! Return to the hermit — or continue exploring.",
-        }.get(_fq_stage, "Keep following the trail.")
-        stick_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
-        xyphem_rows = await db.fetch_all("SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,))
-        stick_count  = sum(r["quantity"] for r in stick_rows)
-        xyphem_count = sum(r["quantity"] for r in xyphem_rows)
+        hint = _hints.get(_stage, "Keep following the trail — the forest will show you the way.")
         content = render_grid(
             grid, player,
-            f"🌿 *\"Walk carefully, traveller.\"*\n\n"
-            f"**Wayerwood:** {'✅' if stick_count >= 1 else '❌'} Stick ({stick_count}/1)  "
-            f"{'✅' if xyphem_count >= 5 else '❌'} Xyphem ({xyphem_count}/5)\n"
-            f"**Forest Depths:** {_fq_hint}",
+            f"🌳 *\"Walk carefully, traveller.\"*\n\n{hint}",
         )
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
-    if already_has_fq and not already_has:
-        # Has Forest Depths but not Wayerwood — offer Wayerwood too
-        pass  # falls through to offer Wayerwood below
+    # ── Offer the quest for the first time ────────────────────────────────────
+    _hf_info = await get_hermit_forest_info(db)
+    if _hf_info is None:
+        content = render_grid(
+            grid, player,
+            "🌿 *\"The forest is not yet ready to reveal its secrets. Come back soon.\"*",
+        )
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=grid))
+        return
 
-    # Offer the Wayerwood quest for the first time
-    quest_id = await create_wayerwood_quest(db)
+    _hf_wx, _hf_wy = _hf_info["world_x"], _hf_info["world_y"]
+    quest_id = await create_forest_depths_quest(db)
     quest_row = await db.fetch_one(
         "SELECT id, quest_type, quest_subtype, title, description, target_id, target_count, "
         "reward_gold, reward_xp, reward_item FROM quests WHERE id=?",
@@ -14246,13 +14242,16 @@ async def _open_tree_city_elder(
     )
     if not quest_row:
         return
-    q_dict = dict(quest_row)
-    _ui_state[user_id] = {"type": "quest_offer", "quest_id": quest_id, "is_main_quest": True}
+    _ui_state[user_id] = {
+        "type": "quest_offer", "quest_id": quest_id, "is_main_quest": True,
+        "fq_hermit_wx": _hf_wx, "fq_hermit_wy": _hf_wy,
+    }
     content = (
-        "🌿 *\"Traveller... you have reached the heart of the tree. Good. "
-        "There is much the forest wishes to share with you — "
-        "but first, you must earn its trust.\"*\n\n"
-        + render_quest_offer(q_dict, "Elder of the Grove")
+        "🌿 *\"Traveller — you have reached the heart of the tree. Good. "
+        "There is a hermit in the distant forest who guards old knowledge: "
+        "the secret of the **Wayerwood**, and the path to what lies beyond. "
+        "Seek him out. The tracker will show you the way.\"*\n\n"
+        + render_quest_offer(dict(quest_row), "Elder of the Grove")
     )
     await interaction.response.edit_message(
         embed=_embed(content), content=None,
@@ -16653,18 +16652,14 @@ async def handle_npc_talk(
             _eh = _hash(f"tc_elder{player.tc_forest_id}{player.tc_floor}")
             lore_text = _elder_lore[_eh % len(_elder_lore)]
             # Determine main quest label based on current stage
-            from dwarf_explorer.game.quests import has_wayerwood_quest as _hwq, has_forest_depths_quest as _hfdq
-            _has_ww  = await _hwq(db, user_id)
+            from dwarf_explorer.game.quests import has_forest_depths_quest as _hfdq
             _has_fq  = await _hfdq(db, user_id)
             _fq_stg  = getattr(player, "fq_quest_stage", "none") or "none"
-            if not _has_ww:
+            if not _has_fq:
                 _mq_label = "⚔️ I seek purpose (Main Quest)"
-            elif _fq_stg == "quest_complete":
-                _mq_label = "✅ Forest Depths: Complete"
-            elif _has_fq:
-                _mq_label = "⚔️ Forest Depths: Progress"
-            else:
-                # Has Wayerwood quest; check materials
+            elif _fq_stg in ("quest_complete", "rewarded"):
+                _mq_label = "✅ The Forest Depths: Complete"
+            elif _fq_stg == "hermit_met":
                 _stick_n  = sum(r["quantity"] for r in await db.fetch_all(
                     "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)))
                 _xyphem_n = sum(r["quantity"] for r in await db.fetch_all(
@@ -16672,7 +16667,13 @@ async def handle_npc_talk(
                 if _stick_n >= 1 and _xyphem_n >= 5:
                     _mq_label = "🪄 Craft the Wayerwood (ready!)"
                 else:
-                    _mq_label = f"📋 Wayerwood: {_stick_n}/1 stick, {_xyphem_n}/5 xyphem"
+                    _mq_label = f"📋 Gather materials: {_stick_n}/1 stick, {_xyphem_n}/5 xyphem"
+            elif _fq_stg == "seek_hermit":
+                _mq_label = "⚔️ Find the Hermit"
+            elif _fq_stg == "wayerwood_crafted":
+                _mq_label = "⚔️ Enter the Forest Depths"
+            else:
+                _mq_label = "⚔️ The Forest Depths: In progress"
             _elder_mq_label = _mq_label
             # Elder side-quest pool on floor 4
             if getattr(player, "tc_floor", 1) == 4:

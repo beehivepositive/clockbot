@@ -1390,6 +1390,18 @@ async def get_main_quests(db, user_id: int) -> list[dict]:
             )
             stage = (p_row["fq_quest_stage"] if p_row else None) or "seek_hermit"
             q["description"] = _fq_descs.get(stage, q["description"])
+            # Update quest_type label to reflect current stage
+            _stage_labels = {
+                "seek_hermit":       "Find the hermit",
+                "hermit_met":        "Craft the Wayerwood",
+                "wayerwood_crafted": "Enter the Forest Depths",
+                "map_marked":        "Bridge the stream",
+                "puzzle_solved":     "Explore deeper",
+                "warden_defeated":   "Solve the canal",
+                "canal_solved":      "Enter final chamber",
+                "quest_complete":    "Return to elder",
+            }
+            q["quest_type"] = _stage_labels.get(stage, q["quest_type"])
     return result
 
 
@@ -1397,15 +1409,21 @@ async def get_main_quests(db, user_id: int) -> list[dict]:
 
 _FQ_STAGE_DESCRIPTIONS: dict[str, str] = {
     "seek_hermit": (
-        "The Tree City elder has told you of a **hermit** — a reclusive sage who knows the "
-        "ancient woodland paths. He lives alone in **a different forest**, far from the city's noise. "
-        "The quest tracker will guide you to the forest entrance. Seek him out; "
-        "he holds the knowledge you need."
+        "The Tree City elder has tasked you with uncovering the secret of the **Wayerwood** — "
+        "a magical divining rod that senses hidden paths. Only a reclusive **hermit** in a "
+        "distant forest knows how to make one. The quest tracker will guide you to his forest. "
+        "Seek him out."
     ),
     "hermit_met": (
-        "The hermit has marked your map with the location of a hidden gap in the ancient wall — "
-        "the entrance to a place locals call the *Forest Depths*. Travel to his forest and find "
-        "the marked tile. **Ents** lurk within, moving silently through the trees."
+        "The hermit has revealed the recipe: **1 Stick** and **5 Xyphem** crystals. "
+        "He has also marked a hidden gap in the ancient wall — the entrance to the *Forest Depths*. "
+        "Return to the **Tree City elder** with the materials to forge your Wayerwood, "
+        "then head to the marked entrance."
+    ),
+    "wayerwood_crafted": (
+        "The elder has forged your **Wayerwood** 🪄. Equip it to feel the forest's pull. "
+        "The hermit marked the entrance to the *Forest Depths* on your tracker — find it "
+        "and press inside."
     ),
     "map_marked": (
         "You've entered the ancient corridor. **Ents** roam the passage — avoid or fight them. "
@@ -1416,6 +1434,17 @@ _FQ_STAGE_DESCRIPTIONS: dict[str, str] = {
     "puzzle_solved": (
         "The logs bridge the stream. The Forest Depths open before you — "
         "a hidden corridor leads further in. What secrets lie beyond the crossing?"
+    ),
+    "warden_defeated": (
+        "The Thornwarden is slain. A fork in the path lies ahead — "
+        "navigate further and solve the canal puzzle to press on."
+    ),
+    "canal_solved": (
+        "The canal is open. The final chamber awaits — press forward."
+    ),
+    "quest_complete": (
+        "You have explored the Forest Depths and uncovered its ancient secrets. "
+        "Return to the **Tree City elder** to claim your reward."
     ),
 }
 
@@ -1489,38 +1518,5 @@ async def update_forest_depths_quest_target(
     await db.commit()
 
 
-async def create_wayerwood_quest(db) -> int:
-    """Get or create the Wayerwood main quest row. Returns quest_id."""
-    row = await db.fetch_one(
-        "SELECT id FROM quests WHERE title='The Wayerwood' LIMIT 1"
-    )
-    if row:
-        return row["id"]
-    cur = await db.execute(
-        "INSERT INTO quests "
-        "(quest_type, quest_subtype, title, description, target_id, target_count, "
-        " reward_gold, reward_xp, reward_item, source_type) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            "main", "craft",
-            "The Wayerwood",
-            "The elder of the tree city has tasked you with forging a Wayerwood — a magical divining rod "
-            "that senses a hidden grove within the forest. Gather **1 Stick** and **5 Xyphem** crystals "
-            "(found in forest chests), then return to the elder to have it crafted.",
-            "xyphem", 5,
-            0, 200, "wayerwood",
-            "tree_city_elder",
-        ),
-    )
-    return cur.lastrowid
-
-
-async def has_wayerwood_quest(db, user_id: int) -> bool:
-    """Return True if player already has The Wayerwood quest active."""
-    row = await db.fetch_one(
-        "SELECT 1 FROM player_quests pq "
-        "JOIN quests q ON pq.quest_id = q.id "
-        "WHERE pq.user_id=? AND q.title='The Wayerwood' AND pq.status='active'",
-        (user_id,),
-    )
-    return bool(row)
+# create_wayerwood_quest and has_wayerwood_quest removed — the Wayerwood is now
+# a milestone within The Forest Depths main quest (wayerwood_crafted stage).
