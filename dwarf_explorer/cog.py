@@ -277,6 +277,8 @@ class DwarfExplorer(commands.Cog):
                 in_tree_city=0, tc_forest_id=NULL, tc_floor=1, tc_x=0, tc_y=0,
                 in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0,
                 in_hermit_hut=0, hermit_hut_forest_id=NULL, hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0,
+                in_bandit_camp=0, bandit_camp_id=NULL, bc_x=0, bc_y=0, bandit_bribe_remaining=0,
+                in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, grove_forest_id=NULL,
                 in_maze=0, maze_id=NULL, maze_x=0, maze_y=0,
                 in_sky=0, sky_id=NULL, sky_x=0, sky_y=0,
                 in_temple=0, temple_id=NULL, temple_x=0, temple_y=0,
@@ -298,6 +300,8 @@ class DwarfExplorer(commands.Cog):
         player.in_hermit_hut = False
         player.hermit_hut_forest_id = None
         player.hermit_hut_floor = 1
+        player.in_bandit_camp = False
+        player.in_grove = False
         player.in_maze = False
         player.in_sky = False
         player.in_temple = False
@@ -655,7 +659,11 @@ class DwarfExplorer(commands.Cog):
                 "in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
                 "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
                 "in_forest=1, forest_id=?, forest_x=?, forest_y=?, "
-                "in_tree_city=0, in_forest_quest=0 "
+                "in_tree_city=0, in_forest_quest=0, "
+                "in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                "in_bandit_camp=0, bandit_camp_id=NULL, bc_x=0, bc_y=0, bandit_bribe_remaining=0, "
+                "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, grove_forest_id=NULL, "
+                "in_maze=0, maze_id=NULL, maze_x=0, maze_y=0 "
                 "WHERE user_id=?",
                 (fid, fx, fy, ADMIN_PLAYER_ID)
             )
@@ -687,11 +695,15 @@ class DwarfExplorer(commands.Cog):
             in_house=0, house_id=None,
             in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
         )
-        # Clear sky/temple/forest state directly
+        # Clear sky/temple/forest/bandit-camp/grove state directly
         await db.execute(
             "UPDATE players SET in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
             "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
-            "in_forest=0, forest_id=NULL WHERE user_id=?",
+            "in_forest=0, forest_id=NULL, in_hermit_hut=0, in_tree_city=0, "
+            "in_bandit_camp=0, bandit_camp_id=NULL, bc_x=0, bc_y=0, bandit_bribe_remaining=0, "
+            "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, grove_forest_id=NULL, "
+            "in_maze=0, maze_id=NULL, maze_x=0, maze_y=0 "
+            "WHERE user_id=?",
             (ADMIN_PLAYER_ID,)
         )
 
