@@ -1042,8 +1042,6 @@ TREE_CITY_SHOP = [
      "description": "A glowing root still warm with forest magic. Crafting ingredient."},
     {"id": "bark_shield",  "name": "Bark Shield",  "price": 80,
      "description": "Woven from enchanted bark. Sturdy and surprisingly light. +3 defense."},
-    {"id": "ancient_seed", "name": "Ancient Seed", "price": 50,
-     "description": "A seed from the ancient tree. Plant it and something extraordinary may grow."},
 ]
 
 # --- Ship System ---

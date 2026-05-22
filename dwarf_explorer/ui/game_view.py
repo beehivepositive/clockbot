@@ -5633,7 +5633,7 @@ def _explode_bomb(arena: dict, player) -> list[str]:
         for dx, dy in _BOMB_CROSS_OFFSETS
     )
     player_in_blast = any(
-        player.combat_pos_x == bx2 + dx and player.combat_pos_y == by2 + dy
+        player.combat_player_x == bx2 + dx and player.combat_player_y == by2 + dy
         for dx, dy in _BOMB_CROSS_OFFSETS
     )
     blast_log = ["💥 **BOOM!** The bomb explodes!"]
@@ -6156,11 +6156,15 @@ async def handle_combat_bomb(
         return
 
     # Place bomb at player position
-    px_c = getattr(player, "combat_pos_x", ARENA_SIZE // 2)
-    py_c = getattr(player, "combat_pos_y", ARENA_SIZE // 2)
+    px_c = player.combat_player_x
+    py_c = player.combat_player_y
     arena["bomb_fuse"] = 5
     arena["bomb_x"] = px_c
     arena["bomb_y"] = py_c
+    # Stamp bomb_lit tile into arena grid so it renders visually
+    if 0 <= py_c < len(arena.get("grid", [])) and 0 <= px_c < len(arena["grid"][py_c]):
+        arena["bomb_orig_tile"] = arena["grid"][py_c][px_c]
+        arena["grid"][py_c][px_c] = "bomb_lit"
     # Remove bomb from player
     await remove_from_inventory(db, user_id, "bomb", 1)
     await _auto_unequip_depleted(db, user_id, "bomb", player)
@@ -8815,7 +8819,7 @@ async def handle_interact(
                 import random as _mrng
                 loot_rng = _mrng.Random(hash((player.maze_id, "chest_loot")))
                 gold_reward = loot_rng.randint(80, 200)
-                item_pool = ["gem", "ancient_seed", "living_root", "bark_shield", "iron_ingot"]
+                item_pool = ["gem", "living_root", "bark_shield", "iron_ingot"]
                 items = loot_rng.sample(item_pool, k=loot_rng.randint(2, 3))
                 await add_to_chest(db, chest_id, "gold_coin", gold_reward)
                 for it in items:
@@ -9302,7 +9306,7 @@ async def handle_interact(
             gold_reward = loot_rng.randint(30, 100)
             # xyphem chance: 35% per chest (at most 1 per chest per day)
             _has_xyphem = loot_rng.random() < 0.35
-            item_pool = ["forest_nut", "living_root", "ancient_seed", "bark_shield", "iron_ingot"]
+            item_pool = ["forest_nut", "living_root", "bark_shield", "iron_ingot"]
             if _has_xyphem:
                 item_pool.insert(0, "xyphem")
             item = loot_rng.choice(item_pool)
@@ -9361,7 +9365,7 @@ async def handle_interact(
             # Roll chamber loot (better than regular forest chests)
             _ch_loot_rng = _random.Random(hash((player.forest_id, fx_ch, fy_ch, _ch_today_ord, "chamber")))
             _ch_gold = _ch_loot_rng.randint(60, 150)
-            _ch_pool = ["xyphem", "living_root", "ancient_seed", "bark_shield", "iron_ingot",
+            _ch_pool = ["xyphem", "living_root", "bark_shield", "iron_ingot",
                         "forest_nut", "cave_crystal", "deep_ore"]
             _ch_item = _ch_loot_rng.choice(_ch_pool)
             _ch_qty = _ch_loot_rng.randint(1, 3) if _ch_item in ("forest_nut", "living_root", "cave_crystal") else 1
