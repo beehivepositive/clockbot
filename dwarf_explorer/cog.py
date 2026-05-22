@@ -251,6 +251,8 @@ class DwarfExplorer(commands.Cog):
             )
             return
 
+        await interaction.response.defer()
+
         guild_id = interaction.guild.id
 
         db = await get_database(guild_id)
@@ -304,8 +306,7 @@ class DwarfExplorer(commands.Cog):
         grid = await load_viewport(sx, sy, seed, db)
         content = render_grid(grid, player)
         view = GameView(guild_id, ADMIN_PLAYER_ID)
-        await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
-        msg = await interaction.original_response()
+        msg = await interaction.followup.send(embed=discord.Embed(description=content), view=view)
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
@@ -604,6 +605,8 @@ class DwarfExplorer(commands.Cog):
             )
             return
 
+        await interaction.response.defer()
+
         guild_id = interaction.guild.id
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
@@ -662,10 +665,9 @@ class DwarfExplorer(commands.Cog):
             grid = await load_forest_viewport(fid, fx, fy, db)
             content = render_grid(grid, player, f"🗺️ Teleported to {label}.")
             view = GameView(guild_id, ADMIN_PLAYER_ID)
-            await interaction.response.send_message(
+            msg = await interaction.followup.send(
                 embed=discord.Embed(description=content), view=view
             )
-            msg = await interaction.original_response()
             await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
             return
 
@@ -699,10 +701,9 @@ class DwarfExplorer(commands.Cog):
         grid = await load_viewport(x, y, seed, db)
         content = render_grid(grid, player, f"🗺️ Teleported to ({x}, {original_y}).")
         view = GameView(guild_id, ADMIN_PLAYER_ID)
-        await interaction.response.send_message(
+        msg = await interaction.followup.send(
             embed=discord.Embed(description=content), view=view
         )
-        msg = await interaction.original_response()
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
 
 
