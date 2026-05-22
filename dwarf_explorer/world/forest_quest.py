@@ -455,7 +455,7 @@ async def load_fq_viewport(
             if aim_cursor and (wx, wy) == aim_cursor:
                 t = "fq_aim_cursor"
 
-            row.append(TileData(terrain=t, walkable=(t in FQ_WALKABLE), structure=None))
+            row.append(TileData(terrain=t, structure=None))
         grid.append(row)
     return grid
 
@@ -467,21 +467,21 @@ async def load_fq_single_tile(fq_id: int, x: int, y: int, db) -> TileData:
         (fq_id, x, y),
     )
     if lrow:
-        return TileData(terrain="fq_log", walkable=False, structure=None)
+        return TileData(terrain="fq_log", structure=None)
 
     erow = await db.fetch_one(
         "SELECT 1 FROM fq_ents WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1",
         (fq_id, x, y),
     )
     if erow:
-        return TileData(terrain="fq_wall", walkable=False, structure=None)
+        return TileData(terrain="fq_wall", structure=None)
 
     row = await db.fetch_one(
         "SELECT tile_type FROM forest_quest_tiles WHERE fq_id=? AND local_x=? AND local_y=?",
         (fq_id, x, y),
     )
     t = row["tile_type"] if row else "fq_wall"
-    return TileData(terrain=t, walkable=(t in FQ_WALKABLE), structure=None)
+    return TileData(terrain=t, structure=None)
 
 
 # ── Puzzle helpers ────────────────────────────────────────────────────────────
