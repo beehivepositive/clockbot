@@ -673,7 +673,8 @@ class DwarfExplorer(commands.Cog):
         # Clamp to world bounds
         x = max(0, min(WORLD_SIZE - 1, x))
         # Y=0 is displayed at the south (bottom); flip so user coords match the world map
-        y = WORLD_SIZE - 1 - max(0, min(WORLD_SIZE - 1, y))
+        original_y = max(0, min(WORLD_SIZE - 1, y))   # user-facing y (before flip)
+        y = WORLD_SIZE - 1 - original_y
 
         # Reset all sub-location state and place admin at overworld coordinates
         await update_player_stats(
@@ -696,7 +697,7 @@ class DwarfExplorer(commands.Cog):
         player.gold = 999999
 
         grid = await load_viewport(x, y, seed, db)
-        content = render_grid(grid, player, f"🗺️ Teleported to ({x}, {y}).")
+        content = render_grid(grid, player, f"🗺️ Teleported to ({x}, {original_y}).")
         view = GameView(guild_id, ADMIN_PLAYER_ID)
         await interaction.response.send_message(
             embed=discord.Embed(description=content), view=view

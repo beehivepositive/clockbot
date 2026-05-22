@@ -205,7 +205,6 @@ ITEM_EMOJI = {
     "pickaxe": "\u26CF\uFE0F",      # ⛏️
     "log": "\U0001FAB5",             # 🪵
     "stick": "\U0001F38B",           # 🎋
-    "xyphem": "\U0001F3F5",          # 🏵️ rosette crystal
     "wayerwood":          "\U0001FA84",       # 🪄 magical divining rod (unattuned)
     "attuned_wayerwood":  "\U0001FA84",       # 🪄 attuned divining rod (crafted with rock)
     "resin": "\U0001F7E1",           # 🟡

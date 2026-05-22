@@ -216,6 +216,32 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             grove_forest_id=row["grove_forest_id"] if "grove_forest_id" in cols else None,
             has_warp_crystal=bool(row["has_warp_crystal"]) if "has_warp_crystal" in cols else False,
             watering_can_uses=int(row["watering_can_uses"]) if "watering_can_uses" in cols else 0,
+            # Forest Quest zone state
+            in_forest_quest=bool(row["in_forest_quest"]) if "in_forest_quest" in cols else False,
+            fq_area_id=row["fq_area_id"] if "fq_area_id" in cols else None,
+            fq_x=row["fq_x"] if "fq_x" in cols else 0,
+            fq_y=row["fq_y"] if "fq_y" in cols else 0,
+            fq_quest_stage=row["fq_quest_stage"] if "fq_quest_stage" in cols else "none",
+            # Thornwarden boss combat state
+            in_fq_boss_combat=bool(row["in_fq_boss_combat"]) if "in_fq_boss_combat" in cols else False,
+            fq_boss_turn=row["fq_boss_turn"] if "fq_boss_turn" in cols else 0,
+            fq_boss_eye_idx=row["fq_boss_eye_idx"] if "fq_boss_eye_idx" in cols else 0,
+            fq_boss_eyes=row["fq_boss_eyes"] if "fq_boss_eyes" in cols else "1111",
+            fq_boss_aim_mode=bool(row["fq_boss_aim_mode"]) if "fq_boss_aim_mode" in cols else False,
+            fq_boss_aim_x=row["fq_boss_aim_x"] if "fq_boss_aim_x" in cols else 10,
+            fq_boss_aim_y=row["fq_boss_aim_y"] if "fq_boss_aim_y" in cols else 66,
+            # Bandit camp interior state
+            in_bandit_camp=bool(row["in_bandit_camp"]) if "in_bandit_camp" in cols else False,
+            bandit_camp_id=row["bandit_camp_id"] if "bandit_camp_id" in cols else None,
+            bc_x=row["bc_x"] if "bc_x" in cols else 0,
+            bc_y=row["bc_y"] if "bc_y" in cols else 0,
+            bandit_bribe_remaining=row["bandit_bribe_remaining"] if "bandit_bribe_remaining" in cols else 0,
+            # Hermit Hut interior state
+            in_hermit_hut=bool(row["in_hermit_hut"]) if "in_hermit_hut" in cols else False,
+            hermit_hut_forest_id=row["hermit_hut_forest_id"] if "hermit_hut_forest_id" in cols else None,
+            hermit_hut_floor=row["hermit_hut_floor"] if "hermit_hut_floor" in cols else 1,
+            hermit_hut_x=row["hermit_hut_x"] if "hermit_hut_x" in cols else 0,
+            hermit_hut_y=row["hermit_hut_y"] if "hermit_hut_y" in cols else 0,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "

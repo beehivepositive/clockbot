@@ -2825,9 +2825,13 @@ def _compute_context_labels(
             elif t == "tc_bed":
                 center_label, center_enabled = "🛏️ Rest", True
             elif t == "tc_stair_up":
-                center_label, center_enabled = "🔼 Up", True
+                from dwarf_explorer.config import TC_EMOJI as _TCE
+                _sc_e = _TCE.get("tc_stair_up", "🔼")
+                center_label, center_enabled = f"{_sc_e} Up", True
             elif t == "tc_stair_down":
-                center_label, center_enabled = "🔽 Down", True
+                from dwarf_explorer.config import TC_EMOJI as _TCE
+                _sc_e = _TCE.get("tc_stair_down", "🔽")
+                center_label, center_enabled = f"{_sc_e} Down", True
             # Adjacency: show action button when next to a merchant NPC
             for _dy2, _dx2 in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _ar2, _ac2 = vc + _dy2, vc + _dx2
@@ -4676,47 +4680,28 @@ async def _move_steps(
                     "Etched at its base: *'Water me, and I shall give you what the forest guards.'*"), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
-            # Hermit hut — enter interior
+            # Hermit hut — stand on tile, prompt to enter
             if target.terrain == "fst_hermit_house":
-                from dwarf_explorer.world.hermit_hut import (
-                    ensure_hermit_hut_built as _ehb2,
-                    load_hut_viewport as _lhv2,
-                    HUT_ENTRY_X, HUT_ENTRY_Y,
-                )
-                await _ehb2(player.forest_id, db)
-                player.forest_x, player.forest_y = nx, ny   # remember exit position
-                player.in_hermit_hut = True
-                player.hermit_hut_forest_id = player.forest_id
-                player.hermit_hut_floor = 1
-                player.hermit_hut_x, player.hermit_hut_y = HUT_ENTRY_X, HUT_ENTRY_Y
+                player.forest_x, player.forest_y = nx, ny
                 await db.execute(
-                    "UPDATE players SET forest_x=?, forest_y=?, in_hermit_hut=1, "
-                    "hermit_hut_forest_id=?, hermit_hut_floor=1, "
-                    "hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
-                    (nx, ny, player.forest_id, HUT_ENTRY_X, HUT_ENTRY_Y, user_id),
+                    "UPDATE players SET forest_x=?, forest_y=? WHERE user_id=?",
+                    (nx, ny, user_id),
                 )
-                grid = await _lhv2(player.forest_id, 1, HUT_ENTRY_X, HUT_ENTRY_Y, db)
+                grid = await load_forest_viewport(player.forest_id, nx, ny, db)
                 return render_grid(grid, player,
-                    "🛖 You push open the creaking door of the hermit's hut..."), \
+                    "🛖 The hermit's hut looms before you. Press ⚙️ to enter."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
-            # Tree city — enter interior
+            # Tree city — stand on tile, prompt to enter
             if target.terrain == "fst_tree_city":
-                from dwarf_explorer.world.forest import ensure_tree_city_built, load_tree_city_viewport as _ltcv2
-                await ensure_tree_city_built(player.forest_id, db)
-                player.forest_x, player.forest_y = nx, ny   # remember exit position
-                player.in_tree_city = True
-                player.tc_forest_id = player.forest_id
-                player.tc_floor = 1
-                player.tc_x, player.tc_y = 14, 21
+                player.forest_x, player.forest_y = nx, ny
                 await db.execute(
-                    "UPDATE players SET forest_x=?, forest_y=?, in_tree_city=1, "
-                    "tc_forest_id=?, tc_floor=1, tc_x=14, tc_y=21 WHERE user_id=?",
-                    (nx, ny, player.forest_id, user_id)
+                    "UPDATE players SET forest_x=?, forest_y=? WHERE user_id=?",
+                    (nx, ny, user_id),
                 )
-                grid = await _ltcv2(player.tc_forest_id, 1, 14, 21, db)
+                grid = await load_forest_viewport(player.forest_id, nx, ny, db)
                 return render_grid(grid, player,
-                    "🌲 You push open the great wooden door and step inside the **Tree City**."), \
+                    "🌲 The great wooden gate of the **Tree City** stands before you. Press ⚙️ to enter."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             player.forest_x, player.forest_y = nx, ny
@@ -5610,18 +5595,7 @@ async def _finish_combat(
     view = await _build_player_view(guild_id, user_id, player, db, grid)
     qmarks = await get_player_quest_markers(db, user_id)
     nav = _ui_state.get(user_id, {}).get("nav_target")
-    # Hidden chamber reveal: wayerwood equipped + pinecone in inventory
-    _reveal_chambers = False
-    if getattr(player, "in_forest", False):
-        _has_ww = (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")
-        if _has_ww:
-            _pc_row = await db.fetch_one(
-                "SELECT 1 FROM inventory WHERE user_id=? AND item_id='pinecone' LIMIT 1",
-                (user_id,),
-            )
-            _reveal_chambers = bool(_pc_row)
-    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav,
-                       reveal_fst_chambers=_reveal_chambers), view
+    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav), view
 
 
 def _explode_bomb(arena: dict, player) -> list[str]:
@@ -9304,11 +9278,7 @@ async def handle_interact(
             # Roll loot (seeded by forest + position + day so same player always gets same loot today)
             loot_rng = _random.Random(hash((player.forest_id, fx, fy, _today_ord, "loot")))
             gold_reward = loot_rng.randint(30, 100)
-            # xyphem chance: 35% per chest (at most 1 per chest per day)
-            _has_xyphem = loot_rng.random() < 0.35
             item_pool = ["forest_nut", "living_root", "bark_shield", "iron_ingot"]
-            if _has_xyphem:
-                item_pool.insert(0, "xyphem")
             item = loot_rng.choice(item_pool)
             qty = loot_rng.randint(1, 3) if item in ("forest_nut", "living_root") else 1
             await db.execute(
@@ -9365,8 +9335,8 @@ async def handle_interact(
             # Roll chamber loot (better than regular forest chests)
             _ch_loot_rng = _random.Random(hash((player.forest_id, fx_ch, fy_ch, _ch_today_ord, "chamber")))
             _ch_gold = _ch_loot_rng.randint(60, 150)
-            _ch_pool = ["xyphem", "living_root", "bark_shield", "iron_ingot",
-                        "forest_nut", "cave_crystal", "deep_ore"]
+            _ch_pool = ["living_root", "bark_shield", "iron_ingot",
+                        "forest_nut", "cave_crystal", "deep_ore", "pinecone"]
             _ch_item = _ch_loot_rng.choice(_ch_pool)
             _ch_qty = _ch_loot_rng.randint(1, 3) if _ch_item in ("forest_nut", "living_root", "cave_crystal") else 1
             await db.execute(
@@ -10972,9 +10942,10 @@ async def _execute_tool_action(
                 dist_now = abs(nearest["local_x"] - cx) + abs(nearest["local_y"] - cy)
                 ww_msg = _wayerwood_signal(user_id, dist_now)
         elif getattr(player, "in_forest", False) and not getattr(player, "in_grove", False):
-            # Forest: hot/cold signal toward the wayerwood target grove tile
-            # Reset last-reading if we've moved to a different forest
+            # Forest: hot/cold signal — toward fst_secret_wall if pinecone in inventory,
+            # else toward the grove (wayerwood target).
             _ww_state = _ui_state.setdefault(user_id, {})
+            # Reset last-reading when moving to a different forest
             if _ww_state.get("ww_cave_id") != ("forest", player.forest_id):
                 _ww_state.pop("ww_last_dist", None)
                 _ww_state["ww_cave_id"] = ("forest", player.forest_id)
@@ -10983,12 +10954,47 @@ async def _execute_tool_action(
                 load_forest_viewport as _lfv_ex,
             )
             grid = await _lfv_ex(player.forest_id, player.forest_x, player.forest_y, db)
-            _ww_tgt = await _gwwt_ex(player.forest_id, db)
-            if _ww_tgt:
-                dist_now = abs(player.forest_x - _ww_tgt[0]) + abs(player.forest_y - _ww_tgt[1])
-                ww_msg = _wayerwood_signal(user_id, dist_now)
+            # Check if player carries a pinecone — if so, sniff for hidden chamber walls
+            _pc_row = await db.fetch_one(
+                "SELECT 1 FROM inventory WHERE user_id=? AND item_id='pinecone' LIMIT 1",
+                (user_id,),
+            )
+            if _pc_row:
+                # Query all fst_secret_wall positions in this forest
+                _secret_walls = await db.fetch_all(
+                    "SELECT local_x, local_y FROM forest_tiles "
+                    "WHERE forest_id=? AND tile_type='fst_secret_wall'",
+                    (player.forest_id,),
+                )
+                if _secret_walls:
+                    fx, fy = player.forest_x, player.forest_y
+                    _nearest_sw = min(_secret_walls,
+                                      key=lambda r: abs(r["local_x"] - fx) + abs(r["local_y"] - fy))
+                    dist_now = abs(_nearest_sw["local_x"] - fx) + abs(_nearest_sw["local_y"] - fy)
+                    # Forest-flavoured signal variants
+                    _ww_state_fst = _ui_state.setdefault(user_id, {})
+                    _last = _ww_state_fst.get("ww_last_dist")
+                    _ww_state_fst["ww_last_dist"] = dist_now
+                    if dist_now == 1:
+                        ww_msg = "🪄 *The wayerwood thrums intensely. A hidden passage is right beside you.*"
+                    elif _last is None:
+                        ww_msg = "🪄 *The wayerwood stirs faintly. Something concealed lies within the trees...*"
+                    elif dist_now < _last:
+                        ww_msg = "🪄 *The wayerwood pulses warmly — you're getting closer.*"
+                    elif dist_now > _last:
+                        ww_msg = "🪄 *The wayerwood dims... you've wandered from the hidden path.*"
+                    else:
+                        ww_msg = "🪄 *The wayerwood quivers — keep moving to get a clearer reading.*"
+                else:
+                    ww_msg = "🪄 *The pinecone resonates faintly, but no hidden chambers stir in this forest.*"
             else:
-                ww_msg = "🪄 *The wayerwood hums quietly.*"
+                # No pinecone — guide toward the grove as before
+                _ww_tgt = await _gwwt_ex(player.forest_id, db)
+                if _ww_tgt:
+                    dist_now = abs(player.forest_x - _ww_tgt[0]) + abs(player.forest_y - _ww_tgt[1])
+                    ww_msg = _wayerwood_signal(user_id, dist_now)
+                else:
+                    ww_msg = "🪄 *The wayerwood hums quietly.*"
         else:
             grid = await load_viewport(wx, wy, seed, db)
             ww_msg = "🪄 *The wayerwood feels lifeless here. It only stirs underground or in the deep forest.*"
@@ -14555,17 +14561,17 @@ async def _open_tree_city_elder(
 
         # Hermit has been met — craft the Wayerwood
         if _stage == "hermit_met":
-            stick_rows  = await db.fetch_all(
+            stick_rows = await db.fetch_all(
                 "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
-            xyphem_rows = await db.fetch_all(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,))
-            stick_count  = sum(r["quantity"] for r in stick_rows)
-            xyphem_count = sum(r["quantity"] for r in xyphem_rows)
+            root_rows = await db.fetch_all(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='living_root'", (user_id,))
+            stick_count = sum(r["quantity"] for r in stick_rows)
+            root_count  = sum(r["quantity"] for r in root_rows)
 
-            if stick_count >= 1 and xyphem_count >= 5:
+            if stick_count >= 1 and root_count >= 5:
                 # Forge the Wayerwood and advance the quest stage
-                await remove_from_inventory(db, user_id, "stick",  1)
-                await remove_from_inventory(db, user_id, "xyphem", 5)
+                await remove_from_inventory(db, user_id, "stick",       1)
+                await remove_from_inventory(db, user_id, "living_root", 5)
                 await add_to_inventory(db, user_id, "wayerwood", 1)
                 player.fq_quest_stage = "wayerwood_crafted"
                 await db.execute(
@@ -14575,7 +14581,7 @@ async def _open_tree_city_elder(
                 content = render_grid(
                     grid, player,
                     "🪄 *\"The wood takes shape...\"*\n\n"
-                    "The elder weaves the xyphem into the stick. A faint glow pulses through it.\n"
+                    "The hermit weaves living roots into the stick. A faint glow pulses through it.\n"
                     "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n\n"
                     "The hermit already marked the **Forest Depths entrance** on your tracker. "
                     "Head there when you are ready.",
@@ -14585,8 +14591,8 @@ async def _open_tree_city_elder(
                     grid, player,
                     f"🌿 *\"The hermit's recipe requires:\"*\n\n"
                     f"{'✅' if stick_count >= 1 else '❌'} **1 Stick** ({stick_count}/1)\n"
-                    f"{'✅' if xyphem_count >= 5 else '❌'} **5 Xyphem** ({xyphem_count}/5) "
-                    f"— found in forest chests (🏵️)\n\n"
+                    f"{'✅' if root_count >= 5 else '❌'} **5 Living Roots** ({root_count}/5) "
+                    f"— found by chopping logs in the forest\n\n"
                     f"Gather the materials and return.",
                 )
             await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -17049,14 +17055,14 @@ async def handle_npc_talk(
             elif _fq_stg in ("quest_complete", "rewarded"):
                 _mq_label = "✅ The Forest Depths: Complete"
             elif _fq_stg == "hermit_met":
-                _stick_n  = sum(r["quantity"] for r in await db.fetch_all(
+                _stick_n = sum(r["quantity"] for r in await db.fetch_all(
                     "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)))
-                _xyphem_n = sum(r["quantity"] for r in await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='xyphem'", (user_id,)))
-                if _stick_n >= 1 and _xyphem_n >= 5:
+                _root_n  = sum(r["quantity"] for r in await db.fetch_all(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='living_root'", (user_id,)))
+                if _stick_n >= 1 and _root_n >= 5:
                     _mq_label = "🪄 Craft the Wayerwood (ready!)"
                 else:
-                    _mq_label = f"📋 Gather materials: {_stick_n}/1 stick, {_xyphem_n}/5 xyphem"
+                    _mq_label = f"📋 Gather materials: {_stick_n}/1 stick, {_root_n}/5 living roots"
             elif _fq_stg == "seek_hermit":
                 _mq_label = "⚔️ Find the Hermit"
             elif _fq_stg == "wayerwood_crafted":

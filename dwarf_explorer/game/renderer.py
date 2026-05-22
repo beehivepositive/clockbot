@@ -62,8 +62,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 other_players: list[tuple[int, int, str]] | None = None,
                 cursor_pos: tuple[int, int] | None = None,
                 quest_markers: list[tuple[int, int, str]] | None = None,
-                nav_target: tuple[int, int] | None = None,
-                reveal_fst_chambers: bool = False) -> str:
+                nav_target: tuple[int, int] | None = None) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -176,12 +175,6 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
 
     _player_emoji = getattr(player, "avatar_emoji", None) or ENTITY_EMOJI["player"]
 
-    # Forest hidden-chamber reveal: check if player is standing on fst_chamber_floor
-    _player_on_chamber_floor = (
-        location == "forest"
-        and grid[vp_center][vp_center].terrain == "fst_chamber_floor"
-    )
-
     lines: list[str] = []
     for row_y in range(vp_size):
         row_emojis: list[str] = []
@@ -225,17 +218,6 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
-                elif (location == "forest"
-                      and grid[row_y][col_x].terrain == "fst_secret_wall"):
-                    # Hidden chamber entrance: reveal as ✨ with wayerwood+pinecone,
-                    # as chamber floor if player is inside a chamber, else as a normal tree.
-                    if reveal_fst_chambers:
-                        row_emojis.append("✨")  # ✨
-                    elif _player_on_chamber_floor:
-                        row_emojis.append(FOREST_EMOJI.get("fst_chamber_floor",
-                                                           FOREST_EMOJI["fst_floor"]))
-                    else:
-                        row_emojis.append(FOREST_EMOJI["fst_tree"])
                 else:
                     row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
 
