@@ -3975,7 +3975,7 @@ async def _move_steps(
         grid = await load_maze_viewport(player.maze_id, player.maze_x, player.maze_y, db)
         return render_grid(grid, player), _game_view(guild_id, user_id, player, grid=grid)
 
-    elif getattr(player, "in_bandit_camp", False):
+    elif getattr(player, "in_bandit_camp", False) and player.bandit_camp_id is not None:
         _bc_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.bandit_camp import (
             load_camp_viewport as _lbcv_mv,
@@ -4091,7 +4091,7 @@ async def _move_steps(
         )
         return _bc_content, _bc_view
 
-    elif getattr(player, "in_grove", False):
+    elif getattr(player, "in_grove", False) and player.grove_id is not None:
         from dwarf_explorer.world.forest import load_grove_viewport as _lgv2, load_grove_single_tile as _lgst2
         nx, ny = player.grove_x + dx, player.grove_y + dy
         target = await _lgst2(player.grove_id, nx, ny, db)
@@ -4120,7 +4120,7 @@ async def _move_steps(
         content = render_grid(grove_grid3, player)
         return content, _game_view(guild_id, user_id, player, grid=grove_grid3)
 
-    elif getattr(player, "in_forest_quest", False):
+    elif getattr(player, "in_forest_quest", False) and player.fq_area_id is not None:
         from dwarf_explorer.world.forest_quest import (
             load_fq_viewport as _lfqv,
             load_fq_single_tile as _lfqst,
@@ -4485,12 +4485,10 @@ async def _move_steps(
             get_forest_exit_world, get_maze_for_forest,
         )
         from dwarf_explorer.game.player import can_move_forest
-        print(f"[DBG forest_handler] entered forest handler fid={player.forest_id} pos=({player.forest_x},{player.forest_y}) dx={dx} dy={dy}", flush=True)
         for _ in range(steps):
             nx, ny = player.forest_x + dx, player.forest_y + dy
             target = await load_forest_single_tile(player.forest_id, nx, ny, db)
             ok, reason = can_move_forest(target)
-            print(f"[DBG forest_handler] target=({nx},{ny}) terrain={target.terrain} ok={ok} reason={reason!r}", flush=True)
             if not ok:
                 # Wayerwood secret passage
                 if (target.terrain == "fst_tree"
@@ -4742,11 +4740,7 @@ async def _move_steps(
                                   moves_left=player.combat_moves_left)
                 return content, view
 
-        print(f"[DBG forest_handler] loading viewport fid={player.forest_id} final_pos=({player.forest_x},{player.forest_y})", flush=True)
         grid = await load_forest_viewport(player.forest_id, player.forest_x, player.forest_y, db)
-        _dbg_terrains = [grid[r][c].terrain for r in range(len(grid)) for c in range(len(grid[r]))]
-        _dbg_tree_count = sum(1 for t in _dbg_terrains if t == "fst_tree")
-        print(f"[DBG forest_handler] grid tiles={len(_dbg_terrains)} trees={_dbg_tree_count} sample={_dbg_terrains[:9]}", flush=True)
         return render_grid(grid, player, None), _game_view(guild_id, user_id, player, grid=grid)
 
     elif getattr(player, "in_tree_city", False):
@@ -5275,20 +5269,6 @@ async def handle_move(
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-
-    # DEBUG — remove after diagnosis
-    print(
-        f"[DBG handle_move] uid={user_id} dir={direction} "
-        f"in_forest={player.in_forest} forest_id={player.forest_id} "
-        f"forest_x={player.forest_x} forest_y={player.forest_y} "
-        f"in_hermit_hut={getattr(player,'in_hermit_hut',None)} "
-        f"in_bandit_camp={getattr(player,'in_bandit_camp',None)} "
-        f"in_grove={getattr(player,'in_grove',None)} "
-        f"in_tree_city={getattr(player,'in_tree_city',None)} "
-        f"in_forest_quest={getattr(player,'in_forest_quest',None)} "
-        f"in_cave={player.in_cave}",
-        flush=True,
-    )
 
     # No sprinting inside shipwreck (grid is only 7×7 and movement costs breath)
     if getattr(player, "in_shipwreck", False):
