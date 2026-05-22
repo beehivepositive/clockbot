@@ -288,6 +288,9 @@ def _vp_cache_key(player) -> tuple:
         return ("house", player.house_id, player.house_x, player.house_y)
     if player.in_village:
         return ("village", player.village_id, player.village_x, player.village_y)
+    if getattr(player, "in_hermit_hut", False):
+        return ("hermit_hut", getattr(player, "hermit_hut_forest_id", 0), getattr(player, "hermit_hut_floor", 1),
+                getattr(player, "hermit_hut_x", 0), getattr(player, "hermit_hut_y", 0))
     if player.in_cave:
         return ("cave", player.cave_id, player.cave_x, player.cave_y)
     if getattr(player, "in_shipwreck", False):
@@ -299,9 +302,6 @@ def _vp_cache_key(player) -> tuple:
         return ("sky", getattr(player, "sky_id", 0), getattr(player, "sky_x", 0), getattr(player, "sky_y", 0))
     if getattr(player, "in_tree_city", False):
         return ("tree_city", player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y)
-    if getattr(player, "in_hermit_hut", False):
-        return ("hermit_hut", getattr(player, "hermit_hut_forest_id", 0), getattr(player, "hermit_hut_floor", 1),
-                getattr(player, "hermit_hut_x", 0), getattr(player, "hermit_hut_y", 0))
     if getattr(player, "in_maze", False):
         return ("maze", getattr(player, "maze_id", 0), getattr(player, "maze_x", 0), getattr(player, "maze_y", 0))
     if getattr(player, "in_grove", False):
@@ -333,6 +333,11 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
         grid = await _load_house_grid(player, db)
     elif player.in_village:
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=uid)
+    elif getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import load_hut_viewport as _lhv_cache, ensure_hermit_hut_built as _ehb_cache
+        await _ehb_cache(player.hermit_hut_forest_id, db)
+        grid = await _lhv_cache(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                                player.hermit_hut_x, player.hermit_hut_y, db)
     elif player.in_cave:
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
     elif getattr(player, "in_shipwreck", False):
@@ -352,11 +357,6 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif getattr(player, "in_maze", False):
         from dwarf_explorer.world.forest import load_maze_viewport as _lmv_cache
         grid = await _lmv_cache(player.maze_id, player.maze_x, player.maze_y, db)
-    elif getattr(player, "in_hermit_hut", False):
-        from dwarf_explorer.world.hermit_hut import load_hut_viewport as _lhv_cache, ensure_hermit_hut_built as _ehb_cache
-        await _ehb_cache(player.hermit_hut_forest_id, db)
-        grid = await _lhv_cache(player.hermit_hut_forest_id, player.hermit_hut_floor,
-                                player.hermit_hut_x, player.hermit_hut_y, db)
     elif getattr(player, "in_grove", False):
         from dwarf_explorer.world.forest import load_grove_viewport as _lgv_cache
         grid = await _lgv_cache(player.grove_id, player.grove_x, player.grove_y, db)
@@ -2880,23 +2880,7 @@ def _compute_context_labels(
                         break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
-        # Bandit camp tile context
-        if getattr(player, "in_bandit_camp", False):
-            if t == "bc_exit":
-                center_label, center_enabled = "🚪 Leave", True
-            # NPC button when adjacent to a bandit
-            _bc_bandit_adj = False
-            for _dy_bc, _dx_bc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                _ar_bc, _ac_bc = vc + _dy_bc, vc + _dx_bc
-                if 0 <= _ar_bc < len(grid) and 0 <= _ac_bc < len(grid[_ar_bc]):
-                    _bc_tile = grid[_ar_bc][_ac_bc]
-                    if _bc_tile and _bc_tile.terrain == "bc_bandit":
-                        _bc_bandit_adj = True
-                        break
-            _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2", "", False
-
-        # Hermit Hut tile context
+        # Hermit Hut tile context — checked BEFORE bandit camp to avoid stale flag conflicts
         if getattr(player, "in_hermit_hut", False):
             if t == "b_door":
                 center_label, center_enabled = "🚪 Exit", True
@@ -2912,6 +2896,22 @@ def _compute_context_labels(
                         action_label, action_enabled = "🧙 Talk", True
                         break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
+
+        # Bandit camp tile context
+        if getattr(player, "in_bandit_camp", False):
+            if t == "bc_exit":
+                center_label, center_enabled = "🚪 Leave", True
+            # NPC button when adjacent to a bandit
+            _bc_bandit_adj = False
+            for _dy_bc, _dx_bc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_bc, _ac_bc = vc + _dy_bc, vc + _dx_bc
+                if 0 <= _ar_bc < len(grid) and 0 <= _ac_bc < len(grid[_ar_bc]):
+                    _bc_tile = grid[_ar_bc][_ac_bc]
+                    if _bc_tile and _bc_tile.terrain == "bc_bandit":
+                        _bc_bandit_adj = True
+                        break
+            _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2", "", False
 
         # Island tile context
         if player.in_island:
@@ -9461,8 +9461,12 @@ async def handle_interact(
             player.hermit_hut_floor = 1
             player.hermit_hut_x, player.hermit_hut_y = _HEX, _HEY
             player.in_cave = False
+            player.in_bandit_camp = False
+            player.in_house = False
+            player.in_village = False
             await db.execute(
                 "UPDATE players SET in_hermit_hut=1, in_cave=0, in_house=0, in_village=0, "
+                "in_bandit_camp=0, bandit_camp_id=NULL, "
                 "hermit_hut_forest_id=?, "
                 "hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
                 (player.forest_id, _HEX, _HEY, user_id),
