@@ -146,6 +146,8 @@ ENTITY_EMOJI = {
     "vine_creeper":    "\U0001F40D",  # 🐍 snake-like vine monster
     "corrupted_dryad": "\U0001F9DF",  # 🧟 corrupted forest spirit
     "forest_troll":    "\U0001F479",  # 👹 mossy forest troll
+    # Quest marker types (rendered on overworld as location indicators)
+    "exploration":     "\U0001F332",  # 🌲 forest exploration quest marker
 }
 
 # ── Custom gear emoji IDs ──────────────────────────────────────────────────────
