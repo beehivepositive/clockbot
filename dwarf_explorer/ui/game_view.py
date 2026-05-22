@@ -9460,8 +9460,10 @@ async def handle_interact(
             player.hermit_hut_forest_id = player.forest_id
             player.hermit_hut_floor = 1
             player.hermit_hut_x, player.hermit_hut_y = _HEX, _HEY
+            player.in_cave = False
             await db.execute(
-                "UPDATE players SET in_hermit_hut=1, hermit_hut_forest_id=?, "
+                "UPDATE players SET in_hermit_hut=1, in_cave=0, in_house=0, in_village=0, "
+                "hermit_hut_forest_id=?, "
                 "hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
                 (player.forest_id, _HEX, _HEY, user_id),
             )

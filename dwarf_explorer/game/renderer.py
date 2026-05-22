@@ -87,6 +87,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = player.house_type  # "house" | "church" | "bank" | "shop"
     elif player.in_village:
         location = "village"
+    elif getattr(player, "in_hermit_hut", False):
+        location = "hermit_hut"
     elif player.in_cave:
         location = "cave"
     elif getattr(player, "in_shipwreck", False):
@@ -97,8 +99,6 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "sky"
     elif getattr(player, "in_tree_city", False):
         location = "tree_city"
-    elif getattr(player, "in_hermit_hut", False):
-        location = "hermit_hut"
     elif getattr(player, "in_maze", False):
         location = "maze"
     elif getattr(player, "in_forest", False):
