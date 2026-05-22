@@ -923,6 +923,8 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
     "fst_map_chest":    "\U0001F4E6",   # 📦 map chest — looks like a regular chest
     "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
+    # Hermit hut
+    "fst_hermit_house":  "\U0001F6D6",  # 🛖 hermit's hut tile in the forest
     # Bomb (shared with cave / overworld)
     "bomb_lit":          "\U0001F4A3",  # 💣 lit bomb placed on the forest floor
     # Hidden chamber tiles
