@@ -1281,6 +1281,11 @@ BUILDING_EMOJI = {
     "b_armory_npc":       "🧑",              # 🧑  armorer NPC
     "b_weapons_rack":     "\U0001F5E1️", # 🗡️  weapons rack (decoration)
     "b_ammo_shelf":       "\U0001F4A3",       # 💣  ammo/bomb shelf (decoration)
+    # Hermit Hut unique
+    "hermit_npc":         "\U0001F9D9",       # 🧙  hermit / old wizard NPC
+    "hut_stair_up":       "\U0001F53C",       # 🔼  staircase up
+    "hut_stair_down":     "\U0001F53D",       # 🔽  staircase down
+    "b_vines":            "\U0001F33F",       # 🌿  creeping vines (walkable decoration)
 }
 
 VILLAGE_WALKABLE = {
@@ -1321,6 +1326,17 @@ BUILDING_WALKABLE = {
     "ph_chest_small", "ph_chest_medium", "ph_chest_large",
     "b_armory_npc",   # armorer NPC — walkable
 }
+
+# Walkable tiles inside the hermit hut (floor 1 and floor 2)
+HERMIT_HUT_WALKABLE: frozenset[str] = frozenset({
+    "b_floor_wood", "b_floor",
+    "b_door",            # exit door — player can step on it (triggers exit)
+    "b_bookshelf", "b_table", "b_bed", "b_chair", "b_candle",
+    "hermit_npc",        # walkable NPC tile (interact via adjacent action)
+    "hut_stair_up",      # staircase up to floor 2
+    "hut_stair_down",    # staircase down to floor 1
+    "b_vines",           # decorative vines — passable
+})
 
 VILLAGE_MIN_SIZE = 32
 VILLAGE_MAX_SIZE = 32

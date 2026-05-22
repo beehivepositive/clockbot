@@ -11,6 +11,7 @@ from dwarf_explorer.config import (
     GROVE_WALKABLE,
     BANDIT_CAMP_WALKABLE,
     FQ_WALKABLE,
+    HERMIT_HUT_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -167,6 +168,12 @@ class Player:
     bc_x: int = 0
     bc_y: int = 0
     bandit_bribe_remaining: int = 0   # moves left before bandits attack again
+    # Hermit Hut interior state
+    in_hermit_hut: bool = False
+    hermit_hut_forest_id: int | None = None  # forest_id the hut belongs to
+    hermit_hut_floor: int = 1                # 1 = ground floor, 2 = upper room
+    hermit_hut_x: int = 0
+    hermit_hut_y: int = 0
 
 
 def can_move_ship(target_tile: TileData) -> tuple[bool, str]:
@@ -234,6 +241,8 @@ def can_move(player: Player, direction: str, target_tile: TileData) -> tuple[boo
         return can_move_grove(target_tile)
     if getattr(player, "in_bandit_camp", False):
         return can_move_bandit_camp(target_tile)
+    if getattr(player, "in_hermit_hut", False):
+        return can_move_hermit_hut(target_tile)
     if getattr(player, "in_forest_quest", False):
         return can_move_forest_quest(target_tile)
 
@@ -336,6 +345,18 @@ def can_move_grove(target_tile: TileData) -> tuple[bool, str]:
         return False, "🌳 Ancient trees bar your path."
     if t not in GROVE_WALKABLE:
         return False, "You can't go that way."
+    return True, ""
+
+
+def can_move_hermit_hut(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside the hermit's hut."""
+    t = target_tile.terrain
+    if t == "b_stove":
+        return False, "🔥 The old hearth radiates heat — you can't step there."
+    if t == "b_wall":
+        return False, "🪵 Rough log walls bar your path."
+    if t not in HERMIT_HUT_WALKABLE:
+        return False, "Something is in the way."
     return True, ""
 
 

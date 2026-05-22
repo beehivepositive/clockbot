@@ -39,7 +39,7 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
                     "tavern", "hospital", "lumber_mill", "farmhouse", "player_house",
-                    "armory"):
+                    "armory", "hermit_hut"):
         # Wood floors for cozy buildings; stone/grey for blacksmith
         if tile.terrain == "b_floor" and location != "blacksmith":
             return BUILDING_EMOJI.get("b_floor_wood", BUILDING_EMOJI.get("b_floor", _BLACK))
@@ -97,6 +97,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "sky"
     elif getattr(player, "in_tree_city", False):
         location = "tree_city"
+    elif getattr(player, "in_hermit_hut", False):
+        location = "hermit_hut"
     elif getattr(player, "in_maze", False):
         location = "maze"
     elif getattr(player, "in_forest", False):
@@ -264,6 +266,10 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         pos = "🌀 Forest Maze"   # deliberately no coordinates
     elif getattr(player, "in_grove", False):
         pos = "🌿 Hidden Grove"
+    elif getattr(player, "in_hermit_hut", False):
+        _hf_names = {1: "Ground Floor", 2: "Upper Room"}
+        _hf_name  = _hf_names.get(getattr(player, "hermit_hut_floor", 1), "Upper Floor")
+        pos = f"🛖 Hermit's Hut — {_hf_name} (Fl. {getattr(player, 'hermit_hut_floor', 1)})"
     elif getattr(player, "in_forest_quest", False):
         pos = "🌳 Forest Depths"   # deliberately no coordinates
     elif getattr(player, "in_temple", False):

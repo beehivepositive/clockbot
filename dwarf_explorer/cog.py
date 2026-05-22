@@ -267,6 +267,7 @@ class DwarfExplorer(commands.Cog):
                 forest_wx=0, forest_wy=0,
                 in_tree_city=0, tc_forest_id=NULL, tc_floor=1, tc_x=0, tc_y=0,
                 in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0,
+                in_hermit_hut=0, hermit_hut_forest_id=NULL, hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0,
                 in_maze=0, maze_id=NULL, maze_x=0, maze_y=0,
                 in_sky=0, sky_id=NULL, sky_x=0, sky_y=0,
                 in_temple=0, temple_id=NULL, temple_x=0, temple_y=0,
@@ -285,6 +286,9 @@ class DwarfExplorer(commands.Cog):
         player.tc_forest_id = None
         player.tc_floor = 1
         player.in_forest_quest = False
+        player.in_hermit_hut = False
+        player.hermit_hut_forest_id = None
+        player.hermit_hut_floor = 1
         player.in_maze = False
         player.in_sky = False
         player.in_temple = False

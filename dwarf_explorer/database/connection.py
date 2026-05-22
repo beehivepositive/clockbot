@@ -1122,6 +1122,25 @@ class Database:
             except Exception as e:
                 _log.warning("Thornwarden boss migration warning: %s", e)
 
+            # ── Hermit Hut player fields ───────────────────────────────────────
+            try:
+                _hhc = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+                for _hh, _hht, _hhd in [
+                    ("in_hermit_hut",        "INTEGER", "0"),
+                    ("hermit_hut_forest_id", "INTEGER", "NULL"),
+                    ("hermit_hut_floor",     "INTEGER", "1"),
+                    ("hermit_hut_x",         "INTEGER", "0"),
+                    ("hermit_hut_y",         "INTEGER", "0"),
+                ]:
+                    if _hh not in _hhc:
+                        conn.execute(
+                            f"ALTER TABLE players ADD COLUMN {_hh} {_hht} "
+                            f"{'NOT NULL DEFAULT ' + _hhd if _hhd != 'NULL' else ''}"
+                        )
+                conn.commit()
+            except Exception as e:
+                _log.warning("Hermit hut migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

@@ -427,6 +427,15 @@ CREATE TABLE IF NOT EXISTS grove_tiles (
 
 CREATE INDEX IF NOT EXISTS idx_grove_tiles ON grove_tiles(grove_id, local_x, local_y);
 
+CREATE TABLE IF NOT EXISTS hermit_hut_tiles (
+    forest_id INTEGER NOT NULL,
+    floor_num INTEGER NOT NULL DEFAULT 1,
+    local_x   INTEGER NOT NULL,
+    local_y   INTEGER NOT NULL,
+    tile_type TEXT    NOT NULL,
+    PRIMARY KEY (forest_id, floor_num, local_x, local_y)
+);
+
 -- Warp crystal waypoints unlocked per player
 CREATE TABLE IF NOT EXISTS player_waypoints (
     user_id     INTEGER NOT NULL,

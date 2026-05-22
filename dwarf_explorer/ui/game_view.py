@@ -299,6 +299,9 @@ def _vp_cache_key(player) -> tuple:
         return ("sky", getattr(player, "sky_id", 0), getattr(player, "sky_x", 0), getattr(player, "sky_y", 0))
     if getattr(player, "in_tree_city", False):
         return ("tree_city", player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y)
+    if getattr(player, "in_hermit_hut", False):
+        return ("hermit_hut", getattr(player, "hermit_hut_forest_id", 0), getattr(player, "hermit_hut_floor", 1),
+                getattr(player, "hermit_hut_x", 0), getattr(player, "hermit_hut_y", 0))
     if getattr(player, "in_maze", False):
         return ("maze", getattr(player, "maze_id", 0), getattr(player, "maze_x", 0), getattr(player, "maze_y", 0))
     if getattr(player, "in_grove", False):
@@ -349,6 +352,11 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif getattr(player, "in_maze", False):
         from dwarf_explorer.world.forest import load_maze_viewport as _lmv_cache
         grid = await _lmv_cache(player.maze_id, player.maze_x, player.maze_y, db)
+    elif getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import load_hut_viewport as _lhv_cache, ensure_hermit_hut_built as _ehb_cache
+        await _ehb_cache(player.hermit_hut_forest_id, db)
+        grid = await _lhv_cache(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                                player.hermit_hut_x, player.hermit_hut_y, db)
     elif getattr(player, "in_grove", False):
         from dwarf_explorer.world.forest import load_grove_viewport as _lgv_cache
         grid = await _lgv_cache(player.grove_id, player.grove_x, player.grove_y, db)
@@ -2790,7 +2798,7 @@ def _compute_context_labels(
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Forest tile context
-        if getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
+        if getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False) and not getattr(player, "in_hermit_hut", False):
             if t == "fst_exit":
                 center_label, center_enabled = "🌲 Exit", True
             elif t == "fst_nut_tree":
@@ -2802,7 +2810,7 @@ def _compute_context_labels(
             elif t == "fst_maze_door":
                 center_label, center_enabled = "🌀 Enter", True
             elif t == "fst_hermit_house":
-                center_label, center_enabled = "🛖 Talk", True
+                center_label, center_enabled = "🛖 Enter", True
             elif t in ("fst_chest", "fst_mimic", "fst_map_chest"):
                 # fst_mimic and fst_map_chest look identical to fst_chest
                 from dwarf_explorer.config import FOREST_EMOJI as _FE
@@ -2876,6 +2884,23 @@ def _compute_context_labels(
                         break
             _bc_npc = ("💬", True) if _bc_bandit_adj else ("", False)
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, _bc_npc[0], _bc_npc[1], False, False, False, "", False, "sp_action2", "", False
+
+        # Hermit Hut tile context
+        if getattr(player, "in_hermit_hut", False):
+            if t == "b_door":
+                center_label, center_enabled = "🚪 Exit", True
+            elif t == "hut_stair_up":
+                center_label, center_enabled = "🔼 Ascend", True
+            elif t == "hut_stair_down":
+                center_label, center_enabled = "🔽 Descend", True
+            # Show Talk action when adjacent to the hermit NPC
+            for _dy_hh, _dx_hh in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_hh, _ac_hh = vc + _dy_hh, vc + _dx_hh
+                if 0 <= _ar_hh < len(grid) and 0 <= _ac_hh < len(grid[_ar_hh]):
+                    if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
+                        action_label, action_enabled = "🧙 Talk", True
+                        break
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Island tile context
         if player.in_island:
@@ -4444,7 +4469,7 @@ async def _move_steps(
         content = render_grid(fq_grid_mv, player, _extra_fq_msg or None)
         return content, _game_view(guild_id, user_id, player, grid=fq_grid_mv)
 
-    elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False):
+    elif getattr(player, "in_forest", False) and not getattr(player, "in_tree_city", False) and not getattr(player, "in_hermit_hut", False):
         _for_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.forest import (
             load_forest_viewport, load_forest_single_tile,
@@ -4653,6 +4678,30 @@ async def _move_steps(
                     "Etched at its base: *'Water me, and I shall give you what the forest guards.'*"), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
+            # Hermit hut — enter interior
+            if target.terrain == "fst_hermit_house":
+                from dwarf_explorer.world.hermit_hut import (
+                    ensure_hermit_hut_built as _ehb2,
+                    load_hut_viewport as _lhv2,
+                    HUT_ENTRY_X, HUT_ENTRY_Y,
+                )
+                await _ehb2(player.forest_id, db)
+                player.forest_x, player.forest_y = nx, ny   # remember exit position
+                player.in_hermit_hut = True
+                player.hermit_hut_forest_id = player.forest_id
+                player.hermit_hut_floor = 1
+                player.hermit_hut_x, player.hermit_hut_y = HUT_ENTRY_X, HUT_ENTRY_Y
+                await db.execute(
+                    "UPDATE players SET forest_x=?, forest_y=?, in_hermit_hut=1, "
+                    "hermit_hut_forest_id=?, hermit_hut_floor=1, "
+                    "hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                    (nx, ny, player.forest_id, HUT_ENTRY_X, HUT_ENTRY_Y, user_id),
+                )
+                grid = await _lhv2(player.forest_id, 1, HUT_ENTRY_X, HUT_ENTRY_Y, db)
+                return render_grid(grid, player,
+                    "🛖 You push open the creaking door of the hermit's hut..."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
             # Tree city — enter interior
             if target.terrain == "fst_tree_city":
                 from dwarf_explorer.world.forest import ensure_tree_city_built, load_tree_city_viewport as _ltcv2
@@ -4801,6 +4850,92 @@ async def _move_steps(
 
         grid = await _ltcv3(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
         return render_grid(grid, player, nav_target=_tc_nav), _game_view(guild_id, user_id, player, grid=grid)
+
+    elif getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import (
+            load_hut_viewport as _lhv_mv,
+            load_hut_single_tile as _lhst_mv,
+            ensure_hermit_hut_built as _ehb_mv,
+            HUT_F1_STAIR_X, HUT_F1_STAIR_Y,
+            HUT_F2_STAIR_X, HUT_F2_STAIR_Y,
+            HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y,
+            HUT_F1_RETURN_X, HUT_F1_RETURN_Y,
+            HUT_DOOR_X, HUT_DOOR_Y,
+        )
+        from dwarf_explorer.config import HERMIT_HUT_WALKABLE as _HHW
+        await _ehb_mv(player.hermit_hut_forest_id, db)
+
+        for _ in range(steps):
+            nx, ny = player.hermit_hut_x + dx, player.hermit_hut_y + dy
+            target = await _lhst_mv(player.hermit_hut_forest_id, player.hermit_hut_floor, nx, ny, db)
+            if target.terrain not in _HHW:
+                grid = await _lhv_mv(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                                     player.hermit_hut_x, player.hermit_hut_y, db)
+                _hh_msg = (
+                    "🔥 The old hearth radiates heat — you can't step there."
+                    if target.terrain == "b_stove"
+                    else "🪵 Rough log walls bar your path."
+                )
+                return render_grid(grid, player, _hh_msg), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
+            # Exit door → back to forest
+            if target.terrain == "b_door":
+                fx, fy = player.forest_x, player.forest_y
+                fid = player.hermit_hut_forest_id
+                player.in_hermit_hut = False
+                player.hermit_hut_forest_id = None
+                player.hermit_hut_floor = 1
+                player.hermit_hut_x = player.hermit_hut_y = 0
+                await db.execute(
+                    "UPDATE players SET in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                    "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0, "
+                    "forest_x=?, forest_y=? WHERE user_id=?",
+                    (fx, fy, user_id),
+                )
+                from dwarf_explorer.world.forest import load_forest_viewport as _lfv_hh
+                grid = await _lfv_hh(fid, fx, fy, db)
+                return render_grid(grid, player,
+                    "🚪 You step out of the hermit's hut back into the forest."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
+            # Stair up → floor 2
+            if target.terrain == "hut_stair_up":
+                player.hermit_hut_floor = 2
+                player.hermit_hut_x, player.hermit_hut_y = HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y
+                await db.execute(
+                    "UPDATE players SET hermit_hut_floor=2, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                    (HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y, user_id),
+                )
+                grid = await _lhv_mv(player.hermit_hut_forest_id, 2, HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y, db)
+                return render_grid(grid, player,
+                    "🔼 You climb the creaky stairs into the **upper room**. "
+                    "Vines and old tomes fill every corner."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
+            # Stair down → floor 1
+            if target.terrain == "hut_stair_down":
+                player.hermit_hut_floor = 1
+                player.hermit_hut_x, player.hermit_hut_y = HUT_F1_RETURN_X, HUT_F1_RETURN_Y
+                await db.execute(
+                    "UPDATE players SET hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                    (HUT_F1_RETURN_X, HUT_F1_RETURN_Y, user_id),
+                )
+                grid = await _lhv_mv(player.hermit_hut_forest_id, 1, HUT_F1_RETURN_X, HUT_F1_RETURN_Y, db)
+                return render_grid(grid, player,
+                    "🔽 You descend back to the ground floor of the hut."), \
+                       _game_view(guild_id, user_id, player, grid=grid)
+
+            # Normal step
+            player.hermit_hut_x, player.hermit_hut_y = nx, ny
+            await db.execute(
+                "UPDATE players SET hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                (nx, ny, user_id),
+            )
+
+        grid = await _lhv_mv(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                              player.hermit_hut_x, player.hermit_hut_y, db)
+        return render_grid(grid, player, None), _game_view(guild_id, user_id, player, grid=grid)
 
     elif player.in_cave:
         _cave_nav = _ui_state.get(user_id, {}).get("nav_target")
@@ -8958,7 +9093,7 @@ async def handle_interact(
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
-    elif getattr(player, "in_forest", False):
+    elif getattr(player, "in_forest", False) and not getattr(player, "in_hermit_hut", False):
         _int_for_nav = _ui_state.get(user_id, {}).get("nav_target")
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_i, load_forest_single_tile as _lfst_i
         ftile = await _lfst_i(player.forest_id, player.forest_x, player.forest_y, db)
@@ -9195,72 +9330,25 @@ async def handle_interact(
             return
 
         elif ftile.terrain == "fst_hermit_house":
-            # ── Hermit dialog ────────────────────────────────────────────────
-            from dwarf_explorer.world.forest import get_hermit_forest_info as _ghfi
-            from dwarf_explorer.game.quests import update_forest_depths_quest_target as _ufdqt
-            _stage = getattr(player, "fq_quest_stage", "none")
-
-            if _stage == "none":
-                # Player hasn't started the quest — hermit just greets them
-                msg = (
-                    "🛖 An old man sits outside a weathered hut, whittling a branch.\n\n"
-                    "*'These woods have many secrets, traveller. But you don't look ready for them yet.'*"
-                )
-            elif _stage == "seek_hermit":
-                # Check if player has the local map for this forest
-                _fmap = await db.fetch_one(
-                    "SELECT 1 FROM player_map_collection "
-                    "WHERE user_id=? AND map_type='forest' AND ref_id=?",
-                    (user_id, player.forest_id),
-                )
-                if not _fmap:
-                    msg = (
-                        "🛖 The hermit squints at you from beneath a wild brow.\n\n"
-                        "*'You're looking for something deeper in these woods? "
-                        "You'll need a proper map of this forest first — "
-                        "find the hidden cache nearby. It holds a chart of the grounds.'*\n\n"
-                        "🗺️ *Explore the forest for a hidden chest with a **Forest Map**.*"
-                    )
-                else:
-                    # Has map → advance quest to hermit_met, redirect tracker to FQ entrance
-                    _hinfo = await _ghfi(db)
-                    _new_wx = _hinfo["world_x"] if _hinfo else None
-                    _new_wy = _hinfo["world_y"] if _hinfo else None
-                    player.fq_quest_stage = "hermit_met"
-                    await db.execute(
-                        "UPDATE players SET fq_quest_stage='hermit_met' WHERE user_id=?",
-                        (user_id,),
-                    )
-                    # Point quest tracker at the FQ entrance tile in the overworld
-                    if _new_wx is not None:
-                        await _ufdqt(db, user_id, _new_wx, _new_wy)
-                    msg = (
-                        "🛖 The old man's eyes widen as he sees your forest chart.\n\n"
-                        "*'Ah — you've mapped this place. Good. Then you're ready to hear it.'*\n\n"
-                        "He leans forward, voice dropping to a murmur:\n"
-                        "*'There is an entrance deeper in the forest — looks just like any other tree. "
-                        "I've marked it on your chart. Beyond it lies something ancient. "
-                        "Something that predates even the Tree City.'*\n\n"
-                        "*'Head to the entrance the next time you're ready. And bring your wits.'*\n\n"
-                        "📍 *Quest updated — the marker now points to the Forest Depths entrance.*"
-                    )
-            elif _stage == "hermit_met":
-                msg = (
-                    "🛖 The hermit nods slowly as you approach.\n\n"
-                    "*'You haven't gone in yet? The entrance is marked on your map. "
-                    "Look for it at the edge of this forest — it blends in with the trees.'*\n\n"
-                    "*'Once you pass through, you'll be in the old growth. Mind the roots — "
-                    "and the things that move in the dark.'*"
-                )
-            else:
-                # map_marked or puzzle_solved
-                msg = (
-                    "🛖 The hermit looks up from his work with a knowing smile.\n\n"
-                    "*'So you've ventured inside. I can see it in your eyes. "
-                    "Whatever you find in there — trust the forest. It has a pattern.'*"
-                )
-
-            content = render_grid(grid, player, msg)
+            # ── Enter hermit hut interior ─────────────────────────────────────
+            from dwarf_explorer.world.hermit_hut import (
+                ensure_hermit_hut_built as _ehb_act,
+                load_hut_viewport as _lhv_act,
+                HUT_ENTRY_X as _HEX, HUT_ENTRY_Y as _HEY,
+            )
+            await _ehb_act(player.forest_id, db)
+            player.in_hermit_hut = True
+            player.hermit_hut_forest_id = player.forest_id
+            player.hermit_hut_floor = 1
+            player.hermit_hut_x, player.hermit_hut_y = _HEX, _HEY
+            await db.execute(
+                "UPDATE players SET in_hermit_hut=1, hermit_hut_forest_id=?, "
+                "hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                (player.forest_id, _HEX, _HEY, user_id),
+            )
+            grid = await _lhv_act(player.forest_id, 1, _HEX, _HEY, db)
+            content = render_grid(grid, player,
+                "🛖 You push open the creaking door of the hermit's hut...")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
@@ -9298,6 +9386,73 @@ async def handle_interact(
 
         else:
             content = render_grid(grid, player, "🌿 Ancient forest. Nothing to interact with here.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+    elif getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import (
+            load_hut_single_tile as _lhst_i,
+            load_hut_viewport as _lhv_i,
+            ensure_hermit_hut_built as _ehb_i,
+            HUT_F2_ENTRY_X as _HF2EX, HUT_F2_ENTRY_Y as _HF2EY,
+            HUT_F1_RETURN_X as _HF1RX, HUT_F1_RETURN_Y as _HF1RY,
+        )
+        await _ehb_i(player.hermit_hut_forest_id, db)
+        hhtile = await _lhst_i(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                               player.hermit_hut_x, player.hermit_hut_y, db)
+        grid = await _lhv_i(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                            player.hermit_hut_x, player.hermit_hut_y, db)
+
+        if hhtile.terrain == "b_door":
+            # Exit back to forest
+            fx, fy = player.forest_x, player.forest_y
+            fid = player.hermit_hut_forest_id
+            player.in_hermit_hut = False
+            player.hermit_hut_forest_id = None
+            player.hermit_hut_floor = 1
+            player.hermit_hut_x = player.hermit_hut_y = 0
+            await db.execute(
+                "UPDATE players SET in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0 WHERE user_id=?", (user_id,)
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_hhi
+            grid = await _lfv_hhi(fid, fx, fy, db)
+            content = render_grid(grid, player, "🚪 You step back out into the forest.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif hhtile.terrain == "hut_stair_up":
+            player.hermit_hut_floor = 2
+            player.hermit_hut_x, player.hermit_hut_y = _HF2EX, _HF2EY
+            await db.execute(
+                "UPDATE players SET hermit_hut_floor=2, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                (_HF2EX, _HF2EY, user_id),
+            )
+            grid = await _lhv_i(player.hermit_hut_forest_id, 2, _HF2EX, _HF2EY, db)
+            content = render_grid(grid, player,
+                "🔼 You climb the creaky stairs into the **upper room**. "
+                "Vines and old tomes fill every corner.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif hhtile.terrain == "hut_stair_down":
+            player.hermit_hut_floor = 1
+            player.hermit_hut_x, player.hermit_hut_y = _HF1RX, _HF1RY
+            await db.execute(
+                "UPDATE players SET hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
+                (_HF1RX, _HF1RY, user_id),
+            )
+            grid = await _lhv_i(player.hermit_hut_forest_id, 1, _HF1RX, _HF1RY, db)
+            content = render_grid(grid, player, "🔽 You descend back to the ground floor of the hut.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        else:
+            content = render_grid(grid, player, "🛖 The old timber walls creak in the wind.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
@@ -10904,6 +11059,29 @@ async def handle_action(
         hand_items.add(player.hand_1)
     if player.hand_2:
         hand_items.add(player.hand_2)
+
+    # ── Hermit Hut: adjacent hermit NPC ─────────────────────────────────────────
+    if getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import (
+            load_hut_viewport as _lhv_hha,
+            ensure_hermit_hut_built as _ehb_hha,
+        )
+        await _ehb_hha(player.hermit_hut_forest_id, db)
+        _hh_grid_act = await _lhv_hha(player.hermit_hut_forest_id, player.hermit_hut_floor,
+                                      player.hermit_hut_x, player.hermit_hut_y, db)
+        vc = 4
+        _hh_hermit_adj = any(
+            _hh_grid_act[vc + dy][vc + dx].terrain == "hermit_npc"
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
+            if 0 <= vc + dy < len(_hh_grid_act) and 0 <= vc + dx < len(_hh_grid_act[vc + dy])
+        )
+        if _hh_hermit_adj:
+            await _open_hermit_dialogue(interaction, guild_id, user_id, player, db, _hh_grid_act)
+            return
+        content = render_grid(_hh_grid_act, player, "🛖 Nothing to interact with here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=_hh_grid_act))
+        return
 
     # ── Tree city: adjacent shop NPC ─────────────────────────────────────────
     if getattr(player, "in_tree_city", False):
@@ -14056,6 +14234,111 @@ async def _open_armory_shop(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           armory_mode=True))
+
+
+async def _open_hermit_dialogue(
+    interaction: discord.Interaction,
+    guild_id: int, user_id: int, player, db, grid: list,
+) -> None:
+    """Hermit NPC dialogue — triggered by 🧙 Talk when adjacent to hermit_npc tile."""
+    from dwarf_explorer.world.forest import get_hermit_forest_info as _ghfi_hh
+    from dwarf_explorer.game.quests import update_forest_depths_quest_target as _ufdqt_hh
+    _stage = getattr(player, "fq_quest_stage", "none")
+
+    if _stage == "none":
+        msg = (
+            "🧙 The hermit barely glances up from a tattered book, surrounded by "
+            "tangled vines and scattered notes.\n\n"
+            "*'Hmph. Another wanderer. These woods have many secrets, traveller. "
+            "But you don't look ready for them yet.'*"
+        )
+    elif _stage == "seek_hermit":
+        _fmap = await db.fetch_one(
+            "SELECT 1 FROM player_map_collection "
+            "WHERE user_id=? AND map_type='forest' AND ref_id=?",
+            (user_id, player.forest_id),
+        )
+        if not _fmap:
+            msg = (
+                "🧙 The hermit squints at you from beneath a wild brow of unruly grey.\n\n"
+                "*'You're looking for something deeper in these woods? "
+                "You'll need a proper map of this forest first — "
+                "find the hidden cache nearby. It holds a chart of the grounds.'*\n\n"
+                "🗺️ *Explore the forest for a hidden chest containing a **Forest Map**.*"
+            )
+        else:
+            # Has map → advance quest to hermit_met, redirect tracker to FQ entrance
+            _hinfo_hh = await _ghfi_hh(db)
+            _new_wx_hh = _hinfo_hh["world_x"] if _hinfo_hh else None
+            _new_wy_hh = _hinfo_hh["world_y"] if _hinfo_hh else None
+            player.fq_quest_stage = "hermit_met"
+            await db.execute(
+                "UPDATE players SET fq_quest_stage='hermit_met' WHERE user_id=?", (user_id,)
+            )
+            if _new_wx_hh is not None:
+                await _ufdqt_hh(db, user_id, _new_wx_hh, _new_wy_hh)
+            msg = (
+                "🧙 The old man's eyes widen as he sees your forest chart.\n\n"
+                "*'Ah — you've mapped this place. Good. Then you're ready to hear it.'*\n\n"
+                "He sets down his book and leans forward, voice dropping to a murmur:\n"
+                "*'There is an entrance deeper in the forest — looks just like any other tree. "
+                "I've marked it on your chart. Beyond it lies something ancient. "
+                "Something that predates even the Tree City.'*\n\n"
+                "*'Bring your wits. And perhaps something sharp.'*\n\n"
+                "📍 *Quest updated — the marker now points to the Forest Depths entrance.*"
+            )
+    elif _stage == "hermit_met":
+        msg = (
+            "🧙 The hermit nods slowly, gesturing at the door.\n\n"
+            "*'You haven't gone in yet? The entrance is marked on your map. "
+            "Look for it at the edge of this forest — it blends in with the trees.'*\n\n"
+            "*'Once you pass through, you'll be in the old growth. "
+            "Mind the roots — and the things that move in the dark.'*"
+        )
+    elif _stage in ("wayerwood_crafted", "map_marked", "puzzle_solved",
+                    "warden_defeated", "canal_solved"):
+        _hh_hints = {
+            "wayerwood_crafted": (
+                "*'The Wayerwood is forged. Head to the Forest Depths entrance — "
+                "my mark is on your tracker.'*"
+            ),
+            "map_marked": (
+                "*'You've entered the depths. Good. Push the heavy logs to bridge the stream — "
+                "the forest will show you the way.'*"
+            ),
+            "puzzle_solved": (
+                "*'The stream is bridged. Press deeper — something old waits beyond. "
+                "It won't be friendly.'*"
+            ),
+            "warden_defeated": (
+                "*'The Thornwarden is slain. Impressive. "
+                "Navigate the fork and solve the canal ahead.'*"
+            ),
+            "canal_solved": (
+                "*'The canal is open. The final chamber awaits. "
+                "Whatever lies within — you are ready.'*"
+            ),
+        }
+        msg = (
+            "🧙 The hermit sets aside a crumbling scroll and fixes you with a steady gaze.\n\n"
+            + _hh_hints.get(_stage, "*'Keep pushing forward. The forest does not reward hesitation.'*")
+        )
+    else:
+        # quest_complete or rewarded
+        msg = (
+            "🧙 The hermit looks up from his work with a rare, quiet smile.\n\n"
+            "*'You've seen it all now, haven't you. The depths. The warden. "
+            "The heart tree.'*\n\n"
+            "*'You carry that knowledge well. The forest breathes a little easier "
+            "because of what you did in there.'*\n\n"
+            "He returns to his reading, content."
+        )
+
+    content = render_grid(grid, player, msg)
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=_game_view(guild_id, user_id, player, grid=grid),
+    )
 
 
 async def _open_tree_city_villager(
