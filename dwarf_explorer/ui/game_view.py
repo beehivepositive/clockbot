@@ -9166,32 +9166,49 @@ async def handle_interact(
         elif ftile.terrain == "fst_ancient_tree":
             has_axe = player.hand_1 == "axe" or player.hand_2 == "axe"
             if has_axe:
-                # Chop the ancient tree for ancient logs (hourly cooldown per tree)
-                _chop_key_x = player.forest_x + player.forest_id * 10000 + 2
-                _chop_key_y = player.forest_y + player.forest_id * 10000 + 2
-                _chop_cd = await db.fetch_one(
-                    "SELECT last_watered FROM farm_watered_at WHERE world_x=? AND world_y=?",
-                    (_chop_key_x, _chop_key_y),
+                # 10-chop fell mechanic — consistent with overworld ancient tree
+                _fac_key_x = player.forest_x + player.forest_id * 10000 + 2
+                _fac_key_y = player.forest_y + player.forest_id * 10000 + 2
+                _fac_row = await db.fetch_one(
+                    "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                    (_fac_key_x, _fac_key_y),
                 )
-                import datetime as _dt_anc
-                if _chop_cd:
-                    _last_chop = _dt_anc.datetime.fromisoformat(_chop_cd["last_watered"])
-                    if (_dt_anc.datetime.utcnow() - _last_chop).total_seconds() < 3600:
-                        content = render_grid(grid, player,
-                            "🪵 The ancient tree is still recovering. Come back in an hour.")
-                        await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                                view=_game_view(guild_id, user_id, player, grid=grid))
-                        return
-                _log_qty = _random.randint(1, 2)
-                await add_to_inventory(db, user_id, "ancient_log", _log_qty)
-                await db.execute(
-                    "INSERT OR REPLACE INTO farm_watered_at(world_x, world_y, last_watered) "
-                    "VALUES(?,?,datetime('now'))",
-                    (_chop_key_x, _chop_key_y),
-                )
-                content = render_grid(grid, player,
-                    f"🪓 You chip away at the **Ancient Tree's** dense bark.\n"
-                    f"The wood splinters free — you gather **{_log_qty} Ancient Log{'s' if _log_qty > 1 else ''}** 🪵!")
+                _fac_chops = (_fac_row["chops"] if _fac_row else 0) + 1
+                if _fac_chops >= 10:
+                    # Tree felled — replace tile, award loot
+                    await db.execute(
+                        "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                        (_fac_key_x, _fac_key_y),
+                    )
+                    await db.execute(
+                        "UPDATE forest_tiles SET tile_type='fst_floor' "
+                        "WHERE forest_id=? AND local_x=? AND local_y=?",
+                        (player.forest_id, player.forest_x, player.forest_y),
+                    )
+                    _invalidate_vp(user_id)
+                    await add_to_inventory(db, user_id, "ancient_log",  3)
+                    await add_to_inventory(db, user_id, "ancient_seed", 1)
+                    from dwarf_explorer.world.forest import load_forest_viewport as _lfv_anc
+                    grid = await _lfv_anc(player.forest_id, player.forest_x, player.forest_y, db)
+                    content = render_grid(grid, player,
+                        "🪓 The **Ancient Tree** crashes down! You gather **3 Ancient Logs** 🪵 "
+                        "and recover **1 Ancient Seed** 🌱.")
+                else:
+                    # Still chopping — update progress
+                    if _fac_row:
+                        await db.execute(
+                            "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
+                            (_fac_chops, _fac_key_x, _fac_key_y),
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
+                            (_fac_key_x, _fac_key_y, _fac_chops),
+                        )
+                    _fac_left = 10 - _fac_chops
+                    content = render_grid(grid, player,
+                        f"🪓 You swing at the **Ancient Tree** ({_fac_chops}/10). "
+                        f"{_fac_left} more blow{'s' if _fac_left != 1 else ''} to fell it.")
                 await interaction.response.edit_message(embed=_embed(content), content=None,
                                                         view=_game_view(guild_id, user_id, player, grid=grid))
                 return
