@@ -4687,18 +4687,6 @@ async def _move_steps(
                     "Etched at its base: *'Water me, and I shall give you what the forest guards.'*"), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
-            # Hermit hut — stand on tile, prompt to enter
-            if target.terrain == "fst_hermit_house":
-                player.forest_x, player.forest_y = nx, ny
-                await db.execute(
-                    "UPDATE players SET forest_x=?, forest_y=? WHERE user_id=?",
-                    (nx, ny, user_id),
-                )
-                grid = await load_forest_viewport(player.forest_id, nx, ny, db)
-                return render_grid(grid, player,
-                    "🛖 The hermit's hut looms before you. Press ⚙️ to enter."), \
-                       _game_view(guild_id, user_id, player, grid=grid)
-
             # Tree city — stand on tile, prompt to enter
             if target.terrain == "fst_tree_city":
                 player.forest_x, player.forest_y = nx, ny
