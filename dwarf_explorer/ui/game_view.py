@@ -3990,9 +3990,7 @@ async def _move_steps(
             _bc_full_grid = _bcgrid_mv(_bc_wx, _bc_wy)
             _bc_tile_type = _bc_full_grid[ny_bc][nx_bc]
             from dwarf_explorer.world.generator import TileData as _TileData
-            _bc_td = _TileData(terrain=_bc_tile_type, emoji="", walkable=_bc_tile_type in __import__(
-                "dwarf_explorer.config", fromlist=["BANDIT_CAMP_WALKABLE"]
-            ).BANDIT_CAMP_WALKABLE, world_x=nx_bc, world_y=ny_bc)
+            _bc_td = _TileData(terrain=_bc_tile_type, world_x=nx_bc, world_y=ny_bc)
             ok_bc, reason_bc = _cmbc(_bc_td)
         else:
             ok_bc, reason_bc = False, "You can't go that way."
