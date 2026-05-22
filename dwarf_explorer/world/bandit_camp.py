@@ -108,16 +108,11 @@ def generate_camp_grid(camp_wx: int, camp_wy: int) -> list[list[str]]:
 
 def _tile(tile_type: str, lx: int, ly: int, camp_wx: int, camp_wy: int) -> TileData:
     """Build a TileData for a bandit camp interior cell."""
-    emoji = BANDIT_CAMP_EMOJI.get(tile_type, "⬛")
-    walkable = tile_type in BANDIT_CAMP_WALKABLE
-    td = TileData(
+    return TileData(
         terrain=tile_type,
-        emoji=emoji,
-        walkable=walkable,
         world_x=lx,
         world_y=ly,
     )
-    return td
 
 
 def load_camp_viewport(

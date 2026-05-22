@@ -2804,9 +2804,16 @@ def _compute_context_labels(
             elif t == "fst_nut_tree":
                 center_label, center_enabled = "🌰 Gather", True
             elif t == "fst_ancient_tree":
-                center_label, center_enabled = "🌲 Inspect", True
+                if "axe" in hand_items:
+                    center_label, center_enabled = "🪓 Chop", True
+                elif "watering_can" in hand_items:
+                    center_label, center_enabled = "🪣 Water", True
+                else:
+                    center_label, center_enabled = "🌲 Inspect", True
             elif t == "fst_tree_city":
-                center_label, center_enabled = "🌲 Enter", True
+                from dwarf_explorer.config import FOREST_EMOJI as _FE_tc
+                _tc_e = _FE_tc.get("fst_tree_city", "🏡")
+                center_label, center_enabled = f"{_tc_e} Enter", True
             elif t == "fst_maze_door":
                 center_label, center_enabled = "🌀 Enter", True
             elif t == "fst_hermit_house":
@@ -9157,6 +9164,38 @@ async def handle_interact(
             return
 
         elif ftile.terrain == "fst_ancient_tree":
+            has_axe = player.hand_1 == "axe" or player.hand_2 == "axe"
+            if has_axe:
+                # Chop the ancient tree for ancient logs (hourly cooldown per tree)
+                _chop_key_x = player.forest_x + player.forest_id * 10000 + 2
+                _chop_key_y = player.forest_y + player.forest_id * 10000 + 2
+                _chop_cd = await db.fetch_one(
+                    "SELECT last_watered FROM farm_watered_at WHERE world_x=? AND world_y=?",
+                    (_chop_key_x, _chop_key_y),
+                )
+                import datetime as _dt_anc
+                if _chop_cd:
+                    _last_chop = _dt_anc.datetime.fromisoformat(_chop_cd["last_watered"])
+                    if (_dt_anc.datetime.utcnow() - _last_chop).total_seconds() < 3600:
+                        content = render_grid(grid, player,
+                            "🪵 The ancient tree is still recovering. Come back in an hour.")
+                        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                                view=_game_view(guild_id, user_id, player, grid=grid))
+                        return
+                _log_qty = _random.randint(1, 2)
+                await add_to_inventory(db, user_id, "ancient_log", _log_qty)
+                await db.execute(
+                    "INSERT OR REPLACE INTO farm_watered_at(world_x, world_y, last_watered) "
+                    "VALUES(?,?,datetime('now'))",
+                    (_chop_key_x, _chop_key_y),
+                )
+                content = render_grid(grid, player,
+                    f"🪓 You chip away at the **Ancient Tree's** dense bark.\n"
+                    f"The wood splinters free — you gather **{_log_qty} Ancient Log{'s' if _log_qty > 1 else ''}** 🪵!")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+
             has_can = player.hand_1 == "watering_can" or player.hand_2 == "watering_can"
             if not has_can:
                 content = render_grid(grid, player,
@@ -10363,6 +10402,11 @@ _BOMB_BLAST_OVERWORLD_DESTROYS = {
     "forest", "plains", "grass", "sapling", "short_grass", "seedling",
     "ancient_planted", "ancient_sapling",
 }
+_BOMB_BLAST_FOREST_DESTROYS = {
+    "fst_tree", "fst_log", "fst_bramble",
+    "fst_secret_wall",   # secret wall → chamber floor (reveals chamber!)
+    "bomb_lit",
+}
 _BOMB_BLAST_OVERWORLD_EXCLUDES = {
     "mountain", "hills", "snow", "deep_water", "shallow_water", "river",
     "village", "ruins", "player_house", "harbor",
@@ -10428,6 +10472,85 @@ async def _bomb_blast_overworld(
     except Exception as _blast_err2:
         _bbo_log.exception("bomb blast overworld error (guild=%s user=%s): %s",
                            guild_id, user_id, _blast_err2)
+
+
+async def _bomb_blast_forest(
+    client, message_id: int | None, channel_id: int | None,
+    guild_id: int, user_id: int,
+    forest_id: int, bx: int, by: int, db,
+) -> None:
+    """Fires 4 seconds after a bomb is placed in a forest interior."""
+    import logging as _bbf
+    _bbf_log = _bbf.getLogger(__name__)
+    await asyncio.sleep(4)
+    db = await get_database(guild_id)
+    try:
+        blast_msg_parts: list[str] = ["💥 **BOOM!** The bomb explodes!"]
+        player = await get_or_create_player(db, user_id, "?")
+        # Damage player if still within blast range (check forest coords)
+        if getattr(player, "in_forest", False) and player.forest_id == forest_id:
+            player_in_blast = any(
+                player.forest_x == bx + dx and player.forest_y == by + dy
+                for dx, dy in _BOMB_CROSS_OFFSETS
+            )
+            if player_in_blast:
+                dmg = max(1, 15 - player.defense)
+                player.hp = max(0, player.hp - dmg)
+                await update_player_stats(db, user_id, hp=player.hp)
+                blast_msg_parts.append(f"You were caught in the blast! **−{dmg} HP** ({player.hp}/{player.max_hp})")
+        # Blast forest tiles in cross pattern
+        for dx, dy in _BOMB_CROSS_OFFSETS:
+            tx, ty = bx + dx, by + dy
+            tile_row = await db.fetch_one(
+                "SELECT tile_type FROM forest_tiles WHERE forest_id=? AND local_x=? AND local_y=?",
+                (forest_id, tx, ty),
+            )
+            if not tile_row:
+                continue
+            t = tile_row["tile_type"]
+            if t == "fst_secret_wall":
+                # Bomb reveals the hidden chamber by converting wall → chamber floor
+                await db.execute(
+                    "UPDATE forest_tiles SET tile_type='fst_chamber_floor' "
+                    "WHERE forest_id=? AND local_x=? AND local_y=?",
+                    (forest_id, tx, ty),
+                )
+                blast_msg_parts.append("✨ A hidden passage is revealed!")
+            elif t in _BOMB_BLAST_FOREST_DESTROYS:
+                # Restore the original tile under bomb_lit, clear trees/logs
+                if t == "bomb_lit":
+                    orig_t = _bomb_original_tiles.pop(("forest", forest_id, tx, ty), "fst_floor")
+                    await db.execute(
+                        "UPDATE forest_tiles SET tile_type=? WHERE forest_id=? AND local_x=? AND local_y=?",
+                        (orig_t, forest_id, tx, ty),
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE forest_tiles SET tile_type='fst_floor' "
+                        "WHERE forest_id=? AND local_x=? AND local_y=?",
+                        (forest_id, tx, ty),
+                    )
+        # Refresh player's view and edit message
+        _invalidate_vp(user_id)
+        if message_id and channel_id:
+            ch = client.get_channel(channel_id)
+            if ch:
+                try:
+                    msg = await ch.fetch_message(message_id)
+                    if getattr(player, "in_forest", False) and player.forest_id == forest_id:
+                        from dwarf_explorer.world.forest import load_forest_viewport as _lfv_bomb
+                        grid = await _lfv_bomb(forest_id, player.forest_x, player.forest_y, db)
+                    else:
+                        seed = await get_or_create_world(db, guild_id)
+                        grid = await load_viewport(player.world_x, player.world_y, seed, db)
+                    view = _game_view(guild_id, user_id, player, grid=grid)
+                    content = render_grid(grid, player, " ".join(blast_msg_parts))
+                    await msg.edit(embed=_embed(content), content=None, view=view)
+                except Exception as _msg_err3:
+                    _bbf_log.warning("bomb blast forest: message edit failed: %s", _msg_err3)
+    except Exception as _blast_err3:
+        _bbf_log.exception("bomb blast forest error (guild=%s user=%s): %s",
+                           guild_id, user_id, _blast_err3)
 
 
 async def _bomb_blast_cave(
@@ -10902,8 +11025,34 @@ async def _execute_tool_action(
                     interaction.client, player.message_id, player.channel_id,
                     guild_id, user_id, player.cave_id, cx, cy, db
                 ))
+            elif getattr(player, "in_forest", False) and not getattr(player, "in_grove", False) and not getattr(player, "in_hermit_hut", False):
+                # Place bomb in forest tiles
+                from dwarf_explorer.world.forest import load_forest_viewport as _lfv_bomb_place
+                fx, fy = player.forest_x, player.forest_y
+                _orig_f = await db.fetch_one(
+                    "SELECT tile_type FROM forest_tiles WHERE forest_id=? AND local_x=? AND local_y=?",
+                    (player.forest_id, fx, fy),
+                )
+                _bomb_original_tiles[("forest", player.forest_id, fx, fy)] = (
+                    _orig_f["tile_type"] if _orig_f else "fst_floor"
+                )
+                await db.execute(
+                    "UPDATE forest_tiles SET tile_type='bomb_lit' WHERE forest_id=? AND local_x=? AND local_y=?",
+                    (player.forest_id, fx, fy),
+                )
+                await db.execute(
+                    "INSERT OR IGNORE INTO forest_tiles(forest_id, local_x, local_y, tile_type) VALUES(?,?,?,'bomb_lit')",
+                    (player.forest_id, fx, fy),
+                )
+                _invalidate_vp(user_id)
+                grid = await _lfv_bomb_place(player.forest_id, fx, fy, db)
+                content = render_grid(grid, player, "💣 You light the fuse! **Get clear!** (4 seconds...)")
+                asyncio.create_task(_bomb_blast_forest(
+                    interaction.client, player.message_id, player.channel_id,
+                    guild_id, user_id, player.forest_id, fx, fy, db
+                ))
             else:
-                # Place bomb_lit tile override on player's position
+                # Place bomb_lit tile override on player's position (overworld)
                 await set_tile_override(db, wx, wy, "bomb_lit")
                 _invalidate_vp(user_id)
                 grid = await _cached_grid(user_id, player, seed, db)
@@ -14561,17 +14710,13 @@ async def _open_tree_city_elder(
 
         # Hermit has been met — craft the Wayerwood
         if _stage == "hermit_met":
-            stick_rows = await db.fetch_all(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,))
-            root_rows = await db.fetch_all(
-                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='living_root'", (user_id,))
-            stick_count = sum(r["quantity"] for r in stick_rows)
-            root_count  = sum(r["quantity"] for r in root_rows)
+            alog_rows = await db.fetch_all(
+                "SELECT quantity FROM inventory WHERE user_id=? AND item_id='ancient_log'", (user_id,))
+            alog_count = sum(r["quantity"] for r in alog_rows)
 
-            if stick_count >= 1 and root_count >= 5:
+            if alog_count >= 3:
                 # Forge the Wayerwood and advance the quest stage
-                await remove_from_inventory(db, user_id, "stick",       1)
-                await remove_from_inventory(db, user_id, "living_root", 5)
+                await remove_from_inventory(db, user_id, "ancient_log", 3)
                 await add_to_inventory(db, user_id, "wayerwood", 1)
                 player.fq_quest_stage = "wayerwood_crafted"
                 await db.execute(
@@ -14580,9 +14725,10 @@ async def _open_tree_city_elder(
                 )
                 content = render_grid(
                     grid, player,
-                    "🪄 *\"The wood takes shape...\"*\n\n"
-                    "The hermit weaves living roots into the stick. A faint glow pulses through it.\n"
-                    "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n\n"
+                    "🪄 *\"The ancient wood yields its secret...\"*\n\n"
+                    "The hermit shapes the ancient logs into a slender rod. A faint glow pulses through it.\n"
+                    "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n"
+                    "Combine it with a **rock** to attune it for caves, or a **pinecone** for hidden chambers.\n\n"
                     "The hermit already marked the **Forest Depths entrance** on your tracker. "
                     "Head there when you are ready.",
                 )
@@ -14590,10 +14736,9 @@ async def _open_tree_city_elder(
                 content = render_grid(
                     grid, player,
                     f"🌿 *\"The hermit's recipe requires:\"*\n\n"
-                    f"{'✅' if stick_count >= 1 else '❌'} **1 Stick** ({stick_count}/1)\n"
-                    f"{'✅' if root_count >= 5 else '❌'} **5 Living Roots** ({root_count}/5) "
-                    f"— found by chopping logs in the forest\n\n"
-                    f"Gather the materials and return.",
+                    f"{'✅' if alog_count >= 3 else '❌'} **3 Ancient Logs** ({alog_count}/3)\n"
+                    f"— chop the **Ancient Tree** inside any forest with an 🪓 axe\n\n"
+                    f"Bring them and I shall craft you a Wayerwood.",
                 )
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
@@ -17055,14 +17200,12 @@ async def handle_npc_talk(
             elif _fq_stg in ("quest_complete", "rewarded"):
                 _mq_label = "✅ The Forest Depths: Complete"
             elif _fq_stg == "hermit_met":
-                _stick_n = sum(r["quantity"] for r in await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)))
-                _root_n  = sum(r["quantity"] for r in await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='living_root'", (user_id,)))
-                if _stick_n >= 1 and _root_n >= 5:
+                _alog_n = sum(r["quantity"] for r in await db.fetch_all(
+                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='ancient_log'", (user_id,)))
+                if _alog_n >= 3:
                     _mq_label = "🪄 Craft the Wayerwood (ready!)"
                 else:
-                    _mq_label = f"📋 Gather materials: {_stick_n}/1 stick, {_root_n}/5 living roots"
+                    _mq_label = f"📋 Gather materials: {_alog_n}/3 ancient logs (chop forest ancient tree)"
             elif _fq_stg == "seek_hermit":
                 _mq_label = "⚔️ Find the Hermit"
             elif _fq_stg == "wayerwood_crafted":

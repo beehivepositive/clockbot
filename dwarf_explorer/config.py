@@ -286,6 +286,7 @@ ITEM_EMOJI = {
     "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
     "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
     "ancient_sapling":"\U0001F331",           # 🌱 planted ancient sapling (same as sapling)
+    "ancient_log":    "\U0001FAB5",           # 🪵 dense timber from the forest ancient tree
     # Forest Quest boss drops
     "ent_core":              "\U0001F7E2",    # 🟢 compressed life-orb from a slain ent
     "forest_heart_amulet":   "\U0001F49A",    # 💚 amulet crafted from ent cores (+15 max HP)
@@ -760,8 +761,11 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     # Sky temple gears
     frozenset({("iron_ingot", 2)}):                              {"result": "small_gear",        "qty": 1, "label": "⚙️ Forge Small Gear"},
     frozenset({("iron_ingot", 3)}):                              {"result": "large_gear",         "qty": 1, "label": "🔩 Forge Large Gear"},
-    # Wayerwood attunement — press a stone into the rod to awaken it
-    frozenset({("wayerwood", 1), ("rock", 1)}):                  {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Attune"},
+    # Wayerwood attunement — press a stone into the rod (cave chambers)
+    frozenset({("wayerwood", 1), ("rock", 1)}):                  {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Attune (Cave)"},
+    # Wayerwood forest attunement — bind a pinecone to the rod (forest chambers)
+    frozenset({("wayerwood", 1), ("pinecone", 1)}):              {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Attune (Forest)"},
+    frozenset({("attuned_wayerwood", 1), ("pinecone", 1)}):      {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Re-attune (Forest)"},
     # Forest Heart Amulet — compressed ent life-force woven into a charm
     frozenset({("ent_core", 4), ("living_root", 2)}):            {"result": "forest_heart_amulet", "qty": 1, "label": "💚 Forest Heart Amulet"},
 }
@@ -919,6 +923,8 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
     "fst_map_chest":    "\U0001F4E6",   # 📦 map chest — looks like a regular chest
     "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
+    # Bomb (shared with cave / overworld)
+    "bomb_lit":          "\U0001F4A3",  # 💣 lit bomb placed on the forest floor
     # Hidden chamber tiles
     "fst_secret_wall":   "\U0001F333",  # 🌳 looks identical to fst_tree (hidden passage)
     "fst_chamber_floor": "\U0001F7E9",  # 🟩 chamber interior floor
@@ -942,6 +948,7 @@ FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
     "fst_hermit_house",
     "fst_secret_wall", "fst_chamber_floor", "fst_chamber_chest",
+    "bomb_lit",         # placed lit bomb — walkable (blast imminent)
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({
@@ -1716,6 +1723,7 @@ ITEM_SELL_PRICES = {
     "living_root":            10,
     "bark_shield":            48,
     "ancient_seed":           25,
+    "ancient_log":            30,
     "ent_core":               28,
     "forest_heart_amulet":    380,
 }
