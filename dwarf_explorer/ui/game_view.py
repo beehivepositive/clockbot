@@ -14394,6 +14394,16 @@ async def _open_tree_city_elder(
 
     grid = await _ltcv_eld(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
 
+    # Always resolve the hermit forest entrance and keep quests.location_x/y correct.
+    # This repairs broken/missing coordinates for players who accepted before it was stored.
+    _hf_info_early = await get_hermit_forest_info(db)
+    if _hf_info_early is not None:
+        _early_quest_id = await create_forest_depths_quest(db)
+        await db.execute(
+            "UPDATE quests SET location_x=?, location_y=? WHERE id=?",
+            (_hf_info_early["world_x"], _hf_info_early["world_y"], _early_quest_id),
+        )
+
     # ── Player has the quest ──────────────────────────────────────────────────
     if already_has:
 

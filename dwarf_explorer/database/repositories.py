@@ -1600,9 +1600,12 @@ async def get_player_quest_markers(db: Database, user_id: int) -> list[tuple[int
             if r["location_x"] is not None and r["location_y"] is not None:
                 markers.append((r["location_x"], r["location_y"], r["quest_subtype"]))
         elif r["quest_subtype"] == "exploration":
-            # Main exploration quests use bounty_wx/wy as a waypoint tracker
-            if r["bounty_wx"] is not None and r["bounty_wy"] is not None:
-                markers.append((r["bounty_wx"], r["bounty_wy"], "exploration"))
+            # Exploration quests use quests.location_x/y (same as investigation).
+            # bounty_wx/wy is only used as a fallback if location_x/y isn't set yet.
+            wx = r["location_x"] if r["location_x"] is not None else r["bounty_wx"]
+            wy = r["location_y"] if r["location_y"] is not None else r["bounty_wy"]
+            if wx is not None and wy is not None:
+                markers.append((wx, wy, "exploration"))
     return markers
 
 
