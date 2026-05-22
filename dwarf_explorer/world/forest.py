@@ -763,13 +763,20 @@ async def get_hermit_forest_info(db) -> dict | None:
     fq_entrance_ty, world_x, world_y (overworld entrance tile).
     Returns None if not yet generated.
     """
+    # Only return a forest whose entrance tile_override actually exists on the overworld.
+    # This guards against ghost forests that have has_hermit=1 but whose entrance tile
+    # was never written to tile_overrides (e.g. due to INSERT OR IGNORE collision).
     row = await db.fetch_one(
         "SELECT fa.forest_id, fa.hermit_tx, fa.hermit_ty, "
         "fa.fq_entrance_tx, fa.fq_entrance_ty, "
         "fe.world_x, fe.world_y "
         "FROM forest_areas fa "
         "JOIN forest_entrances fe ON fe.forest_id = fa.forest_id "
+        "JOIN tile_overrides tov "
+        "  ON tov.world_x = fe.world_x AND tov.world_y = fe.world_y "
+        "  AND tov.tile_type = 'forest_entrance' "
         "WHERE fa.has_hermit = 1 "
+        "ORDER BY fa.forest_id "
         "LIMIT 1"
     )
     return dict(row) if row else None
