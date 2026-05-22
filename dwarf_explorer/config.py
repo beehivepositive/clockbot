@@ -920,6 +920,10 @@ FOREST_EMOJI: dict[str, str] = {
     "fst_chest":        "\U0001F4E6",   # 📦 chest (overridable with :chest:)
     "fst_map_chest":    "\U0001F4E6",   # 📦 map chest — looks like a regular chest
     "fst_mimic":        "\U0001F4E6",   # 📦 mimic — identical look to fst_chest, by design
+    # Hidden chamber tiles
+    "fst_secret_wall":   "\U0001F333",  # 🌳 looks identical to fst_tree (hidden passage)
+    "fst_chamber_floor": "\U0001F7E9",  # 🟩 chamber interior floor
+    "fst_chamber_chest": "\U0001F48E",  # 💎 hidden chamber treasure chest
     # Maze tiles
     "maze_wall":        "\U0001F333",   # 🌳 dense forest wall (impassable)
     "maze_floor":       "\U0001F7E9",   # 🟩 maze passage
@@ -938,6 +942,7 @@ FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
     "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
     "fst_hermit_house",
+    "fst_secret_wall", "fst_chamber_floor", "fst_chamber_chest",
 })
 
 MAZE_WALKABLE: frozenset[str] = frozenset({
@@ -1026,6 +1031,7 @@ FOREST_ENCOUNTER_MOBS = {
     "vine_creeper":    0.07,
     "corrupted_dryad": 0.05,
     "forest_troll":    0.03,
+    "ent":             0.02,
 }
 
 # Tree city merchant shop (unique items, gold prices)

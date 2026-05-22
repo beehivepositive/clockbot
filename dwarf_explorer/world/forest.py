@@ -444,6 +444,56 @@ def _generate_forest_interior(
                 break
         fq_entrance_pos = (_fqex, _fqey)
 
+    # ── 6.5 Hidden forest chambers ───────────────────────────────────────────────
+    # Pick up to 2 remaining dead-ends for hidden chambers.
+    # Each chamber: a fst_secret_wall entrance tile just outside the dead-end
+    # clearing, a short corridor of fst_chamber_floor, and a 3×3 fst_chamber_floor
+    # room with fst_chamber_chest at the centre.
+    _chamber_cands = [d for d in dead_ends if d not in specials]
+    rng.shuffle(_chamber_cands)
+    for (cdx, cdy) in _chamber_cands[:2]:
+        _dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        rng.shuffle(_dirs)
+        for _ddx, _ddy in _dirs:
+            # Secret wall at clearing edge (CLEARING_R + 1 tiles from dead-end centre)
+            swx = cdx + _ddx * (_CLEARING_R + 1)
+            swy = cdy + _ddy * (_CLEARING_R + 1)
+            # Chamber centre (CLEARING_R + 4 tiles from dead-end)
+            chx = cdx + _ddx * (_CLEARING_R + 4)
+            chy = cdy + _ddy * (_CLEARING_R + 4)
+            # Bounds checks — secret wall must be in-bounds, 3×3 room fits too
+            if not (1 <= swx < W - 1 and 1 <= swy < H - 1):
+                continue
+            if not (2 <= chx < W - 2 and 2 <= chy < H - 2):
+                continue
+            # Secret wall must currently be a tree tile and not reserved
+            if grid[swy][swx] != "fst_tree" or (swx, swy) in specials:
+                continue
+            # All 3×3 chamber tiles must currently be fst_tree
+            if not all(
+                grid[chy + _dy2][chx + _dx2] == "fst_tree"
+                for _dy2 in range(-1, 2)
+                for _dx2 in range(-1, 2)
+            ):
+                continue
+            # --- Place the chamber ---
+            grid[swy][swx] = "fst_secret_wall"
+            specials.add((swx, swy))
+            # Corridor tiles between secret wall and chamber
+            for _step in (2, 3):
+                _ctx = cdx + _ddx * (_CLEARING_R + _step)
+                _cty = cdy + _ddy * (_CLEARING_R + _step)
+                if 0 < _ctx < W - 1 and 0 < _cty < H - 1 and grid[_cty][_ctx] == "fst_tree":
+                    grid[_cty][_ctx] = "fst_chamber_floor"
+            # 3×3 chamber floor
+            for _dy2 in range(-1, 2):
+                for _dx2 in range(-1, 2):
+                    grid[chy + _dy2][chx + _dx2] = "fst_chamber_floor"
+            # Chest at centre
+            grid[chy][chx] = "fst_chamber_chest"
+            specials.add((chx, chy))
+            break  # placed — move to next candidate
+
     # Rebuild tile list including hermit/entrance modifications
     tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
 

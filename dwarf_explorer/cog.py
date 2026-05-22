@@ -85,6 +85,13 @@ async def _ensure_admin_resources(db, player_id: int) -> None:
     if not canoe_row or canoe_row["cnt"] == 0:
         from dwarf_explorer.ui.game_view import _add_canoe_to_inventory
         await _add_canoe_to_inventory(db, player_id)
+    # Give admin maps for all forests
+    forest_rows = await db.fetch_all("SELECT forest_id FROM forest_areas")
+    for _fr in forest_rows:
+        await db.execute(
+            "INSERT OR IGNORE INTO player_map_collection(user_id, map_type, ref_id) VALUES(?,?,?)",
+            (player_id, "forest", _fr["forest_id"]),
+        )
 
 
 class DwarfExplorer(commands.Cog):

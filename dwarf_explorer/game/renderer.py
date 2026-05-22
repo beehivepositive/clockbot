@@ -62,7 +62,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 other_players: list[tuple[int, int, str]] | None = None,
                 cursor_pos: tuple[int, int] | None = None,
                 quest_markers: list[tuple[int, int, str]] | None = None,
-                nav_target: tuple[int, int] | None = None) -> str:
+                nav_target: tuple[int, int] | None = None,
+                reveal_fst_chambers: bool = False) -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -174,6 +175,13 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                                 _lava_lit.add((_nx, _ny))
 
     _player_emoji = getattr(player, "avatar_emoji", None) or ENTITY_EMOJI["player"]
+
+    # Forest hidden-chamber reveal: check if player is standing on fst_chamber_floor
+    _player_on_chamber_floor = (
+        location == "forest"
+        and grid[vp_center][vp_center].terrain == "fst_chamber_floor"
+    )
+
     lines: list[str] = []
     for row_y in range(vp_size):
         row_emojis: list[str] = []
@@ -217,6 +225,17 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
+                elif (location == "forest"
+                      and grid[row_y][col_x].terrain == "fst_secret_wall"):
+                    # Hidden chamber entrance: reveal as ✨ with wayerwood+pinecone,
+                    # as chamber floor if player is inside a chamber, else as a normal tree.
+                    if reveal_fst_chambers:
+                        row_emojis.append("✨")  # ✨
+                    elif _player_on_chamber_floor:
+                        row_emojis.append(FOREST_EMOJI.get("fst_chamber_floor",
+                                                           FOREST_EMOJI["fst_floor"]))
+                    else:
+                        row_emojis.append(FOREST_EMOJI["fst_tree"])
                 else:
                     row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
 
@@ -972,6 +991,7 @@ def render_chest(
         "ph_chest_large":    (4, 9),
         "fst_chest":         (1, 5),
         "maze_chest":        (1, 5),
+        "fst_chamber_chest": (2, 5),
     }
     chest_labels = {
         "cave_chest":        "Small Chest",
@@ -982,19 +1002,29 @@ def render_chest(
         "ph_chest_large":    "Large Chest",
         "fst_chest":         "Forest Cache",
         "maze_chest":        "Maze Chest",
+        "fst_chamber_chest": "Hidden Chamber",
     }
     c_rows, c_cols = chest_sizes.get(chest_type, (2, 9))
     c_total = c_rows * c_cols
 
+    # Map chest type to its display emoji (use FOREST_EMOJI for forest/maze types)
+    _chest_icon_map: dict[str, str] = {
+        "fst_chest":         FOREST_EMOJI.get("fst_chest",         "\U0001F4E6"),
+        "fst_map_chest":     FOREST_EMOJI.get("fst_map_chest",     "\U0001F4E6"),
+        "fst_chamber_chest": FOREST_EMOJI.get("fst_chamber_chest", "\U0001F48E"),
+        "maze_chest":        FOREST_EMOJI.get("maze_chest",        "\U0001F4B0"),
+    }
+    chest_icon = _chest_icon_map.get(chest_type, "\U0001F4E6")
+
     if view == "chest":
-        title = f"\U0001F4E6 **{chest_labels.get(chest_type, 'Chest')}** ({c_rows}×{c_cols})"
+        title = f"{chest_icon} **{chest_labels.get(chest_type, 'Chest')}** ({c_rows}×{c_cols})"
         source = chest_items
         action_label = "📤 Take"
         total_disp = c_total
         disp_cols = c_cols
     else:
         p_total = player_inv_rows * player_inv_cols
-        title = f"\U0001F4E6 **Chest** — Your Inventory ({player_inv_rows}×{player_inv_cols})"
+        title = f"{chest_icon} **Chest** — Your Inventory ({player_inv_rows}×{player_inv_cols})"
         source = player_items
         action_label = "📥 Give"
         total_disp = p_total
@@ -1005,14 +1035,13 @@ def render_chest(
     for i in range(total_disp):
         if i < len(source):
             item = source[i]
-            emoji = _item_emoji(item["item_id"])
-            qty = f"×{item['quantity']}" if item["quantity"] > 1 else ""
-            cell = f"{emoji}{qty}"
+            slots.append(_fmt_slot(item["item_id"], item["quantity"],
+                                   cursor_on=(i == selected), is_selected=False))
         else:
-            cell = _EMPTY_SLOT
-        if i == selected:
-            cell = f"[{cell}]"
-        slots.append(cell)
+            if i == selected:
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_CUR}")
+            else:
+                slots.append(f"{_PAD}{_EMPTY_SLOT}{_PAD}{_PAD}")
 
     for row in range(total_disp // disp_cols):
         lines.append("  ".join(slots[row * disp_cols: row * disp_cols + disp_cols]))

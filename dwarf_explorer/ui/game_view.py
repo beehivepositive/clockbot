@@ -5610,7 +5610,48 @@ async def _finish_combat(
     view = await _build_player_view(guild_id, user_id, player, db, grid)
     qmarks = await get_player_quest_markers(db, user_id)
     nav = _ui_state.get(user_id, {}).get("nav_target")
-    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav), view
+    # Hidden chamber reveal: wayerwood equipped + pinecone in inventory
+    _reveal_chambers = False
+    if getattr(player, "in_forest", False):
+        _has_ww = (player.hand_1 == "wayerwood" or player.hand_2 == "wayerwood")
+        if _has_ww:
+            _pc_row = await db.fetch_one(
+                "SELECT 1 FROM inventory WHERE user_id=? AND item_id='pinecone' LIMIT 1",
+                (user_id,),
+            )
+            _reveal_chambers = bool(_pc_row)
+    return render_grid(grid, player, extra_msg, quest_markers=qmarks, nav_target=nav,
+                       reveal_fst_chambers=_reveal_chambers), view
+
+
+def _explode_bomb(arena: dict, player) -> list[str]:
+    """Fire bomb explosion in arena. Deletes bomb_fuse from arena, applies damage in-place."""
+    bx2, by2 = arena.get("bomb_x", 0), arena.get("bomb_y", 0)
+    del arena["bomb_fuse"]
+    enemy_in_blast = any(
+        player.combat_enemy_x == bx2 + dx and player.combat_enemy_y == by2 + dy
+        for dx, dy in _BOMB_CROSS_OFFSETS
+    )
+    player_in_blast = any(
+        player.combat_pos_x == bx2 + dx and player.combat_pos_y == by2 + dy
+        for dx, dy in _BOMB_CROSS_OFFSETS
+    )
+    blast_log = ["💥 **BOOM!** The bomb explodes!"]
+    if enemy_in_blast:
+        enemy_dmg = 25
+        player.combat_enemy_hp = max(0, player.combat_enemy_hp - enemy_dmg)
+        blast_log.append(f"Enemy takes **{enemy_dmg}** blast damage!")
+    if player_in_blast:
+        pdmg = max(1, 15 - player.defense)
+        player.hp = max(0, player.hp - pdmg)
+        blast_log.append(f"You were caught in the blast! **−{pdmg} HP**")
+    # Remove bomb tile from arena grid if placed
+    for dx2, dy2 in _BOMB_CROSS_OFFSETS:
+        tx2, ty2 = bx2 + dx2, by2 + dy2
+        if 0 <= ty2 < len(arena.get("grid", [])) and 0 <= tx2 < len(arena["grid"][ty2]):
+            if arena["grid"][ty2][tx2] == "bomb_lit":
+                arena["grid"][ty2][tx2] = arena.get("bomb_orig_tile", "grass")
+    return blast_log
 
 
 async def _after_player_action(
@@ -5636,6 +5677,25 @@ async def _after_player_action(
 
     def _is_dead() -> bool:
         return (player.ship_hp <= 0) if is_naval else (player.hp <= 0)
+
+    # ── Bomb fuse: tick for this player action ───────────────────────────────────
+    if "bomb_fuse" in arena:
+        arena["bomb_fuse"] -= 1
+        if arena["bomb_fuse"] <= 0:
+            blast_log = _explode_bomb(arena, player)
+            arena["combat_log"].extend(blast_log)
+            if player.combat_enemy_hp <= 0:
+                victory_msg = apply_victory(player)
+                arena["combat_log"].append(victory_msg)
+                content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                                     " ".join(arena["combat_log"][-5:]), won=True)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            if _is_dead():
+                content, view = await _finish_combat(db, guild_id, user_id, player, arena,
+                                                     " ".join(arena["combat_log"][-5:]))
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
 
     # Enemy dead?
     if player.combat_enemy_hp <= 0:
@@ -5675,38 +5735,12 @@ async def _after_player_action(
     enemy_msg = resolve_enemy_turn(arena, player, rng, naval=is_naval)
     arena["combat_log"].append(enemy_msg)
 
-    # ── Bomb fuse countdown ──────────────────────────────────────────────────
+    # ── Bomb fuse: tick for enemy turn ──────────────────────────────────────────
     if "bomb_fuse" in arena:
         arena["bomb_fuse"] -= 1
         if arena["bomb_fuse"] <= 0:
-            # BOOM — 5-tile cross blast in arena
-            del arena["bomb_fuse"]
-            bx2, by2 = arena.get("bomb_x", 0), arena.get("bomb_y", 0)
-            enemy_in_blast = any(
-                player.combat_enemy_x == bx2 + dx and player.combat_enemy_y == by2 + dy
-                for dx, dy in _BOMB_CROSS_OFFSETS
-            )
-            player_in_blast = any(
-                player.combat_pos_x == bx2 + dx and player.combat_pos_y == by2 + dy
-                for dx, dy in _BOMB_CROSS_OFFSETS
-            )
-            blast_log = ["💥 **BOOM!** The bomb explodes!"]
-            if enemy_in_blast:
-                enemy_dmg = 25
-                player.combat_enemy_hp = max(0, player.combat_enemy_hp - enemy_dmg)
-                blast_log.append(f"Enemy takes **{enemy_dmg}** blast damage!")
-            if player_in_blast:
-                pdmg = max(1, 15 - player.defense)
-                player.hp = max(0, player.hp - pdmg)
-                blast_log.append(f"You were caught in the blast! **−{pdmg} HP**")
+            blast_log = _explode_bomb(arena, player)
             arena["combat_log"].extend(blast_log)
-            # Remove bomb tile from arena grid if placed
-            for dx2, dy2 in _BOMB_CROSS_OFFSETS:
-                tx2, ty2 = bx2 + dx2, by2 + dy2
-                if 0 <= ty2 < len(arena.get("grid", [])) and 0 <= tx2 < len(arena["grid"][ty2]):
-                    if arena["grid"][ty2][tx2] == "bomb_lit":
-                        arena["grid"][ty2][tx2] = arena.get("bomb_orig_tile", "grass")
-            # Check deaths from blast
             if player.combat_enemy_hp <= 0:
                 victory_msg = apply_victory(player)
                 arena["combat_log"].append(victory_msg)
@@ -5714,7 +5748,7 @@ async def _after_player_action(
                                                      " ".join(arena["combat_log"][-5:]), won=True)
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
-            if player.hp <= 0:
+            if _is_dead():
                 content, view = await _finish_combat(db, guild_id, user_id, player, arena,
                                                      " ".join(arena["combat_log"][-5:]))
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
@@ -6133,7 +6167,7 @@ async def handle_combat_bomb(
     # Use a move
     player.combat_moves_left = max(0, player.combat_moves_left - 1)
     await _after_player_action(interaction, db, guild_id, user_id, player, arena,
-                               "💣 You place the bomb and light the fuse! (**5 turns**)")
+                               "💣 You place the bomb and light the fuse! (**5 moves**)")
 
 
 # ── Mine adjacent rock ────────────────────────────────────────────────────────
@@ -9291,6 +9325,63 @@ async def handle_interact(
             content = _rc_fst(items, [], 0, "chest", "fst_chest")
             if _map_bonus_msg:
                 content = _map_bonus_msg.lstrip("\n") + "\n\n" + content
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=FstChestView(guild_id, user_id))
+            return
+
+        elif ftile.terrain == "fst_chamber_chest":
+            # Hidden chamber chest — better loot, no mimic, daily reset
+            import datetime as _dt_ch
+            _ch_today_ord = _dt_ch.date.today().toordinal()
+            fx_ch, fy_ch = player.forest_x, player.forest_y
+            _ch_already = await db.fetch_one(
+                "SELECT 1 FROM player_forest_chest_loots "
+                "WHERE user_id=? AND forest_id=? AND local_x=? AND local_y=? AND loot_day=?",
+                (user_id, player.forest_id, fx_ch, fy_ch, _ch_today_ord),
+            )
+            # Re-open existing partially-looted chamber chest from state if available
+            _ch_existing = _ui_state.get(user_id, {})
+            if (_ch_already and _ch_existing.get("type") == "fst_chest"
+                    and _ch_existing.get("chest_type") == "fst_chamber_chest"
+                    and _ch_existing.get("forest_id") == player.forest_id
+                    and _ch_existing.get("fx") == fx_ch and _ch_existing.get("fy") == fy_ch
+                    and _ch_existing.get("loot_day") == _ch_today_ord):
+                _ch_items = _ch_existing.get("items", [])
+                from dwarf_explorer.game.renderer import render_chest as _rc_ch
+                content = _rc_ch(_ch_items, [], _ch_existing.get("selected", 0),
+                                 "chest", "fst_chamber_chest")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=FstChestView(guild_id, user_id))
+                return
+            if _ch_already:
+                content = render_grid(grid, player, "💎 The chamber chest is empty — resets at midnight.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+            # Roll chamber loot (better than regular forest chests)
+            _ch_loot_rng = _random.Random(hash((player.forest_id, fx_ch, fy_ch, _ch_today_ord, "chamber")))
+            _ch_gold = _ch_loot_rng.randint(60, 150)
+            _ch_pool = ["xyphem", "living_root", "ancient_seed", "bark_shield", "iron_ingot",
+                        "forest_nut", "cave_crystal", "deep_ore"]
+            _ch_item = _ch_loot_rng.choice(_ch_pool)
+            _ch_qty = _ch_loot_rng.randint(1, 3) if _ch_item in ("forest_nut", "living_root", "cave_crystal") else 1
+            await db.execute(
+                "INSERT OR IGNORE INTO player_forest_chest_loots"
+                "(user_id, forest_id, local_x, local_y, loot_day) VALUES(?,?,?,?,?)",
+                (user_id, player.forest_id, fx_ch, fy_ch, _ch_today_ord),
+            )
+            _ch_items = [
+                {"item_id": "gold_coin", "quantity": _ch_gold},
+                {"item_id": _ch_item, "quantity": _ch_qty},
+            ]
+            _ui_state[user_id] = {
+                "type": "fst_chest", "chest_type": "fst_chamber_chest",
+                "items": _ch_items, "selected": 0,
+                "fx": fx_ch, "fy": fy_ch, "forest_id": player.forest_id,
+                "loot_day": _ch_today_ord,
+            }
+            from dwarf_explorer.game.renderer import render_chest as _rc_ch2
+            content = _rc_ch2(_ch_items, [], 0, "chest", "fst_chamber_chest")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=FstChestView(guild_id, user_id))
             return
@@ -16141,8 +16232,9 @@ async def _fst_chest_render(guild_id: int, user_id: int) -> tuple[str, discord.u
     state = _ui_state.get(user_id, {})
     items = state.get("items", [])
     selected = state.get("selected", 0)
+    chest_type = state.get("chest_type", "fst_chest")
     from dwarf_explorer.game.renderer import render_chest as _rc_fst2
-    content = _rc_fst2(items, [], selected, "chest", "fst_chest")
+    content = _rc_fst2(items, [], selected, "chest", chest_type)
     return content, FstChestView(guild_id, user_id)
 
 
