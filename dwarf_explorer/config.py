@@ -457,7 +457,8 @@ FQ_CORRIDOR_Y0 = 0
 FQ_CORRIDOR_Y1 = 15   # corridor ends at y=15; chamber begins at y=16
 
 FQ_CHAMBER_Y0  = 16
-FQ_STREAM_Y    = 30   # impassable stream row
+FQ_STREAM_Y    = 29   # near (shallow) stream row — log pushed here becomes a ford
+FQ_STREAM_Y2   = 30   # far (deep) stream row — log slides here to complete bridge
 
 FQ_PUZZLE_X0   = 5    # sunken Sokoban area x = 5..15 (11 wide)
 FQ_PUZZLE_X1   = 15
@@ -566,20 +567,29 @@ FQ_FINAL_EXIT_Y         = 177
 FQ_FINAL_Y1             = 180
 
 # Puzzle log starting positions (zone-absolute coords)
-FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 2)   # zone (6, 20)
-FQ_LOG_B_START = (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 2)   # zone (14, 20)
+FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0)        # zone (6, 18)
+FQ_LOG_B_START = (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0)        # zone (14, 18)
 
-# Target positions where logs must rest to bridge the stream (zone-absolute)
-FQ_TARGET_A = (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y1)           # zone (9, 28)
-FQ_TARGET_B = (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y1)           # zone (10, 28)
+# Logs are pushed directly into the stream — no orange target tiles in new design.
+# Bridge requires one log in FQ_STREAM_Y (near) and one in FQ_STREAM_Y2 (far).
 
-# Immovable obstacles inside the puzzle (zone-absolute coords)
+# Immovable obstacles inside the puzzle — 12-obstacle layout (zone-absolute coords)
 FQ_PUZZLE_OBSTACLES = frozenset({
-    (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 4),   # (9,  22)
-    (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 4),   # (11, 22)
-    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 6),   # (7,  24)
-    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 6),   # (13, 24)
-    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 7),   # (10, 25)
+    # Upper gate — block direct center approach
+    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 2),   # (10, 20) center top blocker
+    # Upper funnel — force logs off the straight vertical
+    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 3),   # (8,  21)
+    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 3),   # (12, 21)
+    # Mid section — side walls + center pinch
+    (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 5),   # (6,  23)
+    (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 5),   # (14, 23)
+    (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 5),   # (9,  23)
+    (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 5),   # (11, 23)
+    # Lower section — narrow the approach
+    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 7),   # (7,  25)
+    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 7),   # (13, 25)
+    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 7),   # (10, 25) center lower blocker
+    # Near bottom — final routing obstacles
     (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 9),   # (8,  27)
     (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 9),   # (12, 27)
 })

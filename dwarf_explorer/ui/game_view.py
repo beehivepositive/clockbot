@@ -4253,7 +4253,78 @@ async def _move_steps(
             beyond = await _lfqst(fq_id, beyond_x, beyond_y, db)
             _sokoban_valid = ("fq_puzzle_floor", "fq_log_target")
             _canal_valid   = ("fq_canal_floor",  "fq_canal_target")
-            if beyond.terrain in _sokoban_valid + _canal_valid:
+
+            # ── Stream push: log pushed directly into the near stream row ────
+            if beyond.terrain == "fq_stream":
+                await _mfql(db, fq_id, nx_fq, ny_fq, beyond_x, beyond_y)
+                # Create a ford at the log's landing tile
+                await db.execute(
+                    "UPDATE forest_quest_tiles SET tile_type='fq_stream_ford' "
+                    "WHERE fq_id=? AND local_x=? AND local_y=?",
+                    (fq_id, beyond_x, beyond_y),
+                )
+                player.fq_x, player.fq_y = nx_fq, ny_fq
+                await db.execute(
+                    "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                    (nx_fq, ny_fq, user_id),
+                )
+                solved = await _cfqp(db, fq_id)
+                fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                if solved:
+                    if getattr(player, "fq_quest_stage", "none") in ("map_marked", "none"):
+                        player.fq_quest_stage = "puzzle_solved"
+                        await db.execute(
+                            "UPDATE players SET fq_quest_stage='puzzle_solved' WHERE user_id=?",
+                            (user_id,),
+                        )
+                    content = render_grid(fq_grid_push, player,
+                        "🌊 *The second log crashes into the stream and locks against the first — "
+                        "a bridge of wood spans the water. The way south is open!*")
+                else:
+                    content = render_grid(fq_grid_push, player,
+                        "🪵 *The log splashes into the stream and holds firm — a stepping stone!*")
+                return content, _game_view(guild_id, user_id, player, grid=fq_grid_push)
+
+            # ── Slide mechanic: log pushed onto ford slides to far stream row ─
+            elif beyond.terrain == "fq_stream_ford":
+                slide_x, slide_y = beyond_x + dx, beyond_y + dy
+                slide_tile = await _lfqst(fq_id, slide_x, slide_y, db)
+                if slide_tile.terrain == "fq_stream":
+                    await _mfql(db, fq_id, nx_fq, ny_fq, slide_x, slide_y)
+                    # Create a ford at the far stream row
+                    await db.execute(
+                        "UPDATE forest_quest_tiles SET tile_type='fq_stream_ford' "
+                        "WHERE fq_id=? AND local_x=? AND local_y=?",
+                        (fq_id, slide_x, slide_y),
+                    )
+                    player.fq_x, player.fq_y = nx_fq, ny_fq
+                    await db.execute(
+                        "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                        (nx_fq, ny_fq, user_id),
+                    )
+                    solved = await _cfqp(db, fq_id)
+                    fq_grid_push = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                    if solved:
+                        if getattr(player, "fq_quest_stage", "none") in ("map_marked", "none"):
+                            player.fq_quest_stage = "puzzle_solved"
+                            await db.execute(
+                                "UPDATE players SET fq_quest_stage='puzzle_solved' WHERE user_id=?",
+                                (user_id,),
+                            )
+                        content = render_grid(fq_grid_push, player,
+                            "🌊 *The second log crashes into the stream and locks against the first — "
+                            "a bridge of wood spans the water. The way south is open!*")
+                    else:
+                        content = render_grid(fq_grid_push, player,
+                            "🪵 *The log vaults over the stepping stone and splashes into the deep channel!*")
+                    return content, _game_view(guild_id, user_id, player, grid=fq_grid_push)
+                else:
+                    fq_grid_nb = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                    return render_grid(fq_grid_nb, player,
+                        "🪵 The log can't slide further — the far bank is blocked."), \
+                           _game_view(guild_id, user_id, player, grid=fq_grid_nb)
+
+            elif beyond.terrain in _sokoban_valid + _canal_valid:
                 await _mfql(db, fq_id, nx_fq, ny_fq, beyond_x, beyond_y)
                 player.fq_x, player.fq_y = nx_fq, ny_fq
                 await db.execute(
@@ -4304,7 +4375,7 @@ async def _move_steps(
                 _ledge_msg = (
                     "🪵 The ledge is too steep — the block can't go that way."
                     if beyond.terrain in ("fq_wall", "fq_obstacle", "fq_floor", "fq_canal_floor",
-                                          "fq_stream", "fq_stream_ford", "fq_log")
+                                          "fq_log")
                     else "🪵 Something blocks the log from moving that way."
                 )
                 return render_grid(fq_grid_nb, player, _ledge_msg), \

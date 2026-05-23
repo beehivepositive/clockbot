@@ -4,8 +4,8 @@ shop section → Thornwarden boss chamber → (Y-fork / puzzle gauntlet / final 
 
 Zone layout (21 wide × 200 tall):
   y   0-15  : corridor (5 wide at x=8-12); ents disguised as fq_wall
-  y  16-29  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
-  y  30     : stream (impassable fq_stream; fords at x=9,10 once puzzle solved)
+  y  16-28  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
+  y  29-30  : stream (2-wide; push logs into stream to build bridge — no orange targets)
   y  31-40  : post-stream corridor (9 wide at x=6-14)
   y  41-53  : shop section (7 wide at x=7-13; shopkeeper at x=10, y=47)
   y  54-57  : boss approach (corridor widens to full room width)
@@ -24,14 +24,13 @@ from dwarf_explorer.config import (
     FQ_WIDTH, FQ_HEIGHT,
     FQ_CORRIDOR_X0, FQ_CORRIDOR_X1,
     FQ_CORRIDOR_Y0, FQ_CORRIDOR_Y1,
-    FQ_CHAMBER_Y0, FQ_STREAM_Y,
+    FQ_CHAMBER_Y0, FQ_STREAM_Y, FQ_STREAM_Y2,
     FQ_PUZZLE_X0, FQ_PUZZLE_X1,
     FQ_PUZZLE_Y0, FQ_PUZZLE_Y1,
     FQ_FORD_XA, FQ_FORD_XB,
     FQ_ENTRY_X, FQ_ENTRY_Y,
     FQ_RESET_X, FQ_RESET_Y,
     FQ_LOG_A_START, FQ_LOG_B_START,
-    FQ_TARGET_A, FQ_TARGET_B,
     FQ_PUZZLE_OBSTACLES,
     FQ_ENT_STARTS,
     FQ_WALKABLE,
@@ -226,22 +225,20 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
             if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1 and FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1:
                 if (x, y) in FQ_PUZZLE_OBSTACLES:
                     return "fq_obstacle"
-                if (x, y) == FQ_TARGET_A or (x, y) == FQ_TARGET_B:
-                    return "fq_log_target"
                 return "fq_puzzle_floor"
             if x == FQ_RESET_X and y == FQ_RESET_Y:
                 return "fq_reset"
             return "fq_floor"
         return "fq_wall"
 
-    # ── Stream row (y 30) ──────────────────────────────────────────────────
-    if y == FQ_STREAM_Y:
+    # ── Stream rows (y 29-30) — near ford + far deep channel ─────────────
+    if FQ_STREAM_Y <= y <= FQ_STREAM_Y2:
         if 1 <= x <= FQ_WIDTH - 2:
             return "fq_stream"
         return "fq_wall"
 
     # ── Post-stream corridor (y 31-40) ────────────────────────────────────
-    if FQ_STREAM_Y < y <= 40:
+    if FQ_STREAM_Y2 < y <= 40:
         if FQ_POST_STREAM_X0 <= x <= FQ_POST_STREAM_X1:
             return "fq_floor"
         return "fq_wall"
@@ -505,28 +502,43 @@ async def move_fq_log(db, fq_id: int, from_x: int, from_y: int,
 
 
 async def reset_fq_logs(db, fq_id: int) -> None:
-    """Return Sokoban logs (indices 0, 1) to their starting positions."""
+    """Return Sokoban logs (indices 0, 1) to their starting positions.
+
+    Also resets any fq_stream_ford tiles in the stream rows back to fq_stream
+    and clears the solved flag so the puzzle can be attempted again.
+    """
     await db.execute(
         "UPDATE fq_puzzle_logs SET cur_x=start_x, cur_y=start_y "
         "WHERE fq_id=? AND log_idx IN (0, 1)",
         (fq_id,),
     )
+    # Revert any ford tiles created by pushing logs into the stream
+    await db.execute(
+        "UPDATE forest_quest_tiles SET tile_type='fq_stream' "
+        "WHERE fq_id=? AND tile_type='fq_stream_ford' AND local_y IN (?, ?)",
+        (fq_id, FQ_STREAM_Y, FQ_STREAM_Y2),
+    )
+    # Re-open the solved flag so the bridge can be rebuilt
+    await db.execute(
+        "UPDATE forest_quest_areas SET solved=0 WHERE fq_id=?", (fq_id,)
+    )
     await db.commit()
 
 
 async def check_and_solve_puzzle(db, fq_id: int) -> bool:
-    """If both logs are on their targets, activate the stream fords and return True."""
-    logs = await db.fetch_all(
-        "SELECT cur_x, cur_y FROM fq_puzzle_logs WHERE fq_id=?", (fq_id,)
+    """Bridge is complete when one Sokoban log is in each stream row. Return True if solved."""
+    # Already solved?
+    row = await db.fetch_one(
+        "SELECT solved FROM forest_quest_areas WHERE fq_id=?", (fq_id,)
     )
-    positions = {(r["cur_x"], r["cur_y"]) for r in logs}
-    if FQ_TARGET_A in positions and FQ_TARGET_B in positions:
-        for fx in (FQ_FORD_XA, FQ_FORD_XB):
-            await db.execute(
-                "UPDATE forest_quest_tiles SET tile_type='fq_stream_ford' "
-                "WHERE fq_id=? AND local_x=? AND local_y=?",
-                (fq_id, fx, FQ_STREAM_Y),
-            )
+    if row and row["solved"]:
+        return True
+
+    logs = await db.fetch_all(
+        "SELECT cur_y FROM fq_puzzle_logs WHERE fq_id=? AND log_idx IN (0, 1)", (fq_id,)
+    )
+    y_positions = {r["cur_y"] for r in logs}
+    if FQ_STREAM_Y in y_positions and FQ_STREAM_Y2 in y_positions:
         await db.execute(
             "UPDATE forest_quest_areas SET solved=1 WHERE fq_id=?", (fq_id,)
         )
