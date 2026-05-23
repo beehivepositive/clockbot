@@ -360,6 +360,16 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
     elif getattr(player, "in_grove", False):
         from dwarf_explorer.world.forest import load_grove_viewport as _lgv_cache
         grid = await _lgv_cache(player.grove_id, player.grove_x, player.grove_y, db)
+    elif getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_cache
+        _bst_cache = ({"eyes": getattr(player, "fq_boss_eyes", "1111"),
+                       "warn_eye": None, "open_eye": None}
+                      if getattr(player, "in_fq_boss_combat", False) else None)
+        _ac_cache = None
+        if getattr(player, "fq_boss_aim_mode", False):
+            _ac_cache = (player.fq_boss_aim_x, player.fq_boss_aim_y)
+        grid = await _lfqv_cache(player.fq_area_id, player.fq_x, player.fq_y, db,
+                                  boss_state=_bst_cache, aim_cursor=_ac_cache)
     elif getattr(player, "in_forest", False):
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_cache
         grid = await _lfv_cache(player.forest_id, player.forest_x, player.forest_y, db)
@@ -372,16 +382,6 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
             grid = _lbcv_cache(player.bc_x, player.bc_y, int(_bc_row_cache["world_x"]), int(_bc_row_cache["world_y"]))
         else:
             grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    elif getattr(player, "in_forest_quest", False):
-        from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_cache
-        _bst_cache = ({"eyes": getattr(player, "fq_boss_eyes", "1111"),
-                       "warn_eye": None, "open_eye": None}
-                      if getattr(player, "in_fq_boss_combat", False) else None)
-        _ac_cache = None
-        if getattr(player, "fq_boss_aim_mode", False):
-            _ac_cache = (player.fq_boss_aim_x, player.fq_boss_aim_y)
-        grid = await _lfqv_cache(player.fq_area_id, player.fq_x, player.fq_y, db,
-                                  boss_state=_bst_cache, aim_cursor=_ac_cache)
     else:
         grid = await load_viewport(player.world_x, player.world_y, seed, db)
     _VP_CACHE[uid] = (key, grid)
@@ -4547,10 +4547,12 @@ async def _move_steps(
                         get_fq_entry_info as _gfqei,
                         get_or_create_fq_area as _gfqa,
                         load_fq_viewport as _lfqv_entry,
+                        reset_ent_positions as _reset_ents_entry,
                     )
                     fq_id_entry = await _gfqa(
                         db, guild_id, player.forest_id, nx, ny
                     )
+                    await _reset_ents_entry(db, fq_id_entry)
                     from dwarf_explorer.config import FQ_ENTRY_X as _FQEntX, FQ_ENTRY_Y as _FQEntY
                     player.in_forest_quest = True
                     player.fq_area_id = fq_id_entry

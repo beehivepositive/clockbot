@@ -537,6 +537,27 @@ async def check_and_solve_puzzle(db, fq_id: int) -> bool:
 
 # ── Ent movement ──────────────────────────────────────────────────────────────
 
+async def reset_ent_positions(db, fq_id: int) -> None:
+    """Reset all alive regular ents to their spawn positions.
+
+    Called every time a player enters (or re-enters) the FQ zone so that ents
+    which drifted toward the entry point during a previous session cannot
+    trigger instant combat on arrival.
+    """
+    ents = await db.fetch_all(
+        "SELECT id FROM fq_ents WHERE fq_id=? AND ent_type='regular' AND alive=1 ORDER BY id",
+        (fq_id,),
+    )
+    for i, ent in enumerate(ents):
+        if i < len(FQ_ENT_STARTS):
+            sx, sy = FQ_ENT_STARTS[i]
+            await db.execute(
+                "UPDATE fq_ents SET local_x=?, local_y=? WHERE id=?",
+                (sx, sy, ent["id"]),
+            )
+    await db.commit()
+
+
 async def step_ents_toward_player(
     db, fq_id: int, player_x: int, player_y: int
 ) -> list[tuple[int, int]]:
