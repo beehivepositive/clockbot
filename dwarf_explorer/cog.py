@@ -104,9 +104,11 @@ class DwarfExplorer(commands.Cog):
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(GameButton)
         self._hourly_map_regen.start()
+        self._boss_eye_rotation.start()
 
     async def cog_unload(self) -> None:
         self._hourly_map_regen.cancel()
+        self._boss_eye_rotation.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -175,6 +177,85 @@ class DwarfExplorer(commands.Cog):
         """Wait until the bot is ready and the initial pregen is done."""
         await self.bot.wait_until_ready()
         await asyncio.sleep(3600)  # first run at T+1h (startup pregen covers T+0)
+
+    @tasks.loop(seconds=1)
+    async def _boss_eye_rotation(self) -> None:
+        """Advance the Thornwarden's rotating eye every FQ_WARDEN_EYE_DURATION seconds.
+
+        For each player currently in boss combat, this task checks whether the
+        current eye's open window has expired.  If so it advances fq_boss_eye_idx
+        to the next alive eye, resets the timestamp, and edits the player's
+        Discord message so the new eye position appears in real time.
+        """
+        import time as _t_ber
+        from dwarf_explorer.config import (
+            FQ_WARDEN_EYE_CYCLE as _wec_ber,
+            FQ_WARDEN_EYE_DURATION as _dur_ber,
+        )
+        from dwarf_explorer.ui.game_view import rebuild_boss_view as _rbv
+
+        _now_ber = _t_ber.time()
+
+        for guild in self.bot.guilds:
+            try:
+                db = await get_database(guild.id)
+                rows = await db.fetch_all(
+                    "SELECT user_id, fq_boss_eye_idx, fq_boss_eyes, "
+                    "fq_boss_eye_opened_at, message_id, channel_id "
+                    "FROM players WHERE in_fq_boss_combat=1"
+                )
+                for row in rows:
+                    try:
+                        uid        = row["user_id"]
+                        opened_at  = float(row["fq_boss_eye_opened_at"] or 0.0)
+                        elapsed    = _now_ber - opened_at
+
+                        if elapsed < _dur_ber:
+                            continue  # eye still in its open window — nothing to advance
+
+                        # ── Advance to the next alive eye ──────────────────────
+                        eyes_str = row["fq_boss_eyes"] or "1111"
+                        cur_idx  = int(row["fq_boss_eye_idx"] or 0)
+                        next_idx = cur_idx
+                        for _ni in range(1, 5):
+                            candidate = (cur_idx + _ni) % 4
+                            if eyes_str[candidate] == "1":
+                                next_idx = candidate
+                                break
+
+                        await db.execute(
+                            "UPDATE players SET fq_boss_eye_idx=?, fq_boss_eye_opened_at=? "
+                            "WHERE user_id=?",
+                            (next_idx, _now_ber, uid),
+                        )
+                        await db.commit()
+
+                        # ── Edit the player's Discord message ──────────────────
+                        mid = row["message_id"]
+                        cid = row["channel_id"]
+                        if not (mid and cid):
+                            continue
+                        ch = self.bot.get_channel(cid)
+                        if ch is None:
+                            continue
+                        result = await _rbv(guild.id, uid)
+                        if result is None:
+                            continue
+                        embed, view = result
+                        try:
+                            await ch.get_partial_message(mid).edit(
+                                embed=embed, content=None, view=view
+                            )
+                        except Exception:
+                            pass  # message deleted or missing permissions
+                    except Exception:
+                        pass  # per-player errors are non-fatal
+            except Exception:
+                pass  # per-guild errors are non-fatal
+
+    @_boss_eye_rotation.before_loop
+    async def _before_boss_eye_rotation(self) -> None:
+        await self.bot.wait_until_ready()
 
     @app_commands.command(name="explore", description="Start or resume your Dwarf Explorer adventure!")
     async def explore(self, interaction: discord.Interaction) -> None:
@@ -592,7 +673,7 @@ class DwarfExplorer(commands.Cog):
     @app_commands.describe(
         x="World X coordinate (0–447)",
         y="World Y coordinate (0–447)",
-        location="Named location: 'forestcity' or 'hermit' (overrides x/y when provided)",
+        location="Named location: 'forestcity', 'hermit', or 'warden' (overrides x/y when provided)",
     )
     async def tp(
         self, interaction: discord.Interaction,
@@ -618,6 +699,58 @@ class DwarfExplorer(commands.Cog):
         await _ensure_admin_resources(db, ADMIN_PLAYER_ID)
 
         loc = location.strip().lower()
+
+        # ── Forest Quest — Thornwarden chamber entrance ───────────────────────────
+        if loc == "warden":
+            from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_tp
+            from dwarf_explorer.config import FQ_BOSS_APPROACH_Y1 as _fq_approach_y1
+            # Find (or create) the forest quest area
+            _fq_row = await db.fetch_one(
+                "SELECT id FROM forest_quest_areas ORDER BY id LIMIT 1"
+            )
+            if not _fq_row:
+                await interaction.followup.send(
+                    "⚠️ No forest quest area found — enter the Forest Quest zone at least once first.",
+                    ephemeral=True,
+                )
+                return
+            _fq_id_tp = _fq_row["id"]
+            # Place just outside the circular chamber (tip of the approach funnel)
+            _tp_x, _tp_y = 10, _fq_approach_y1  # (10, 57)
+
+            await update_player_stats(
+                db, ADMIN_PLAYER_ID,
+                in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+                in_village=0, village_id=None,
+                in_house=0, house_id=None,
+                in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+            )
+            await db.execute(
+                "UPDATE players SET "
+                "in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
+                "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
+                "in_forest=0, forest_id=NULL, forest_x=0, forest_y=0, "
+                "in_tree_city=0, in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                "in_bandit_camp=0, bandit_camp_id=NULL, bc_x=0, bc_y=0, bandit_bribe_remaining=0, "
+                "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, grove_forest_id=NULL, "
+                "in_maze=0, maze_id=NULL, maze_x=0, maze_y=0, "
+                "in_forest_quest=1, fq_area_id=?, fq_x=?, fq_y=? "
+                "WHERE user_id=?",
+                (_fq_id_tp, _tp_x, _tp_y, ADMIN_PLAYER_ID)
+            )
+            await db.commit()
+
+            player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+            player.gold = 999999
+            _fq_grid_tp = await _lfqv_tp(_fq_id_tp, _tp_x, _tp_y, db)
+            content = render_grid(_fq_grid_tp, player,
+                                  "🌿 Teleported to the Thornwarden chamber entrance.")
+            view = GameView(guild_id, ADMIN_PLAYER_ID)
+            msg = await interaction.followup.send(
+                embed=discord.Embed(description=content), view=view
+            )
+            await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+            return
 
         # ── Named forest locations ────────────────────────────────────────────────
         if loc in ("forestcity", "hermit"):

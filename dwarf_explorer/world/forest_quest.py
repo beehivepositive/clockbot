@@ -41,6 +41,7 @@ from dwarf_explorer.config import (
     # Boss approach + chamber
     FQ_BOSS_APPROACH_Y0, FQ_BOSS_APPROACH_Y1,
     FQ_BOSS_CHAMBER_Y0, FQ_BOSS_CHAMBER_Y1,
+    FQ_BOSS_CHAMBER_CX, FQ_BOSS_CHAMBER_CY, FQ_BOSS_CHAMBER_R,
     FQ_WARDEN_X0, FQ_WARDEN_X1,
     FQ_WARDEN_Y0, FQ_WARDEN_Y1,
     FQ_WARDEN_EYE_NW, FQ_WARDEN_EYE_NE,
@@ -255,19 +256,18 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
             return "fq_floor"
         return "fq_wall"
 
-    # ── Boss approach (y 54-57): corridor widens ──────────────────────────
+    # ── Boss approach (y 54-57): funnel narrows to single-tile entrance ───
     if FQ_BOSS_APPROACH_Y0 <= y <= FQ_BOSS_APPROACH_Y1:
-        span = FQ_BOSS_APPROACH_Y1 - FQ_BOSS_APPROACH_Y0 + 1
-        step = y - FQ_BOSS_APPROACH_Y0          # 0 → (span-1)
-        x0 = max(1, 7 - (step * 6 // (span - 1)) if span > 1 else 1)
-        x1 = min(FQ_WIDTH - 2, 13 + (step * 6 // (span - 1)) if span > 1 else FQ_WIDTH - 2)
-        if x0 <= x <= x1:
+        step     = y - FQ_BOSS_APPROACH_Y0          # 0 → 3
+        half_w   = (2, 1, 1, 0)[step]               # widths: 5, 3, 3, 1
+        if abs(x - FQ_BOSS_CHAMBER_CX) <= half_w:
             return "fq_floor"
         return "fq_wall"
 
-    # ── Boss chamber (y 58-79) ────────────────────────────────────────────
+    # ── Boss chamber (y 58-68): circular arena, radius 5 ─────────────────
     if FQ_BOSS_CHAMBER_Y0 <= y <= FQ_BOSS_CHAMBER_Y1:
-        if 1 <= x <= FQ_WIDTH - 2:
+        dist_sq = (x - FQ_BOSS_CHAMBER_CX) ** 2 + (y - FQ_BOSS_CHAMBER_CY) ** 2
+        if dist_sq <= FQ_BOSS_CHAMBER_R ** 2:
             # Warden body region
             if FQ_WARDEN_X0 <= x <= FQ_WARDEN_X1 and FQ_WARDEN_Y0 <= y <= FQ_WARDEN_Y1:
                 if (x, y) == FQ_WARDEN_EYE_NW:
@@ -279,13 +279,13 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
                 if (x, y) == FQ_WARDEN_EYE_SE:
                     return "fq_warden_eye_se"
                 return "fq_warden_body"
-            # Boss door at south end
+            # Boss door at southernmost circle point
             if x == FQ_BOSS_DOOR_X and y == FQ_BOSS_DOOR_Y:
                 return "fq_boss_door"
             return "fq_floor"
         return "fq_wall"
 
-    # ── Post-boss corridor (y 80-87) ──────────────────────────────────────
+    # ── Post-boss corridor (y 69-87) ──────────────────────────────────────
     if FQ_POST_BOSS_Y0 <= y <= FQ_POST_BOSS_Y1:
         if 7 <= x <= 13:
             return "fq_floor"

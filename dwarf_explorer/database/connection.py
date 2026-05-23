@@ -1110,13 +1110,14 @@ class Database:
             try:
                 _bsc = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
                 for _bc, _bt, _bd in [
-                    ("in_fq_boss_combat", "INTEGER", "0"),
-                    ("fq_boss_turn",      "INTEGER", "0"),
-                    ("fq_boss_eye_idx",   "INTEGER", "0"),
-                    ("fq_boss_eyes",      "TEXT",    "'1111'"),
-                    ("fq_boss_aim_mode",  "INTEGER", "0"),
-                    ("fq_boss_aim_x",     "INTEGER", "10"),
-                    ("fq_boss_aim_y",     "INTEGER", "66"),
+                    ("in_fq_boss_combat",    "INTEGER", "0"),
+                    ("fq_boss_turn",         "INTEGER", "0"),
+                    ("fq_boss_eye_idx",      "INTEGER", "0"),
+                    ("fq_boss_eyes",         "TEXT",    "'1111'"),
+                    ("fq_boss_aim_mode",     "INTEGER", "0"),
+                    ("fq_boss_aim_x",        "INTEGER", "10"),
+                    ("fq_boss_aim_y",        "INTEGER", "62"),
+                    ("fq_boss_eye_opened_at","REAL",    "0.0"),
                 ]:
                     if _bc not in _bsc:
                         conn.execute(

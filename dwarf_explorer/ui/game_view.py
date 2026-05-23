@@ -4145,8 +4145,8 @@ async def _move_steps(
             FQ_BOSS_CHAMBER_Y0 as _FQ_BCY0, FQ_BOSS_CHAMBER_Y1 as _FQ_BCY1,
             FQ_WARDEN_EYE_CYCLE as _FQ_WEC,
             FQ_WARDEN_EYE_POSITIONS as _FQ_WEP,
-            FQ_WARDEN_WARN_TURN as _FQ_WARN, FQ_WARDEN_OPEN_TURN as _FQ_OPEN,
-            FQ_WARDEN_CYCLE_LEN as _FQ_CYCLEN,
+            FQ_WARDEN_EYE_DURATION as _FQ_EYE_DUR,
+            FQ_WARDEN_EYE_WARN_SEC as _FQ_EYE_WARN,
             FQ_WARDEN_THORN_DAMAGE_MIN as _FQ_DMIN,
             FQ_WARDEN_THORN_DAMAGE_MAX as _FQ_DMAX,
             FQ_ENT_CORE_DROP_ENT as _FQ_ECDE,
@@ -4205,6 +4205,20 @@ async def _move_steps(
                 "✨ *A golden light spills from the hidden grove. "
                 "The ancient trees seem to welcome you… but the path ahead is not yet revealed.*")
             return content, _game_view(guild_id, user_id, player, grid=fq_grid_ge)
+
+        # ── North gate: once inside the chamber you can't retreat ────────────
+        if ny_fq < _FQ_BCY0 and player.fq_y >= _FQ_BCY0:
+            _wdef_ng = await _gwdef(db, fq_id)
+            if not _wdef_ng:
+                _bst_ng = ({"eyes": player.fq_boss_eyes,
+                            "warn_eye": _warn_eye_mv, "open_eye": _open_eye_mv}
+                           if getattr(player, "in_fq_boss_combat", False) else None)
+                fq_grid_ng = await _lfqv(fq_id, player.fq_x, player.fq_y, db,
+                                         boss_state=_bst_ng)
+                return (render_grid(fq_grid_ng, player,
+                        "🌿 Thorned vines seal the way back. "
+                        "Defeat the Thornwarden to leave the chamber."),
+                        _game_view(guild_id, user_id, player, grid=fq_grid_ng))
 
         # ── Boss door (locked) ─────────────────────────────────────────────
         if target_fq.terrain == "fq_boss_door":
@@ -4413,23 +4427,26 @@ async def _move_steps(
         if _entering_boss:
             _warden_already_dead = await _gwdef(db, fq_id)
             if not _warden_already_dead:
+                import time as _t_entry
+                _now_entry = _t_entry.time()
                 player.in_fq_boss_combat = True
-                player.fq_boss_turn = 0
                 player.fq_boss_eye_idx = 0
                 player.fq_boss_eyes = "1111"
                 player.fq_boss_aim_mode = False
                 player.fq_boss_aim_x = player.fq_x
                 player.fq_boss_aim_y = player.fq_y
+                player.fq_boss_eye_opened_at = _now_entry
                 await db.execute(
-                    "UPDATE players SET in_fq_boss_combat=1, fq_boss_turn=0, "
-                    "fq_boss_eye_idx=0, fq_boss_eyes='1111', fq_boss_aim_mode=0, "
-                    "fq_boss_aim_x=?, fq_boss_aim_y=? WHERE user_id=?",
-                    (player.fq_x, player.fq_y, user_id),
+                    "UPDATE players SET in_fq_boss_combat=1, fq_boss_eye_idx=0, "
+                    "fq_boss_eyes='1111', fq_boss_aim_mode=0, "
+                    "fq_boss_aim_x=?, fq_boss_aim_y=?, fq_boss_eye_opened_at=? "
+                    "WHERE user_id=?",
+                    (player.fq_x, player.fq_y, _now_entry, user_id),
                 )
                 _extra_fq_msg = (
                     "🌿 *The air grows thick with briars. Something vast stirs in the dark...*\n\n"
-                    "**THE THORNWARDEN AWAKENS!** 🟤🟤🟤🟤 Four dormant eyes pulse with cold light.\n"
-                    "🎯 Equip your slingshot and shoot an eye **just before it opens** to destroy it!"
+                    "**THE THORNWARDEN AWAKENS!** ⚫⚫⚫⚫ Four dormant eyes begin to stir.\n"
+                    "👁️ Watch for an eye to open — aim your slingshot and shoot it!"
                 )
 
         # Step regular ents every 2nd player move (corridor section only)
@@ -4491,61 +4508,20 @@ async def _move_steps(
                                       enemy_type="ancient_ent")
                 return content_anc, view_anc
 
-        # Warden turn processing (after every move in boss combat)
+        # ── Warden eye state: time-based, managed by background task ─────────
+        # On each player move we only compute the current display state from
+        # the timestamp — no per-move turn counter needed.
         _warn_eye_mv = None
         _open_eye_mv = None
         if getattr(player, "in_fq_boss_combat", False) and not _entering_boss:
-            player.fq_boss_turn = (player.fq_boss_turn + 1) % _FQ_CYCLEN
-
-            if player.fq_boss_turn == _FQ_WARN:
-                # Find next alive eye
-                for _wi in range(4):
-                    _widx = (player.fq_boss_eye_idx + _wi) % 4
-                    if player.fq_boss_eyes[_widx] == "1":
-                        _warn_eye_mv = _FQ_WEC[_widx]
-                        player.fq_boss_eye_idx = _widx
-                        _wpos = _FQ_WEP[_warn_eye_mv]
-                        _extra_fq_msg = (
-                            f"⚠️ *The Thornwarden's **{_warn_eye_mv}** eye begins to glow…* "
-                            f"Position: ({_wpos[0]}, {_wpos[1]})\n"
-                            "🎯 Aim your slingshot at it NOW before it opens!"
-                        )
-                        break
-                await db.execute(
-                    "UPDATE players SET fq_boss_turn=?, fq_boss_eye_idx=? WHERE user_id=?",
-                    (player.fq_boss_turn, player.fq_boss_eye_idx, user_id),
-                )
-
-            elif player.fq_boss_turn == _FQ_OPEN:
-                _open_eye_mv = _FQ_WEC[player.fq_boss_eye_idx]
-                _thorn_dmg = _random.randint(_FQ_DMIN, _FQ_DMAX)
-                player.hp = max(0, player.hp - _thorn_dmg)
-                _extra_fq_msg = (
-                    f"🔴 *The **{_open_eye_mv}** eye snaps open — thorns lash out!*\n"
-                    f"💥 You take **{_thorn_dmg} damage**! ({player.hp}/{player.max_hp} HP)"
-                )
-                # Advance to next alive eye and reset turn
-                player.fq_boss_turn = 0
-                for _ni in range(1, 5):
-                    _nidx = (player.fq_boss_eye_idx + _ni) % 4
-                    if player.fq_boss_eyes[_nidx] == "1":
-                        player.fq_boss_eye_idx = _nidx
-                        break
-                await db.execute(
-                    "UPDATE players SET hp=?, fq_boss_turn=?, fq_boss_eye_idx=? WHERE user_id=?",
-                    (player.hp, player.fq_boss_turn, player.fq_boss_eye_idx, user_id),
-                )
-                if player.hp <= 0:
-                    # Player died — handled by caller; return death state
-                    fq_grid_d = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
-                    return (render_grid(fq_grid_d, player,
-                            "💀 The thorns pierce deep. Darkness claims you..."),
-                            _game_view(guild_id, user_id, player, grid=fq_grid_d))
+            import time as _t_mv
+            _now_mv  = _t_mv.time()
+            _elapsed = _now_mv - (getattr(player, "fq_boss_eye_opened_at", _now_mv) or 0)
+            _cur_eye = _FQ_WEC[player.fq_boss_eye_idx]
+            if _elapsed < _FQ_EYE_WARN:
+                _warn_eye_mv = _cur_eye   # brief 🟡 flash at start of cycle
             else:
-                await db.execute(
-                    "UPDATE players SET fq_boss_turn=? WHERE user_id=?",
-                    (player.fq_boss_turn, user_id),
-                )
+                _open_eye_mv = _cur_eye   # 👁️ hit window for remainder
 
         _bst_mv = ({"eyes": player.fq_boss_eyes,
                     "warn_eye": _warn_eye_mv, "open_eye": _open_eye_mv}
@@ -13991,7 +13967,7 @@ async def handle_fq_boss_shoot(
     from dwarf_explorer.config import (
         FQ_WARDEN_EYE_CYCLE as _wec_s,
         FQ_WARDEN_EYE_POSITIONS as _wep_s,
-        FQ_WARDEN_WARN_TURN as _fq_warn_s,
+        FQ_WARDEN_EYE_DURATION as _eye_dur_s,
         FQ_ENT_CORE_DROP_WARDEN as _wdrp_s,
     )
     from dwarf_explorer.database.repositories import (
@@ -14023,63 +13999,66 @@ async def handle_fq_boss_shoot(
 
     await _rfi_s(db, user_id, "rock", 1)
 
-    # Is this the warning-phase eye?
+    # Check whether the eye is currently open (time-based window)
+    import time as _t_shoot
+    _now_shoot    = _t_shoot.time()
+    _opened_at    = getattr(player, "fq_boss_eye_opened_at", 0) or 0
+    _elapsed_sh   = _now_shoot - _opened_at
+    _eye_is_open  = (0 <= _elapsed_sh <= _eye_dur_s)
+    _cur_eye      = _wec_s[player.fq_boss_eye_idx]
+    _eye_pos      = _wep_s[_cur_eye]
+
     msg = ""
-    if player.fq_boss_turn == _fq_warn_s:
-        _cur_eye = _wec_s[player.fq_boss_eye_idx]
-        _eye_pos = _wep_s[_cur_eye]
-        if (cx, cy) == _eye_pos:
-            # HIT — destroy this eye
-            _eyes_list = list(player.fq_boss_eyes)
-            _eyes_list[player.fq_boss_eye_idx] = "0"
-            player.fq_boss_eyes = "".join(_eyes_list)
-            # Update DB tile to dead
-            await db.execute(
-                "UPDATE forest_quest_tiles SET tile_type='fq_warden_dead' "
-                "WHERE fq_id=? AND local_x=? AND local_y=?",
-                (player.fq_area_id, cx, cy),
-            )
-            # Interrupt attack: reset turn counter
-            player.fq_boss_turn = 0
-            # Advance eye index to next alive eye
-            for _ni in range(1, 5):
-                _nidx = (player.fq_boss_eye_idx + _ni) % 4
-                if player.fq_boss_eyes[_nidx] == "1":
-                    player.fq_boss_eye_idx = _nidx
-                    break
-            msg = (
-                f"🎯 **DIRECT HIT!** The **{_cur_eye}** eye shatters in a burst of light!\n"
-                f"*Eyes remaining: {player.fq_boss_eyes.count('1')}/4*"
-            )
-            # Check all eyes dead
-            if player.fq_boss_eyes.count("1") == 0:
-                await _dfw(db, player.fq_area_id)
-                player.in_fq_boss_combat = False
-                # Advance quest stage
-                _ws = getattr(player, "fq_quest_stage", "none")
-                if _ws not in ("warden_defeated", "canal_solved", "quest_complete"):
-                    player.fq_quest_stage = "warden_defeated"
-                    await db.execute(
-                        "UPDATE players SET fq_quest_stage='warden_defeated' WHERE user_id=?",
-                        (user_id,)
-                    )
-                msg += (
-                    "\n\n🌿 **THE THORNWARDEN COLLAPSES!**\n"
-                    "Ancient brambles crash to the earth. "
-                    "A heavy gate grinds open at the far end of the chamber...\n"
-                    "📦 A chest lies in the rubble."
+    if _eye_is_open and (cx, cy) == _eye_pos:
+        # ── HIT — eye is open and player aimed correctly ──────────────
+        _eyes_list = list(player.fq_boss_eyes)
+        _eyes_list[player.fq_boss_eye_idx] = "0"
+        player.fq_boss_eyes = "".join(_eyes_list)
+        await db.execute(
+            "UPDATE forest_quest_tiles SET tile_type='fq_warden_dead' "
+            "WHERE fq_id=? AND local_x=? AND local_y=?",
+            (player.fq_area_id, cx, cy),
+        )
+        # Advance to next alive eye, reset its timer
+        for _ni in range(1, 5):
+            _nidx = (player.fq_boss_eye_idx + _ni) % 4
+            if player.fq_boss_eyes[_nidx] == "1":
+                player.fq_boss_eye_idx = _nidx
+                break
+        player.fq_boss_eye_opened_at = _now_shoot
+        msg = (
+            f"🎯 **DIRECT HIT!** The **{_cur_eye}** eye shatters!\n"
+            f"*Eyes remaining: {player.fq_boss_eyes.count('1')}/4*"
+        )
+        if player.fq_boss_eyes.count("1") == 0:
+            await _dfw(db, player.fq_area_id)
+            player.in_fq_boss_combat = False
+            _ws = getattr(player, "fq_quest_stage", "none")
+            if _ws not in ("warden_defeated", "canal_solved", "quest_complete"):
+                player.fq_quest_stage = "warden_defeated"
+                await db.execute(
+                    "UPDATE players SET fq_quest_stage='warden_defeated' WHERE user_id=?",
+                    (user_id,)
                 )
-            await db.execute(
-                "UPDATE players SET fq_boss_eyes=?, fq_boss_turn=?, fq_boss_eye_idx=?, "
-                "in_fq_boss_combat=? WHERE user_id=?",
-                (player.fq_boss_eyes, player.fq_boss_turn, player.fq_boss_eye_idx,
-                 1 if player.in_fq_boss_combat else 0, user_id),
+            msg += (
+                "\n\n🌿 **THE THORNWARDEN COLLAPSES!**\n"
+                "Ancient brambles crash to the earth. "
+                "A heavy gate grinds open at the far end of the chamber...\n"
+                "📦 A chest lies in the rubble."
             )
-        else:
-            msg = f"🪨 The rock skips off the bark — missed the **{_cur_eye}** eye at ({_eye_pos[0]},{_eye_pos[1]})."
+        await db.execute(
+            "UPDATE players SET fq_boss_eyes=?, fq_boss_eye_idx=?, "
+            "fq_boss_eye_opened_at=?, in_fq_boss_combat=? WHERE user_id=?",
+            (player.fq_boss_eyes, player.fq_boss_eye_idx,
+             player.fq_boss_eye_opened_at,
+             1 if player.in_fq_boss_combat else 0, user_id),
+        )
+    elif _eye_is_open:
+        # Eye is open but player aimed at wrong position
+        msg = (f"🪨 Missed! The open eye 👁️ is at ({_eye_pos[0]}, {_eye_pos[1]}).")
     else:
-        _phase = "open" if player.fq_boss_turn > _fq_warn_s else "dormant"
-        msg = (f"🪨 Rock flies wide. The eye is **{_phase}** — only shoot during the ⚠️ warning phase!")
+        # Eye is closed — wasted shot
+        msg = ("🪨 The eye is closed — wait for it to open 👁️ before shooting!")
 
     await db.commit()
     _bst_sh = {"eyes": player.fq_boss_eyes, "warn_eye": None, "open_eye": None}
@@ -14105,6 +14084,64 @@ async def handle_fq_boss_aim_cancel(
     content = render_grid(grid, player, "🎯 Aim cancelled.")
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=_game_view(guild_id, user_id, player, grid=grid))
+
+
+async def rebuild_boss_view(
+    guild_id: int,
+    user_id: int,
+) -> "tuple[discord.Embed, discord.ui.View] | None":
+    """Rebuild the Thornwarden fight display for the background eye-rotation task.
+
+    Loads the player's current DB state, derives the eye display (warn / open)
+    from the stored timestamp, renders the FQ viewport with boss_state, and
+    returns ``(embed, view)`` ready to pass straight to ``message.edit()``.
+
+    Returns ``None`` if the player is no longer in boss combat (so the caller
+    can skip editing the message).
+    """
+    import time as _t_rbv
+
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, "")
+
+    if not getattr(player, "in_fq_boss_combat", False):
+        return None
+
+    from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_rbv
+    from dwarf_explorer.config import (
+        FQ_WARDEN_EYE_CYCLE as _wec_rbv,
+        FQ_WARDEN_EYE_DURATION as _dur_rbv,
+        FQ_WARDEN_EYE_WARN_SEC as _warn_rbv,
+    )
+
+    _now_rbv = _t_rbv.time()
+    _elapsed_rbv = _now_rbv - (getattr(player, "fq_boss_eye_opened_at", _now_rbv) or 0)
+    _cur_eye_rbv = _wec_rbv[player.fq_boss_eye_idx]
+
+    _warn_eye: "str | None" = None
+    _open_eye: "str | None" = None
+    if _elapsed_rbv < _warn_rbv:
+        _warn_eye = _cur_eye_rbv
+    elif _elapsed_rbv <= _dur_rbv:
+        _open_eye = _cur_eye_rbv
+    # else: elapsed > dur — background task is about to advance; show no eye
+
+    _bst_rbv = {
+        "eyes": getattr(player, "fq_boss_eyes", "1111"),
+        "warn_eye": _warn_eye,
+        "open_eye": _open_eye,
+    }
+
+    _ac_rbv = None
+    if getattr(player, "fq_boss_aim_mode", False):
+        _ac_rbv = (player.fq_boss_aim_x, player.fq_boss_aim_y)
+
+    grid = await _lfqv_rbv(
+        player.fq_area_id, player.fq_x, player.fq_y, db,
+        boss_state=_bst_rbv, aim_cursor=_ac_rbv,
+    )
+    content = render_grid(grid, player)
+    return _embed(content), _game_view(guild_id, user_id, player, grid=grid)
 
 
 async def handle_inv_drop(
