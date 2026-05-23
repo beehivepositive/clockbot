@@ -5364,8 +5364,9 @@ async def _finish_combat(
             await add_to_inventory(db, user_id, "stick", 1)
             extra_msg += " 🪵 It also drops a **Stick**!"
         # Ent core drop
-        await add_to_inventory(db, user_id, "ent_core", _FQ_ECDE)
-        extra_msg += f" 🟢 **Ent Core** × {_FQ_ECDE}!"
+        from dwarf_explorer.config import FQ_ENT_CORE_DROP_ENT as _FQ_ECDE_fc
+        await add_to_inventory(db, user_id, "ent_core", _FQ_ECDE_fc)
+        extra_msg += f" 🟢 **Ent Core** × {_FQ_ECDE_fc}!"
 
     # Ancient ent defeated — mark it dead, drop ent_core × 2
     if won and player.combat_enemy_type == "ancient_ent" and getattr(player, "in_forest_quest", False):
