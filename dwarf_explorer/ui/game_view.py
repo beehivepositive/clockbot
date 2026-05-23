@@ -18500,7 +18500,9 @@ async def handle_dialogue_confirm(
         return
 
     if action == "hermit_map":
-        # Render the forest map with a highlight on the fst_maze_door tile
+        # Render a clean forest map with a large arrow/circle overlay on fst_maze_door.
+        # Only floors and ancient trees are shown — other POI icons are deliberately
+        # excluded to avoid visual noise that looks like "entrance/village markers".
         await interaction.response.defer()
         _hmap_forest_id = state.get("hermit_hut_forest_id") or getattr(
             player, "hermit_hut_forest_id", None
@@ -18520,68 +18522,113 @@ async def handle_dialogue_confirm(
             )
             return
         import io as _hmio
-        from PIL import Image as _HMImage, ImageDraw as _HMDraw
+        from PIL import Image as _HMImage, ImageDraw as _HMDraw, ImageFont as _HMFont
         from dwarf_explorer.world.forest import FOREST_W as _HMW, FOREST_H as _HMH
-        from dwarf_explorer.world.world_map import _draw_icon as _hm_draw_icon
-        _HM_SCALE = 4
-        _hm_tree_col   = (10, 80, 20)
-        _hm_floor_col  = (80, 160, 60)
-        _hm_anc_col    = (20, 200, 120)
-        _hm_maze_col   = (150, 50, 200)
-        _hm_self_col   = (220, 60, 60)
-        _hm_img = _HMImage.new("RGB", (_HMW * _HM_SCALE, _HMH * _HM_SCALE), _hm_tree_col)
+
+        _S = 5          # pixels per tile — 120×120 → 600×600px
+        _PAD = 6        # border padding so edge icons aren't clipped
+        _IW = _HMW * _S + _PAD * 2
+        _IH = _HMH * _S + _PAD * 2
+
+        _COL_TREE  = (10, 75, 15)     # dense forest
+        _COL_FLOOR = (70, 150, 50)    # walkable path
+        _COL_ANC   = (30, 210, 130)   # ancient tree dot
+        _COL_SELF  = (230, 50,  50)   # player
+        _COL_YEL   = (255, 220,  30)  # entrance overlay (yellow)
+        _COL_BLK   = (0,    0,   0)   # outline shadow
+
+        _hm_img  = _HMImage.new("RGB", (_IW, _IH), _COL_TREE)
         _hm_draw = _HMDraw.Draw(_hm_img)
-        _HM_ICON_TILES = {
-            "fst_floor":         (_hm_floor_col,      None),
-            "fst_ancient_tree":  (_hm_anc_col,         "filled_circle"),
-            "fst_maze_door":     (_hm_maze_col,        "filled_diamond"),
-            "fst_chest":         ((200, 170, 50),      "filled_diamond"),
-            "fst_map_chest":     ((200, 170, 50),      "filled_diamond"),
-            "fst_tree_city":     ((220, 140, 30),      "filled_diamond"),
-            "fst_exit":          ((50, 200, 80),       "filled_triangle"),
-            "fst_nut_tree":      ((60, 130, 40),       "filled_circle"),
-            "fst_hermit_house":  ((180, 130, 60),      "filled_diamond"),
-        }
+
         _hm_maze_pos = None
         for _hmt in _hmap_tiles:
             _tx, _ty, _tt = _hmt["local_x"], _hmt["local_y"], _hmt["tile_type"]
-            _px0, _py0 = _tx * _HM_SCALE, _ty * _HM_SCALE
-            _px1, _py1 = _px0 + _HM_SCALE - 1, _py0 + _HM_SCALE - 1
+            _px0 = _tx * _S + _PAD
+            _py0 = _ty * _S + _PAD
+            _px1 = _px0 + _S - 1
+            _py1 = _py0 + _S - 1
+
             if _tt == "fst_floor":
-                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_hm_floor_col)
-            elif _tt in _HM_ICON_TILES:
-                _ic, _ist = _HM_ICON_TILES[_tt]
-                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_hm_floor_col)
-                if _ist:
-                    _hm_draw_icon(_hm_draw,
-                                  _tx * _HM_SCALE + _HM_SCALE // 2,
-                                  _ty * _HM_SCALE + _HM_SCALE // 2,
-                                  _ist, _ic, r=_HM_SCALE)
+                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
+            elif _tt == "fst_ancient_tree":
+                # Draw as a floor tile with a small teal dot
+                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
+                _acx = _px0 + _S // 2
+                _acy = _py0 + _S // 2
+                _hm_draw.ellipse([_acx - 2, _acy - 2, _acx + 2, _acy + 2], fill=_COL_ANC)
+            elif _tt in ("fst_maze_door", "fst_tree_city", "fst_exit",
+                         "fst_chest", "fst_map_chest", "fst_nut_tree",
+                         "fst_hermit_house"):
+                # Draw as floor tile (no icon) — entrance has its own big overlay
+                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
                 if _tt == "fst_maze_door":
-                    _hm_maze_pos = (_tx * _HM_SCALE + _HM_SCALE // 2,
-                                    _ty * _HM_SCALE + _HM_SCALE // 2)
-        # Player dot (last known forest position)
+                    _hm_maze_pos = (_px0 + _S // 2, _py0 + _S // 2)
+
+        # ── Player dot ────────────────────────────────────────────────────────
         if getattr(player, "forest_x", None) is not None:
-            _cx_p = player.forest_x * _HM_SCALE + _HM_SCALE // 2
-            _cy_p = player.forest_y * _HM_SCALE + _HM_SCALE // 2
-            _hm_draw.ellipse([_cx_p - 4, _cy_p - 4, _cx_p + 4, _cy_p + 4],
-                             fill=_hm_self_col, outline=(255, 255, 255))
-        # ── Overlay: yellow circle + downward arrow on fst_maze_door ─────────
+            _pcx = player.forest_x * _S + _PAD + _S // 2
+            _pcy = player.forest_y * _S + _PAD + _S // 2
+            _hm_draw.ellipse([_pcx - 5, _pcy - 5, _pcx + 5, _pcy + 5],
+                             fill=(0, 0, 0), outline=(0, 0, 0))
+            _hm_draw.ellipse([_pcx - 4, _pcy - 4, _pcx + 4, _pcy + 4],
+                             fill=_COL_SELF, outline=(255, 255, 255))
+
+        # ── Entrance overlay: large arrow + ringed circle ─────────────────────
         if _hm_maze_pos:
-            _mdx, _mdy = _hm_maze_pos
-            _R = 12
-            _hm_draw.ellipse([_mdx - _R, _mdy - _R, _mdx + _R, _mdy + _R],
-                             outline=(255, 230, 0), width=2)
-            # Arrow shaft (above the circle)
-            _arr_base_y = _mdy - _R - 2
-            _hm_draw.line([(_mdx, _arr_base_y - 10), (_mdx, _arr_base_y)],
-                          fill=(255, 230, 0), width=2)
-            # Arrowhead
+            _ex, _ey = _hm_maze_pos
+            _CR = 18   # circle radius
+
+            # Black drop-shadow ring (slightly larger)
+            _hm_draw.ellipse([_ex - _CR - 2, _ey - _CR - 2, _ex + _CR + 2, _ey + _CR + 2],
+                             outline=_COL_BLK, width=4)
+            # Yellow highlight ring
+            _hm_draw.ellipse([_ex - _CR, _ey - _CR, _ex + _CR, _ey + _CR],
+                             outline=_COL_YEL, width=3)
+
+            # Arrow — shaft starts 6px above circle top, extends 40px further up
+            _shaft_bot = _ey - _CR - 4        # just above the circle
+            _shaft_top = _shaft_bot - 36      # 36px shaft
+            _AW = 5                           # half-width of arrowhead
+            _AH = 12                          # arrowhead height
+
+            # Shadow stroke for shaft
+            _hm_draw.line([(_ex, _shaft_top + _AH), (_ex, _shaft_bot)],
+                          fill=_COL_BLK, width=6)
+            # Yellow shaft
+            _hm_draw.line([(_ex, _shaft_top + _AH), (_ex, _shaft_bot)],
+                          fill=_COL_YEL, width=4)
+
+            # Shadow arrowhead
             _hm_draw.polygon([
-                (_mdx - 4, _arr_base_y - 4),
-                (_mdx + 4, _arr_base_y - 4),
-                (_mdx,     _arr_base_y + 2),
-            ], fill=(255, 230, 0))
+                (_ex,         _shaft_top - 2),
+                (_ex - _AW - 2, _shaft_top + _AH + 2),
+                (_ex + _AW + 2, _shaft_top + _AH + 2),
+            ], fill=_COL_BLK)
+            # Yellow arrowhead
+            _hm_draw.polygon([
+                (_ex,       _shaft_top),
+                (_ex - _AW, _shaft_top + _AH),
+                (_ex + _AW, _shaft_top + _AH),
+            ], fill=_COL_YEL)
+
+        # ── Small legend strip at bottom ──────────────────────────────────────
+        try:
+            _hm_font = _HMFont.truetype("arial.ttf", 11)
+        except Exception:
+            _hm_font = _HMFont.load_default()
+        _leg_y = _IH - _PAD - 12
+        _entries = [
+            (_COL_FLOOR, "Forest path"),
+            (_COL_ANC,   "Ancient tree"),
+            (_COL_YEL,   "Forest Depths entrance"),
+            (_COL_SELF,  "You"),
+        ]
+        _lx = _PAD + 2
+        for _lc, _llabel in _entries:
+            _hm_draw.rectangle([_lx, _leg_y + 2, _lx + 9, _leg_y + 11], fill=_lc)
+            _hm_draw.text((_lx + 12, _leg_y), _llabel, fill=(210, 210, 210), font=_hm_font)
+            _lx += 12 + len(_llabel) * 6 + 10
+
         _hm_buf = _hmio.BytesIO()
         _hm_img.save(_hm_buf, format="PNG")
         _hm_buf.seek(0)
