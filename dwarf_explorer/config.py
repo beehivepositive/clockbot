@@ -567,31 +567,56 @@ FQ_FINAL_EXIT_Y         = 177
 FQ_FINAL_Y1             = 180
 
 # Puzzle log starting positions (zone-absolute coords)
-FQ_LOG_A_START = (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0)        # zone (6, 18)
-FQ_LOG_B_START = (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0)        # zone (14, 18)
+FQ_LOG_A_START = (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0)        # zone (9,  18)
+FQ_LOG_B_START = (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0)        # zone (11, 18)
 
 # Logs are pushed directly into the stream — no orange target tiles in new design.
 # Bridge requires one log in FQ_STREAM_Y (near) and one in FQ_STREAM_Y2 (far).
 
-# Immovable obstacles inside the puzzle — 12-obstacle layout (zone-absolute coords)
+# ── Three-wall gate puzzle — v25 layout (30 obstacles, 62-push minimum solution) ──
+#
+#  Three complete horizontal walls, each with exactly ONE open gate column:
+#    Wall 1  y=20  gate at col  5  (far left)
+#    Wall 2  y=23  gate at col 15  (far right)
+#    Wall 3  y=26  gate at col 10  (centre)
+#
+#  Both logs MUST zigzag: far-left → far-right → centre, then into the stream.
+#  BFS-verified minimum solution: 62 pushes (either log can go first).
+#
 FQ_PUZZLE_OBSTACLES = frozenset({
-    # Upper gate — block direct center approach
-    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 2),   # (10, 20) center top blocker
-    # Upper funnel — force logs off the straight vertical
-    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 3),   # (8,  21)
-    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 3),   # (12, 21)
-    # Mid section — side walls + center pinch
+    # ── Wall 1 (y=20): gate ONLY at col 5  (cols 6-15 blocked) ─────────────────
+    (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 2),   # (6,  20)
+    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 2),   # (7,  20)
+    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 2),   # (8,  20)
+    (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 2),   # (9,  20)
+    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 2),   # (10, 20)
+    (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 2),   # (11, 20)
+    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 2),   # (12, 20)
+    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 2),   # (13, 20)
+    (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 2),   # (14, 20)
+    (FQ_PUZZLE_X0 +10, FQ_PUZZLE_Y0 + 2),   # (15, 20)
+    # ── Wall 2 (y=23): gate ONLY at col 15 (cols 5-14 blocked) ─────────────────
+    (FQ_PUZZLE_X0 + 0, FQ_PUZZLE_Y0 + 5),   # (5,  23)
     (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 5),   # (6,  23)
-    (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 5),   # (14, 23)
+    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 5),   # (7,  23)
+    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 5),   # (8,  23)
     (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 5),   # (9,  23)
+    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 5),   # (10, 23)
     (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 5),   # (11, 23)
-    # Lower section — narrow the approach
-    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 7),   # (7,  25)
-    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 7),   # (13, 25)
-    (FQ_PUZZLE_X0 + 5, FQ_PUZZLE_Y0 + 7),   # (10, 25) center lower blocker
-    # Near bottom — final routing obstacles
-    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 9),   # (8,  27)
-    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 9),   # (12, 27)
+    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 5),   # (12, 23)
+    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 5),   # (13, 23)
+    (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 5),   # (14, 23)
+    # ── Wall 3 (y=26): gate ONLY at col 10 (cols 5-9 and 11-15 blocked) ────────
+    (FQ_PUZZLE_X0 + 0, FQ_PUZZLE_Y0 + 8),   # (5,  26)
+    (FQ_PUZZLE_X0 + 1, FQ_PUZZLE_Y0 + 8),   # (6,  26)
+    (FQ_PUZZLE_X0 + 2, FQ_PUZZLE_Y0 + 8),   # (7,  26)
+    (FQ_PUZZLE_X0 + 3, FQ_PUZZLE_Y0 + 8),   # (8,  26)
+    (FQ_PUZZLE_X0 + 4, FQ_PUZZLE_Y0 + 8),   # (9,  26)
+    (FQ_PUZZLE_X0 + 6, FQ_PUZZLE_Y0 + 8),   # (11, 26)
+    (FQ_PUZZLE_X0 + 7, FQ_PUZZLE_Y0 + 8),   # (12, 26)
+    (FQ_PUZZLE_X0 + 8, FQ_PUZZLE_Y0 + 8),   # (13, 26)
+    (FQ_PUZZLE_X0 + 9, FQ_PUZZLE_Y0 + 8),   # (14, 26)
+    (FQ_PUZZLE_X0 +10, FQ_PUZZLE_Y0 + 8),   # (15, 26)
 })
 
 # Ent starting positions in corridor (zone-absolute coords)
