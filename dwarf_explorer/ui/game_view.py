@@ -279,6 +279,9 @@ _VP_CACHE: dict[int, tuple[tuple, list]] = {}
 # Key: (cave_id, local_x, local_y).  Values are consumed by _bomb_blast_cave.
 _bomb_original_tiles: dict[tuple[int, int, int], str] = {}
 
+# Tracks how many FQ-zone steps each player has taken. Ents move every 2nd step.
+_fq_step_counter: dict[int, int] = {}
+
 
 def _vp_cache_key(player) -> tuple:
     """Return a tuple that uniquely identifies the viewport the player currently sees."""
@@ -4358,8 +4361,9 @@ async def _move_steps(
                     "🎯 Equip your slingshot and shoot an eye **just before it opens** to destroy it!"
                 )
 
-        # Step regular ents (corridor section only)
-        if player.fq_y < _FQ_CY0:
+        # Step regular ents every 2nd player move (corridor section only)
+        _fq_step_counter[user_id] = _fq_step_counter.get(user_id, 0) + 1
+        if player.fq_y < _FQ_CY0 and _fq_step_counter[user_id] % 2 == 0:
             combat_tiles = await _setp(db, fq_id, player.fq_x, player.fq_y)
             if combat_tiles:
                 fq_grid_c = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
