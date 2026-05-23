@@ -14508,105 +14508,121 @@ async def _open_hermit_dialogue(
     interaction: discord.Interaction,
     guild_id: int, user_id: int, player, db, grid: list,
 ) -> None:
-    """Hermit NPC dialogue — triggered by 🧙 Talk when adjacent to hermit_npc tile."""
-    from dwarf_explorer.world.forest import get_hermit_forest_info as _ghfi_hh
-    from dwarf_explorer.game.quests import update_forest_depths_quest_target as _ufdqt_hh
-    _stage = getattr(player, "fq_quest_stage", "none")
+    """Hermit NPC dialogue — opened via ⚙️ Action when adjacent to hermit_npc tile."""
+    import hashlib as _hhash
 
+    _stage = getattr(player, "fq_quest_stage", "none") or "none"
+    _forest_id = getattr(player, "hermit_hut_forest_id", None) or getattr(player, "forest_id", None)
+    npc_name = "The Hermit"
+
+    # Check forest map and ancient log count
+    _fmap = await db.fetch_one(
+        "SELECT 1 FROM player_map_collection WHERE user_id=? AND map_type='forest' AND ref_id=?",
+        (user_id, _forest_id),
+    )
+    _has_map = _fmap is not None
+    _alog_count = sum(
+        r["quantity"] for r in await db.fetch_all(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='ancient_log'", (user_id,)
+        )
+    )
+
+    # ── Greeting and options based on quest stage ─────────────────────────────
     if _stage == "none":
-        msg = (
-            "🧙 The hermit barely glances up from a tattered book, surrounded by "
-            "tangled vines and scattered notes.\n\n"
-            "*'Hmph. Another wanderer. These woods have many secrets, traveller. "
-            "But you don't look ready for them yet.'*"
+        greeting = (
+            "Hmph. Another wanderer. These woods have their secrets — "
+            "but they're not for the idle curious."
         )
+        options = [
+            {"label": "\"What do you know about this forest?\"", "action": "lore"},
+            {"label": "\"Farewell.\"", "action": "close"},
+        ]
+
     elif _stage == "seek_hermit":
-        _fmap = await db.fetch_one(
-            "SELECT 1 FROM player_map_collection "
-            "WHERE user_id=? AND map_type='forest' AND ref_id=?",
-            (user_id, player.forest_id),
+        greeting = (
+            "I don't get many visitors. Sit down if you like. Don't touch the books."
         )
-        if not _fmap:
-            msg = (
-                "🧙 The hermit squints at you from beneath a wild brow of unruly grey.\n\n"
-                "*'You're looking for something deeper in these woods? "
-                "You'll need a proper map of this forest first — "
-                "find the hidden cache nearby. It holds a chart of the grounds.'*\n\n"
-                "🗺️ *Explore the forest for a hidden chest containing a **Forest Map**.*"
-            )
-        else:
-            # Has map → advance quest to hermit_met, redirect tracker to FQ entrance
-            _hinfo_hh = await _ghfi_hh(db)
-            _new_wx_hh = _hinfo_hh["world_x"] if _hinfo_hh else None
-            _new_wy_hh = _hinfo_hh["world_y"] if _hinfo_hh else None
-            player.fq_quest_stage = "hermit_met"
-            await db.execute(
-                "UPDATE players SET fq_quest_stage='hermit_met' WHERE user_id=?", (user_id,)
-            )
-            if _new_wx_hh is not None:
-                await _ufdqt_hh(db, user_id, _new_wx_hh, _new_wy_hh)
-            msg = (
-                "🧙 The old man's eyes widen as he sees your forest chart.\n\n"
-                "*'Ah — you've mapped this place. Good. Then you're ready to hear it.'*\n\n"
-                "He sets down his book and leans forward, voice dropping to a murmur:\n"
-                "*'There is an entrance deeper in the forest — looks just like any other tree. "
-                "I've marked it on your chart. Beyond it lies something ancient. "
-                "Something that predates even the Tree City.'*\n\n"
-                "*'Bring your wits. And perhaps something sharp.'*\n\n"
-                "📍 *Quest updated — the marker now points to the Forest Depths entrance.*"
-            )
+        options = [
+            {"label": "\"I heard you know how to reach the hidden grove.\"", "action": "hermit_grove"},
+            {"label": "\"What do you know about this forest?\"", "action": "lore"},
+            {"label": "\"Farewell.\"", "action": "close"},
+        ]
+
     elif _stage == "hermit_met":
-        msg = (
-            "🧙 The hermit nods slowly, gesturing at the door.\n\n"
-            "*'You haven't gone in yet? The entrance is marked on your map. "
-            "Look for it at the edge of this forest — it blends in with the trees.'*\n\n"
-            "*'Once you pass through, you'll be in the old growth. "
-            "Mind the roots — and the things that move in the dark.'*"
-        )
+        if _alog_count >= 1:
+            greeting = (
+                "Ah — back already. Let me see what you've got."
+            )
+            options = [
+                {"label": f"\"Here — one ancient log.\" ({_alog_count} in pack)", "action": "hermit_craft"},
+                {"label": "\"Not yet — just passing through.\"", "action": "close"},
+            ]
+        else:
+            greeting = (
+                "Still waiting on that ancient log. "
+                "Find the ancient tree in this forest and bring me a log from it."
+            )
+            options = []
+            if _has_map:
+                options.append({"label": "\"Show me the map again.\"", "action": "hermit_map"})
+            options.append({"label": "\"Farewell.\"", "action": "close"})
+
     elif _stage in ("wayerwood_crafted", "map_marked", "puzzle_solved",
                     "warden_defeated", "canal_solved"):
-        _hh_hints = {
-            "wayerwood_crafted": (
-                "*'The Wayerwood is forged. Head to the Forest Depths entrance — "
-                "my mark is on your tracker.'*"
-            ),
-            "map_marked": (
-                "*'You've entered the depths. Good. Push the heavy logs to bridge the stream — "
-                "the forest will show you the way.'*"
-            ),
-            "puzzle_solved": (
-                "*'The stream is bridged. Press deeper — something old waits beyond. "
-                "It won't be friendly.'*"
-            ),
-            "warden_defeated": (
-                "*'The Thornwarden is slain. Impressive. "
-                "Navigate the fork and solve the canal ahead.'*"
-            ),
-            "canal_solved": (
-                "*'The canal is open. The final chamber awaits. "
-                "Whatever lies within — you are ready.'*"
-            ),
+        _stage_hints = {
+            "wayerwood_crafted": "The Wayerwood knows the forest. Head to the marked entrance — trust the rod.",
+            "map_marked":        "You're inside. Push the heavy logs to bridge the stream. The path will clear.",
+            "puzzle_solved":     "The stream is bridged. Keep going. Something old is waiting beyond.",
+            "warden_defeated":   "The Thornwarden is slain. Solve the canal and press deeper.",
+            "canal_solved":      "The canal is open. Whatever's in that final chamber — you're ready for it.",
         }
-        msg = (
-            "🧙 The hermit sets aside a crumbling scroll and fixes you with a steady gaze.\n\n"
-            + _hh_hints.get(_stage, "*'Keep pushing forward. The forest does not reward hesitation.'*")
-        )
+        greeting = _stage_hints.get(_stage, "Keep pushing. The forest does not reward hesitation.")
+        options = [
+            {"label": "\"Any further advice?\"", "action": "lore"},
+            {"label": "\"Farewell.\"", "action": "close"},
+        ]
+
     else:
         # quest_complete or rewarded
-        msg = (
-            "🧙 The hermit looks up from his work with a rare, quiet smile.\n\n"
-            "*'You've seen it all now, haven't you. The depths. The warden. "
-            "The heart tree.'*\n\n"
-            "*'You carry that knowledge well. The forest breathes a little easier "
-            "because of what you did in there.'*\n\n"
-            "He returns to his reading, content."
+        greeting = (
+            "You've seen it all now, haven't you. The depths. The warden. The heart tree. "
+            "The forest breathes a little easier because of what you did in there."
         )
+        options = [
+            {"label": "\"Thank you, old man.\"", "action": "close"},
+        ]
 
-    content = render_grid(grid, player, msg)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player, grid=grid),
-    )
+    # Lore pool — stable per forest
+    _lore_pool = [
+        "These trees are older than any city still standing. They remember the wars, "
+        "the floods. They do not much care for the creatures scurrying around their roots.",
+        "The forest has layers, traveller. What you see walking through it — that is the skin. "
+        "What hides beneath is the bone. Very few ever see the bone.",
+        "I have been in these woods thirty years. I still don't fully understand them. "
+        "That should tell you something.",
+        "There are things in the deep forest that have no name. Not because no one has seen them — "
+        "but because those who did did not come back to name them.",
+    ]
+    _lore_idx = int(_hhash.md5(f"hermit_lore_{_forest_id}".encode()).hexdigest(), 16) % len(_lore_pool)
+    lore_text = _lore_pool[_lore_idx]
+
+    state = {
+        "type": "npc_dialogue",
+        "npc_type": "hermit_npc",
+        "npc_name": npc_name,
+        "text": greeting,
+        "options": options,
+        "selected": 0,
+        "context": "hermit_hut",
+        "lore_text": lore_text,
+        "hermit_hut_forest_id": _forest_id,
+        "has_map": _has_map,
+        "alog_count": _alog_count,
+    }
+    _ui_state[user_id] = state
+    content = _render_dialogue(npc_name, greeting, options, 0)
+    view = DialogueView(guild_id, user_id, options, 0)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def _open_tree_city_villager(
@@ -14728,37 +14744,24 @@ async def _open_tree_city_elder(
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
-        # Hermit has been met — craft the Wayerwood
+        # Hermit has been met — guide player to gather logs and return to hermit
         if _stage == "hermit_met":
             alog_rows = await db.fetch_all(
                 "SELECT quantity FROM inventory WHERE user_id=? AND item_id='ancient_log'", (user_id,))
             alog_count = sum(r["quantity"] for r in alog_rows)
-
-            if alog_count >= 3:
-                # Forge the Wayerwood and advance the quest stage
-                await remove_from_inventory(db, user_id, "ancient_log", 3)
-                await add_to_inventory(db, user_id, "wayerwood", 1)
-                player.fq_quest_stage = "wayerwood_crafted"
-                await db.execute(
-                    "UPDATE players SET fq_quest_stage='wayerwood_crafted' WHERE user_id=?",
-                    (user_id,),
-                )
+            if alog_count >= 1:
                 content = render_grid(
                     grid, player,
-                    "🪄 *\"The ancient wood yields its secret...\"*\n\n"
-                    "The hermit shapes the ancient logs into a slender rod. A faint glow pulses through it.\n"
-                    "You receive the **Wayerwood** 🪄 — equip it to feel the forest's pull.\n"
-                    "Combine it with a **rock** to attune it for caves, or a **pinecone** for hidden chambers.\n\n"
-                    "The hermit already marked the **Forest Depths entrance** on your tracker. "
-                    "Head there when you are ready.",
+                    "🌳 *\"You have the ancient log. Take it to the hermit — he is expecting you.\"*\n\n"
+                    f"✅ Ancient log in pack ({alog_count}) — return to the **Hermit's Hut** to forge your Wayerwood.",
                 )
             else:
                 content = render_grid(
                     grid, player,
-                    f"🌿 *\"The hermit's recipe requires:\"*\n\n"
-                    f"{'✅' if alog_count >= 3 else '❌'} **3 Ancient Logs** ({alog_count}/3)\n"
-                    f"— chop the **Ancient Tree** inside any forest with an 🪓 axe\n\n"
-                    f"Bring them and I shall craft you a Wayerwood.",
+                    "🌿 *\"The hermit can forge your Wayerwood — but he needs materials. "
+                    "Find an **ancient tree** in any forest and chop it down. "
+                    "Bring the log to the hermit and he will do the rest.\"*\n\n"
+                    "❌ **Ancient Log** — 0/1 (chop the 🌳 ancient tree with an 🪓 axe)",
                 )
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
@@ -15153,6 +15156,19 @@ class NavView(discord.ui.View):
         self.add_item(close_btn)
 
 
+class _HermitMapBackView(discord.ui.View):
+    """Shown after the hermit entrance-map overlay — single Back button."""
+
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="🔙 Back to Hut",
+            custom_id=_custom_id(guild_id, user_id, "hermit_map_close"),
+            row=0,
+        ))
+
+
 class MapCloseView(discord.ui.View):
     """Attached to the standalone map message so the player can close it."""
 
@@ -15377,6 +15393,28 @@ async def handle_forest_map(
     view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=True)
     await interaction.edit_original_response(
         content=None, embed=None, attachments=[file], view=view
+    )
+
+
+async def handle_hermit_map_close(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Return to hermit hut game view after viewing the entrance map overlay."""
+    db = await get_database(guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+    from dwarf_explorer.world.hermit_hut import (
+        load_hut_viewport as _lhv_hmc,
+        ensure_hermit_hut_built as _ehb_hmc,
+    )
+    await _ehb_hmc(player.hermit_hut_forest_id, db)
+    grid = await _lhv_hmc(
+        player.hermit_hut_forest_id, player.hermit_hut_floor,
+        player.hermit_hut_x, player.hermit_hut_y, db,
+    )
+    content = render_grid(grid, player, "🗺️ *The entrance is marked on your chart.*")
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None, attachments=[],
+        view=_game_view(guild_id, user_id, player, grid=grid),
     )
 
 
@@ -18160,6 +18198,22 @@ async def _dialogue_return_to_view(
 ) -> None:
     """Return to the correct game view after closing a dialogue, based on context."""
     seed = await get_or_create_world(db, guild_id)
+    if ctx == "hermit_hut" and getattr(player, "in_hermit_hut", False):
+        from dwarf_explorer.world.hermit_hut import (
+            load_hut_viewport as _lhv_drt,
+            ensure_hermit_hut_built as _ehb_drt,
+        )
+        await _ehb_drt(player.hermit_hut_forest_id, db)
+        grid = await _lhv_drt(
+            player.hermit_hut_forest_id, player.hermit_hut_floor,
+            player.hermit_hut_x, player.hermit_hut_y, db,
+        )
+        content = render_grid(grid, player, msg)
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
     if ctx == "bandit_camp" and getattr(player, "in_bandit_camp", False):
         from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_dlg
         _bc_row_dlg = await db.fetch_one(
@@ -18303,6 +18357,238 @@ async def handle_dialogue_confirm(
         await interaction.response.edit_message(
             embed=_embed(content), content=None,
             view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
+
+    # ── Hermit NPC actions ────────────────────────────────────────────────────
+    if action == "hermit_grove":
+        npc_name = state.get("npc_name", "The Hermit")
+        has_map = state.get("has_map", False)
+        if not has_map:
+            new_text = (
+                "You'll need a wayerwood to find the grove. "
+                "But I can't point you anywhere without a proper chart of this forest. "
+                "There's a hidden chest somewhere out there — it holds a map of the grounds. "
+                "Come back once you've found it."
+            )
+            new_options = [
+                {"label": "\"I heard you know how to reach the hidden grove.\"", "action": "hermit_grove"},
+                {"label": "\"What do you know about this forest?\"", "action": "lore"},
+                {"label": "\"Farewell.\"", "action": "close"},
+            ]
+        else:
+            new_text = (
+                "You'll need a wayerwood for that. "
+                "Haven't seen one of those in a long time."
+            )
+            new_options = [
+                {"label": "\"Where can I find a wayerwood?\"", "action": "hermit_wayerwood_q"},
+                {"label": "\"What is a wayerwood, exactly?\"", "action": "hermit_what"},
+                {"label": "\"Farewell.\"", "action": "close"},
+            ]
+        state["text"] = new_text
+        state["options"] = new_options
+        state["selected"] = 0
+        _ui_state[user_id] = state
+        content = _render_dialogue(npc_name, new_text, new_options, 0)
+        view = DialogueView(guild_id, user_id, new_options, 0)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "hermit_what":
+        npc_name = state.get("npc_name", "The Hermit")
+        new_text = (
+            "A wayerwood is carved from ancient timber — wood old enough that it carries "
+            "the memory of the forest. Once shaped, it can sense hidden openings that "
+            "ordinary folk walk right past. "
+            "Most haven't seen one in decades. I've made a few in my time."
+        )
+        new_options = [
+            {"label": "\"Where can I find a wayerwood?\"", "action": "hermit_wayerwood_q"},
+            {"label": "\"Farewell.\"", "action": "close"},
+        ]
+        state["text"] = new_text
+        state["options"] = new_options
+        state["selected"] = 0
+        _ui_state[user_id] = state
+        content = _render_dialogue(npc_name, new_text, new_options, 0)
+        view = DialogueView(guild_id, user_id, new_options, 0)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "hermit_wayerwood_q":
+        from dwarf_explorer.game.quests import update_forest_depths_quest_target as _ufdqt_hw
+        from dwarf_explorer.world.forest import get_hermit_forest_info as _ghfi_hw
+        npc_name = state.get("npc_name", "The Hermit")
+        _hw_stage = getattr(player, "fq_quest_stage", "none") or "none"
+        # Advance quest from seek_hermit → hermit_met on first ask
+        if _hw_stage == "seek_hermit":
+            _hinfo_hw = await _ghfi_hw(db)
+            _new_wx_hw = _hinfo_hw["world_x"] if _hinfo_hw else None
+            _new_wy_hw = _hinfo_hw["world_y"] if _hinfo_hw else None
+            player.fq_quest_stage = "hermit_met"
+            await db.execute(
+                "UPDATE players SET fq_quest_stage='hermit_met' WHERE user_id=?", (user_id,)
+            )
+            if _new_wx_hw is not None:
+                await _ufdqt_hw(db, user_id, _new_wx_hw, _new_wy_hw)
+        new_text = (
+            "Well, I can make you one — but I'll need materials. "
+            "There's an ancient tree growing deep in this forest. "
+            "Chop it down and bring me a log from it, and I'll forge your wayerwood. "
+            "It's not a gentle tree. Be careful in there."
+        )
+        new_options = []
+        if state.get("has_map"):
+            new_text += "\n\n*I've marked the forest entrance on your chart.*"
+            new_options.append({"label": "🗺️ View Map", "action": "hermit_map"})
+        new_options.append({"label": "\"I'll find it.\"", "action": "close"})
+        state["text"] = new_text
+        state["options"] = new_options
+        state["selected"] = 0
+        _ui_state[user_id] = state
+        content = _render_dialogue(npc_name, new_text, new_options, 0)
+        view = DialogueView(guild_id, user_id, new_options, 0)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
+    if action == "hermit_craft":
+        from dwarf_explorer.world.hermit_hut import (
+            load_hut_viewport as _lhv_hcr,
+            ensure_hermit_hut_built as _ehb_hcr,
+        )
+        _ui_state.pop(user_id, None)
+        _alog_rows_hcr = await db.fetch_all(
+            "SELECT quantity FROM inventory WHERE user_id=? AND item_id='ancient_log'", (user_id,)
+        )
+        _alog_count_hcr = sum(r["quantity"] for r in _alog_rows_hcr)
+        await _ehb_hcr(player.hermit_hut_forest_id, db)
+        grid = await _lhv_hcr(
+            player.hermit_hut_forest_id, player.hermit_hut_floor,
+            player.hermit_hut_x, player.hermit_hut_y, db,
+        )
+        if _alog_count_hcr < 1:
+            content = render_grid(
+                grid, player,
+                "🧙 *\"You haven't got the log yet. Chop down the ancient tree — then come back.\"*",
+            )
+            await interaction.response.edit_message(
+                embed=_embed(content), content=None,
+                view=_game_view(guild_id, user_id, player, grid=grid),
+            )
+            return
+        # Craft the Wayerwood
+        await remove_from_inventory(db, user_id, "ancient_log", 1)
+        await add_to_inventory(db, user_id, "wayerwood", 1)
+        player.fq_quest_stage = "wayerwood_crafted"
+        await db.execute(
+            "UPDATE players SET fq_quest_stage='wayerwood_crafted' WHERE user_id=?", (user_id,)
+        )
+        content = render_grid(
+            grid, player,
+            "🧙 *\"Aye, that'll do.\"*\n\n"
+            "The hermit takes the log and works it with quiet precision — a few steady strokes "
+            "and the ancient wood yields a slender rod. He holds it out without ceremony.\n\n"
+            "*\"Your Wayerwood.\"* 🪄\n\n"
+            "You receive the **Wayerwood** — equip it and head to the "
+            "**Forest Depths entrance**. Your tracker will guide you there.",
+        )
+        await interaction.response.edit_message(
+            embed=_embed(content), content=None,
+            view=_game_view(guild_id, user_id, player, grid=grid),
+        )
+        return
+
+    if action == "hermit_map":
+        # Render the forest map with a highlight on the fst_maze_door tile
+        await interaction.response.defer()
+        _hmap_forest_id = state.get("hermit_hut_forest_id") or getattr(
+            player, "hermit_hut_forest_id", None
+        )
+        if not _hmap_forest_id:
+            await interaction.edit_original_response(
+                content="🗺️ No forest map available.", embed=None, attachments=[], view=None
+            )
+            return
+        _hmap_tiles = await db.fetch_all(
+            "SELECT local_x, local_y, tile_type FROM forest_tiles WHERE forest_id=?",
+            (_hmap_forest_id,)
+        )
+        if not _hmap_tiles:
+            await interaction.edit_original_response(
+                content="🗺️ Forest map data not available.", embed=None, attachments=[], view=None
+            )
+            return
+        import io as _hmio
+        from PIL import Image as _HMImage, ImageDraw as _HMDraw
+        from dwarf_explorer.world.forest import FOREST_W as _HMW, FOREST_H as _HMH
+        from dwarf_explorer.world.world_map import _draw_icon as _hm_draw_icon
+        _HM_SCALE = 4
+        _hm_tree_col   = (10, 80, 20)
+        _hm_floor_col  = (80, 160, 60)
+        _hm_anc_col    = (20, 200, 120)
+        _hm_maze_col   = (150, 50, 200)
+        _hm_self_col   = (220, 60, 60)
+        _hm_img = _HMImage.new("RGB", (_HMW * _HM_SCALE, _HMH * _HM_SCALE), _hm_tree_col)
+        _hm_draw = _HMDraw.Draw(_hm_img)
+        _HM_ICON_TILES = {
+            "fst_floor":         (_hm_floor_col,      None),
+            "fst_ancient_tree":  (_hm_anc_col,         "filled_circle"),
+            "fst_maze_door":     (_hm_maze_col,        "filled_diamond"),
+            "fst_chest":         ((200, 170, 50),      "filled_diamond"),
+            "fst_map_chest":     ((200, 170, 50),      "filled_diamond"),
+            "fst_tree_city":     ((220, 140, 30),      "filled_diamond"),
+            "fst_exit":          ((50, 200, 80),       "filled_triangle"),
+            "fst_nut_tree":      ((60, 130, 40),       "filled_circle"),
+            "fst_hermit_house":  ((180, 130, 60),      "filled_diamond"),
+        }
+        _hm_maze_pos = None
+        for _hmt in _hmap_tiles:
+            _tx, _ty, _tt = _hmt["local_x"], _hmt["local_y"], _hmt["tile_type"]
+            _px0, _py0 = _tx * _HM_SCALE, _ty * _HM_SCALE
+            _px1, _py1 = _px0 + _HM_SCALE - 1, _py0 + _HM_SCALE - 1
+            if _tt == "fst_floor":
+                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_hm_floor_col)
+            elif _tt in _HM_ICON_TILES:
+                _ic, _ist = _HM_ICON_TILES[_tt]
+                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_hm_floor_col)
+                if _ist:
+                    _hm_draw_icon(_hm_draw,
+                                  _tx * _HM_SCALE + _HM_SCALE // 2,
+                                  _ty * _HM_SCALE + _HM_SCALE // 2,
+                                  _ist, _ic, r=_HM_SCALE)
+                if _tt == "fst_maze_door":
+                    _hm_maze_pos = (_tx * _HM_SCALE + _HM_SCALE // 2,
+                                    _ty * _HM_SCALE + _HM_SCALE // 2)
+        # Player dot (last known forest position)
+        if getattr(player, "forest_x", None) is not None:
+            _cx_p = player.forest_x * _HM_SCALE + _HM_SCALE // 2
+            _cy_p = player.forest_y * _HM_SCALE + _HM_SCALE // 2
+            _hm_draw.ellipse([_cx_p - 4, _cy_p - 4, _cx_p + 4, _cy_p + 4],
+                             fill=_hm_self_col, outline=(255, 255, 255))
+        # ── Overlay: yellow circle + downward arrow on fst_maze_door ─────────
+        if _hm_maze_pos:
+            _mdx, _mdy = _hm_maze_pos
+            _R = 12
+            _hm_draw.ellipse([_mdx - _R, _mdy - _R, _mdx + _R, _mdy + _R],
+                             outline=(255, 230, 0), width=2)
+            # Arrow shaft (above the circle)
+            _arr_base_y = _mdy - _R - 2
+            _hm_draw.line([(_mdx, _arr_base_y - 10), (_mdx, _arr_base_y)],
+                          fill=(255, 230, 0), width=2)
+            # Arrowhead
+            _hm_draw.polygon([
+                (_mdx - 4, _arr_base_y - 4),
+                (_mdx + 4, _arr_base_y - 4),
+                (_mdx,     _arr_base_y + 2),
+            ], fill=(255, 230, 0))
+        _hm_buf = _hmio.BytesIO()
+        _hm_img.save(_hm_buf, format="PNG")
+        _hm_buf.seek(0)
+        _hm_file = discord.File(_hm_buf, filename="hermit_map.png")
+        _hm_back_view = _HermitMapBackView(guild_id, user_id)
+        await interaction.edit_original_response(
+            content=None, embed=None, attachments=[_hm_file], view=_hm_back_view
         )
         return
 

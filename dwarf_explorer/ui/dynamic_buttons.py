@@ -140,6 +140,7 @@ from dwarf_explorer.ui.game_view import (
     _execute_warp,
     handle_nav_open,
     handle_nav_close,
+    handle_hermit_map_close,
     handle_npc_talk,
 )
 
@@ -760,6 +761,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_nav_open(interaction, gid, uid)
             elif act == "nav_close":
                 await handle_nav_close(interaction, gid, uid)
+            elif act == "hermit_map_close":
+                await handle_hermit_map_close(interaction, gid, uid)
             elif act == "fill_watering_can":
                 await handle_fill_watering_can(interaction, gid, uid)
             elif act == "fish_secondary":

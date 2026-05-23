@@ -1415,10 +1415,10 @@ _FQ_STAGE_DESCRIPTIONS: dict[str, str] = {
         "Seek him out."
     ),
     "hermit_met": (
-        "The hermit has revealed the recipe: **1 Stick** and **5 Xyphem** crystals. "
-        "He has also marked a hidden gap in the ancient wall — the entrance to the *Forest Depths*. "
-        "Return to the **Tree City elder** with the materials to forge your Wayerwood, "
-        "then head to the marked entrance."
+        "The hermit has offered to forge a **Wayerwood** — the key to the hidden grove. "
+        "He needs one **ancient log** from the ancient tree deep in this forest. "
+        "Return to him with the log and he will craft it. "
+        "The **Forest Depths entrance** is now marked on your tracker."
     ),
     "wayerwood_crafted": (
         "The elder has forged your **Wayerwood** 🪄. Equip it to feel the forest's pull. "
