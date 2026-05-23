@@ -4182,10 +4182,11 @@ async def _move_steps(
         if target_fq.terrain == "fq_exit":
             player.in_forest_quest = False
             player.in_fq_boss_combat = False
+            player.in_forest = True           # re-enter forest on exit
             player.fq_area_id = None
             player.fq_x = player.fq_y = 0
             await db.execute(
-                "UPDATE players SET in_forest_quest=0, in_fq_boss_combat=0, "
+                "UPDATE players SET in_forest=1, in_forest_quest=0, in_fq_boss_combat=0, "
                 "fq_area_id=NULL, fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fq
@@ -4554,6 +4555,7 @@ async def _move_steps(
                     )
                     await _reset_ents_entry(db, fq_id_entry)
                     from dwarf_explorer.config import FQ_ENTRY_X as _FQEntX, FQ_ENTRY_Y as _FQEntY
+                    player.in_forest = False      # clear forest flag — only one zone flag active at a time
                     player.in_forest_quest = True
                     player.fq_area_id = fq_id_entry
                     player.fq_x = _FQEntX
@@ -4570,7 +4572,7 @@ async def _move_steps(
                         # Null out tracker — player is inside now, no overworld marker needed
                         await _ufdqt_entry(db, user_id, None, None)
                     await db.execute(
-                        "UPDATE players SET in_forest_quest=1, fq_area_id=?, "
+                        "UPDATE players SET in_forest=0, in_forest_quest=1, fq_area_id=?, "
                         "fq_x=?, fq_y=?, forest_x=?, forest_y=?, fq_quest_stage=? "
                         "WHERE user_id=?",
                         (fq_id_entry, player.fq_x, player.fq_y,
