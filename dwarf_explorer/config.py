@@ -618,7 +618,7 @@ FQ_WALKABLE = frozenset({
 
 # Enemy stats — ent, snake, and ancient ent for the FQ zone
 ENEMY_STATS.update({
-    "ent":         (55, 18,  6, 40, 20),   # disguised as a tree; heavy, slow
+    "ent":         (30, 10,  2, 40, 20),   # disguised as a tree; heavy, slow
     "snake":       (18,  9,  0, 12,  6),   # fast, low HP
     "ancient_ent": (90, 24, 10,  0,  0),   # ancient guardian; no gold, drops ent_core ×2
 })
