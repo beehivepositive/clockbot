@@ -57,6 +57,10 @@ class Database:
             return conn.execute(sql, params).fetchall()
         return await asyncio.to_thread(_run)
 
+    async def commit(self) -> None:
+        """No-op: every execute() auto-commits. Exists for call-site compatibility."""
+        pass
+
     async def init_schema(self) -> None:
         import logging as _logging
         _log = _logging.getLogger(__name__)
