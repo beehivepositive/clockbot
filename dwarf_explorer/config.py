@@ -101,6 +101,8 @@ TERRAIN_EMOJI = {
     # Hermit zone tiles
     "fst_hermit_house": "\U0001F6D6",  # 🛖 hermit's hut
     "fst_fq_entrance":  "\U0001F333",  # 🌳 looks like a tree wall (FQ zone entrance marker)
+    # Shared tile — used both in forest surface and FQ entry corridor
+    "fst_ancient_tree": "\U0001F332",  # 🌲 choppable ancient tree (quest: ancient log)
 }
 
 STRUCTURE_EMOJI = {
@@ -469,6 +471,8 @@ FQ_FORD_XB     = 10
 
 FQ_ENTRY_X     = 10   # player enters the zone here (top of corridor)
 FQ_ENTRY_Y     = 0
+FQ_ENTRY_TREE_X = 10  # ancient tree in entry corridor — chop for ancient_log quest item
+FQ_ENTRY_TREE_Y = 12
 FQ_RESET_X     = 3    # reset stone position (in chamber, left of puzzle)
 FQ_RESET_Y     = 22
 FQ_GROVE_EXIT_X = 10  # kept for backward compat; no longer used in tile gen
@@ -614,6 +618,7 @@ FQ_WALKABLE = frozenset({
     "fq_ancient_tree",      # the ancient heart tree (interactable)
     "fq_ancient_tree_done", # post-activation state
     "fq_ancient_chest",     # final room reward chest
+    "fst_ancient_tree",     # choppable ancient tree in entry corridor (yields ancient_log)
 })
 
 # Enemy stats — ent, snake, and ancient ent for the FQ zone
@@ -946,7 +951,7 @@ FOREST_EMOJI: dict[str, str] = {
 }
 
 FOREST_WALKABLE: frozenset[str] = frozenset({
-    "fst_floor", "fst_exit", "fst_tree_city", "fst_ancient_tree",
+    "fst_floor", "fst_exit", "fst_tree_city",
     "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
     "fst_hermit_house",
     "fst_secret_wall", "fst_chamber_floor", "fst_chamber_chest",

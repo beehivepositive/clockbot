@@ -9087,6 +9087,63 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
             return
 
+        if fq_tile_i.terrain == "fst_ancient_tree":
+            # Choppable ancient tree in entry corridor — 3 chops yield 1 ancient_log
+            _fq_has_axe = player.hand_1 == "axe" or player.hand_2 == "axe"
+            if not _fq_has_axe:
+                content = render_grid(fq_grid_i, player,
+                    "🌲 A gnarled ancient tree blocks the path — its wood is dense and old.\n"
+                    "Equip an 🪓 **Axe** and interact again to chop it down.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+                return
+            # Use FQ area ID and tile position as unique chop key
+            _fq_chop_key_x = player.fq_x + (player.fq_area_id or 0) * 100000
+            _fq_chop_key_y = player.fq_y + (player.fq_area_id or 0) * 100000
+            _fq_chop_row = await db.fetch_one(
+                "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                (_fq_chop_key_x, _fq_chop_key_y),
+            )
+            _fq_chops = (_fq_chop_row["chops"] if _fq_chop_row else 0) + 1
+            if _fq_chops >= 3:
+                # Tree felled — replace tile with fq_floor and award 1 ancient_log
+                await db.execute(
+                    "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
+                    (_fq_chop_key_x, _fq_chop_key_y),
+                )
+                await db.execute(
+                    "UPDATE forest_quest_tiles SET tile_type='fq_floor' "
+                    "WHERE fq_id=? AND local_x=? AND local_y=?",
+                    (player.fq_area_id, player.fq_x, player.fq_y),
+                )
+                from dwarf_explorer.database.repositories import add_to_inventory as _ati_fqt
+                await _ati_fqt(db, user_id, "ancient_log", 1)
+                await db.commit()
+                _invalidate_vp(user_id)
+                fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+                content = render_grid(fq_grid_i, player,
+                    "🪓 The ancient tree splinters and falls! You pry loose **1 Ancient Log** 🪵.\n"
+                    "*The hermit will know what to do with it.*")
+            else:
+                if _fq_chop_row:
+                    await db.execute(
+                        "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
+                        (_fq_chops, _fq_chop_key_x, _fq_chop_key_y),
+                    )
+                else:
+                    await db.execute(
+                        "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
+                        (_fq_chop_key_x, _fq_chop_key_y, _fq_chops),
+                    )
+                await db.commit()
+                _fq_chop_left = 3 - _fq_chops
+                content = render_grid(fq_grid_i, player,
+                    f"🪓 You swing at the ancient tree ({_fq_chops}/3). "
+                    f"{_fq_chop_left} more blow{'s' if _fq_chop_left != 1 else ''} to fell it.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
         content = render_grid(fq_grid_i, player, "🌿 Nothing to interact with here in the depths.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
@@ -15228,7 +15285,8 @@ async def handle_nav_open(
 async def handle_forest_map(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Render the current forest interior as a PIL image with key, avatars, and icons."""
+    """Render the current forest interior as a clean PIL image showing paths and the
+    Forest Depths entrance, matching the style of the hermit map overlay."""
     await interaction.response.defer()
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
@@ -15247,152 +15305,117 @@ async def handle_forest_map(
         )
         return
 
-    import io
-    from PIL import Image, ImageDraw, ImageFont
-    from dwarf_explorer.world.forest import FOREST_W, FOREST_H
-    from dwarf_explorer.world.world_map import _draw_icon, _paste_avatar
+    import io as _fmio
+    from PIL import Image as _FMImage, ImageDraw as _FMDraw, ImageFont as _FMFont
+    from dwarf_explorer.world.forest import FOREST_W as _FMW, FOREST_H as _FMH
 
-    SCALE = 4
-    MAP_W = FOREST_W * SCALE   # 480 px
-    MAP_H = FOREST_H * SCALE   # 480 px
+    _S = 5          # pixels per tile (120×120 → 600×600 px)
+    _PAD = 6        # border padding so edge tiles aren't clipped
+    _IW = _FMW * _S + _PAD * 2
+    _IH = _FMH * _S + _PAD * 2
 
-    # ── Legend / key layout ───────────────────────────────────────────────────
-    # Legend is placed ABOVE the map. Each entry is a swatch + label.
-    _TREE_COL   = (10, 80, 20)       # same as dense_forest in TILE_COLORS
-    _FLOOR_COL  = (80, 160, 60)      # lighter green for walkable paths
-    _CHEST_COL  = (200, 170, 50)
-    _NUT_COL    = (60, 130, 40)
-    _ANC_COL    = (20, 200, 120)
-    _CITY_COL   = (220, 140, 30)
-    _EXIT_COL   = (50, 200, 80)
-    _MAZE_COL   = (150, 50, 200)
-    _SELF_COL   = (255, 50, 50)
-    _OTHER_COL  = (60, 120, 255)
+    _COL_TREE  = (10, 75, 15)     # dense forest background
+    _COL_FLOOR = (70, 150, 50)    # walkable path
+    _COL_SELF  = (230, 50,  50)   # player dot
+    _COL_YEL   = (255, 220,  30)  # entrance overlay
+    _COL_BLK   = (0,    0,   0)   # outline shadow
 
-    # (label, color, style)  — style "square" = filled rect; others match _draw_icon
-    _LEGEND = [
-        ("Tree Wall",    _TREE_COL,  "square"),
-        ("Forest Path",  _FLOOR_COL, "square"),
-        ("Chest",        _CHEST_COL, "filled_diamond"),
-        ("Nut Tree",     _NUT_COL,   "filled_circle"),
-        ("Ancient Tree", _ANC_COL,   "filled_circle"),
-        ("Tree City",    _CITY_COL,  "filled_diamond"),
-        ("Exit",         _EXIT_COL,  "filled_triangle"),
-        ("Maze Door",    _MAZE_COL,  "filled_diamond"),
-        ("You",          _SELF_COL,  "dot_red"),
-        ("Other Player", _OTHER_COL, "dot_blue"),
-    ]
-    _SW   = 14   # swatch width/height px
-    _ROW_H = 18  # px per legend row
-    _COL_W = 110 # px per legend column
-    _COLS  = 5   # legend columns
-    _MARGIN = 6
-    _LEGEND_H = _MARGIN * 2 + (_ROW_H * ((len(_LEGEND) + _COLS - 1) // _COLS))
-    TOTAL_H = _LEGEND_H + MAP_H
+    _fm_img  = _FMImage.new("RGB", (_IW, _IH), _COL_TREE)
+    _fm_draw = _FMDraw.Draw(_fm_img)
 
-    img = Image.new("RGB", (MAP_W, TOTAL_H), (20, 20, 20))  # dark bg for legend area
-    draw = ImageDraw.Draw(img)
+    # ── Render tiles ──────────────────────────────────────────────────────────
+    # Only forest floors are drawn; all other walkable POI tiles render as
+    # plain floor so there's no confusing clutter.  The FQ entrance gets its
+    # own large overlay below.
+    _fm_entrance_pos = None
+    _FLOOR_LIKE = frozenset({
+        "fst_floor", "fst_exit", "fst_tree_city", "fst_chest", "fst_map_chest",
+        "fst_nut_tree", "fst_hermit_house", "fst_maze_door",
+    })
+    for _fmtile in tiles:
+        _tx, _ty, _tt = _fmtile["local_x"], _fmtile["local_y"], _fmtile["tile_type"]
+        _px0 = _tx * _S + _PAD
+        _py0 = _ty * _S + _PAD
+        _px1 = _px0 + _S - 1
+        _py1 = _py0 + _S - 1
+        if _tt in _FLOOR_LIKE:
+            _fm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
+        elif _tt == "fst_fq_entrance":
+            _fm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
+            _fm_entrance_pos = (_px0 + _S // 2, _py0 + _S // 2)
 
-    # Draw legend header
+    # ── Player dot ────────────────────────────────────────────────────────────
+    if getattr(player, "forest_x", None) is not None:
+        _pcx = player.forest_x * _S + _PAD + _S // 2
+        _pcy = player.forest_y * _S + _PAD + _S // 2
+        _fm_draw.ellipse([_pcx - 5, _pcy - 5, _pcx + 5, _pcy + 5],
+                         fill=(0, 0, 0), outline=(0, 0, 0))
+        _fm_draw.ellipse([_pcx - 4, _pcy - 4, _pcx + 4, _pcy + 4],
+                         fill=_COL_SELF, outline=(255, 255, 255))
+
+    # ── Forest Depths entrance overlay: large arrow + ringed circle ───────────
+    if _fm_entrance_pos:
+        _ex, _ey = _fm_entrance_pos
+        _CR = 18   # circle radius
+
+        # Black drop-shadow ring
+        _fm_draw.ellipse([_ex - _CR - 2, _ey - _CR - 2, _ex + _CR + 2, _ey + _CR + 2],
+                         outline=_COL_BLK, width=4)
+        # Yellow highlight ring
+        _fm_draw.ellipse([_ex - _CR, _ey - _CR, _ex + _CR, _ey + _CR],
+                         outline=_COL_YEL, width=3)
+
+        # Arrow shaft + arrowhead pointing down at the circle
+        _shaft_bot = _ey - _CR - 4
+        _shaft_top = _shaft_bot - 36
+        _AW = 5
+        _AH = 12
+
+        # Shadow stroke for shaft
+        _fm_draw.line([(_ex, _shaft_top + _AH), (_ex, _shaft_bot)],
+                      fill=_COL_BLK, width=6)
+        # Yellow shaft
+        _fm_draw.line([(_ex, _shaft_top + _AH), (_ex, _shaft_bot)],
+                      fill=_COL_YEL, width=4)
+
+        # Shadow arrowhead
+        _fm_draw.polygon([
+            (_ex,         _shaft_top - 2),
+            (_ex - _AW - 2, _shaft_top + _AH + 2),
+            (_ex + _AW + 2, _shaft_top + _AH + 2),
+        ], fill=_COL_BLK)
+        # Yellow arrowhead
+        _fm_draw.polygon([
+            (_ex,       _shaft_top),
+            (_ex - _AW, _shaft_top + _AH),
+            (_ex + _AW, _shaft_top + _AH),
+        ], fill=_COL_YEL)
+
+    # ── Small legend strip at bottom ──────────────────────────────────────────
     try:
-        font = ImageFont.truetype("arial.ttf", 10)
+        _fm_font = _FMFont.truetype("arial.ttf", 11)
     except Exception:
-        font = ImageFont.load_default()
-
-    for i, (label, color, style) in enumerate(_LEGEND):
-        col = i % _COLS
-        row = i // _COLS
-        x0 = _MARGIN + col * _COL_W
-        y0 = _MARGIN + row * _ROW_H
-        cx = x0 + _SW // 2
-        cy = y0 + _SW // 2
-        if style == "square":
-            draw.rectangle([x0, y0, x0 + _SW - 1, y0 + _SW - 1], fill=color, outline=(180, 180, 180))
-        elif style in ("dot_red", "dot_blue"):
-            draw.ellipse([x0 + 1, y0 + 1, x0 + _SW - 2, y0 + _SW - 2], fill=color, outline=(255, 255, 255))
-        else:
-            draw.rectangle([x0, y0, x0 + _SW - 1, y0 + _SW - 1], fill=(30, 30, 30))
-            _draw_icon(draw, cx, cy, style, color, r=5)
-        draw.text((x0 + _SW + 3, y0 + (_SW - 10) // 2), label, fill=(210, 210, 210), font=font)
-
-    # ── Render map tiles (offset below legend) ────────────────────────────────
-    OFFSET_Y = _LEGEND_H   # map starts after legend
-
-    # Background = tree wall color
-    draw.rectangle([0, OFFSET_Y, MAP_W - 1, TOTAL_H - 1], fill=_TREE_COL)
-
-    # Special tile types that draw as plain filled rectangles
-    RECT_TILES = {
-        "fst_floor": _FLOOR_COL,
-    }
-    # Icon tiles — drawn as icons on top of the floor/tree base
-    ICON_TILES = {
-        "fst_chest":        (_CHEST_COL, "filled_diamond"),
-        "fst_map_chest":    (_CHEST_COL, "filled_diamond"),
-        "fst_nut_tree":     (_NUT_COL,   "filled_circle"),
-        "fst_ancient_tree": (_ANC_COL,   "filled_circle"),
-        "fst_tree_city":    (_CITY_COL,  "filled_diamond"),
-        "fst_exit":         (_EXIT_COL,  "filled_triangle"),
-        "fst_maze_door":    (_MAZE_COL,  "filled_diamond"),
-    }
-
-    for tile in tiles:
-        tx, ty, tt = tile["local_x"], tile["local_y"], tile["tile_type"]
-        px0 = tx * SCALE
-        py0 = ty * SCALE + OFFSET_Y
-        px1 = px0 + SCALE - 1
-        py1 = py0 + SCALE - 1
-        if tt in RECT_TILES:
-            draw.rectangle([px0, py0, px1, py1], fill=RECT_TILES[tt])
-        elif tt in ICON_TILES:
-            # Draw floor background under icon
-            draw.rectangle([px0, py0, px1, py1], fill=_FLOOR_COL)
-            ic, ist = ICON_TILES[tt]
-            cx = tx * SCALE + SCALE // 2
-            cy = ty * SCALE + SCALE // 2 + OFFSET_Y
-            _draw_icon(draw, cx, cy, ist, ic, r=SCALE)
-
-    # ── Fetch other forest players ────────────────────────────────────────────
-    other_rows = await db.fetch_all(
-        "SELECT user_id, forest_x, forest_y FROM players "
-        "WHERE in_forest=1 AND forest_id=? AND user_id!=?",
-        (player.forest_id, user_id),
-    )
-
-    # ── Fetch avatars ─────────────────────────────────────────────────────────
-    player_avatar = await _fetch_or_cache_avatar(db, interaction.guild, user_id)
-    other_avatars: list[bytes | None] = [
-        await _fetch_or_cache_avatar(db, interaction.guild, r["user_id"]) for r in other_rows
+        _fm_font = _FMFont.load_default()
+    _leg_y = _IH - _PAD - 12
+    _fm_entries = [
+        (_COL_FLOOR, "Forest path"),
+        (_COL_YEL,   "Forest Depths entrance"),
+        (_COL_SELF,  "You"),
     ]
+    _lx = _PAD + 2
+    for _lc, _llabel in _fm_entries:
+        _fm_draw.rectangle([_lx, _leg_y + 2, _lx + 9, _leg_y + 11], fill=_lc)
+        _fm_draw.text((_lx + 12, _leg_y), _llabel, fill=(210, 210, 210), font=_fm_font)
+        _lx += 12 + len(_llabel) * 6 + 10
 
-    # ── Draw other players (blue) ─────────────────────────────────────────────
-    for i, row in enumerate(other_rows):
-        cx = row["forest_x"] * SCALE + SCALE // 2
-        cy = row["forest_y"] * SCALE + SCALE // 2 + OFFSET_Y
-        av = other_avatars[i] if i < len(other_avatars) else None
-        if av:
-            img = _paste_avatar(img, av, cx, cy, 16, _OTHER_COL)
-            draw = ImageDraw.Draw(img)
-        else:
-            draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=_OTHER_COL, outline=(255, 255, 255))
-
-    # ── Draw current player (red) ─────────────────────────────────────────────
-    cx_p = player.forest_x * SCALE + SCALE // 2
-    cy_p = player.forest_y * SCALE + SCALE // 2 + OFFSET_Y
-    if player_avatar:
-        img = _paste_avatar(img, player_avatar, cx_p, cy_p, 20, _SELF_COL)
-        draw = ImageDraw.Draw(img)
-    else:
-        draw.ellipse([cx_p - 5, cy_p - 5, cx_p + 5, cy_p + 5], fill=_SELF_COL, outline=(255, 255, 255))
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    file = discord.File(buf, filename="forest_map.png")
+    _fm_buf = _fmio.BytesIO()
+    _fm_img.save(_fm_buf, format="PNG")
+    _fm_buf.seek(0)
+    _fm_file = discord.File(_fm_buf, filename="forest_map.png")
     has_crystal = getattr(player, "has_warp_crystal", False)
     view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=True)
     await interaction.edit_original_response(
-        content=None, embed=None, attachments=[file], view=view
+        content=None, embed=None, attachments=[_fm_file], view=view
     )
 
 
@@ -18434,13 +18457,12 @@ async def handle_dialogue_confirm(
                 await _ufdqt_hw(db, user_id, _new_wx_hw, _new_wy_hw)
         new_text = (
             "Well, I can make you one — but I'll need materials. "
-            "There's an ancient tree growing deep in this forest. "
-            "Chop it down and bring me a log from it, and I'll forge your wayerwood. "
-            "It's not a gentle tree. Be careful in there."
+            "There's an ancient tree growing just inside the **Forest Depths** entrance. "
+            "You'll need an axe. Chop it down, bring me one log, and I'll forge your wayerwood."
         )
         new_options = []
         if state.get("has_map"):
-            new_text += "\n\n*I've marked the forest entrance on your chart.*"
+            new_text += "\n\n*I've marked the Forest Depths entrance on your chart.*"
             new_options.append({"label": "🗺️ View Map", "action": "hermit_map"})
         new_options.append({"label": "\"I'll find it.\"", "action": "close"})
         state["text"] = new_text
@@ -18500,9 +18522,9 @@ async def handle_dialogue_confirm(
         return
 
     if action == "hermit_map":
-        # Render a clean forest map with a large arrow/circle overlay on fst_maze_door.
-        # Only floors and ancient trees are shown — other POI icons are deliberately
-        # excluded to avoid visual noise that looks like "entrance/village markers".
+        # Render a clean forest map with a large arrow/circle overlay on fst_fq_entrance.
+        # Only floor paths are shown — other POI icons are deliberately excluded to
+        # avoid visual noise; the entrance is highlighted with its own large overlay.
         await interaction.response.defer()
         _hmap_forest_id = state.get("hermit_hut_forest_id") or getattr(
             player, "hermit_hut_forest_id", None
@@ -18550,18 +18572,12 @@ async def handle_dialogue_confirm(
 
             if _tt == "fst_floor":
                 _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
-            elif _tt == "fst_ancient_tree":
-                # Draw as a floor tile with a small teal dot
-                _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
-                _acx = _px0 + _S // 2
-                _acy = _py0 + _S // 2
-                _hm_draw.ellipse([_acx - 2, _acy - 2, _acx + 2, _acy + 2], fill=_COL_ANC)
-            elif _tt in ("fst_maze_door", "fst_tree_city", "fst_exit",
+            elif _tt in ("fst_fq_entrance", "fst_maze_door", "fst_tree_city", "fst_exit",
                          "fst_chest", "fst_map_chest", "fst_nut_tree",
                          "fst_hermit_house"):
                 # Draw as floor tile (no icon) — entrance has its own big overlay
                 _hm_draw.rectangle([_px0, _py0, _px1, _py1], fill=_COL_FLOOR)
-                if _tt == "fst_maze_door":
+                if _tt == "fst_fq_entrance":
                     _hm_maze_pos = (_px0 + _S // 2, _py0 + _S // 2)
 
         # ── Player dot ────────────────────────────────────────────────────────
@@ -18619,7 +18635,6 @@ async def handle_dialogue_confirm(
         _leg_y = _IH - _PAD - 12
         _entries = [
             (_COL_FLOOR, "Forest path"),
-            (_COL_ANC,   "Ancient tree"),
             (_COL_YEL,   "Forest Depths entrance"),
             (_COL_SELF,  "You"),
         ]

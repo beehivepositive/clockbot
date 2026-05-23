@@ -338,13 +338,6 @@ def _generate_forest_interior(
     for ex, ey in exits:
         grid[ey][ex] = "fst_exit"
 
-    # Ancient tree: farthest dead-end from center
-    if dead_ends:
-        far = max(dead_ends, key=lambda p: abs(p[0] - center_x) + abs(p[1] - center_y))
-        if far not in specials:
-            grid[far[1]][far[0]] = "fst_ancient_tree"
-            specials.add(far)
-
     # Place exactly 5 chest positions (all stored as fst_chest; mimic randomised at runtime)
     # Pick the 5 dead-ends that are farthest from the center
     remaining = [d for d in dead_ends if d not in specials]

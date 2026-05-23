@@ -600,10 +600,11 @@ def render_arena(arena: dict, player) -> str:
         else:
             rows.append(f"💠 Ring cleared — deposits will spawn on your move **{next_spawn}**")
 
-    if arena["combat_log"]:
-        rows.append("")
-        for line in arena["combat_log"][-3:]:
-            rows.append(f"> {line}")
+    # Always append a blank separator + exactly one log line so the embed
+    # height stays constant — same trick as render_grid's zero-width spacer.
+    rows.append("")
+    last_log = arena["combat_log"][-1] if arena["combat_log"] else None
+    rows.append(f"> {last_log}" if last_log else "​")
 
     return "\n".join(rows)
 
