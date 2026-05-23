@@ -4862,11 +4862,13 @@ async def _move_steps(
                 fx, fy = player.forest_x, player.forest_y
                 fid = player.hermit_hut_forest_id
                 player.in_hermit_hut = False
+                player.in_forest = True           # restore forest flag on exit
                 player.hermit_hut_forest_id = None
                 player.hermit_hut_floor = 1
                 player.hermit_hut_x = player.hermit_hut_y = 0
                 await db.execute(
-                    "UPDATE players SET in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                    "UPDATE players SET in_hermit_hut=0, in_forest=1, "
+                    "hermit_hut_forest_id=NULL, "
                     "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0, "
                     "forest_x=?, forest_y=? WHERE user_id=?",
                     (fx, fy, user_id),
@@ -8848,7 +8850,7 @@ async def handle_interact(
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
         return
 
-    elif getattr(player, "in_forest_quest", False):
+    elif getattr(player, "in_forest_quest", False) and player.fq_area_id is not None:
         from dwarf_explorer.world.forest_quest import (
             load_fq_viewport as _lfqv_i,
             load_fq_single_tile as _lfqst_i,
@@ -9443,8 +9445,10 @@ async def handle_interact(
                 load_hut_viewport as _lhv_act,
                 HUT_ENTRY_X as _HEX, HUT_ENTRY_Y as _HEY,
             )
+            print(f"DEBUG hut-enter: forest_id={player.forest_id} pos=({player.forest_x},{player.forest_y})", flush=True)
             await _ehb_act(player.forest_id, db)
             player.in_hermit_hut = True
+            player.in_forest = False          # leave forest when entering hut
             player.hermit_hut_forest_id = player.forest_id
             player.hermit_hut_floor = 1
             player.hermit_hut_x, player.hermit_hut_y = _HEX, _HEY
@@ -9453,13 +9457,16 @@ async def handle_interact(
             player.in_house = False
             player.in_village = False
             await db.execute(
-                "UPDATE players SET in_hermit_hut=1, in_cave=0, in_house=0, in_village=0, "
+                "UPDATE players SET in_hermit_hut=1, in_forest=0, in_cave=0, in_house=0, in_village=0, "
                 "in_bandit_camp=0, bandit_camp_id=NULL, "
                 "hermit_hut_forest_id=?, "
                 "hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
                 (player.forest_id, _HEX, _HEY, user_id),
             )
-            grid = await _lhv_act(player.forest_id, 1, _HEX, _HEY, db)
+            grid = await _lhv_act(player.hermit_hut_forest_id, 1, _HEX, _HEY, db)
+            print(f"DEBUG hut-enter: grid rows={len(grid)}, in_hermit_hut={player.in_hermit_hut}, in_forest={player.in_forest}", flush=True)
+            if grid:
+                print(f"DEBUG hut-enter: center tile terrain={grid[len(grid)//2][len(grid[0])//2].terrain}", flush=True)
             content = render_grid(grid, player,
                 "🛖 You push open the creaking door of the hermit's hut...")
             await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -9522,11 +9529,13 @@ async def handle_interact(
             fx, fy = player.forest_x, player.forest_y
             fid = player.hermit_hut_forest_id
             player.in_hermit_hut = False
+            player.in_forest = True           # restore forest flag on exit
             player.hermit_hut_forest_id = None
             player.hermit_hut_floor = 1
             player.hermit_hut_x = player.hermit_hut_y = 0
             await db.execute(
-                "UPDATE players SET in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                "UPDATE players SET in_hermit_hut=0, in_forest=1, "
+                "hermit_hut_forest_id=NULL, "
                 "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_hhi
