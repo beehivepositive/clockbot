@@ -1416,13 +1416,13 @@ _FQ_STAGE_DESCRIPTIONS: dict[str, str] = {
     ),
     "hermit_met": (
         "The hermit has offered to forge a **Wayerwood** — the key to the hidden grove. "
-        "He needs one **ancient log** from the ancient tree deep in this forest. "
-        "Return to him with the log and he will craft it. "
+        "He needs one **ancient log**. Ancient trees grow large and old in the world — "
+        "find one, fell it, and return with a log. "
         "The **Forest Depths entrance** is now marked on your tracker."
     ),
     "wayerwood_crafted": (
-        "The elder has forged your **Wayerwood** 🪄. Equip it to feel the forest's pull. "
-        "The hermit marked the entrance to the *Forest Depths* on your tracker — find it "
+        "The hermit has forged your **Wayerwood** 🪄. Equip it to feel the forest's pull. "
+        "The entrance to the *Forest Depths* is marked on your tracker — find it "
         "and press inside."
     ),
     "map_marked": (

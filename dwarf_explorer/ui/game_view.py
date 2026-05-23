@@ -9087,63 +9087,6 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
             return
 
-        if fq_tile_i.terrain == "fst_ancient_tree":
-            # Choppable ancient tree in entry corridor — 3 chops yield 1 ancient_log
-            _fq_has_axe = player.hand_1 == "axe" or player.hand_2 == "axe"
-            if not _fq_has_axe:
-                content = render_grid(fq_grid_i, player,
-                    "🌲 A gnarled ancient tree blocks the path — its wood is dense and old.\n"
-                    "Equip an 🪓 **Axe** and interact again to chop it down.")
-                await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                        view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
-                return
-            # Use FQ area ID and tile position as unique chop key
-            _fq_chop_key_x = player.fq_x + (player.fq_area_id or 0) * 100000
-            _fq_chop_key_y = player.fq_y + (player.fq_area_id or 0) * 100000
-            _fq_chop_row = await db.fetch_one(
-                "SELECT chops FROM tree_chop_progress WHERE world_x=? AND world_y=?",
-                (_fq_chop_key_x, _fq_chop_key_y),
-            )
-            _fq_chops = (_fq_chop_row["chops"] if _fq_chop_row else 0) + 1
-            if _fq_chops >= 3:
-                # Tree felled — replace tile with fq_floor and award 1 ancient_log
-                await db.execute(
-                    "DELETE FROM tree_chop_progress WHERE world_x=? AND world_y=?",
-                    (_fq_chop_key_x, _fq_chop_key_y),
-                )
-                await db.execute(
-                    "UPDATE forest_quest_tiles SET tile_type='fq_floor' "
-                    "WHERE fq_id=? AND local_x=? AND local_y=?",
-                    (player.fq_area_id, player.fq_x, player.fq_y),
-                )
-                from dwarf_explorer.database.repositories import add_to_inventory as _ati_fqt
-                await _ati_fqt(db, user_id, "ancient_log", 1)
-                await db.commit()
-                _invalidate_vp(user_id)
-                fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
-                content = render_grid(fq_grid_i, player,
-                    "🪓 The ancient tree splinters and falls! You pry loose **1 Ancient Log** 🪵.\n"
-                    "*The hermit will know what to do with it.*")
-            else:
-                if _fq_chop_row:
-                    await db.execute(
-                        "UPDATE tree_chop_progress SET chops=? WHERE world_x=? AND world_y=?",
-                        (_fq_chops, _fq_chop_key_x, _fq_chop_key_y),
-                    )
-                else:
-                    await db.execute(
-                        "INSERT INTO tree_chop_progress(world_x, world_y, chops) VALUES(?,?,?)",
-                        (_fq_chop_key_x, _fq_chop_key_y, _fq_chops),
-                    )
-                await db.commit()
-                _fq_chop_left = 3 - _fq_chops
-                content = render_grid(fq_grid_i, player,
-                    f"🪓 You swing at the ancient tree ({_fq_chops}/3). "
-                    f"{_fq_chop_left} more blow{'s' if _fq_chop_left != 1 else ''} to fell it.")
-            await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
-            return
-
         content = render_grid(fq_grid_i, player, "🌿 Nothing to interact with here in the depths.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
@@ -18456,9 +18399,9 @@ async def handle_dialogue_confirm(
             if _new_wx_hw is not None:
                 await _ufdqt_hw(db, user_id, _new_wx_hw, _new_wy_hw)
         new_text = (
-            "Well, I can make you one — but I'll need materials. "
-            "There's an ancient tree growing just inside the **Forest Depths** entrance. "
-            "You'll need an axe. Chop it down, bring me one log, and I'll forge your wayerwood."
+            "Well, I can make you one — but I'll need the wood of an ancient tree. "
+            "Big ones, old ones — not your common forest timber. "
+            "Get me one log from an ancient tree and I'll forge your wayerwood."
         )
         new_options = []
         if state.get("has_map"):

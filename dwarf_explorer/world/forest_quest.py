@@ -29,7 +29,6 @@ from dwarf_explorer.config import (
     FQ_PUZZLE_Y0, FQ_PUZZLE_Y1,
     FQ_FORD_XA, FQ_FORD_XB,
     FQ_ENTRY_X, FQ_ENTRY_Y,
-    FQ_ENTRY_TREE_X, FQ_ENTRY_TREE_Y,
     FQ_RESET_X, FQ_RESET_Y,
     FQ_LOG_A_START, FQ_LOG_B_START,
     FQ_TARGET_A, FQ_TARGET_B,
@@ -218,8 +217,6 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
         if FQ_CORRIDOR_X0 <= x <= FQ_CORRIDOR_X1:
             if x == FQ_ENTRY_X and y == FQ_ENTRY_Y:
                 return "fq_exit"
-            if x == FQ_ENTRY_TREE_X and y == FQ_ENTRY_TREE_Y:
-                return "fst_ancient_tree"
             return "fq_floor"
         return "fq_wall"
 

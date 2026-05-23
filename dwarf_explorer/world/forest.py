@@ -421,21 +421,30 @@ def _generate_forest_interior(
             specials.add((hx, hy))
             hermit_pos = (hx, hy)
 
-        # FQ entrance: a tile on the forest boundary (always fst_tree there)
-        # Pick a border position that's not already an exit tile
-        _fq_angle = _math.radians((forest_id * 137 + seed * 53) % 360)
-        _fqex = max(1, min(W - 2, int(W // 2 + (W // 2 - 2) * _math.cos(_fq_angle))))
-        _fqey = max(1, min(H - 2, int(H // 2 + (H // 2 - 2) * _math.sin(_fq_angle))))
-        # Try positions until we find one that's fst_tree and not an exit
-        for _fq_da in range(0, 360, 15):
-            _fq_r2 = _math.radians(_fq_da)
-            _fqcx = max(1, min(W - 2, int(W // 2 + (W // 2 - 3) * _math.cos(_fq_r2))))
-            _fqcy = max(1, min(H - 2, int(H // 2 + (H // 2 - 3) * _math.sin(_fq_r2))))
-            if grid[_fqcy][_fqcx] == "fst_tree" and (_fqcx, _fqcy) not in specials:
-                grid[_fqcy][_fqcx] = "fst_fq_entrance"
-                _fqex, _fqey = _fqcx, _fqcy
-                break
-        fq_entrance_pos = (_fqex, _fqey)
+        # FQ entrance: a fst_tree tile that is orthogonally adjacent to a fst_floor
+        # tile, so the player can actually reach it from a forest path/clearing.
+        # Scan all inner tiles and collect candidates, then pick one with the RNG
+        # for reproducibility.
+        _fq_candidates = [
+            (_fqx, _fqy)
+            for _fqy in range(1, H - 1)
+            for _fqx in range(1, W - 1)
+            if (grid[_fqy][_fqx] == "fst_tree"
+                and (_fqx, _fqy) not in specials
+                and any(
+                    1 <= _fqy + _ddy < H - 1 and 1 <= _fqx + _ddx < W - 1
+                    and grid[_fqy + _ddy][_fqx + _ddx] == "fst_floor"
+                    for _ddx, _ddy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+                ))
+        ]
+        if _fq_candidates:
+            rng.shuffle(_fq_candidates)
+            _fqcx, _fqcy = _fq_candidates[0]
+            grid[_fqcy][_fqcx] = "fst_fq_entrance"
+            fq_entrance_pos = (_fqcx, _fqcy)
+        else:
+            # Fallback: pick any interior tree tile (shouldn't happen in a normal forest)
+            fq_entrance_pos = (W // 2, H // 2)
 
     # ── 6.5 Hidden forest chambers ───────────────────────────────────────────────
     # Pick up to 2 remaining dead-ends for hidden chambers.
