@@ -658,210 +658,210 @@ _PY = FQ_PUZZLE_Y0   # 18
 
 FQ_PUZZLE_VARIANTS = [
 
-    # ── V0: Classic Zigzag  L→R→C  (30 obstacles, ~62 pushes) ────────────────
-    #   Wall y=20 gate x=5  |  Wall y=23 gate x=15  |  Wall y=26 gate x=10
+    # ── V0: Pinball  (22 obstacles, ~29 pushes) ───────────────────────────────
+    #   Symmetric horizontal bars at y=20/27 (open x=5,10,15) plus paired
+    #   corner pillars at y=22/25 and a centre spine at y=23-24.
+    #   No spanning walls → no deadlock risk.  Logs deflect off pillars and
+    #   must find indirect routes to the stream.
+    #   BFS-verified: 29 pushes, 29 box lines. (sokoban_gen.py Room A)
     {
-        "name": "Classic",
-        "log_a": (_PX + 4, _PY),       # (9, 18)
-        "log_b": (_PX + 6, _PY),       # (11, 18)
-        "obstacles": FQ_PUZZLE_OBSTACLES,
-    },
-
-    # ── V1: Mirror Zigzag  R→L→C  (30 obstacles, ~62 pushes) ─────────────────
-    #   Wall y=20 gate x=15 |  Wall y=23 gate x=5   |  Wall y=26 gate x=10
-    {
-        "name": "Mirror",
-        "log_a": (_PX + 4, _PY),       # (9, 18)
+        "name": "Pinball",
+        "log_a": (_PX + 3, _PY),       # (8, 18)
         "log_b": (_PX + 6, _PY),       # (11, 18)
         "obstacles": frozenset({
-            # Wall 1 (y=20): gate ONLY at col 15 (cols 5-14 blocked)
-            (_PX + 0, _PY + 2),  # (5,  20)
-            (_PX + 1, _PY + 2),  # (6,  20)
+            # Upper bar (y=20): open at x=5, 10, 15
             (_PX + 2, _PY + 2),  # (7,  20)
             (_PX + 3, _PY + 2),  # (8,  20)
             (_PX + 4, _PY + 2),  # (9,  20)
-            (_PX + 5, _PY + 2),  # (10, 20)
             (_PX + 6, _PY + 2),  # (11, 20)
             (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 8, _PY + 2),  # (13, 20)
+            # Mid-upper corner pillars (y=22)
+            (_PX + 1, _PY + 4),  # (6,  22)
+            (_PX + 2, _PY + 4),  # (7,  22)
+            (_PX + 8, _PY + 4),  # (13, 22)
+            (_PX + 9, _PY + 4),  # (14, 22)
+            # Centre spine (y=23-24)
+            (_PX + 5, _PY + 5),  # (10, 23)
+            (_PX + 5, _PY + 6),  # (10, 24)
+            # Mid-lower corner pillars (y=25) — mirror of y=22
+            (_PX + 1, _PY + 7),  # (6,  25)
+            (_PX + 2, _PY + 7),  # (7,  25)
+            (_PX + 8, _PY + 7),  # (13, 25)
+            (_PX + 9, _PY + 7),  # (14, 25)
+            # Lower bar (y=27): open at x=5, 10, 15 — mirror of y=20
+            (_PX + 2, _PY + 9),  # (7,  27)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 4, _PY + 9),  # (9,  27)
+            (_PX + 6, _PY + 9),  # (11, 27)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            (_PX + 8, _PY + 9),  # (13, 27)
+        }),
+    },
+
+    # ── V1: Corridors  (23 obstacles, ~32 pushes) ────────────────────────────
+    #   Two vertical divider walls (x=8, x=12) split the area into three lanes.
+    #   Gaps in the dividers are staggered so each log must switch lanes at
+    #   least twice.  Horizontal cross-bars add deflection inside the lanes.
+    #   BFS-verified: 32 pushes, 32 box lines — the hardest of all variants.
+    #   (sokoban_gen.py Room B)
+    {
+        "name": "Corridors",
+        "log_a": (_PX + 5, _PY),       # (10, 18)
+        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "obstacles": frozenset({
+            # Left–centre divider (x=8): gaps at y=20 and y=26
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 3, _PY + 3),  # (8,  21)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 3, _PY + 6),  # (8,  24)
+            (_PX + 3, _PY + 7),  # (8,  25)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 3, _PY +10),  # (8,  28)
+            # Centre–right divider (x=12): gaps at y=23 and y=27
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 7, _PY + 3),  # (12, 21)
+            (_PX + 7, _PY + 4),  # (12, 22)
+            (_PX + 7, _PY + 6),  # (12, 24)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 7, _PY + 8),  # (12, 26)
+            (_PX + 7, _PY +10),  # (12, 28)
+            # Left-lane cross-bar (y=22)
+            (_PX + 1, _PY + 4),  # (6,  22)
+            (_PX + 2, _PY + 4),  # (7,  22)
+            # Right-lane cross-bar (y=22)
+            (_PX + 8, _PY + 4),  # (13, 22)
+            (_PX + 9, _PY + 4),  # (14, 22)
+            # Centre-lane cross-bar (y=25)
+            (_PX + 4, _PY + 7),  # (9,  25)
+            (_PX + 5, _PY + 7),  # (10, 25)
+            (_PX + 6, _PY + 7),  # (11, 25)
+        }),
+    },
+
+    # ── V2: Chambers  (19 obstacles, ~24 pushes) ─────────────────────────────
+    #   Two tall chamber walls (x=8, x=12) divide the area into left / centre /
+    #   right rooms.  Each wall has two narrow openings at different heights, so
+    #   the logs must coordinate which opening to use.  One log starts inside the
+    #   left chamber, the other in the centre — neither can reach the stream
+    #   directly.
+    #   BFS-verified: 24 pushes, 24 box lines. (sokoban_gen.py Room C)
+    {
+        "name": "Chambers",
+        "log_a": (_PX + 1, _PY),       # (6, 18) — left chamber
+        "log_b": (_PX + 5, _PY),       # (10, 18) — centre
+        "obstacles": frozenset({
+            # Left chamber wall (x=8): openings at y=21 and y=25
+            (_PX + 3, _PY + 0),  # (8,  18)
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 3, _PY + 6),  # (8,  24)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 3, _PY +10),  # (8,  28)
+            # Right chamber wall (x=12): openings at y=22 and y=26
+            (_PX + 7, _PY + 0),  # (12, 18)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 7, _PY + 3),  # (12, 21)
+            (_PX + 7, _PY + 5),  # (12, 23)
+            (_PX + 7, _PY + 6),  # (12, 24)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            (_PX + 7, _PY +10),  # (12, 28)
+            # Centre blocker
+            (_PX + 5, _PY + 5),  # (10, 23)
+        }),
+    },
+
+    # ── V3: Cross  (22 obstacles, ~25 pushes) ────────────────────────────────
+    #   Solid 2×2 blocks in all four corners + symmetric mid-wall pillars +
+    #   two centre spines create a cross-shaped open area.  Logs must navigate
+    #   around the corner blocks and through the narrow cross arms.
+    #   BFS-verified: 25 pushes, 25 box lines. (sokoban_gen.py Room D)
+    {
+        "name": "Cross",
+        "log_a": (_PX + 1, _PY),       # (6, 18)
+        "log_b": (_PX + 5, _PY),       # (10, 18)
+        "obstacles": frozenset({
+            # Top-left 2×2 block (y=19-20, x=6-7)
+            (_PX + 1, _PY + 1),  # (6,  19)
+            (_PX + 2, _PY + 1),  # (7,  19)
+            (_PX + 1, _PY + 2),  # (6,  20)
+            (_PX + 2, _PY + 2),  # (7,  20)
+            # Top-right 2×2 block (y=19-20, x=13-14)
+            (_PX + 8, _PY + 1),  # (13, 19)
+            (_PX + 9, _PY + 1),  # (14, 19)
             (_PX + 8, _PY + 2),  # (13, 20)
             (_PX + 9, _PY + 2),  # (14, 20)
-            # Wall 2 (y=23): gate ONLY at col 5 (cols 6-15 blocked)
+            # Centre-top spine (y=21)
+            (_PX + 5, _PY + 3),  # (10, 21)
+            # Mid-left pillar (y=23-24, x=6)
             (_PX + 1, _PY + 5),  # (6,  23)
-            (_PX + 2, _PY + 5),  # (7,  23)
-            (_PX + 3, _PY + 5),  # (8,  23)
-            (_PX + 4, _PY + 5),  # (9,  23)
-            (_PX + 5, _PY + 5),  # (10, 23)
-            (_PX + 6, _PY + 5),  # (11, 23)
-            (_PX + 7, _PY + 5),  # (12, 23)
-            (_PX + 8, _PY + 5),  # (13, 23)
+            (_PX + 1, _PY + 6),  # (6,  24)
+            # Mid-right pillar (y=23-24, x=14)
             (_PX + 9, _PY + 5),  # (14, 23)
-            (_PX +10, _PY + 5),  # (15, 23)
-            # Wall 3 (y=26): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
-            (_PX + 0, _PY + 8),  # (5,  26)
+            (_PX + 9, _PY + 6),  # (14, 24)
+            # Centre-bottom spine (y=26)
+            (_PX + 5, _PY + 8),  # (10, 26)
+            # Bottom-left 2×2 block (y=26-27, x=6-7)
             (_PX + 1, _PY + 8),  # (6,  26)
             (_PX + 2, _PY + 8),  # (7,  26)
-            (_PX + 3, _PY + 8),  # (8,  26)
-            (_PX + 4, _PY + 8),  # (9,  26)
-            (_PX + 6, _PY + 8),  # (11, 26)
-            (_PX + 7, _PY + 8),  # (12, 26)
+            (_PX + 1, _PY + 9),  # (6,  27)
+            (_PX + 2, _PY + 9),  # (7,  27)
+            # Bottom-right 2×2 block (y=26-27, x=13-14)
             (_PX + 8, _PY + 8),  # (13, 26)
             (_PX + 9, _PY + 8),  # (14, 26)
-            (_PX +10, _PY + 8),  # (15, 26)
+            (_PX + 8, _PY + 9),  # (13, 27)
+            (_PX + 9, _PY + 9),  # (14, 27)
         }),
     },
 
-    # ── V2: Grand Tour  L→R→L→C  (40 obstacles, ~80 pushes, hard) ─────────────
-    #   Four walls with gap-3 spacing — each pair separated by 2 free rows so
-    #   the player can always stand clear of wall obstacles to make every push.
-    #   Deadlock-free by the gap-3 rule.
-    #
-    #   Wall y=19 gate x=5  (1 row below log start)
-    #   Wall y=22 gate x=15 (far right; 2 free rows y=20-21 above)
-    #   Wall y=25 gate x=5  (back left;  2 free rows y=23-24 above)
-    #   Wall y=28 gate x=10 (centre;     2 free rows y=26-27 above) → ford y=29
+    # ── V4: Slot  (26 obstacles, ~29 pushes) ─────────────────────────────────
+    #   Two full-height divider walls (x=8, x=12) with staggered gaps create
+    #   three narrow vertical lanes.  A bottom funnel forces both logs through
+    #   x=9-11 to reach the stream, and a centre deflector at y=20/25 prevents
+    #   any straight-line solution.  Logs start at the extreme outer edges.
+    #   BFS-verified: 29 pushes, 29 box lines. (sokoban_gen.py Room F)
     {
-        "name": "Grand Tour",
-        "log_a": (_PX + 4, _PY),       # (9, 18)
-        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "name": "Slot",
+        "log_a": (_PX + 1, _PY),       # (6, 18)
+        "log_b": (_PX + 9, _PY),       # (14, 18)
         "obstacles": frozenset({
-            # Wall 1 (y=19): gate x=5  (cols 6-15 blocked)
-            (_PX + 1, _PY + 1),  # (6,  19)
-            (_PX + 2, _PY + 1),  # (7,  19)
+            # Left divider (x=8): openings at y=21 and y=25
+            (_PX + 3, _PY + 0),  # (8,  18)
             (_PX + 3, _PY + 1),  # (8,  19)
-            (_PX + 4, _PY + 1),  # (9,  19)
-            (_PX + 5, _PY + 1),  # (10, 19)
-            (_PX + 6, _PY + 1),  # (11, 19)
-            (_PX + 7, _PY + 1),  # (12, 19)
-            (_PX + 8, _PY + 1),  # (13, 19)
-            (_PX + 9, _PY + 1),  # (14, 19)
-            (_PX +10, _PY + 1),  # (15, 19)
-            # Wall 2 (y=22): gate x=15 (cols 5-14 blocked; 2 free rows y=20-21)
-            (_PX + 0, _PY + 4),  # (5,  22)
-            (_PX + 1, _PY + 4),  # (6,  22)
-            (_PX + 2, _PY + 4),  # (7,  22)
-            (_PX + 3, _PY + 4),  # (8,  22)
-            (_PX + 4, _PY + 4),  # (9,  22)
-            (_PX + 5, _PY + 4),  # (10, 22)
-            (_PX + 6, _PY + 4),  # (11, 22)
-            (_PX + 7, _PY + 4),  # (12, 22)
-            (_PX + 8, _PY + 4),  # (13, 22)
-            (_PX + 9, _PY + 4),  # (14, 22)
-            # Wall 3 (y=25): gate x=5  (cols 6-15 blocked; 2 free rows y=23-24)
-            (_PX + 1, _PY + 7),  # (6,  25)
-            (_PX + 2, _PY + 7),  # (7,  25)
-            (_PX + 3, _PY + 7),  # (8,  25)
-            (_PX + 4, _PY + 7),  # (9,  25)
-            (_PX + 5, _PY + 7),  # (10, 25)
-            (_PX + 6, _PY + 7),  # (11, 25)
-            (_PX + 7, _PY + 7),  # (12, 25)
-            (_PX + 8, _PY + 7),  # (13, 25)
-            (_PX + 9, _PY + 7),  # (14, 25)
-            (_PX +10, _PY + 7),  # (15, 25)
-            # Wall 4 (y=28): gate x=10 (cols 5-9, 11-15 blocked; 2 free rows y=26-27)
-            (_PX + 0, _PY +10),  # (5,  28)
-            (_PX + 1, _PY +10),  # (6,  28)
-            (_PX + 2, _PY +10),  # (7,  28)
-            (_PX + 3, _PY +10),  # (8,  28)
-            (_PX + 4, _PY +10),  # (9,  28)
-            (_PX + 6, _PY +10),  # (11, 28)
-            (_PX + 7, _PY +10),  # (12, 28)
-            (_PX + 8, _PY +10),  # (13, 28)
-            (_PX + 9, _PY +10),  # (14, 28)
-            (_PX +10, _PY +10),  # (15, 28)
-        }),
-    },
-
-    # ── V3: Funnel  outer-edges → centre  (18 obstacles, ~25 pushes, easiest) ─
-    #   Logs start at the OUTER edges of the puzzle (x=7 and x=13).
-    #   Wall y=20: centre blocked, gates on BOTH sides (x=5 and x=14-15).
-    #   After passing the outer gates, both logs converge to the single
-    #   centre gate at y=26 (x=10).  Short and beginner-friendly.
-    {
-        "name": "Funnel",
-        "log_a": (_PX + 2, _PY),       # (7, 18) — starts left of centre
-        "log_b": (_PX + 8, _PY),       # (13, 18) — starts right of centre
-        "obstacles": frozenset({
-            # Wall 1 (y=20): gates at x=5 (left) and x=14-15 (right)
-            #   centre blocked: cols 6-13
-            (_PX + 1, _PY + 2),  # (6,  20)
-            (_PX + 2, _PY + 2),  # (7,  20)
             (_PX + 3, _PY + 2),  # (8,  20)
-            (_PX + 4, _PY + 2),  # (9,  20)
-            (_PX + 5, _PY + 2),  # (10, 20)
-            (_PX + 6, _PY + 2),  # (11, 20)
-            (_PX + 7, _PY + 2),  # (12, 20)
-            (_PX + 8, _PY + 2),  # (13, 20)
-            # Wall 2 (y=26): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
-            (_PX + 0, _PY + 8),  # (5,  26)
-            (_PX + 1, _PY + 8),  # (6,  26)
-            (_PX + 2, _PY + 8),  # (7,  26)
-            (_PX + 3, _PY + 8),  # (8,  26)
-            (_PX + 4, _PY + 8),  # (9,  26)
-            (_PX + 6, _PY + 8),  # (11, 26)
-            (_PX + 7, _PY + 8),  # (12, 26)
-            (_PX + 8, _PY + 8),  # (13, 26)
-            (_PX + 9, _PY + 8),  # (14, 26)
-            (_PX +10, _PY + 8),  # (15, 26)
-        }),
-    },
-
-    # ── V4: Reverse Tour  R→L→R→C  (40 obstacles, ~80 pushes, hard) ───────────
-    #   Mirror image of Grand Tour — logs go right first instead of left.
-    #   Same gap-3 spacing; same deadlock-free guarantee.
-    #
-    #   Wall y=19 gate x=15 (far right; 1 row below log start)
-    #   Wall y=22 gate x=5  (far left;  2 free rows y=20-21 above)
-    #   Wall y=25 gate x=15 (back right; 2 free rows y=23-24 above)
-    #   Wall y=28 gate x=10 (centre;     2 free rows y=26-27 above) → ford y=29
-    {
-        "name": "Reverse Tour",
-        "log_a": (_PX + 4, _PY),       # (9, 18)
-        "log_b": (_PX + 6, _PY),       # (11, 18)
-        "obstacles": frozenset({
-            # Wall 1 (y=19): gate x=15 (cols 5-14 blocked)
-            (_PX + 0, _PY + 1),  # (5,  19)
-            (_PX + 1, _PY + 1),  # (6,  19)
-            (_PX + 2, _PY + 1),  # (7,  19)
-            (_PX + 3, _PY + 1),  # (8,  19)
-            (_PX + 4, _PY + 1),  # (9,  19)
-            (_PX + 5, _PY + 1),  # (10, 19)
-            (_PX + 6, _PY + 1),  # (11, 19)
-            (_PX + 7, _PY + 1),  # (12, 19)
-            (_PX + 8, _PY + 1),  # (13, 19)
-            (_PX + 9, _PY + 1),  # (14, 19)
-            # Wall 2 (y=22): gate x=5  (cols 6-15 blocked; 2 free rows y=20-21)
-            (_PX + 1, _PY + 4),  # (6,  22)
-            (_PX + 2, _PY + 4),  # (7,  22)
             (_PX + 3, _PY + 4),  # (8,  22)
-            (_PX + 4, _PY + 4),  # (9,  22)
-            (_PX + 5, _PY + 4),  # (10, 22)
-            (_PX + 6, _PY + 4),  # (11, 22)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 3, _PY + 6),  # (8,  24)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 3, _PY +10),  # (8,  28)
+            # Right divider (x=12): openings at y=23 and y=27
+            (_PX + 7, _PY + 0),  # (12, 18)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 7, _PY + 3),  # (12, 21)
             (_PX + 7, _PY + 4),  # (12, 22)
-            (_PX + 8, _PY + 4),  # (13, 22)
-            (_PX + 9, _PY + 4),  # (14, 22)
-            (_PX +10, _PY + 4),  # (15, 22)
-            # Wall 3 (y=25): gate x=15 (cols 5-14 blocked; 2 free rows y=23-24)
-            (_PX + 0, _PY + 7),  # (5,  25)
-            (_PX + 1, _PY + 7),  # (6,  25)
-            (_PX + 2, _PY + 7),  # (7,  25)
-            (_PX + 3, _PY + 7),  # (8,  25)
-            (_PX + 4, _PY + 7),  # (9,  25)
-            (_PX + 5, _PY + 7),  # (10, 25)
-            (_PX + 6, _PY + 7),  # (11, 25)
+            (_PX + 7, _PY + 6),  # (12, 24)
             (_PX + 7, _PY + 7),  # (12, 25)
-            (_PX + 8, _PY + 7),  # (13, 25)
-            (_PX + 9, _PY + 7),  # (14, 25)
-            # Wall 4 (y=28): gate x=10 (cols 5-9, 11-15 blocked; 2 free rows y=26-27)
+            (_PX + 7, _PY + 8),  # (12, 26)
+            (_PX + 7, _PY +10),  # (12, 28)
+            # Bottom funnel (y=28): only x=9-11 open
             (_PX + 0, _PY +10),  # (5,  28)
             (_PX + 1, _PY +10),  # (6,  28)
             (_PX + 2, _PY +10),  # (7,  28)
-            (_PX + 3, _PY +10),  # (8,  28)
-            (_PX + 4, _PY +10),  # (9,  28)
-            (_PX + 6, _PY +10),  # (11, 28)
-            (_PX + 7, _PY +10),  # (12, 28)
             (_PX + 8, _PY +10),  # (13, 28)
             (_PX + 9, _PY +10),  # (14, 28)
             (_PX +10, _PY +10),  # (15, 28)
+            # Centre deflectors
+            (_PX + 5, _PY + 2),  # (10, 20)
+            (_PX + 5, _PY + 7),  # (10, 25)
         }),
     },
 ]
