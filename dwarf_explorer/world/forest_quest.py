@@ -7,7 +7,7 @@ Zone layout (21 wide × 200 tall):
   y  16-28  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
   y  29-30  : stream (2-wide; push logs into stream to build bridge — no orange targets)
   y  31-40  : post-stream corridor (9 wide at x=6-14)
-  y  41-53  : shop section (7 wide at x=7-13; shopkeeper at x=10, y=47)
+  y  41-53  : shop section (narrow 3-wide corridor x=9-11; left side room x=4-8, y=44-50; shopkeeper at x=6, y=47)
   y  54-57  : boss approach (corridor widens to full room width)
   y  58-79  : Thornwarden boss chamber (19 wide at x=1-19)
                Warden body: x=8-12, y=65-67; eyes at corners
@@ -37,6 +37,7 @@ from dwarf_explorer.config import (
     # Post-stream / shop
     FQ_POST_STREAM_X0, FQ_POST_STREAM_X1,
     FQ_SHOP_Y0, FQ_SHOP_Y1,
+    FQ_SHOP_ROOM_Y0, FQ_SHOP_ROOM_Y1,
     FQ_SHOPKEEPER_X, FQ_SHOPKEEPER_Y,
     # Boss approach + chamber
     FQ_BOSS_APPROACH_Y0, FQ_BOSS_APPROACH_Y1,
@@ -244,15 +245,15 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
             return "fq_floor"
         return "fq_wall"
 
-    # ── Shop section (y 41-53) ────────────────────────────────────────────
+    # ── Shop section (y 41-53): narrow corridor + left side room ─────────────
     if FQ_SHOP_Y0 <= y <= FQ_SHOP_Y1:
-        # Main corridor: x 7-13 (7 wide)
-        if 7 <= x <= 13:
+        # Narrow 3-wide corridor (always open, connects approach above/below)
+        if 9 <= x <= 11:
+            return "fq_floor"
+        # Left side room (x 4-8, accessible from corridor)
+        if 4 <= x <= 8 and FQ_SHOP_ROOM_Y0 <= y <= FQ_SHOP_ROOM_Y1:
             if x == FQ_SHOPKEEPER_X and y == FQ_SHOPKEEPER_Y:
                 return "fq_shopkeeper"
-            return "fq_floor"
-        # Left alcove for flavour (open floor, reachable via corridor)
-        if 1 <= x <= 6:
             return "fq_floor"
         return "fq_wall"
 

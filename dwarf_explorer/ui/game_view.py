@@ -1308,7 +1308,8 @@ class ShopView(discord.ui.View):
     """Shop UI — D-pad layout matching BankView but buy/sell instead of deposit/withdraw."""
     def __init__(self, guild_id: int, user_id: int, view_mode: str = "shop",
                  farmer_mode: bool = False, tavern_mode: bool = False,
-                 tree_city_mode: bool = False, armory_mode: bool = False):
+                 tree_city_mode: bool = False, armory_mode: bool = False,
+                 buy_only: bool = False):
         super().__init__(timeout=None)
         gid, uid = guild_id, user_id
 
@@ -1319,7 +1320,7 @@ class ShopView(discord.ui.View):
 
         # ── Row 0: Switch (🛒 to go to shop / 🎒 to go to player inv)
         #           Disabled spacer in buy-only modes (no sell tab)
-        if farmer_mode or tavern_mode or tree_city_mode or armory_mode:
+        if farmer_mode or tavern_mode or tree_city_mode or armory_mode or buy_only:
             _sp("shop_switch", 0)
         else:
             switch_emoji = "\U0001F6D2" if view_mode == "player" else "\U0001F392"  # 🛒 / 🎒
@@ -2880,6 +2881,25 @@ def _compute_context_labels(
                 if 0 <= _ar_g < len(grid) and 0 <= _ac_g < len(grid[_ar_g]):
                     if grid[_ar_g][_ac_g].terrain == "grove_statue":
                         action_label, action_enabled = "🗿 Touch", True
+                        break
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
+
+        # Forest Quest tile context
+        if getattr(player, "in_forest_quest", False):
+            if t == "fq_exit":
+                center_label, center_enabled = "🚪 Exit", True
+            elif t == "fq_reset":
+                center_label, center_enabled = "🔄 Reset", True
+            elif t == "fq_canal_reset":
+                center_label, center_enabled = "🔄 Reset", True
+            elif t in ("fq_boss_chest", "fq_fork_chest"):
+                center_label, center_enabled = "📦 Open", True
+            # Adjacent shopkeeper → action button (row 1, "top right" above ➡️)
+            for _dy_fq, _dx_fq in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                _ar_fq, _ac_fq = vc + _dy_fq, vc + _dx_fq
+                if 0 <= _ar_fq < len(grid) and 0 <= _ac_fq < len(grid[_ar_fq]):
+                    if grid[_ar_fq][_ac_fq].terrain == "fq_shopkeeper":
+                        action_label, action_enabled = "🛍️ Shop", True
                         break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
@@ -8946,31 +8966,9 @@ async def handle_interact(
             return
 
         if fq_tile_i.terrain == "fq_shopkeeper":
-            # Forest shopkeeper — sells basic supplies
-            _fq_shop_items = [
-                {"item_id": "forest_nut",   "name": "Forest Nut",   "price": 8,
-                 "desc": "Restores 3 HP. Gathered from the ancient canopy."},
-                {"item_id": "rock",         "name": "Rock",          "price": 4,
-                 "desc": "Smooth stone — good for a slingshot."},
-                {"item_id": "forest_nut",   "name": "Forest Nut ×3", "price": 20,
-                 "desc": "Three nuts bundled together. Bulk discount."},
-            ]
-            _ui_state[user_id] = {
-                "type": "fq_shop",
-                "items": _fq_shop_items,
-                "selected": 0,
-            }
-            _shop_lines = "\n".join(
-                f"**{it['name']}** — {it['price']}🪙  _{it['desc']}_"
-                for it in _fq_shop_items
-            )
-            content = render_grid(fq_grid_i, player,
-                "🧙 *A hunched figure peers out from beneath a mossy hood.*\n\n"
-                "*'Lost, are ya? Things get worse ahead. Buy something.'*\n\n"
-                + _shop_lines +
-                "\n\n*Use the shop interface to purchase.*")
-            await interaction.response.edit_message(embed=_embed(content), content=None,
-                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            # Should not normally be reached (shopkeeper is now unwalkable).
+            # Redirect to handle_action which opens the standardised shop.
+            await handle_action(interaction, guild_id, user_id)
             return
 
         if fq_tile_i.terrain == "fq_boss_chest":
@@ -11405,6 +11403,33 @@ async def handle_action(
         content = render_grid(_hh_grid_act, player, "🛖 Nothing to interact with here.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=_hh_grid_act))
+        return
+
+    # ── Forest Quest: adjacent shopkeeper ────────────────────────────────────
+    if getattr(player, "in_forest_quest", False):
+        from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_fqa
+        from dwarf_explorer.config import FQ_SHOP_CATALOG as _fq_cat_a
+        _fq_grid_a = await _lfqv_fqa(player.fq_area_id, player.fq_x, player.fq_y, db)
+        vc = 4
+        _fq_shop_adj_a = any(
+            0 <= vc + dy < len(_fq_grid_a)
+            and 0 <= vc + dx < len(_fq_grid_a[vc + dy])
+            and _fq_grid_a[vc + dy][vc + dx].terrain == "fq_shopkeeper"
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
+        )
+        if _fq_shop_adj_a:
+            await _open_custom_shop(
+                interaction, guild_id, user_id, player,
+                catalog=_fq_cat_a, can_sell=False,
+                greeting=(
+                    "🧙 *A hunched figure peers from beneath a mossy hood.*\n"
+                    "*'Lost, are ya? Things get worse ahead. Buy something.'*"
+                ),
+            )
+            return
+        content = render_grid(_fq_grid_a, player, "🌿 Nothing to interact with here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=_fq_grid_a))
         return
 
     # ── Tree city: adjacent shop NPC ─────────────────────────────────────────
@@ -14530,6 +14555,8 @@ async def handle_inv_qty_modal(
 
 def _get_shop_catalog(state: dict) -> list:
     """Return the correct shop catalog based on ui_state mode flags."""
+    if state.get("custom_catalog") is not None:
+        return state["custom_catalog"]
     if state.get("tree_city_mode"):
         from dwarf_explorer.config import TREE_CITY_SHOP as _TCS_gc
         return _TCS_gc
@@ -14542,6 +14569,17 @@ def _get_shop_catalog(state: dict) -> list:
         return _AC_gc
     else:
         return SHOP_CATALOG
+
+
+def _shop_view_kwargs(state: dict) -> dict:
+    """Return ShopView keyword arguments derived from ui_state."""
+    return dict(
+        farmer_mode=bool(state.get("farmer_mode")),
+        tavern_mode=bool(state.get("tavern_mode")),
+        tree_city_mode=bool(state.get("tree_city_mode")),
+        armory_mode=bool(state.get("armory_mode")),
+        buy_only=bool(state.get("buy_only")),
+    )
 
 
 def _shop_render(state: dict, player_items: list, equipped: dict,
@@ -14619,6 +14657,47 @@ async def _open_armory_shop(
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop",
                                                           armory_mode=True))
+
+
+async def _open_custom_shop(
+    interaction: discord.Interaction,
+    guild_id: int, user_id: int, player: "Player",
+    catalog: list, *,
+    can_sell: bool = False,
+    greeting: str | None = None,
+) -> None:
+    """Open a buy-only (or buy+sell) shop backed by an arbitrary catalog.
+
+    This is the single code path for all one-off shopkeepers (FQ merchant,
+    future dungeon traders, etc.).  The existing ShopView + handle_shop_*
+    handlers drive navigation, buying, and closing automatically.
+
+    Args:
+        catalog:  List of shop items in the standard SHOP_CATALOG format
+                  (keys: "id", "name", "price", "description", optionally "emoji").
+        can_sell: Whether the player can also sell items back.
+        greeting: Optional flavour text shown above the shop grid.
+    """
+    db = await get_database(guild_id)
+    player_items = await get_inventory(db, user_id)
+    equipped = _equipped_dict(player)
+    inv_rows, inv_cols = _inv_capacity(player)
+    state: dict = {
+        "type": "custom_shop",
+        "selected": 0,
+        "shop_view": "shop",
+        "qty": 1,
+        "custom_catalog": catalog,
+        "buy_only": not can_sell,
+    }
+    _ui_state[user_id] = state
+    content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
+    if greeting:
+        content = greeting + "\n\n" + content
+    await interaction.response.edit_message(
+        embed=_embed(content), content=None,
+        view=ShopView(guild_id, user_id, "shop", buy_only=not can_sell),
+    )
 
 
 async def _open_hermit_dialogue(
@@ -15560,10 +15639,7 @@ async def _shop_nav(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, new_state.get("shop_view", "shop"),
-                                                          farmer_mode=bool(new_state.get("farmer_mode")),
-                                                          tavern_mode=bool(new_state.get("tavern_mode")),
-                                                          tree_city_mode=bool(new_state.get("tree_city_mode")),
-                                                          armory_mode=bool(new_state.get("armory_mode"))))
+                                                          **_shop_view_kwargs(new_state)))
 
 
 async def handle_shop_nav(
@@ -15613,10 +15689,7 @@ async def handle_shop_qty_inc(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
-                                                          farmer_mode=bool(state.get("farmer_mode")),
-                                                          tavern_mode=bool(state.get("tavern_mode")),
-                                                          tree_city_mode=bool(state.get("tree_city_mode")),
-                                                          armory_mode=bool(state.get("armory_mode"))))
+                                                          **_shop_view_kwargs(state)))
 
 
 async def handle_shop_qty_dec(
@@ -15649,10 +15722,7 @@ async def handle_shop_qty_dec(
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, view_mode,
-                                                          farmer_mode=bool(state.get("farmer_mode")),
-                                                          tavern_mode=bool(state.get("tavern_mode")),
-                                                          tree_city_mode=bool(state.get("tree_city_mode")),
-                                                          armory_mode=bool(state.get("armory_mode"))))
+                                                          **_shop_view_kwargs(state)))
 
 
 async def handle_shop_buy(
@@ -15671,8 +15741,7 @@ async def handle_shop_buy(
     _tree_city = bool(state.get("tree_city_mode"))
     _armory = bool(state.get("armory_mode"))
     _catalog = _get_shop_catalog(state)
-    _sv_kwargs = dict(farmer_mode=_farmer, tavern_mode=_tavern, tree_city_mode=_tree_city,
-                      armory_mode=_armory)
+    _sv_kwargs = _shop_view_kwargs(state)
     if sel >= len(_catalog):
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -15755,17 +15824,17 @@ async def handle_shop_switch(
     inv_rows, inv_cols = _inv_capacity(player)
     state = _ui_state.get(user_id, {"selected": 0, "shop_view": "shop"})
     # Buy-only shops have no sell tab — treat switch as a no-op
-    if state.get("farmer_mode") or state.get("tavern_mode") or state.get("tree_city_mode") or state.get("armory_mode"):
-        _sv_kwargs = dict(farmer_mode=bool(state.get("farmer_mode")),
-                          tavern_mode=bool(state.get("tavern_mode")),
-                          tree_city_mode=bool(state.get("tree_city_mode")),
-                          armory_mode=bool(state.get("armory_mode")))
+    if state.get("farmer_mode") or state.get("tavern_mode") or state.get("tree_city_mode") or state.get("armory_mode") or state.get("buy_only"):
+        _sv_kwargs = _shop_view_kwargs(state)
         content = _shop_render(state, player_items, equipped, player.gold, inv_rows, inv_cols)
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=ShopView(guild_id, user_id, "shop", **_sv_kwargs))
         return
     new_view = "player" if state.get("shop_view", "shop") == "shop" else "shop"
-    new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}
+    if state.get("custom_catalog") is not None:
+        new_state = {**state, "selected": 0, "shop_view": new_view, "qty": 1}
+    else:
+        new_state = {"type": "shop", "selected": 0, "shop_view": new_view, "qty": 1}
     _ui_state[user_id] = new_state
     content = _shop_render(new_state, player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,

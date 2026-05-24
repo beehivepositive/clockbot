@@ -479,11 +479,21 @@ FQ_GROVE_EXIT_Y = 999  # moved beyond active zone
 FQ_POST_STREAM_X0 = 6
 FQ_POST_STREAM_X1 = 14
 
-# Shop section (y 41-53): main corridor + left alcove
-FQ_SHOP_Y0         = 41
-FQ_SHOP_Y1         = 53
-FQ_SHOPKEEPER_X    = 10   # shopkeeper stands in the main corridor
-FQ_SHOPKEEPER_Y    = 47
+# Shop section (y 41-53): narrow 3-wide corridor + left side room
+FQ_SHOP_Y0          = 41
+FQ_SHOP_Y1          = 53
+FQ_SHOP_ROOM_Y0     = 44   # side room top
+FQ_SHOP_ROOM_Y1     = 50   # side room bottom
+FQ_SHOPKEEPER_X     = 6    # shopkeeper inside the left side room
+FQ_SHOPKEEPER_Y     = 47
+
+# Items sold by the Forest Quest shopkeeper
+FQ_SHOP_CATALOG = [
+    {"id": "forest_nut", "name": "Forest Nut", "emoji": "🌰", "price": 8,
+     "description": "Restores 3 HP. Gathered from the ancient canopy."},
+    {"id": "rock",       "name": "Rock",        "emoji": "🪨", "price": 4,
+     "description": "Smooth stone — loaded into a slingshot."},
+]
 
 # Boss approach (y 54-57): corridor funnels to single-tile entrance
 FQ_BOSS_APPROACH_Y0 = 54
@@ -639,7 +649,6 @@ FQ_WALKABLE = frozenset({
     "fq_reset",             # Sokoban reset stone
     "fq_grove_exit",
     "fq_exit",              # zone entry/exit
-    "fq_shopkeeper",        # walk to shopkeeper; interact opens shop
     "fq_warden_dead",       # collapsed warden rubble (walkable after boss death)
     "fq_boss_door_open",    # open exit door from boss chamber
     "fq_boss_chest",        # loot chest — walkable; interact opens it
