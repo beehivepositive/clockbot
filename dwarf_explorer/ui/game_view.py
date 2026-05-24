@@ -2734,6 +2734,9 @@ def _compute_context_labels(
     if not grid or len(grid) <= vc:
         return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
+    if getattr(player, "in_hermit_hut", False):
+        print(f"DEBUG ccl-top: in_hermit_hut=True grid_ok={bool(grid)} grid_rows={len(grid)}", flush=True)
+
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
     if _in_ph:
