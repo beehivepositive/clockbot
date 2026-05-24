@@ -454,6 +454,8 @@ class DwarfExplorer(commands.Cog):
             "caves", "village_tiles", "village_entrances", "villages",
             "house_tiles", "house_entrances", "houses",
             "ground_items", "enemies", "chests", "chest_items",
+            # Forest quest — child tables before parent to respect FK order
+            "fq_puzzle_logs", "fq_ents", "forest_quest_tiles", "forest_quest_areas",
         ]:
             try:
                 await db.execute(f"DELETE FROM {table}")
