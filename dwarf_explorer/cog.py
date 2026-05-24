@@ -706,7 +706,7 @@ class DwarfExplorer(commands.Cog):
             from dwarf_explorer.config import FQ_BOSS_APPROACH_Y1 as _fq_approach_y1
             # Find (or create) the forest quest area
             _fq_row = await db.fetch_one(
-                "SELECT id FROM forest_quest_areas ORDER BY id LIMIT 1"
+                "SELECT fq_id FROM forest_quest_areas ORDER BY fq_id LIMIT 1"
             )
             if not _fq_row:
                 await interaction.followup.send(
@@ -714,7 +714,7 @@ class DwarfExplorer(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            _fq_id_tp = _fq_row["id"]
+            _fq_id_tp = _fq_row["fq_id"]
             # Place just outside the circular chamber (tip of the approach funnel)
             _tp_x, _tp_y = 10, _fq_approach_y1  # (10, 57)
 
