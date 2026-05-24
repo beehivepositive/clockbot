@@ -2905,6 +2905,7 @@ def _compute_context_labels(
 
         # Hermit Hut tile context — checked BEFORE bandit camp to avoid stale flag conflicts
         if getattr(player, "in_hermit_hut", False):
+            print(f"DEBUG hermit_ctx: t={t!r} pos=({getattr(player,'hermit_hut_x',0)},{getattr(player,'hermit_hut_y',0)}) adj_tiles={[grid[vc+dy][vc+dx].terrain for dy,dx in ((-1,0),(1,0),(0,-1),(0,1)) if 0<=vc+dy<len(grid) and 0<=vc+dx<len(grid[vc+dy])]}", flush=True)
             if t == "b_door":
                 center_label, center_enabled = "🚪 Exit", True
             elif t == "hut_stair_up":
@@ -2923,6 +2924,7 @@ def _compute_context_labels(
                         if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
                             action_label, action_enabled = "🧙 Talk", True
                             break
+            print(f"DEBUG hermit_ctx result: center={center_label!r}/{center_enabled} action={action_label!r}/{action_enabled}", flush=True)
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Bandit camp tile context
