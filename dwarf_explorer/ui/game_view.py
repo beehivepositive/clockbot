@@ -3233,6 +3233,23 @@ def _game_view(guild_id: int, user_id: int, player: Player,
          interact2_label, interact2_enabled) = \
             _compute_context_labels(grid, player, hand_items, has_canoe=has_canoe)
 
+        # ── Hermit hut Talk safety net (runs after _compute_context_labels) ─
+        # Ensures the button appears even if the context-label function returned
+        # early due to a stale area flag on the player object.
+        if getattr(player, "in_hermit_hut", False):
+            _vc = 4
+            _ct_t = (grid[_vc][_vc].terrain
+                     if len(grid) > _vc and len(grid[_vc]) > _vc else None)
+            if _ct_t == "hermit_npc" and not center_enabled:
+                center_label, center_enabled = "🧙 Talk", True
+            if not action_enabled:
+                for _dy_h, _dx_h in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    _r_h, _c_h = _vc + _dy_h, _vc + _dx_h
+                    if 0 <= _r_h < len(grid) and 0 <= _c_h < len(grid[_r_h]):
+                        if grid[_r_h][_c_h].terrain == "hermit_npc":
+                            action_label, action_enabled = "🧙 Talk", True
+                            break
+
         # ── Bomb: always enabled in hand (overworld AND cave) ─────────────
         if h1_item == "bomb":
             h1_action_enabled = True
