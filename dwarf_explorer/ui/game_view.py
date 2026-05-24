@@ -4528,6 +4528,24 @@ async def _move_steps(
                                       enemy_type="ancient_ent")
                 return content_anc, view_anc
 
+        # ── Sprint: attempt a second step if sprinting (normal floor only) ─────
+        if steps > 1:
+            _nx2_fq, _ny2_fq = player.fq_x + dx, player.fq_y + dy
+            _t2_fq = await _lfqst(fq_id, _nx2_fq, _ny2_fq, db)
+            _ok2_fq, _ = _cmfq(_t2_fq)
+            # Don't sprint across the boss-chamber threshold — handle that properly next press
+            _s2_boss_entry = (
+                _ny2_fq >= _FQ_BCY0 and player.fq_y < _FQ_BCY0
+                and not getattr(player, "in_fq_boss_combat", False)
+            )
+            if _ok2_fq and not _s2_boss_entry:
+                player.fq_x, player.fq_y = _nx2_fq, _ny2_fq
+                await db.execute(
+                    "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
+                    (_nx2_fq, _ny2_fq, user_id),
+                )
+                _fq_step_counter[user_id] = _fq_step_counter.get(user_id, 0) + 1
+
         # ── Warden eye state: time-based, managed by background task ─────────
         # On each player move we only compute the current display state from
         # the timestamp — no per-move turn counter needed.
