@@ -467,8 +467,11 @@ async def load_fq_viewport(
             wy = y_min + gy
             t = tile_map.get((wx, wy), "fq_wall")
 
-            # Log / ent overlays
-            if (wx, wy) in log_positions:
+            # Log / ent overlays.
+            # Sokoban logs that have entered the stream (y >= FQ_STREAM_Y) are
+            # already locked in as bridge structure — render them as ford tiles,
+            # not as pushable logs.
+            if (wx, wy) in log_positions and wy < FQ_STREAM_Y:
                 t = "fq_log"
             elif (wx, wy) in ent_positions:
                 # Regular ents disguised as trees; ancient ents look slightly different
@@ -502,7 +505,10 @@ async def load_fq_single_tile(fq_id: int, x: int, y: int, db) -> TileData:
         "SELECT 1 FROM fq_puzzle_logs WHERE fq_id=? AND cur_x=? AND cur_y=?",
         (fq_id, x, y),
     )
-    if lrow:
+    if lrow and y < FQ_STREAM_Y:
+        # Logs that have entered the stream (y >= FQ_STREAM_Y) are locked in as
+        # bridge structure — fall through to the tile lookup so they render and
+        # behave as fq_stream_ford, not as pushable blocks.
         return TileData(terrain="fq_log", structure=None)
 
     erow = await db.fetch_one(
