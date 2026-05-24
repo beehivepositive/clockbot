@@ -692,11 +692,13 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V1: Tangle  (25 obstacles, ~49 pushes, ~39 box lines) ────────────────
+    # ── V1: Tangle  (24 obstacles, ~45 pushes) ───────────────────────────────
     #   T&P random generation (seed=1337, rank #2).  Dense chaotic cluster on
     #   the left-centre with one log trapped at y=22.  Highest box-line count
     #   (most direction changes) in the pool.
-    #   BFS-verified: 49 pushes, 39 box lines.
+    #   (11,20) removed — it and (13,20) sandwiched (12,20) into an isolated
+    #   pocket whenever any log sat in the (12,19)/(12,21) column.
+    #   Re-verified: 45 pushes, all physically reachable.
     {
         "name": "Tangle",
         "log_a": (6, 18),
@@ -708,23 +710,23 @@ FQ_PUZZLE_VARIANTS = [
             (8, 21), (8, 22),
             (9, 18), (9, 22), (9, 23), (9, 25),
             (10, 22), (10, 25),
-            (11, 20),
             (12, 19), (12, 25), (12, 26), (12, 27),
             (13, 20),
             (15, 19), (15, 21), (15, 23),
         }),
     },
 
-    # ── V2: Drift  (22 obstacles, ~46 pushes, ~37 box lines) ─────────────────
+    # ── V2: Drift  (21 obstacles, ~46 pushes) ────────────────────────────────
     #   T&P random generation (seed=1337, rank #3).  Obstacles cluster on the
     #   left side and south-centre; logs start together at the top-right corner.
-    #   BFS-verified: 46 pushes, 37 box lines.
+    #   (5,26) removed — it sealed (5,27) into an unreachable pocket whenever
+    #   a log sat at (6,27).  Re-verified: 46 pushes, all physically reachable.
     {
         "name": "Drift",
         "log_a": (13, 18),
         "log_b": (14, 18),
         "obstacles": frozenset({
-            (5, 22), (5, 23), (5, 24), (5, 26),
+            (5, 22), (5, 23), (5, 24),
             (6, 19),
             (7, 24),
             (8, 24), (8, 25), (8, 26),
@@ -738,11 +740,12 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V3: Lattice  (26 obstacles, ~44 pushes, ~31 box lines) ───────────────
-    #   T&P random generation (seed=1337, rank #4).  Densest variant (26
-    #   obstacles).  Logs start close together near the top-left; tight
-    #   corridors throughout.
-    #   BFS-verified: 44 pushes, 31 box lines.
+    # ── V3: Lattice  (25 obstacles, ~40 pushes) ──────────────────────────────
+    #   T&P random generation (seed=1337, rank #4).  Densest variant.
+    #   Logs start close together near the top-left; tight corridors throughout.
+    #   (9,22) removed — it and (7,22)/(8,21) sealed (8,22) into an isolated
+    #   pocket whenever a log sat at (8,23).
+    #   Re-verified: 40 pushes, all physically reachable.
     {
         "name": "Lattice",
         "log_a": (6, 18),
@@ -752,7 +755,7 @@ FQ_PUZZLE_VARIANTS = [
             (6, 19), (6, 20), (6, 24), (6, 26),
             (7, 22), (7, 25),
             (8, 20), (8, 21), (8, 26),
-            (9, 21), (9, 22),
+            (9, 21),
             (10, 20), (10, 24),
             (11, 26),
             (12, 18), (12, 21), (12, 22), (12, 24), (12, 25), (12, 27),
@@ -762,11 +765,13 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V4: Buried  (24 obstacles, ~44 pushes, ~30 box lines) ────────────────
+    # ── V4: Buried  (23 obstacles, ~33 pushes) ───────────────────────────────
     #   T&P random generation (seed=1337, rank #5).  Both logs start deep in
-    #   the puzzle at y=24-25 — player must navigate DOWN to find them before
-    #   solving.  Obstacles thin out near the top.
-    #   BFS-verified: 44 pushes, 30 box lines.
+    #   the puzzle at y=24-25 — player must navigate DOWN to find them first.
+    #   (11,26) removed — with logs A and B simultaneously at (10,27)/(9,26),
+    #   (10,25) and (11,26) together sealed (10,26); removing (11,26) opens a
+    #   long roundabout path east through y=22-26.
+    #   Re-verified: 33 pushes, all physically reachable.
     {
         "name": "Buried",
         "log_a": (12, 24),
@@ -778,7 +783,7 @@ FQ_PUZZLE_VARIANTS = [
             (8, 23),
             (9, 21), (9, 23),
             (10, 18), (10, 24), (10, 25),
-            (11, 20), (11, 25), (11, 26),
+            (11, 20), (11, 25),
             (12, 19), (12, 23), (12, 27),
             (13, 19), (13, 20), (13, 23), (13, 25),
             (14, 19), (14, 27),

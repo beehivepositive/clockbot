@@ -97,6 +97,21 @@ def canonical(start: tuple, pw: frozenset, logs: frozenset) -> tuple | None:
     return min(seen)
 
 
+def _reachable_set(start: tuple, pw: frozenset, logs: frozenset) -> frozenset:
+    """Flood fill from *start*, return full set of reachable cells."""
+    if start not in pw or start in logs:
+        return frozenset()
+    seen = {start}
+    q = [start]
+    while q:
+        x, y = q.pop()
+        for nb in ((x+1,y),(x-1,y),(x,y+1),(x,y-1)):
+            if nb in pw and nb not in logs and nb not in seen:
+                seen.add(nb)
+                q.append(nb)
+    return frozenset(seen)
+
+
 # ── Backward BFS ──────────────────────────────────────────────────────────────
 
 def backward_bfs(obstacles: frozenset) -> tuple[dict, dict]:
@@ -584,14 +599,13 @@ ROOM_TANGLE = frozenset({
     (8,21),(8,22),
     (9,18),(9,22),(9,23),(9,25),
     (10,22),(10,25),
-    (11,20),
     (12,19),(12,25),(12,26),(12,27),
     (13,20),
     (15,19),(15,21),(15,23),
 })
 
 ROOM_DRIFT = frozenset({
-    (5,22),(5,23),(5,24),(5,26),
+    (5,22),(5,23),(5,24),
     (6,19),
     (7,24),
     (8,24),(8,25),(8,26),
@@ -609,7 +623,7 @@ ROOM_LATTICE = frozenset({
     (6,19),(6,20),(6,24),(6,26),
     (7,22),(7,25),
     (8,20),(8,21),(8,26),
-    (9,21),(9,22),
+    (9,21),
     (10,20),(10,24),
     (11,26),
     (12,18),(12,21),(12,22),(12,24),(12,25),(12,27),
@@ -625,7 +639,7 @@ ROOM_BURIED = frozenset({
     (8,23),
     (9,21),(9,23),
     (10,18),(10,24),(10,25),
-    (11,20),(11,25),(11,26),
+    (11,20),(11,25),
     (12,19),(12,23),(12,27),
     (13,19),(13,20),(13,23),(13,25),
     (14,19),(14,27),
@@ -757,6 +771,37 @@ def trace_solution(obstacles: frozenset, log_a: tuple, log_b: tuple) -> None:
         print(row)
     print()
 
+    # ── Forward simulation: validate each push is physically reachable ────────
+    # For each push the player must stand at Pp = Lp - dir.  We simulate the
+    # game state (log positions + player canonical) forward and check that Pp
+    # is inside the flood-fill component of the current canonical position.
+    pw, _ = build_sets(obstacles)
+    sim_logs = frozenset({log_a, log_b})
+    sim_can  = best_state[1]          # initial player canonical
+    sim_a, sim_b = log_a, log_b
+    step_valid: list[bool] = []
+
+    for Lp, L_after, dir_ in forward_steps:
+        dx, dy = dir_
+        Pp = (Lp[0] - dx, Lp[1] - dy)          # where player must stand
+        reachable = _reachable_set(sim_can, pw, sim_logs)
+        ok = Pp in reachable
+        step_valid.append(ok)
+        # Advance simulation: player steps into Lp after the push
+        if Lp == sim_a:
+            sim_a = L_after
+        elif Lp == sim_b:
+            sim_b = L_after
+        sim_logs = frozenset({sim_a, sim_b})
+        new_can = canonical(Lp, pw, sim_logs)
+        sim_can = new_can if new_can is not None else sim_can
+
+    n_invalid = step_valid.count(False)
+    if n_invalid == 0:
+        print(f"  Validation: ALL {len(forward_steps)} pushes are physically reachable.")
+    else:
+        print(f"  Validation: {n_invalid} IMPOSSIBLE push(es) detected!")
+
     # ── Step-by-step list ─────────────────────────────────────────────────────
     DIR_NAMES = {(0, 1): "S", (0, -1): "N", (1, 0): "E", (-1, 0): "W"}
     a_pos, b_pos = log_a, log_b
@@ -769,8 +814,11 @@ def trace_solution(obstacles: frozenset, log_a: tuple, log_b: tuple) -> None:
         elif Lp == b_pos:
             which = "B"
             b_pos = L_after
+        dx, dy = dir_
+        Pp = (Lp[0] - dx, Lp[1] - dy)
         d_name = DIR_NAMES.get(dir_, str(dir_))
-        print(f"    {i:3d}. Log {which}  {Lp} -> {L_after}  [{d_name}]")
+        flag = "" if step_valid[i - 1] else f"  !! IMPOSSIBLE (player needs {Pp})"
+        print(f"    {i:3d}. Log {which}  {Lp} -> {L_after}  [{d_name}]{flag}")
     print()
 
 
