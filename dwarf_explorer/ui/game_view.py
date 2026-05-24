@@ -2911,14 +2911,17 @@ def _compute_context_labels(
                 center_label, center_enabled = "🔼 Ascend", True
             elif t == "hut_stair_down":
                 center_label, center_enabled = "🔽 Descend", True
-            # Show Talk action when adjacent to the hermit NPC
+            # Show Talk action when adjacent to the hermit NPC.
+            # Must use interact2_label (custom_id "interact2" → handle_interact2)
+            # NOT action_label ("action" → handle_interact which has no hermit handler).
+            _hh_talk_label, _hh_talk_enabled = "", False
             for _dy_hh, _dx_hh in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _ar_hh, _ac_hh = vc + _dy_hh, vc + _dx_hh
                 if 0 <= _ar_hh < len(grid) and 0 <= _ac_hh < len(grid[_ar_hh]):
                     if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
-                        action_label, action_enabled = "🧙 Talk", True
+                        _hh_talk_label, _hh_talk_enabled = "🧙 Talk", True
                         break
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", _hh_talk_label, _hh_talk_enabled
 
         # Bandit camp tile context
         if getattr(player, "in_bandit_camp", False):
