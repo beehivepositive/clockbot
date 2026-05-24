@@ -6,14 +6,26 @@ find starting log positions that maximise the number of pushes required.
 Quality metric: push count first, box lines (direction changes) second.
 
 Usage:
-    python sokoban_gen.py            # test all built-in rooms
-    python sokoban_gen.py --room A   # test one room
-    python sokoban_gen.py --apply A  # print config.py snippet for room A
+    python sokoban_gen.py                     # test all built-in rooms
+    python sokoban_gen.py --room A            # test one room
+    python sokoban_gen.py --apply A           # print config.py snippet for room A
+    python sokoban_gen.py --generate 200      # T&P random generation: try 200 random
+                                              # obstacle layouts, report best puzzles
+    python sokoban_gen.py --generate 200 --seed 42 --min-pushes 35 --obs-min 16 --obs-max 28
+
+T&P generation algorithm (Taylor & Parberry 2011)
+-------------------------------------------------
+  1. Randomly scatter N obstacles (N drawn from [--obs-min, --obs-max]).
+  2. Pre-filter: reject if puzzle floor is disconnected.
+  3. Run backward BFS from all goal states (logs in stream rows).
+  4. Accept if max push count ≥ --min-pushes.
+  5. Keep the top --top results and display them.
 
 The grid
 --------
   y=16-17  : chamber (fully open, player can reach any x)
-  y=18-28  : 11×11 puzzle area  (x=5-15)
+  y=18-27  : puzzle area  (x=5-15, 11×10 = 110 cells)
+  y=28     : barrier row  — all obstacle except cutaway at x=10
   y=29     : near stream  — logs enter here, become ford tiles
   y=30     : far stream   — second log slides here via ford
 
@@ -22,7 +34,7 @@ usable bridge, but the BFS uses all x to maximise the state space searched).
 """
 
 from __future__ import annotations
-import argparse, sys, time
+import argparse, random as _rng_mod, sys, time
 from collections import deque
 
 # ── Grid constants (mirror config.py) ─────────────────────────────────────────
@@ -242,6 +254,153 @@ def best_starts(obstacles: frozenset, top_n: int = 5,
     return results[:top_n]
 
 
+# ── T&P Random Layout Generator ───────────────────────────────────────────────
+
+# Cells that must never be obstacles (barrier approach path)
+_FORBIDDEN = frozenset({(BX, PY1), (BX, PY1 - 1)})   # (10,27), (10,26)
+
+# All valid obstacle candidate positions
+_CANDIDATES = tuple(
+    (x, y)
+    for y in range(PY0, PY1 + 1)
+    for x in range(PX0, PX1 + 1)
+    if (x, y) not in _FORBIDDEN
+)
+
+
+def _floor_connected(obs: frozenset) -> bool:
+    """
+    Check that every non-obstacle cell in the puzzle area is reachable from
+    every other non-obstacle cell (single connected component for logs).
+    Isolated pockets guarantee dead positions.
+    """
+    floor = frozenset(
+        (x, y)
+        for x in range(PX0, PX1 + 1)
+        for y in range(PY0, PY1 + 1)
+        if (x, y) not in obs
+    )
+    if not floor:
+        return False
+    start = next(iter(floor))
+    seen = {start}
+    q = [start]
+    while q:
+        cx, cy = q.pop()
+        for nb in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+            if nb in floor and nb not in seen:
+                seen.add(nb)
+                q.append(nb)
+    return len(seen) == len(floor)
+
+
+def _simple_deadlock_count(obs: frozenset) -> int:
+    """
+    Count "corner deadlock" cells — cells where a log pushed in cannot
+    be pushed back out, because walls block two perpendicular sides.
+
+    Wall definition (from a log's perspective):
+      • x < PX0 or x > PX1          : left/right boundary
+      • y < PY0                      : north boundary (chamber rows not in lw)
+      • y > PY1 and not (y==BY,x==BX): barrier obstacle or out-of-range
+      • (x,y) in obs                 : obstacle tile
+
+    Cells at the left/right boundary (x=PX0 or x=PX1) always have one
+    perpendicular wall; they contribute to the count only when the second
+    wall is also present (i.e. top-row or obstacle above/below).
+    A layout is rejected if count > MAX_DEADLOCKS (see generate_random_puzzles).
+    """
+    def is_wall(x: int, y: int) -> bool:
+        if x < PX0 or x > PX1:
+            return True
+        if y < PY0:
+            return True
+        if y > PY1:
+            # barrier row: obstacle everywhere except cutaway
+            return not (y == BY and x == BX)
+        return (x, y) in obs
+
+    count = 0
+    for x in range(PX0, PX1 + 1):
+        for y in range(PY0, PY1 + 1):
+            if (x, y) in obs:
+                continue
+            if (is_wall(x - 1, y) and is_wall(x, y - 1)):  # NW
+                count += 1
+            elif (is_wall(x + 1, y) and is_wall(x, y - 1)):  # NE
+                count += 1
+            elif (is_wall(x - 1, y) and is_wall(x, y + 1)):  # SW
+                count += 1
+            elif (is_wall(x + 1, y) and is_wall(x, y + 1)):  # SE
+                count += 1
+    return count
+
+
+def generate_random_puzzles(
+    n_attempts: int = 200,
+    obs_min: int = 15,
+    obs_max: int = 26,
+    min_pushes: int = 30,
+    seed: int | None = None,
+    top_n: int = 5,
+    max_deadlocks: int = 8,  # boundary corners alone give ~4; allow a few more
+    verbose: bool = True,
+) -> list[tuple[int, int, tuple, tuple, frozenset]]:
+    """
+    Taylor & Parberry (2011) random puzzle generation.
+
+    For each of n_attempts iterations:
+      1. Draw a random number of obstacles in [obs_min, obs_max].
+      2. Randomly scatter them across the valid positions (excluding (10,26)
+         and (10,27) which are needed for the barrier approach).
+      3. Pre-filter: reject disconnected floor or too many corner deadlocks.
+      4. Run full backward BFS.
+      5. Accept if max push count ≥ min_pushes.
+
+    Returns a list of (push_count, box_lines, log_a, log_b, obstacles) for the
+    top_n hardest puzzles found, sorted best-first.
+    """
+    rng = _rng_mod.Random(seed)
+    results: list = []
+    passed_prefilter = 0
+    t_start = time.perf_counter()
+
+    for attempt in range(1, n_attempts + 1):
+        n_obs = rng.randint(obs_min, obs_max)
+        obs = frozenset(rng.sample(_CANDIDATES, n_obs))
+
+        # ── Pre-filter: connectivity only ─────────────────────────────────
+        # (The deadlock count is too conservative for random layouts; the BFS
+        # already handles dead-position detection correctly.)
+        if not _floor_connected(obs):
+            continue
+        passed_prefilter += 1
+
+        # ── Full backward BFS ─────────────────────────────────────────────
+        starts = best_starts(obs, top_n=1)
+        if not starts:
+            continue
+
+        d, bl, la, lb = starts[0]
+        if d < min_pushes:
+            continue
+
+        results.append((d, bl, la, lb, obs))
+        if verbose:
+            elapsed = time.perf_counter() - t_start
+            print(f"  [{attempt:4d}/{n_attempts}] +HIT  "
+                  f"pushes={d:3d}  box_lines={bl:3d}  obs={n_obs:2d}  "
+                  f"la={la}  lb={lb}  ({elapsed:.0f}s elapsed)")
+
+    results.sort(key=lambda r: (-r[0], -r[1]))
+
+    elapsed = time.perf_counter() - t_start
+    print(f"\n{'-'*60}")
+    print(f"Done: {n_attempts} attempts, {passed_prefilter} passed pre-filter, "
+          f"{len(results)} met min_pushes={min_pushes}  ({elapsed:.1f}s)")
+    return results[:top_n]
+
+
 # ── Room layouts ──────────────────────────────────────────────────────────────
 # Each room is a frozenset of (x, y) obstacle cells in the puzzle area.
 # Design goals:
@@ -445,7 +604,7 @@ def config_snippet(name: str, obstacles: frozenset,
                    push_count: int, box_lines_n: int) -> str:
     obs_sorted = sorted(obstacles)
     lines = [
-        f"    # ── {name}  ({len(obstacles)} obstacles, ~{push_count} pushes, ~{box_lines_n} box lines)",
+        f"    # -- {name}  ({len(obstacles)} obstacles, ~{push_count} pushes, ~{box_lines_n} box lines)",
         f"    {{",
         f'        "name": "{name}",',
         f'        "log_a": {log_a!r},',
@@ -464,13 +623,50 @@ def config_snippet(name: str, obstacles: frozenset,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--room", default="all",
-                    help="Room key (A/B/C/D) or 'all'")
+                    help="Room key (A-I) or 'all'")
     ap.add_argument("--apply", default=None,
                     help="Print config.py snippet for this room key")
     ap.add_argument("--top", type=int, default=3)
     ap.add_argument("--y18", action="store_true",
                     help="Only allow log starts on y=18")
+    # T&P random generation
+    ap.add_argument("--generate", type=int, default=0, metavar="N",
+                    help="T&P mode: try N random obstacle layouts and report best puzzles")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="RNG seed for --generate (reproducible runs)")
+    ap.add_argument("--min-pushes", type=int, default=30,
+                    help="Minimum push count to accept a generated layout (default 30)")
+    ap.add_argument("--obs-min", type=int, default=15,
+                    help="Min obstacles per random layout (default 15)")
+    ap.add_argument("--obs-max", type=int, default=26,
+                    help="Max obstacles per random layout (default 26)")
     args = ap.parse_args()
+
+    # ── T&P random generation mode ────────────────────────────────────────
+    if args.generate > 0:
+        print(f"T&P random generation: {args.generate} attempts, "
+              f"obs=[{args.obs_min},{args.obs_max}], "
+              f"min_pushes={args.min_pushes}, seed={args.seed}")
+        print("-" * 60)
+        hits = generate_random_puzzles(
+            n_attempts=args.generate,
+            obs_min=args.obs_min,
+            obs_max=args.obs_max,
+            min_pushes=args.min_pushes,
+            seed=args.seed,
+            top_n=args.top,
+        )
+        if not hits:
+            print("No layouts met the criteria.")
+            return
+        print(f"\nTop {len(hits)} results:\n")
+        for rank, (d, bl, la, lb, obs) in enumerate(hits, 1):
+            print(f"{'='*60}")
+            print(f"Rank #{rank}  pushes={d}  box_lines={bl}  obs={len(obs)}")
+            print(f"  log_a={la}  log_b={lb}")
+            visualise(obs, la, lb)
+            print(config_snippet(f"Random_{rank}", obs, la, lb, d, bl))
+        return
 
     if args.apply:
         key = args.apply.upper()
