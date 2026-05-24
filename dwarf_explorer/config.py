@@ -640,6 +640,216 @@ FQ_PUZZLE_OBSTACLES = frozenset({
     (FQ_PUZZLE_X0 +10, FQ_PUZZLE_Y0 + 8),   # (15, 26)
 })
 
+# ── Sokoban puzzle variants ────────────────────────────────────────────────────
+#
+# One variant is picked at random when a new zone is generated.
+# Each variant specifies:
+#   "name"      — label for logging / migration scripts
+#   "log_a"     — start position of log 0  (zone-absolute)
+#   "log_b"     — start position of log 1  (zone-absolute)
+#   "obstacles" — frozenset of (x, y) obstacle cells (zone-absolute)
+#
+# Design constraint: the final wall's gate must be at x=9, 10, or 11 so
+# the ford tiles land inside the post-stream corridor (FQ_POST_STREAM_X0–X1).
+#
+# X helper aliases  (X0=5, X1=15, Y0=18)
+_PX = FQ_PUZZLE_X0   # 5
+_PY = FQ_PUZZLE_Y0   # 18
+
+FQ_PUZZLE_VARIANTS = [
+
+    # ── V0: Classic Zigzag  L→R→C  (30 obstacles, ~62 pushes) ────────────────
+    #   Wall y=20 gate x=5  |  Wall y=23 gate x=15  |  Wall y=26 gate x=10
+    {
+        "name": "Classic",
+        "log_a": (_PX + 4, _PY),       # (9, 18)
+        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "obstacles": FQ_PUZZLE_OBSTACLES,
+    },
+
+    # ── V1: Mirror Zigzag  R→L→C  (30 obstacles, ~62 pushes) ─────────────────
+    #   Wall y=20 gate x=15 |  Wall y=23 gate x=5   |  Wall y=26 gate x=10
+    {
+        "name": "Mirror",
+        "log_a": (_PX + 4, _PY),       # (9, 18)
+        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "obstacles": frozenset({
+            # Wall 1 (y=20): gate ONLY at col 15 (cols 5-14 blocked)
+            (_PX + 0, _PY + 2),  # (5,  20)
+            (_PX + 1, _PY + 2),  # (6,  20)
+            (_PX + 2, _PY + 2),  # (7,  20)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 4, _PY + 2),  # (9,  20)
+            (_PX + 5, _PY + 2),  # (10, 20)
+            (_PX + 6, _PY + 2),  # (11, 20)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 8, _PY + 2),  # (13, 20)
+            (_PX + 9, _PY + 2),  # (14, 20)
+            # Wall 2 (y=23): gate ONLY at col 5 (cols 6-15 blocked)
+            (_PX + 1, _PY + 5),  # (6,  23)
+            (_PX + 2, _PY + 5),  # (7,  23)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 4, _PY + 5),  # (9,  23)
+            (_PX + 5, _PY + 5),  # (10, 23)
+            (_PX + 6, _PY + 5),  # (11, 23)
+            (_PX + 7, _PY + 5),  # (12, 23)
+            (_PX + 8, _PY + 5),  # (13, 23)
+            (_PX + 9, _PY + 5),  # (14, 23)
+            (_PX +10, _PY + 5),  # (15, 23)
+            # Wall 3 (y=26): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
+            (_PX + 0, _PY + 8),  # (5,  26)
+            (_PX + 1, _PY + 8),  # (6,  26)
+            (_PX + 2, _PY + 8),  # (7,  26)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 4, _PY + 8),  # (9,  26)
+            (_PX + 6, _PY + 8),  # (11, 26)
+            (_PX + 7, _PY + 8),  # (12, 26)
+            (_PX + 8, _PY + 8),  # (13, 26)
+            (_PX + 9, _PY + 8),  # (14, 26)
+            (_PX +10, _PY + 8),  # (15, 26)
+        }),
+    },
+
+    # ── V2: Tight S  L→R→L→C  (40 obstacles, ~90+ pushes, hardest) ───────────
+    #   Four walls with tighter row spacing:
+    #     Wall y=20 gate x=5  |  Wall y=22 gate x=15  (only 2 rows apart!)
+    #     Wall y=25 gate x=5  |  Wall y=27 gate x=10  (only 2 rows apart!)
+    #   Logs must reverse direction TWICE under very tight spacing constraints.
+    {
+        "name": "Tight S",
+        "log_a": (_PX + 4, _PY),       # (9, 18)
+        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "obstacles": frozenset({
+            # Wall 1 (y=20): gate x=5  (cols 6-15 blocked)
+            (_PX + 1, _PY + 2),  # (6,  20)
+            (_PX + 2, _PY + 2),  # (7,  20)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 4, _PY + 2),  # (9,  20)
+            (_PX + 5, _PY + 2),  # (10, 20)
+            (_PX + 6, _PY + 2),  # (11, 20)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 8, _PY + 2),  # (13, 20)
+            (_PX + 9, _PY + 2),  # (14, 20)
+            (_PX +10, _PY + 2),  # (15, 20)
+            # Wall 2 (y=22): gate x=15 (cols 5-14 blocked) ← 2 rows below wall 1
+            (_PX + 0, _PY + 4),  # (5,  22)
+            (_PX + 1, _PY + 4),  # (6,  22)
+            (_PX + 2, _PY + 4),  # (7,  22)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 4, _PY + 4),  # (9,  22)
+            (_PX + 5, _PY + 4),  # (10, 22)
+            (_PX + 6, _PY + 4),  # (11, 22)
+            (_PX + 7, _PY + 4),  # (12, 22)
+            (_PX + 8, _PY + 4),  # (13, 22)
+            (_PX + 9, _PY + 4),  # (14, 22)
+            # Wall 3 (y=25): gate x=5  (cols 6-15 blocked) ← 3 rows below wall 2
+            (_PX + 1, _PY + 7),  # (6,  25)
+            (_PX + 2, _PY + 7),  # (7,  25)
+            (_PX + 3, _PY + 7),  # (8,  25)
+            (_PX + 4, _PY + 7),  # (9,  25)
+            (_PX + 5, _PY + 7),  # (10, 25)
+            (_PX + 6, _PY + 7),  # (11, 25)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 8, _PY + 7),  # (13, 25)
+            (_PX + 9, _PY + 7),  # (14, 25)
+            (_PX +10, _PY + 7),  # (15, 25)
+            # Wall 4 (y=27): gate x=10 (cols 5-9 and 11-15 blocked) ← 2 rows below wall 3
+            (_PX + 0, _PY + 9),  # (5,  27)
+            (_PX + 1, _PY + 9),  # (6,  27)
+            (_PX + 2, _PY + 9),  # (7,  27)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 4, _PY + 9),  # (9,  27)
+            (_PX + 6, _PY + 9),  # (11, 27)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            (_PX + 8, _PY + 9),  # (13, 27)
+            (_PX + 9, _PY + 9),  # (14, 27)
+            (_PX +10, _PY + 9),  # (15, 27)
+        }),
+    },
+
+    # ── V3: Funnel  outer-edges → centre  (18 obstacles, ~25 pushes, easiest) ─
+    #   Logs start at the OUTER edges of the puzzle (x=7 and x=13).
+    #   Wall y=20: centre blocked, gates on BOTH sides (x=5 and x=14-15).
+    #   After passing the outer gates, both logs converge to the single
+    #   centre gate at y=26 (x=10).  Short and beginner-friendly.
+    {
+        "name": "Funnel",
+        "log_a": (_PX + 2, _PY),       # (7, 18) — starts left of centre
+        "log_b": (_PX + 8, _PY),       # (13, 18) — starts right of centre
+        "obstacles": frozenset({
+            # Wall 1 (y=20): gates at x=5 (left) and x=14-15 (right)
+            #   centre blocked: cols 6-13
+            (_PX + 1, _PY + 2),  # (6,  20)
+            (_PX + 2, _PY + 2),  # (7,  20)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 4, _PY + 2),  # (9,  20)
+            (_PX + 5, _PY + 2),  # (10, 20)
+            (_PX + 6, _PY + 2),  # (11, 20)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 8, _PY + 2),  # (13, 20)
+            # Wall 2 (y=26): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
+            (_PX + 0, _PY + 8),  # (5,  26)
+            (_PX + 1, _PY + 8),  # (6,  26)
+            (_PX + 2, _PY + 8),  # (7,  26)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 4, _PY + 8),  # (9,  26)
+            (_PX + 6, _PY + 8),  # (11, 26)
+            (_PX + 7, _PY + 8),  # (12, 26)
+            (_PX + 8, _PY + 8),  # (13, 26)
+            (_PX + 9, _PY + 8),  # (14, 26)
+            (_PX +10, _PY + 8),  # (15, 26)
+        }),
+    },
+
+    # ── V4: Boomerang  C→L→C  (31 obstacles, ~45 pushes, medium) ─────────────
+    #   Wall y=21 gate x=10  →  logs must first converge to centre.
+    #   Wall y=25 gate x=5   →  both logs detour far-left.
+    #   Pillar  (11,26)      →  acts as east stop so the return push lands on x=10.
+    #   Wall y=27 gate x=10  →  final convergence back to centre.
+    {
+        "name": "Boomerang",
+        "log_a": (_PX + 4, _PY),       # (9, 18)
+        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "obstacles": frozenset({
+            # Wall 1 (y=21): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
+            (_PX + 0, _PY + 3),  # (5,  21)
+            (_PX + 1, _PY + 3),  # (6,  21)
+            (_PX + 2, _PY + 3),  # (7,  21)
+            (_PX + 3, _PY + 3),  # (8,  21)
+            (_PX + 4, _PY + 3),  # (9,  21)
+            (_PX + 6, _PY + 3),  # (11, 21)
+            (_PX + 7, _PY + 3),  # (12, 21)
+            (_PX + 8, _PY + 3),  # (13, 21)
+            (_PX + 9, _PY + 3),  # (14, 21)
+            (_PX +10, _PY + 3),  # (15, 21)
+            # Wall 2 (y=25): gate ONLY at col 5 (cols 6-15 blocked)
+            (_PX + 1, _PY + 7),  # (6,  25)
+            (_PX + 2, _PY + 7),  # (7,  25)
+            (_PX + 3, _PY + 7),  # (8,  25)
+            (_PX + 4, _PY + 7),  # (9,  25)
+            (_PX + 5, _PY + 7),  # (10, 25)
+            (_PX + 6, _PY + 7),  # (11, 25)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 8, _PY + 7),  # (13, 25)
+            (_PX + 9, _PY + 7),  # (14, 25)
+            (_PX +10, _PY + 7),  # (15, 25)
+            # Pillar (11,26): stop peg — log pushed east from x=5 stops at x=10
+            (_PX + 6, _PY + 8),  # (11, 26)
+            # Wall 3 (y=27): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
+            (_PX + 0, _PY + 9),  # (5,  27)
+            (_PX + 1, _PY + 9),  # (6,  27)
+            (_PX + 2, _PY + 9),  # (7,  27)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            (_PX + 4, _PY + 9),  # (9,  27)
+            (_PX + 6, _PY + 9),  # (11, 27)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            (_PX + 8, _PY + 9),  # (13, 27)
+            (_PX + 9, _PY + 9),  # (14, 27)
+            (_PX +10, _PY + 9),  # (15, 27)
+        }),
+    },
+]
+
 # Ent starting positions in corridor (zone-absolute coords)
 FQ_ENT_STARTS = [
     (9,  4),

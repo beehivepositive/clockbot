@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 
+import random
+
 from dwarf_explorer.config import (
     VIEWPORT_SIZE,
     FQ_WIDTH, FQ_HEIGHT,
@@ -32,6 +34,7 @@ from dwarf_explorer.config import (
     FQ_RESET_X, FQ_RESET_Y,
     FQ_LOG_A_START, FQ_LOG_B_START,
     FQ_PUZZLE_OBSTACLES,
+    FQ_PUZZLE_VARIANTS,
     FQ_ENT_STARTS,
     FQ_WALKABLE,
     # Post-stream / shop
@@ -165,12 +168,22 @@ async def defeat_warden(db, fq_id: int) -> None:
 
 async def _generate_fq_zone(db, fq_id: int) -> None:
     """Populate forest_quest_tiles, fq_puzzle_logs, and fq_ents for a new zone."""
-    log_positions = {FQ_LOG_A_START, FQ_LOG_B_START}
+    # Pick a random Sokoban variant for this zone
+    variant = random.choice(FQ_PUZZLE_VARIANTS)
+    obstacles = variant["obstacles"]
+    log_a_start = variant["log_a"]
+    log_b_start = variant["log_b"]
+    _log.info(
+        "Generating forest quest zone fq_id=%d with Sokoban variant '%s'",
+        fq_id, variant["name"],
+    )
+
+    log_positions = {log_a_start, log_b_start}
 
     tiles: list[tuple] = []
     for y in range(FQ_HEIGHT):
         for x in range(FQ_WIDTH):
-            t = _tile_for(x, y, log_positions)
+            t = _tile_for(x, y, log_positions, obstacles)
             tiles.append((fq_id, x, y, t))
 
     await db.executemany(
@@ -179,8 +192,8 @@ async def _generate_fq_zone(db, fq_id: int) -> None:
     )
 
     # Sokoban puzzle logs (indices 0, 1)
-    ax, ay = FQ_LOG_A_START
-    bx, by = FQ_LOG_B_START
+    ax, ay = log_a_start
+    bx, by = log_b_start
     # Canal puzzle logs (indices 2, 3)
     cax, cay = FQ_CANAL_BLOCK_A_START
     cbx, cby = FQ_CANAL_BLOCK_B_START
@@ -211,8 +224,14 @@ async def _generate_fq_zone(db, fq_id: int) -> None:
     _log.info("Generated forest quest zone fq_id=%d", fq_id)
 
 
-def _tile_for(x: int, y: int, _log_positions) -> str:
-    """Return the base tile type for zone coordinate (x, y)."""
+def _tile_for(x: int, y: int, _log_positions, obstacles=None) -> str:
+    """Return the base tile type for zone coordinate (x, y).
+
+    ``obstacles`` defaults to FQ_PUZZLE_OBSTACLES when not supplied (used by
+    migration scripts that were written before variants were introduced).
+    """
+    if obstacles is None:
+        obstacles = FQ_PUZZLE_OBSTACLES
 
     # ── Corridor (y 0-15) ──────────────────────────────────────────────────
     if FQ_CORRIDOR_Y0 <= y <= FQ_CORRIDOR_Y1:
@@ -226,7 +245,7 @@ def _tile_for(x: int, y: int, _log_positions) -> str:
     if FQ_CHAMBER_Y0 <= y < FQ_STREAM_Y:
         if 1 <= x <= FQ_WIDTH - 2:
             if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1 and FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1:
-                if (x, y) in FQ_PUZZLE_OBSTACLES:
+                if (x, y) in obstacles:
                     return "fq_obstacle"
                 return "fq_puzzle_floor"
             if x == FQ_RESET_X and y == FQ_RESET_Y:
