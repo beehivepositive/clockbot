@@ -66,8 +66,9 @@ import sqlite3
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(_HERE, "dwarf_explorer", "data", "shared.db")
-sys.path.insert(0, _HERE)
+_ROOT = os.path.dirname(_HERE)
+DB_PATH = os.path.join(_HERE, "data", "shared.db")
+sys.path.insert(0, _ROOT)
 
 FQ_ID = 1
 
