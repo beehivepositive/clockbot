@@ -463,8 +463,9 @@ FQ_STREAM_Y2   = 30   # far (deep) stream row — log slides here to complete br
 
 FQ_PUZZLE_X0   = 5    # sunken Sokoban area x = 5..15 (11 wide)
 FQ_PUZZLE_X1   = 15
-FQ_PUZZLE_Y0   = 18   # sunken area y = 18..28 (11 tall)
-FQ_PUZZLE_Y1   = 28
+FQ_PUZZLE_Y0   = 18   # sunken area y = 18..27 (10 tall); y=28 is barrier row
+FQ_PUZZLE_Y1   = 27
+FQ_BARRIER_X   = 10   # barrier row (y=28) cutaway column — only log exit to stream
 
 FQ_FORD_XA     = 9    # stream ford tiles (activated when both logs on targets)
 FQ_FORD_XB     = 10
@@ -647,10 +648,18 @@ FQ_PUZZLE_OBSTACLES = frozenset({
 #   "name"      — label for logging / migration scripts
 #   "log_a"     — start position of log 0  (zone-absolute)
 #   "log_b"     — start position of log 1  (zone-absolute)
-#   "obstacles" — frozenset of (x, y) obstacle cells (zone-absolute)
+#   "obstacles" — frozenset of (x, y) obstacle cells (zone-absolute, y=18..27)
 #
-# Design constraint: the final wall's gate must be at x=9, 10, or 11 so
-# the ford tiles land inside the post-stream corridor (FQ_POST_STREAM_X0–X1).
+# Architecture:
+#   Puzzle area  : x=5-15, y=18-27 (10×11 cells)
+#   Barrier row  : y=28 — all fq_obstacle except FQ_BARRIER_X=10 (cutaway)
+#   Edge walls   : x=4 and x=16 for y=18-27 — prevent outside-edge pushes
+#   Stream       : y=29-30 — logs create ford tiles wherever they land
+#
+# All variants BFS-verified by sokoban_gen.py (backward BFS, Taylor & Parberry 2011).
+# Obstacles must NOT include y=28 cells (barrier row is handled by _tile_for).
+# Do NOT place obstacles at (10,26) or (10,27) — player needs those cells to
+# push logs south through the y=28 cutaway.
 #
 # X helper aliases  (X0=5, X1=15, Y0=18)
 _PX = FQ_PUZZLE_X0   # 5
@@ -658,16 +667,15 @@ _PY = FQ_PUZZLE_Y0   # 18
 
 FQ_PUZZLE_VARIANTS = [
 
-    # ── V0: Pinball  (22 obstacles, ~29 pushes) ───────────────────────────────
-    #   Symmetric horizontal bars at y=20/27 (open x=5,10,15) plus paired
-    #   corner pillars at y=22/25 and a centre spine at y=23-24.
-    #   No spanning walls → no deadlock risk.  Logs deflect off pillars and
-    #   must find indirect routes to the stream.
-    #   BFS-verified: 29 pushes, 29 box lines. (sokoban_gen.py Room A)
+    # ── V0: Pinball  (22 obstacles, ~35 pushes) ───────────────────────────────
+    #   Symmetric horizontal bars at y=20/27 (open at x=5, 10, 15) + paired
+    #   corner pillars at y=22/25 + centre spine y=23-24.  Logs at outer edges;
+    #   barrier at y=28 funnels both through x=10.
+    #   BFS-verified: 35 pushes, 31 box lines.  (sokoban_gen.py Room A)
     {
         "name": "Pinball",
-        "log_a": (_PX + 3, _PY),       # (8, 18)
-        "log_b": (_PX + 6, _PY),       # (11, 18)
+        "log_a": (_PX + 1, _PY),       # (6, 18)
+        "log_b": (_PX + 9, _PY),       # (14, 18)
         "obstacles": frozenset({
             # Upper bar (y=20): open at x=5, 10, 15
             (_PX + 2, _PY + 2),  # (7,  20)
@@ -699,138 +707,16 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V1: Corridors  (23 obstacles, ~32 pushes) ────────────────────────────
-    #   Two vertical divider walls (x=8, x=12) split the area into three lanes.
-    #   Gaps in the dividers are staggered so each log must switch lanes at
-    #   least twice.  Horizontal cross-bars add deflection inside the lanes.
-    #   BFS-verified: 32 pushes, 32 box lines — the hardest of all variants.
-    #   (sokoban_gen.py Room B)
-    {
-        "name": "Corridors",
-        "log_a": (_PX + 5, _PY),       # (10, 18)
-        "log_b": (_PX + 6, _PY),       # (11, 18)
-        "obstacles": frozenset({
-            # Left–centre divider (x=8): gaps at y=20 and y=26
-            (_PX + 3, _PY + 1),  # (8,  19)
-            (_PX + 3, _PY + 3),  # (8,  21)
-            (_PX + 3, _PY + 4),  # (8,  22)
-            (_PX + 3, _PY + 5),  # (8,  23)
-            (_PX + 3, _PY + 6),  # (8,  24)
-            (_PX + 3, _PY + 7),  # (8,  25)
-            (_PX + 3, _PY + 9),  # (8,  27)
-            (_PX + 3, _PY +10),  # (8,  28)
-            # Centre–right divider (x=12): gaps at y=23 and y=27
-            (_PX + 7, _PY + 1),  # (12, 19)
-            (_PX + 7, _PY + 2),  # (12, 20)
-            (_PX + 7, _PY + 3),  # (12, 21)
-            (_PX + 7, _PY + 4),  # (12, 22)
-            (_PX + 7, _PY + 6),  # (12, 24)
-            (_PX + 7, _PY + 7),  # (12, 25)
-            (_PX + 7, _PY + 8),  # (12, 26)
-            (_PX + 7, _PY +10),  # (12, 28)
-            # Left-lane cross-bar (y=22)
-            (_PX + 1, _PY + 4),  # (6,  22)
-            (_PX + 2, _PY + 4),  # (7,  22)
-            # Right-lane cross-bar (y=22)
-            (_PX + 8, _PY + 4),  # (13, 22)
-            (_PX + 9, _PY + 4),  # (14, 22)
-            # Centre-lane cross-bar (y=25)
-            (_PX + 4, _PY + 7),  # (9,  25)
-            (_PX + 5, _PY + 7),  # (10, 25)
-            (_PX + 6, _PY + 7),  # (11, 25)
-        }),
-    },
-
-    # ── V2: Chambers  (19 obstacles, ~24 pushes) ─────────────────────────────
-    #   Two tall chamber walls (x=8, x=12) divide the area into left / centre /
-    #   right rooms.  Each wall has two narrow openings at different heights, so
-    #   the logs must coordinate which opening to use.  One log starts inside the
-    #   left chamber, the other in the centre — neither can reach the stream
-    #   directly.
-    #   BFS-verified: 24 pushes, 24 box lines. (sokoban_gen.py Room C)
-    {
-        "name": "Chambers",
-        "log_a": (_PX + 1, _PY),       # (6, 18) — left chamber
-        "log_b": (_PX + 5, _PY),       # (10, 18) — centre
-        "obstacles": frozenset({
-            # Left chamber wall (x=8): openings at y=21 and y=25
-            (_PX + 3, _PY + 0),  # (8,  18)
-            (_PX + 3, _PY + 1),  # (8,  19)
-            (_PX + 3, _PY + 2),  # (8,  20)
-            (_PX + 3, _PY + 4),  # (8,  22)
-            (_PX + 3, _PY + 5),  # (8,  23)
-            (_PX + 3, _PY + 6),  # (8,  24)
-            (_PX + 3, _PY + 8),  # (8,  26)
-            (_PX + 3, _PY + 9),  # (8,  27)
-            (_PX + 3, _PY +10),  # (8,  28)
-            # Right chamber wall (x=12): openings at y=22 and y=26
-            (_PX + 7, _PY + 0),  # (12, 18)
-            (_PX + 7, _PY + 1),  # (12, 19)
-            (_PX + 7, _PY + 2),  # (12, 20)
-            (_PX + 7, _PY + 3),  # (12, 21)
-            (_PX + 7, _PY + 5),  # (12, 23)
-            (_PX + 7, _PY + 6),  # (12, 24)
-            (_PX + 7, _PY + 7),  # (12, 25)
-            (_PX + 7, _PY + 9),  # (12, 27)
-            (_PX + 7, _PY +10),  # (12, 28)
-            # Centre blocker
-            (_PX + 5, _PY + 5),  # (10, 23)
-        }),
-    },
-
-    # ── V3: Cross  (22 obstacles, ~25 pushes) ────────────────────────────────
-    #   Solid 2×2 blocks in all four corners + symmetric mid-wall pillars +
-    #   two centre spines create a cross-shaped open area.  Logs must navigate
-    #   around the corner blocks and through the narrow cross arms.
-    #   BFS-verified: 25 pushes, 25 box lines. (sokoban_gen.py Room D)
-    {
-        "name": "Cross",
-        "log_a": (_PX + 1, _PY),       # (6, 18)
-        "log_b": (_PX + 5, _PY),       # (10, 18)
-        "obstacles": frozenset({
-            # Top-left 2×2 block (y=19-20, x=6-7)
-            (_PX + 1, _PY + 1),  # (6,  19)
-            (_PX + 2, _PY + 1),  # (7,  19)
-            (_PX + 1, _PY + 2),  # (6,  20)
-            (_PX + 2, _PY + 2),  # (7,  20)
-            # Top-right 2×2 block (y=19-20, x=13-14)
-            (_PX + 8, _PY + 1),  # (13, 19)
-            (_PX + 9, _PY + 1),  # (14, 19)
-            (_PX + 8, _PY + 2),  # (13, 20)
-            (_PX + 9, _PY + 2),  # (14, 20)
-            # Centre-top spine (y=21)
-            (_PX + 5, _PY + 3),  # (10, 21)
-            # Mid-left pillar (y=23-24, x=6)
-            (_PX + 1, _PY + 5),  # (6,  23)
-            (_PX + 1, _PY + 6),  # (6,  24)
-            # Mid-right pillar (y=23-24, x=14)
-            (_PX + 9, _PY + 5),  # (14, 23)
-            (_PX + 9, _PY + 6),  # (14, 24)
-            # Centre-bottom spine (y=26)
-            (_PX + 5, _PY + 8),  # (10, 26)
-            # Bottom-left 2×2 block (y=26-27, x=6-7)
-            (_PX + 1, _PY + 8),  # (6,  26)
-            (_PX + 2, _PY + 8),  # (7,  26)
-            (_PX + 1, _PY + 9),  # (6,  27)
-            (_PX + 2, _PY + 9),  # (7,  27)
-            # Bottom-right 2×2 block (y=26-27, x=13-14)
-            (_PX + 8, _PY + 8),  # (13, 26)
-            (_PX + 9, _PY + 8),  # (14, 26)
-            (_PX + 8, _PY + 9),  # (13, 27)
-            (_PX + 9, _PY + 9),  # (14, 27)
-        }),
-    },
-
-    # ── V4: Slot  (26 obstacles, ~29 pushes) ─────────────────────────────────
-    #   Two full-height divider walls (x=8, x=12) with staggered gaps create
-    #   three narrow vertical lanes.  A bottom funnel forces both logs through
-    #   x=9-11 to reach the stream, and a centre deflector at y=20/25 prevents
-    #   any straight-line solution.  Logs start at the extreme outer edges.
-    #   BFS-verified: 29 pushes, 29 box lines. (sokoban_gen.py Room F)
+    # ── V1: Slot  (18 obstacles, ~38 pushes) ─────────────────────────────────
+    #   Two near-solid vertical dividers (x=8, x=12) with staggered gaps +
+    #   centre deflectors block any direct south path.  Both logs start trapped
+    #   at the bottom of the LEFT lane and must navigate up, through a gap,
+    #   across the centre, then converge to x=10 before the barrier.
+    #   BFS-verified: 38 pushes, 26 box lines.  (sokoban_gen.py Room F)
     {
         "name": "Slot",
-        "log_a": (_PX + 1, _PY),       # (6, 18)
-        "log_b": (_PX + 9, _PY),       # (14, 18)
+        "log_a": (_PX + 1, _PY + 8),   # (6, 26) — left lane, bottom
+        "log_b": (_PX + 2, _PY + 8),   # (7, 26) — left lane, bottom
         "obstacles": frozenset({
             # Left divider (x=8): openings at y=21 and y=25
             (_PX + 3, _PY + 0),  # (8,  18)
@@ -841,7 +727,6 @@ FQ_PUZZLE_VARIANTS = [
             (_PX + 3, _PY + 6),  # (8,  24)
             (_PX + 3, _PY + 8),  # (8,  26)
             (_PX + 3, _PY + 9),  # (8,  27)
-            (_PX + 3, _PY +10),  # (8,  28)
             # Right divider (x=12): openings at y=23 and y=27
             (_PX + 7, _PY + 0),  # (12, 18)
             (_PX + 7, _PY + 1),  # (12, 19)
@@ -851,17 +736,126 @@ FQ_PUZZLE_VARIANTS = [
             (_PX + 7, _PY + 6),  # (12, 24)
             (_PX + 7, _PY + 7),  # (12, 25)
             (_PX + 7, _PY + 8),  # (12, 26)
-            (_PX + 7, _PY +10),  # (12, 28)
-            # Bottom funnel (y=28): only x=9-11 open
-            (_PX + 0, _PY +10),  # (5,  28)
-            (_PX + 1, _PY +10),  # (6,  28)
-            (_PX + 2, _PY +10),  # (7,  28)
-            (_PX + 8, _PY +10),  # (13, 28)
-            (_PX + 9, _PY +10),  # (14, 28)
-            (_PX +10, _PY +10),  # (15, 28)
             # Centre deflectors
             (_PX + 5, _PY + 2),  # (10, 20)
             (_PX + 5, _PY + 7),  # (10, 25)
+        }),
+    },
+
+    # ── V2: Chambers  (17 obstacles, ~31 pushes) ─────────────────────────────
+    #   Two tall chamber walls (x=8, x=12) with two narrow openings each
+    #   divide the area into sealed left / centre / right rooms.  Logs start
+    #   at opposite outer edges inside their respective chambers; neither
+    #   can reach the barrier cutaway directly.
+    #   BFS-verified: 31 pushes, 27 box lines.  (sokoban_gen.py Room C)
+    {
+        "name": "Chambers",
+        "log_a": (_PX + 1, _PY),        # (6, 18) — left chamber
+        "log_b": (_PX + 9, _PY),        # (14, 18) — right chamber
+        "obstacles": frozenset({
+            # Left chamber wall (x=8): openings at y=21 and y=25
+            (_PX + 3, _PY + 0),  # (8,  18)
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 3, _PY + 6),  # (8,  24)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            # Right chamber wall (x=12): openings at y=22 and y=26
+            (_PX + 7, _PY + 0),  # (12, 18)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 7, _PY + 3),  # (12, 21)
+            (_PX + 7, _PY + 5),  # (12, 23)
+            (_PX + 7, _PY + 6),  # (12, 24)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            # Centre blocker
+            (_PX + 5, _PY + 5),  # (10, 23)
+        }),
+    },
+
+    # ── V3: Offset  (21 obstacles, ~51 pushes) ────────────────────────────────
+    #   Two chamber walls with ASYMMETRIC opening heights (left: y=20,24;
+    #   right: y=22,26) + centre deflectors (9,19)(11,19)(10,23)(9,25)(11,25).
+    #   Logs start deep inside the puzzle (one in left chamber at y=26, one
+    #   in the centre at y=24); both must escape their sub-regions and
+    #   converge to x=10.  Hardest variant.
+    #   BFS-verified: 51 pushes, 36 box lines.  (sokoban_gen.py Room D)
+    {
+        "name": "Offset",
+        "log_a": (_PX + 1, _PY + 8),   # (6, 26) — left chamber, deep
+        "log_b": (_PX + 5, _PY + 6),   # (10, 24) — centre
+        "obstacles": frozenset({
+            # Left chamber wall (x=8): openings at y=20 and y=24
+            (_PX + 3, _PY + 0),  # (8,  18)
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 3, _PY + 3),  # (8,  21)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 3, _PY + 5),  # (8,  23)
+            (_PX + 3, _PY + 7),  # (8,  25)
+            (_PX + 3, _PY + 8),  # (8,  26)
+            (_PX + 3, _PY + 9),  # (8,  27)
+            # Right chamber wall (x=12): openings at y=22 and y=26
+            (_PX + 7, _PY + 0),  # (12, 18)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 7, _PY + 3),  # (12, 21)
+            (_PX + 7, _PY + 5),  # (12, 23)
+            (_PX + 7, _PY + 6),  # (12, 24)
+            (_PX + 7, _PY + 7),  # (12, 25)
+            (_PX + 7, _PY + 9),  # (12, 27)
+            # Centre deflector pair (y=19) — flank the centre approach
+            (_PX + 4, _PY + 1),  # (9,  19)
+            (_PX + 6, _PY + 1),  # (11, 19)
+            # Centre pillar (y=23)
+            (_PX + 5, _PY + 5),  # (10, 23)
+            # Near-barrier deflectors (y=25)
+            (_PX + 4, _PY + 7),  # (9,  25)
+            (_PX + 6, _PY + 7),  # (11, 25)
+        }),
+    },
+
+    # ── V4: Hourglass  (24 obstacles, ~31 pushes) ────────────────────────────
+    #   Two near-spanning horizontal pinch rows at y=20 and y=24, each open
+    #   ONLY at x=10.  Both logs must pass through x=10 twice before reaching
+    #   the barrier.  Side pillars at y=22 and y=26 prevent trivial straight
+    #   runs alongside the walls.
+    #   BFS-verified: 31 pushes, 20 box lines.  (sokoban_gen.py Room G)
+    {
+        "name": "Hourglass",
+        "log_a": (_PX + 1, _PY),        # (6, 18)
+        "log_b": (_PX + 9, _PY),        # (14, 18)
+        "obstacles": frozenset({
+            # Top pinch row (y=20): open ONLY at x=10
+            (_PX + 0, _PY + 2),  # (5,  20)
+            (_PX + 1, _PY + 2),  # (6,  20)
+            (_PX + 2, _PY + 2),  # (7,  20)
+            (_PX + 3, _PY + 2),  # (8,  20)
+            (_PX + 4, _PY + 2),  # (9,  20)
+            (_PX + 6, _PY + 2),  # (11, 20)
+            (_PX + 7, _PY + 2),  # (12, 20)
+            (_PX + 8, _PY + 2),  # (13, 20)
+            (_PX + 9, _PY + 2),  # (14, 20)
+            (_PX +10, _PY + 2),  # (15, 20)
+            # Side pillars between pinch rows (y=22)
+            (_PX + 1, _PY + 4),  # (6,  22)
+            (_PX + 9, _PY + 4),  # (14, 22)
+            # Bottom pinch row (y=24): open ONLY at x=10
+            (_PX + 0, _PY + 6),  # (5,  24)
+            (_PX + 1, _PY + 6),  # (6,  24)
+            (_PX + 2, _PY + 6),  # (7,  24)
+            (_PX + 3, _PY + 6),  # (8,  24)
+            (_PX + 4, _PY + 6),  # (9,  24)
+            (_PX + 6, _PY + 6),  # (11, 24)
+            (_PX + 7, _PY + 6),  # (12, 24)
+            (_PX + 8, _PY + 6),  # (13, 24)
+            (_PX + 9, _PY + 6),  # (14, 24)
+            (_PX +10, _PY + 6),  # (15, 24)
+            # Side pillars below bottom pinch (y=26)
+            (_PX + 2, _PY + 8),  # (7,  26)
+            (_PX + 8, _PY + 8),  # (13, 26)
         }),
     },
 ]

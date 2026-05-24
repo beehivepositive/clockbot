@@ -27,7 +27,8 @@ from collections import deque
 
 # ── Grid constants (mirror config.py) ─────────────────────────────────────────
 PX0, PX1 = 5, 15        # puzzle x range (inclusive)
-PY0, PY1 = 18, 28       # puzzle y range (inclusive)
+PY0, PY1 = 18, 27       # puzzle y range (inclusive) — 10 rows; y=28 is barrier
+BY,  BX  = 28, 10       # barrier row y, cutaway column x (only opening at y=28)
 SY,  SY2 = 29, 30       # stream rows
 CH0, CH1 = 16, 17       # chamber rows (always open)
 W        = 21           # zone width
@@ -40,18 +41,23 @@ def build_sets(obstacles: frozenset) -> tuple[frozenset, frozenset]:
     """
     Return (player_walkable, log_walkable) for a given obstacle set.
 
-    Player:  chamber rows + puzzle floor (no stream, no obstacles)
-    Log:     puzzle floor + both stream rows (no obstacles)
+    Player:  chamber rows + puzzle floor (x=5-15, y=18-27, no obstacles)
+             + barrier cutaway (10, 28)
+             Edge columns x=4 and x=16 are walls for y=18-27 (not in pw).
+    Log:     puzzle floor + barrier cutaway + both stream rows (no obstacles)
     """
     pw, lw = set(), set()
     for y in range(CH0, CH1 + 1):          # chamber — full width
         for x in range(1, W - 1):
             pw.add((x, y))
-    for y in range(PY0, PY1 + 1):          # puzzle area
+    for y in range(PY0, PY1 + 1):          # puzzle area y=18-27
         for x in range(PX0, PX1 + 1):
             if (x, y) not in obstacles:
                 pw.add((x, y))
                 lw.add((x, y))
+    # Barrier cutaway — both player and log can pass through
+    pw.add((BX, BY))
+    lw.add((BX, BY))
     for y in (SY, SY2):                    # stream — logs only
         for x in range(PX0, PX1 + 1):
             lw.add((x, y))
@@ -272,11 +278,12 @@ ROOM_PINBALL = _obs(
 # ── Room B: "Corridors" ───────────────────────────────────────────────────────
 # Three vertical "lanes" (left/centre/right) connected by horizontal
 # passages at specific rows.  Forces logs to switch lanes.
+# y=28 obstacles omitted — barrier row handles the bottom wall uniformly.
 ROOM_CORRIDORS = _obs(
     # Left–centre divider (x=8): solid except gaps at y=20 and y=26
-    (8,19),(8,21),(8,22),(8,23),(8,24),(8,25),(8,27),(8,28),
+    (8,19),(8,21),(8,22),(8,23),(8,24),(8,25),(8,27),
     # Centre–right divider (x=12): solid except gaps at y=23 and y=27
-    (12,19),(12,20),(12,21),(12,22),(12,24),(12,25),(12,26),(12,28),
+    (12,19),(12,20),(12,21),(12,22),(12,24),(12,25),(12,26),
     # Horizontal cross-bars to break long open stretches
     (6,22),(7,22),           # left lane y=22
     (9,25),(10,25),(11,25),  # centre lane y=25
@@ -287,34 +294,78 @@ ROOM_CORRIDORS = _obs(
 # Two side chambers (left x=5-7, right x=13-15) connected to a central
 # corridor (x=9-11) via single-cell openings.  Getting logs out of the
 # side chambers requires precise sequencing.
+# y=28 obstacles omitted — barrier row handles the bottom wall uniformly.
 ROOM_CHAMBERS = _obs(
     # Left chamber wall (x=8): open at y=21 and y=25
-    (8,18),(8,19),(8,20),(8,22),(8,23),(8,24),(8,26),(8,27),(8,28),
+    (8,18),(8,19),(8,20),(8,22),(8,23),(8,24),(8,26),(8,27),
     # Right chamber wall (x=12): open at y=22 and y=26
-    (12,18),(12,19),(12,20),(12,21),(12,23),(12,24),(12,25),(12,27),(12,28),
+    (12,18),(12,19),(12,20),(12,21),(12,23),(12,24),(12,25),(12,27),
     # Centre blocker: single pillar at (10,23) breaks direct path
     (10,23),
 )
 
-# ── Room D: "Cross" ───────────────────────────────────────────────────────────
-# A cross-shaped open area with obstacle blocks in the four quadrants.
-# Logs start in the corners and must navigate through the cross to the stream.
-ROOM_CROSS = _obs(
-    # Top-left quadrant obstacles
-    (6,19),(7,19),(6,20),(7,20),
-    # Top-right quadrant obstacles
-    (13,19),(14,19),(13,20),(14,20),
-    # Middle-left pillar
-    (6,23),(6,24),
-    # Middle-right pillar
-    (14,23),(14,24),
-    # Bottom-left quadrant obstacles
-    (6,26),(7,26),(6,27),(7,27),
-    # Bottom-right quadrant obstacles
-    (13,26),(14,26),(13,27),(14,27),
-    # Centre pillar
-    (10,21),
-    (10,26),
+# ── Room D: "Offset Chambers" ────────────────────────────────────────────────
+# Two chamber walls like Room C but with different opening heights so the
+# exit timing doesn't mirror Room C.  Extra interior obstacles create a dense
+# centre region that complicates routing to the barrier cutaway.
+# Rule: (10,26) and (10,27) intentionally left clear for barrier approach.
+ROOM_OFFSET = _obs(
+    # Left chamber wall (x=8): open at y=20 and y=24
+    (8,18),(8,19),(8,21),(8,22),(8,23),(8,25),(8,26),(8,27),
+    # Right chamber wall (x=12): open at y=22 and y=26
+    (12,18),(12,19),(12,20),(12,21),(12,23),(12,24),(12,25),(12,27),
+    # Centre-top deflector pair (y=19)
+    (9,19),(11,19),
+    # Mid pillar (y=23)
+    (10,23),
+    # Near-barrier deflectors (y=25) — keep (10,25) clear, flank it
+    (9,25),(11,25),
+)
+
+# ── Room G: "Hourglass" ───────────────────────────────────────────────────────
+# Horizontal partial walls pinch to a 1-wide throat at x=10 at two points
+# (y=20 and y=24), forcing both logs to pass through x=10 twice.  Side pillars
+# add deflection and prevent shortcut pushes.
+ROOM_HOURGLASS = _obs(
+    # Top pinch row (y=20): open ONLY at x=10  (x=5-9 and x=11-15 blocked)
+    (5,20),(6,20),(7,20),(8,20),(9,20),(11,20),(12,20),(13,20),(14,20),(15,20),
+    # Bottom pinch row (y=24): open ONLY at x=10
+    (5,24),(6,24),(7,24),(8,24),(9,24),(11,24),(12,24),(13,24),(14,24),(15,24),
+    # Side pillars in between to block straight-lane runs
+    (6,22),(14,22),
+    # Side pillars below the bottom pinch
+    (7,26),(13,26),
+)
+
+# ── Room H: "Split Lock" ──────────────────────────────────────────────────────
+# Two nearly sealed vertical chambers separated by full-height dividers.
+# Left chamber exits only at y=19; right chamber exits only at y=25.
+# Getting both logs from their chambers to x=10 requires complex cross-routing.
+ROOM_SPLITLOCK = _obs(
+    # Left divider (x=7): open only at y=19
+    (7,18),(7,20),(7,21),(7,22),(7,23),(7,24),(7,25),(7,26),(7,27),
+    # Right divider (x=13): open only at y=25
+    (13,18),(13,19),(13,20),(13,21),(13,22),(13,23),(13,24),(13,26),(13,27),
+    # Interior centre obstacles — force routing through narrow corridors
+    (9,21),(10,21),(11,21),
+    (9,24),(10,24),(11,24),
+    # Outer-lane bottoms — prevent trivial slides to edge
+    (5,26),(5,27),(15,26),(15,27),
+)
+
+# ── Room I: "Zigzag Dense" ────────────────────────────────────────────────────
+# Three staggered partial walls (NOT spanning — each has 2+ open cells) plus
+# scattered pillars.  Logs must weave left–right–left while converging to x=10.
+ROOM_ZIGZAG = _obs(
+    # Top partial wall (y=19): open at x=13-15 (right gate)
+    (5,19),(6,19),(7,19),(8,19),(9,19),(10,19),(11,19),(12,19),
+    # Mid partial wall (y=23): open at x=5-7 (left gate) + narrow centre
+    (8,23),(9,23),(10,23),(11,23),(12,23),(13,23),(14,23),(15,23),
+    # Lower partial wall (y=26): open at x=9-11 only (approaches barrier)
+    (5,26),(6,26),(7,26),(8,26),(12,26),(13,26),(14,26),(15,26),
+    # Side deflectors between walls
+    (14,21),(14,22),   # right side, upper
+    (6,24),(6,25),     # left side, lower
 )
 
 # ── Room E: "Classic Plus" ────────────────────────────────────────────────────
@@ -339,27 +390,28 @@ ROOM_CLASSIC_PLUS = _obs(
 # ── Room F: "Slot" ────────────────────────────────────────────────────────────
 # Two vertical divider walls split the puzzle into three narrow lanes
 # (left x=5-7, centre x=9-11, right x=13-15).  Gaps in the dividers are
-# staggered so logs MUST switch lanes to progress south; the two logs must
-# choreograph which lane each occupies at each step.
+# staggered so logs MUST switch lanes to progress south.
+# The barrier row at y=28 (only x=10 open) replaces the old bottom funnel.
+# y=28 obstacles omitted — barrier row handles the bottom wall uniformly.
 ROOM_SLOT = _obs(
     # Left divider (x=8): open at y=21 and y=25
-    (8,18),(8,19),(8,20),(8,22),(8,23),(8,24),(8,26),(8,27),(8,28),
+    (8,18),(8,19),(8,20),(8,22),(8,23),(8,24),(8,26),(8,27),
     # Right divider (x=12): open at y=23 and y=27
-    (12,18),(12,19),(12,20),(12,21),(12,22),(12,24),(12,25),(12,26),(12,28),
-    # Bottom funnel (y=28): only x=9-11 open  (x=5-8 and 12-15 blocked)
-    # (x=8 and x=12 already covered; add extra blocks for the funnel)
-    (5,28),(6,28),(7,28),(13,28),(14,28),(15,28),
+    (12,18),(12,19),(12,20),(12,21),(12,22),(12,24),(12,25),(12,26),
     # Centre deflector
     (10,20),(10,25),
 )
 
 ROOMS = {
-    "A": ("Pinball",       ROOM_PINBALL),
-    "B": ("Corridors",     ROOM_CORRIDORS),
-    "C": ("Chambers",      ROOM_CHAMBERS),
-    "D": ("Cross",         ROOM_CROSS),
-    "E": ("Classic Plus",  ROOM_CLASSIC_PLUS),
-    "F": ("Slot",          ROOM_SLOT),
+    "A": ("Pinball",        ROOM_PINBALL),
+    "B": ("Corridors",      ROOM_CORRIDORS),
+    "C": ("Chambers",       ROOM_CHAMBERS),
+    "D": ("Offset",         ROOM_OFFSET),
+    "E": ("Classic Plus",   ROOM_CLASSIC_PLUS),
+    "F": ("Slot",           ROOM_SLOT),
+    "G": ("Hourglass",      ROOM_HOURGLASS),
+    "H": ("Split Lock",     ROOM_SPLITLOCK),
+    "I": ("Zigzag Dense",   ROOM_ZIGZAG),
 }
 
 
@@ -368,21 +420,18 @@ ROOMS = {
 def visualise(obstacles: frozenset,
               log_a: tuple | None = None,
               log_b: tuple | None = None) -> None:
-    CHARS = {
-        "obs":   "#",
-        "log_a": "A",
-        "log_b": "B",
-        "floor": ".",
-    }
+    CHARS = {"obs": "#", "log_a": "A", "log_b": "B", "floor": ".", "barrier": "X", "cut": "O"}
     print()
-    for y in range(PY0, PY1+1):
+    for y in range(PY0, BY + 1):       # puzzle rows + barrier row
         row = f"y={y}: "
-        for x in range(PX0, PX1+1):
-            if (x,y) == log_a:
+        for x in range(PX0, PX1 + 1):
+            if (x, y) == log_a:
                 row += CHARS["log_a"]
-            elif (x,y) == log_b:
+            elif (x, y) == log_b:
                 row += CHARS["log_b"]
-            elif (x,y) in obstacles:
+            elif y == BY:              # barrier row
+                row += CHARS["cut"] if x == BX else CHARS["barrier"]
+            elif (x, y) in obstacles:
                 row += CHARS["obs"]
             else:
                 row += CHARS["floor"]

@@ -4,7 +4,9 @@ shop section → Thornwarden boss chamber → (Y-fork / puzzle gauntlet / final 
 
 Zone layout (21 wide × 200 tall):
   y   0-15  : corridor (5 wide at x=8-12); ents disguised as fq_wall
-  y  16-28  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-28
+  y  16-28  : Sokoban chamber (21 wide); puzzle sunken area at x=5-15, y=18-27;
+              y=28 is barrier row (all fq_obstacle x=5-15 except cutaway at x=10)
+              x=4 and x=16 for y=18-27 are fq_wall (prevent edge-push exploit)
   y  29-30  : stream (2-wide; push logs into stream to build bridge — no orange targets)
   y  31-40  : post-stream corridor (3 wide at x=9-11, same as shop corridor)
   y  41-53  : shop section (3-wide corridor x=9-11; 2-wide wall x=7-8; side room x=3-6, y=44-50; 1-tile opening at y=47; shopkeeper at x=6, y=47)
@@ -29,6 +31,7 @@ from dwarf_explorer.config import (
     FQ_CHAMBER_Y0, FQ_STREAM_Y, FQ_STREAM_Y2,
     FQ_PUZZLE_X0, FQ_PUZZLE_X1,
     FQ_PUZZLE_Y0, FQ_PUZZLE_Y1,
+    FQ_BARRIER_X,
     FQ_FORD_XA, FQ_FORD_XB,
     FQ_ENTRY_X, FQ_ENTRY_Y,
     FQ_RESET_X, FQ_RESET_Y,
@@ -241,9 +244,21 @@ def _tile_for(x: int, y: int, _log_positions, obstacles=None) -> str:
             return "fq_floor"
         return "fq_wall"
 
-    # ── Sokoban chamber (y 16-29) ──────────────────────────────────────────
+    # ── Sokoban chamber (y 16-28) ──────────────────────────────────────────
     if FQ_CHAMBER_Y0 <= y < FQ_STREAM_Y:
         if 1 <= x <= FQ_WIDTH - 2:
+            # Barrier row (y=28): all obstacle except cutaway at FQ_BARRIER_X=10
+            if y == FQ_STREAM_Y - 1:
+                if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1:
+                    return "fq_puzzle_floor" if x == FQ_BARRIER_X else "fq_obstacle"
+                return "fq_floor"
+            # Edge walls at x=4 and x=16 for puzzle rows (y=18-27):
+            # prevents player standing outside the sunken area to push logs sideways
+            if FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1 and (
+                x == FQ_PUZZLE_X0 - 1 or x == FQ_PUZZLE_X1 + 1
+            ):
+                return "fq_wall"
+            # Puzzle sunken area (y=18-27, x=5-15)
             if FQ_PUZZLE_X0 <= x <= FQ_PUZZLE_X1 and FQ_PUZZLE_Y0 <= y <= FQ_PUZZLE_Y1:
                 if (x, y) in obstacles:
                     return "fq_obstacle"
