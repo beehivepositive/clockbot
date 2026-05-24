@@ -667,12 +667,13 @@ _PY = FQ_PUZZLE_Y0   # 18
 
 FQ_PUZZLE_VARIANTS = [
 
-    # ── V0: Scatter  (18 obstacles, ~53 pushes, ~37 box lines) ───────────────
+    # ── V0: Scatter  (15 obstacles, ~53 pushes, ~41 box lines) ──────────────
     #   T&P random generation (seed=1337, rank #1).  Sparse scattered pillars
     #   with no recognisable wall structure.  Both logs start mid-puzzle at
     #   y=21 — the player must first orient themselves before planning.
-    #   Hardest variant in the pool.
-    #   BFS-verified: 53 pushes, 37 box lines.
+    #   (15,21),(15,22),(15,24) removed — they isolated (15,23) into an
+    #   unreachable pocket, making the original BFS solution physically
+    #   impossible.  Re-verified after fix: 53 pushes, 41 box lines.
     {
         "name": "Scatter",
         "log_a": (7, 21),
@@ -688,7 +689,6 @@ FQ_PUZZLE_VARIANTS = [
             (12, 19), (12, 26),
             (13, 20),
             (14, 25), (14, 26),
-            (15, 21), (15, 22), (15, 24),
         }),
     },
 

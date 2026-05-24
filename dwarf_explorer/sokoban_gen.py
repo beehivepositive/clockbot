@@ -560,6 +560,78 @@ ROOM_SLOT = _obs(
     (10,20),(10,25),
 )
 
+# ── T&P generated variants (keys J-N) ────────────────────────────────────────
+# BFS-verified with seed=1337.  Obstacle sets mirror FQ_PUZZLE_VARIANTS in
+# config.py so --trace / --apply produce matching output.
+
+ROOM_SCATTER = frozenset({
+    (5,23),(5,25),
+    (6,20),(6,21),
+    (7,23),
+    (8,22),(8,27),
+    (9,22),
+    (10,20),
+    (11,21),
+    (12,19),(12,26),
+    (13,20),
+    (14,25),(14,26),
+})
+
+ROOM_TANGLE = frozenset({
+    (5,20),(5,27),
+    (6,24),
+    (7,20),(7,21),(7,22),(7,24),(7,26),
+    (8,21),(8,22),
+    (9,18),(9,22),(9,23),(9,25),
+    (10,22),(10,25),
+    (11,20),
+    (12,19),(12,25),(12,26),(12,27),
+    (13,20),
+    (15,19),(15,21),(15,23),
+})
+
+ROOM_DRIFT = frozenset({
+    (5,22),(5,23),(5,24),(5,26),
+    (6,19),
+    (7,24),
+    (8,24),(8,25),(8,26),
+    (9,23),
+    (10,19),(10,22),
+    (11,22),(11,26),
+    (12,21),
+    (13,19),(13,26),
+    (14,21),(14,24),(14,25),
+    (15,25),(15,27),
+})
+
+ROOM_LATTICE = frozenset({
+    (5,19),
+    (6,19),(6,20),(6,24),(6,26),
+    (7,22),(7,25),
+    (8,20),(8,21),(8,26),
+    (9,21),(9,22),
+    (10,20),(10,24),
+    (11,26),
+    (12,18),(12,21),(12,22),(12,24),(12,25),(12,27),
+    (13,21),
+    (14,20),(14,26),
+    (15,22),(15,23),
+})
+
+ROOM_BURIED = frozenset({
+    (5,20),
+    (6,25),
+    (7,18),(7,20),(7,27),
+    (8,23),
+    (9,21),(9,23),
+    (10,18),(10,24),(10,25),
+    (11,20),(11,25),(11,26),
+    (12,19),(12,23),(12,27),
+    (13,19),(13,20),(13,23),(13,25),
+    (14,19),(14,27),
+    (15,18),
+})
+
 ROOMS = {
     "A": ("Pinball",        ROOM_PINBALL),
     "B": ("Corridors",      ROOM_CORRIDORS),
@@ -570,6 +642,12 @@ ROOMS = {
     "G": ("ZigzagBar",      ROOM_ZIGZAGBAR),
     "H": ("Split Lock",     ROOM_SPLITLOCK),
     "I": ("Zigzag Dense",   ROOM_ZIGZAG),
+    # T&P randomly generated variants (live in FQ_PUZZLE_VARIANTS)
+    "J": ("Scatter",        ROOM_SCATTER),
+    "K": ("Tangle",         ROOM_TANGLE),
+    "L": ("Drift",          ROOM_DRIFT),
+    "M": ("Lattice",        ROOM_LATTICE),
+    "N": ("Buried",         ROOM_BURIED),
 }
 
 
@@ -594,6 +672,105 @@ def visualise(obstacles: frozenset,
             else:
                 row += CHARS["floor"]
         print(row)
+    print()
+
+
+# ── Solution tracer ───────────────────────────────────────────────────────────
+
+def trace_solution(obstacles: frozenset, log_a: tuple, log_b: tuple) -> None:
+    """
+    Reconstruct the forward solution path from the backward-BFS parent chain
+    and print an ASCII overlay showing where each log travels.
+
+    Legend:
+      A / B  = log starting positions
+      a / b  = cells log A / log B pass through on the way to the stream
+      #      = obstacle
+      .      = empty floor
+      O      = barrier cutaway  (BX, BY)
+      X      = barrier wall
+    """
+    print(f"  Running backward BFS for trace...")
+    dist, parent = backward_bfs(obstacles)
+
+    logs_start = frozenset({log_a, log_b})
+    matching = [(s, d) for s, d in dist.items() if s[0] == logs_start]
+    if not matching:
+        print(f"  [trace] No solution found — logs {log_a} / {log_b} are unreachable from any goal state.")
+        return
+
+    best_state, push_count = max(matching, key=lambda sd: sd[1])
+
+    # Walk parent chain from best_state toward the goal.
+    # parent[ns] = (prev_state, Lp, L_after, direction)
+    #   ns        = state where the pushed log is at Lp  (BEFORE the push in forward play)
+    #   prev_state = state where the pushed log is at L_after (AFTER the push in forward play)
+    #
+    # Walking best_state → prev_state → ... → goal collects steps in FORWARD
+    # chronological order (first push first), because best_state IS the start.
+    forward_steps: list[tuple] = []
+    cur = best_state
+    while cur in parent:
+        prev_state, Lp, L_after, direction = parent[cur]
+        forward_steps.append((Lp, L_after, direction))
+        cur = prev_state
+
+    # Build per-log trails by tracking each log's current position
+    a_pos, b_pos = log_a, log_b
+    a_trail: set = {log_a}
+    b_trail: set = {log_b}
+    a_pushes = b_pushes = 0
+
+    for Lp, L_after, _ in forward_steps:
+        if Lp == a_pos:
+            a_pos = L_after
+            a_trail.add(L_after)
+            a_pushes += 1
+        elif Lp == b_pos:
+            b_pos = L_after
+            b_trail.add(L_after)
+            b_pushes += 1
+
+    # ── ASCII map overlay ─────────────────────────────────────────────────────
+    print()
+    print(f"  Solution: {push_count} pushes total  (log A: {a_pushes}  log B: {b_pushes})")
+    print(f"  A/B=start  a/b=trail  #=wall  .=floor  O=exit  X=barrier")
+    print()
+    for y in range(PY0, BY + 1):
+        row = f"  y={y:2d}: "
+        for x in range(PX0, PX1 + 1):
+            pos = (x, y)
+            if pos == log_a:
+                row += "A"
+            elif pos == log_b:
+                row += "B"
+            elif y == BY:
+                row += "O" if x == BX else "X"
+            elif pos in obstacles:
+                row += "#"
+            elif pos in a_trail:
+                row += "a"
+            elif pos in b_trail:
+                row += "b"
+            else:
+                row += "."
+        print(row)
+    print()
+
+    # ── Step-by-step list ─────────────────────────────────────────────────────
+    DIR_NAMES = {(0, 1): "S", (0, -1): "N", (1, 0): "E", (-1, 0): "W"}
+    a_pos, b_pos = log_a, log_b
+    print(f"  Steps ({len(forward_steps)} pushes):")
+    for i, (Lp, L_after, dir_) in enumerate(forward_steps, 1):
+        which = "?"
+        if Lp == a_pos:
+            which = "A"
+            a_pos = L_after
+        elif Lp == b_pos:
+            which = "B"
+            b_pos = L_after
+        d_name = DIR_NAMES.get(dir_, str(dir_))
+        print(f"    {i:3d}. Log {which}  {Lp} -> {L_after}  [{d_name}]")
     print()
 
 
@@ -640,6 +817,8 @@ def main():
                     help="Min obstacles per random layout (default 15)")
     ap.add_argument("--obs-max", type=int, default=26,
                     help="Max obstacles per random layout (default 26)")
+    ap.add_argument("--trace", action="store_true",
+                    help="After solving a room, print the full solution path overlay")
     args = ap.parse_args()
 
     # ── T&P random generation mode ────────────────────────────────────────
@@ -673,12 +852,14 @@ def main():
         if key not in ROOMS:
             sys.exit(f"Unknown room: {key}")
         room_name, obs = ROOMS[key]
-        print(f"Solving room {key} ({room_name})…")
+        print(f"Solving room {key} ({room_name})...")
         results = best_starts(obs, top_n=1)
         if results:
             d, bl, la, lb = results[0]
             print(config_snippet(room_name, obs, la, lb, d, bl))
             visualise(obs, la, lb)
+            if args.trace:
+                trace_solution(obs, la, lb)
         return
 
     rooms_to_test = (
@@ -698,6 +879,8 @@ def main():
             print(f"  #{i+1}  pushes={d}  box_lines={bl}  log_a={la}  log_b={lb}")
         best = results[0]
         visualise(obs, best[2], best[3])
+        if args.trace:
+            trace_solution(obs, best[2], best[3])
 
 
 if __name__ == "__main__":
