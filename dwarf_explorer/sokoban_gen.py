@@ -322,19 +322,18 @@ ROOM_OFFSET = _obs(
     (9,25),(11,25),
 )
 
-# ── Room G: "Hourglass" ───────────────────────────────────────────────────────
-# Horizontal partial walls pinch to a 1-wide throat at x=10 at two points
-# (y=20 and y=24), forcing both logs to pass through x=10 twice.  Side pillars
-# add deflection and prevent shortcut pushes.
-ROOM_HOURGLASS = _obs(
-    # Top pinch row (y=20): open ONLY at x=10  (x=5-9 and x=11-15 blocked)
-    (5,20),(6,20),(7,20),(8,20),(9,20),(11,20),(12,20),(13,20),(14,20),(15,20),
-    # Bottom pinch row (y=24): open ONLY at x=10
-    (5,24),(6,24),(7,24),(8,24),(9,24),(11,24),(12,24),(13,24),(14,24),(15,24),
-    # Side pillars in between to block straight-lane runs
-    (6,22),(14,22),
-    # Side pillars below the bottom pinch
-    (7,26),(13,26),
+# ── Room G: "ZigzagBar" ──────────────────────────────────────────────────────
+# Two full-width pinch bars at y=20 and y=24 but with OFFSET openings:
+#   y=20 opens ONLY at x=8  (left-of-centre)
+#   y=24 opens ONLY at x=12 (right-of-centre)
+# Both logs must pass through x=8, then zigzag right to x=12, then converge
+# at x=10 for the barrier — three separate convergence points, no straight
+# vertical path exists anywhere.
+ROOM_ZIGZAGBAR = _obs(
+    # Upper bar (y=20): open ONLY at x=8
+    (5,20),(6,20),(7,20),(9,20),(10,20),(11,20),(12,20),(13,20),(14,20),(15,20),
+    # Lower bar (y=24): open ONLY at x=12
+    (5,24),(6,24),(7,24),(8,24),(9,24),(10,24),(11,24),(13,24),(14,24),(15,24),
 )
 
 # ── Room H: "Split Lock" ──────────────────────────────────────────────────────
@@ -409,7 +408,7 @@ ROOMS = {
     "D": ("Offset",         ROOM_OFFSET),
     "E": ("Classic Plus",   ROOM_CLASSIC_PLUS),
     "F": ("Slot",           ROOM_SLOT),
-    "G": ("Hourglass",      ROOM_HOURGLASS),
+    "G": ("ZigzagBar",      ROOM_ZIGZAGBAR),
     "H": ("Split Lock",     ROOM_SPLITLOCK),
     "I": ("Zigzag Dense",   ROOM_ZIGZAG),
 }

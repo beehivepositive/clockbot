@@ -817,45 +817,43 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V4: Hourglass  (24 obstacles, ~31 pushes) ────────────────────────────
-    #   Two near-spanning horizontal pinch rows at y=20 and y=24, each open
-    #   ONLY at x=10.  Both logs must pass through x=10 twice before reaching
-    #   the barrier.  Side pillars at y=22 and y=26 prevent trivial straight
-    #   runs alongside the walls.
-    #   BFS-verified: 31 pushes, 20 box lines.  (sokoban_gen.py Room G)
+    # ── V4: ZigzagBar  (20 obstacles, ~46 pushes) ────────────────────────────
+    #   Two full-width pinch bars at y=20 and y=24 with OFFSET openings:
+    #   y=20 opens ONLY at x=8 (left-of-centre), y=24 opens ONLY at x=12
+    #   (right-of-centre).  Logs must zigzag: converge to x=8, cross right
+    #   to x=12, then converge back to x=10 for the barrier — three separate
+    #   funnels with no straight vertical path anywhere.  Both logs start
+    #   clustered at the upper-right, far from the first funnel.
+    #   BFS-verified: 46 pushes, 33 box lines.  (sokoban_gen.py Room G)
     {
-        "name": "Hourglass",
-        "log_a": (_PX + 1, _PY),        # (6, 18)
+        "name": "ZigzagBar",
+        "log_a": (_PX + 8, _PY),        # (13, 18) — upper right cluster
         "log_b": (_PX + 9, _PY),        # (14, 18)
         "obstacles": frozenset({
-            # Top pinch row (y=20): open ONLY at x=10
+            # Upper bar (y=20): open ONLY at x=8 — left-of-centre funnel
             (_PX + 0, _PY + 2),  # (5,  20)
             (_PX + 1, _PY + 2),  # (6,  20)
             (_PX + 2, _PY + 2),  # (7,  20)
-            (_PX + 3, _PY + 2),  # (8,  20)
+            # x=8 = (_PX+3) is the opening — NOT blocked
             (_PX + 4, _PY + 2),  # (9,  20)
+            (_PX + 5, _PY + 2),  # (10, 20)
             (_PX + 6, _PY + 2),  # (11, 20)
             (_PX + 7, _PY + 2),  # (12, 20)
             (_PX + 8, _PY + 2),  # (13, 20)
             (_PX + 9, _PY + 2),  # (14, 20)
             (_PX +10, _PY + 2),  # (15, 20)
-            # Side pillars between pinch rows (y=22)
-            (_PX + 1, _PY + 4),  # (6,  22)
-            (_PX + 9, _PY + 4),  # (14, 22)
-            # Bottom pinch row (y=24): open ONLY at x=10
+            # Lower bar (y=24): open ONLY at x=12 — right-of-centre funnel
             (_PX + 0, _PY + 6),  # (5,  24)
             (_PX + 1, _PY + 6),  # (6,  24)
             (_PX + 2, _PY + 6),  # (7,  24)
             (_PX + 3, _PY + 6),  # (8,  24)
             (_PX + 4, _PY + 6),  # (9,  24)
+            (_PX + 5, _PY + 6),  # (10, 24)
             (_PX + 6, _PY + 6),  # (11, 24)
-            (_PX + 7, _PY + 6),  # (12, 24)
+            # x=12 = (_PX+7) is the opening — NOT blocked
             (_PX + 8, _PY + 6),  # (13, 24)
             (_PX + 9, _PY + 6),  # (14, 24)
             (_PX +10, _PY + 6),  # (15, 24)
-            # Side pillars below bottom pinch (y=26)
-            (_PX + 2, _PY + 8),  # (7,  26)
-            (_PX + 8, _PY + 8),  # (13, 26)
         }),
     },
 ]
