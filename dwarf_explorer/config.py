@@ -710,28 +710,32 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V2: Tight S  L→R→L→C  (40 obstacles, ~90+ pushes, hardest) ───────────
-    #   Four walls with tighter row spacing:
-    #     Wall y=20 gate x=5  |  Wall y=22 gate x=15  (only 2 rows apart!)
-    #     Wall y=25 gate x=5  |  Wall y=27 gate x=10  (only 2 rows apart!)
-    #   Logs must reverse direction TWICE under very tight spacing constraints.
+    # ── V2: Grand Tour  L→R→L→C  (40 obstacles, ~80 pushes, hard) ─────────────
+    #   Four walls with gap-3 spacing — each pair separated by 2 free rows so
+    #   the player can always stand clear of wall obstacles to make every push.
+    #   Deadlock-free by the gap-3 rule.
+    #
+    #   Wall y=19 gate x=5  (1 row below log start)
+    #   Wall y=22 gate x=15 (far right; 2 free rows y=20-21 above)
+    #   Wall y=25 gate x=5  (back left;  2 free rows y=23-24 above)
+    #   Wall y=28 gate x=10 (centre;     2 free rows y=26-27 above) → ford y=29
     {
-        "name": "Tight S",
+        "name": "Grand Tour",
         "log_a": (_PX + 4, _PY),       # (9, 18)
         "log_b": (_PX + 6, _PY),       # (11, 18)
         "obstacles": frozenset({
-            # Wall 1 (y=20): gate x=5  (cols 6-15 blocked)
-            (_PX + 1, _PY + 2),  # (6,  20)
-            (_PX + 2, _PY + 2),  # (7,  20)
-            (_PX + 3, _PY + 2),  # (8,  20)
-            (_PX + 4, _PY + 2),  # (9,  20)
-            (_PX + 5, _PY + 2),  # (10, 20)
-            (_PX + 6, _PY + 2),  # (11, 20)
-            (_PX + 7, _PY + 2),  # (12, 20)
-            (_PX + 8, _PY + 2),  # (13, 20)
-            (_PX + 9, _PY + 2),  # (14, 20)
-            (_PX +10, _PY + 2),  # (15, 20)
-            # Wall 2 (y=22): gate x=15 (cols 5-14 blocked) ← 2 rows below wall 1
+            # Wall 1 (y=19): gate x=5  (cols 6-15 blocked)
+            (_PX + 1, _PY + 1),  # (6,  19)
+            (_PX + 2, _PY + 1),  # (7,  19)
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 4, _PY + 1),  # (9,  19)
+            (_PX + 5, _PY + 1),  # (10, 19)
+            (_PX + 6, _PY + 1),  # (11, 19)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 8, _PY + 1),  # (13, 19)
+            (_PX + 9, _PY + 1),  # (14, 19)
+            (_PX +10, _PY + 1),  # (15, 19)
+            # Wall 2 (y=22): gate x=15 (cols 5-14 blocked; 2 free rows y=20-21)
             (_PX + 0, _PY + 4),  # (5,  22)
             (_PX + 1, _PY + 4),  # (6,  22)
             (_PX + 2, _PY + 4),  # (7,  22)
@@ -742,7 +746,7 @@ FQ_PUZZLE_VARIANTS = [
             (_PX + 7, _PY + 4),  # (12, 22)
             (_PX + 8, _PY + 4),  # (13, 22)
             (_PX + 9, _PY + 4),  # (14, 22)
-            # Wall 3 (y=25): gate x=5  (cols 6-15 blocked) ← 3 rows below wall 2
+            # Wall 3 (y=25): gate x=5  (cols 6-15 blocked; 2 free rows y=23-24)
             (_PX + 1, _PY + 7),  # (6,  25)
             (_PX + 2, _PY + 7),  # (7,  25)
             (_PX + 3, _PY + 7),  # (8,  25)
@@ -753,17 +757,17 @@ FQ_PUZZLE_VARIANTS = [
             (_PX + 8, _PY + 7),  # (13, 25)
             (_PX + 9, _PY + 7),  # (14, 25)
             (_PX +10, _PY + 7),  # (15, 25)
-            # Wall 4 (y=27): gate x=10 (cols 5-9 and 11-15 blocked) ← 2 rows below wall 3
-            (_PX + 0, _PY + 9),  # (5,  27)
-            (_PX + 1, _PY + 9),  # (6,  27)
-            (_PX + 2, _PY + 9),  # (7,  27)
-            (_PX + 3, _PY + 9),  # (8,  27)
-            (_PX + 4, _PY + 9),  # (9,  27)
-            (_PX + 6, _PY + 9),  # (11, 27)
-            (_PX + 7, _PY + 9),  # (12, 27)
-            (_PX + 8, _PY + 9),  # (13, 27)
-            (_PX + 9, _PY + 9),  # (14, 27)
-            (_PX +10, _PY + 9),  # (15, 27)
+            # Wall 4 (y=28): gate x=10 (cols 5-9, 11-15 blocked; 2 free rows y=26-27)
+            (_PX + 0, _PY +10),  # (5,  28)
+            (_PX + 1, _PY +10),  # (6,  28)
+            (_PX + 2, _PY +10),  # (7,  28)
+            (_PX + 3, _PY +10),  # (8,  28)
+            (_PX + 4, _PY +10),  # (9,  28)
+            (_PX + 6, _PY +10),  # (11, 28)
+            (_PX + 7, _PY +10),  # (12, 28)
+            (_PX + 8, _PY +10),  # (13, 28)
+            (_PX + 9, _PY +10),  # (14, 28)
+            (_PX +10, _PY +10),  # (15, 28)
         }),
     },
 
@@ -801,28 +805,43 @@ FQ_PUZZLE_VARIANTS = [
         }),
     },
 
-    # ── V4: Boomerang  C→L→C  (31 obstacles, ~45 pushes, medium) ─────────────
-    #   Wall y=21 gate x=10  →  logs must first converge to centre.
-    #   Wall y=25 gate x=5   →  both logs detour far-left.
-    #   Pillar  (11,26)      →  acts as east stop so the return push lands on x=10.
-    #   Wall y=27 gate x=10  →  final convergence back to centre.
+    # ── V4: Reverse Tour  R→L→R→C  (40 obstacles, ~80 pushes, hard) ───────────
+    #   Mirror image of Grand Tour — logs go right first instead of left.
+    #   Same gap-3 spacing; same deadlock-free guarantee.
+    #
+    #   Wall y=19 gate x=15 (far right; 1 row below log start)
+    #   Wall y=22 gate x=5  (far left;  2 free rows y=20-21 above)
+    #   Wall y=25 gate x=15 (back right; 2 free rows y=23-24 above)
+    #   Wall y=28 gate x=10 (centre;     2 free rows y=26-27 above) → ford y=29
     {
-        "name": "Boomerang",
+        "name": "Reverse Tour",
         "log_a": (_PX + 4, _PY),       # (9, 18)
         "log_b": (_PX + 6, _PY),       # (11, 18)
         "obstacles": frozenset({
-            # Wall 1 (y=21): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
-            (_PX + 0, _PY + 3),  # (5,  21)
-            (_PX + 1, _PY + 3),  # (6,  21)
-            (_PX + 2, _PY + 3),  # (7,  21)
-            (_PX + 3, _PY + 3),  # (8,  21)
-            (_PX + 4, _PY + 3),  # (9,  21)
-            (_PX + 6, _PY + 3),  # (11, 21)
-            (_PX + 7, _PY + 3),  # (12, 21)
-            (_PX + 8, _PY + 3),  # (13, 21)
-            (_PX + 9, _PY + 3),  # (14, 21)
-            (_PX +10, _PY + 3),  # (15, 21)
-            # Wall 2 (y=25): gate ONLY at col 5 (cols 6-15 blocked)
+            # Wall 1 (y=19): gate x=15 (cols 5-14 blocked)
+            (_PX + 0, _PY + 1),  # (5,  19)
+            (_PX + 1, _PY + 1),  # (6,  19)
+            (_PX + 2, _PY + 1),  # (7,  19)
+            (_PX + 3, _PY + 1),  # (8,  19)
+            (_PX + 4, _PY + 1),  # (9,  19)
+            (_PX + 5, _PY + 1),  # (10, 19)
+            (_PX + 6, _PY + 1),  # (11, 19)
+            (_PX + 7, _PY + 1),  # (12, 19)
+            (_PX + 8, _PY + 1),  # (13, 19)
+            (_PX + 9, _PY + 1),  # (14, 19)
+            # Wall 2 (y=22): gate x=5  (cols 6-15 blocked; 2 free rows y=20-21)
+            (_PX + 1, _PY + 4),  # (6,  22)
+            (_PX + 2, _PY + 4),  # (7,  22)
+            (_PX + 3, _PY + 4),  # (8,  22)
+            (_PX + 4, _PY + 4),  # (9,  22)
+            (_PX + 5, _PY + 4),  # (10, 22)
+            (_PX + 6, _PY + 4),  # (11, 22)
+            (_PX + 7, _PY + 4),  # (12, 22)
+            (_PX + 8, _PY + 4),  # (13, 22)
+            (_PX + 9, _PY + 4),  # (14, 22)
+            (_PX +10, _PY + 4),  # (15, 22)
+            # Wall 3 (y=25): gate x=15 (cols 5-14 blocked; 2 free rows y=23-24)
+            (_PX + 0, _PY + 7),  # (5,  25)
             (_PX + 1, _PY + 7),  # (6,  25)
             (_PX + 2, _PY + 7),  # (7,  25)
             (_PX + 3, _PY + 7),  # (8,  25)
@@ -832,20 +851,17 @@ FQ_PUZZLE_VARIANTS = [
             (_PX + 7, _PY + 7),  # (12, 25)
             (_PX + 8, _PY + 7),  # (13, 25)
             (_PX + 9, _PY + 7),  # (14, 25)
-            (_PX +10, _PY + 7),  # (15, 25)
-            # Pillar (11,26): stop peg — log pushed east from x=5 stops at x=10
-            (_PX + 6, _PY + 8),  # (11, 26)
-            # Wall 3 (y=27): gate ONLY at col 10 (cols 5-9 and 11-15 blocked)
-            (_PX + 0, _PY + 9),  # (5,  27)
-            (_PX + 1, _PY + 9),  # (6,  27)
-            (_PX + 2, _PY + 9),  # (7,  27)
-            (_PX + 3, _PY + 9),  # (8,  27)
-            (_PX + 4, _PY + 9),  # (9,  27)
-            (_PX + 6, _PY + 9),  # (11, 27)
-            (_PX + 7, _PY + 9),  # (12, 27)
-            (_PX + 8, _PY + 9),  # (13, 27)
-            (_PX + 9, _PY + 9),  # (14, 27)
-            (_PX +10, _PY + 9),  # (15, 27)
+            # Wall 4 (y=28): gate x=10 (cols 5-9, 11-15 blocked; 2 free rows y=26-27)
+            (_PX + 0, _PY +10),  # (5,  28)
+            (_PX + 1, _PY +10),  # (6,  28)
+            (_PX + 2, _PY +10),  # (7,  28)
+            (_PX + 3, _PY +10),  # (8,  28)
+            (_PX + 4, _PY +10),  # (9,  28)
+            (_PX + 6, _PY +10),  # (11, 28)
+            (_PX + 7, _PY +10),  # (12, 28)
+            (_PX + 8, _PY +10),  # (13, 28)
+            (_PX + 9, _PY +10),  # (14, 28)
+            (_PX +10, _PY +10),  # (15, 28)
         }),
     },
 ]
