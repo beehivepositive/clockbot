@@ -2911,17 +2911,19 @@ def _compute_context_labels(
                 center_label, center_enabled = "🔼 Ascend", True
             elif t == "hut_stair_down":
                 center_label, center_enabled = "🔽 Descend", True
-            # Show Talk action when adjacent to the hermit NPC.
-            # Must use interact2_label (custom_id "interact2" → handle_interact2)
-            # NOT action_label ("action" → handle_interact which has no hermit handler).
-            _hh_talk_label, _hh_talk_enabled = "", False
-            for _dy_hh, _dx_hh in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                _ar_hh, _ac_hh = vc + _dy_hh, vc + _dx_hh
-                if 0 <= _ar_hh < len(grid) and 0 <= _ac_hh < len(grid[_ar_hh]):
-                    if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
-                        _hh_talk_label, _hh_talk_enabled = "🧙 Talk", True
-                        break
-            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", _hh_talk_label, _hh_talk_enabled
+            elif t == "hermit_npc":
+                # Player is standing ON the hermit tile — use center interact button
+                center_label, center_enabled = "🧙 Talk", True
+            # Show Talk action button when adjacent to the hermit NPC.
+            # Uses action_label (custom_id "action" → handle_action) which has the hermit handler.
+            if not action_enabled:
+                for _dy_hh, _dx_hh in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    _ar_hh, _ac_hh = vc + _dy_hh, vc + _dx_hh
+                    if 0 <= _ar_hh < len(grid) and 0 <= _ac_hh < len(grid[_ar_hh]):
+                        if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
+                            action_label, action_enabled = "🧙 Talk", True
+                            break
+            return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Bandit camp tile context
         if getattr(player, "in_bandit_camp", False):
@@ -9599,7 +9601,12 @@ async def handle_interact(
         grid = await _lhv_i(player.hermit_hut_forest_id, player.hermit_hut_floor,
                             player.hermit_hut_x, player.hermit_hut_y, db)
 
-        if hhtile.terrain == "b_door":
+        if hhtile.terrain == "hermit_npc":
+            # Player standing directly on the hermit tile
+            await _open_hermit_dialogue(interaction, guild_id, user_id, player, db, grid)
+            return
+
+        elif hhtile.terrain == "b_door":
             # Exit back to forest
             fx, fy = player.forest_x, player.forest_y
             fid = player.hermit_hut_forest_id
