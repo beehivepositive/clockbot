@@ -2746,6 +2746,11 @@ def _compute_context_labels(
         # PH chests are handled after the main block below.
 
     center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
+    if getattr(player, "in_hermit_hut", False):
+        print(f"DEBUG ccl-ct: center_tile={center_tile!r} grid[vc]_len={len(grid[vc]) if grid else 0} vc={vc}", flush=True)
+        if center_tile:
+            _hh_flags = {k: getattr(player, k, None) for k in ("in_ship","in_shipwreck","in_temple","in_sky","in_forest","in_tree_city","in_maze","in_grove","in_forest_quest")}
+            print(f"DEBUG ccl-flags: {_hh_flags}", flush=True)
     if center_tile:
         t = center_tile.terrain
         s = center_tile.structure
