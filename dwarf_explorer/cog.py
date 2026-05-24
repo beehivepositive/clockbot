@@ -752,6 +752,56 @@ class DwarfExplorer(commands.Cog):
             await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
             return
 
+        # ── Forest Quest — Sokoban puzzle ─────────────────────────────────────────
+        if loc == "sokoban":
+            from dwarf_explorer.world.forest_quest import load_fq_viewport as _lfqv_tp
+            from dwarf_explorer.config import FQ_PUZZLE_Y0 as _fq_puz_y0
+            _fq_row = await db.fetch_one(
+                "SELECT fq_id FROM forest_quest_areas ORDER BY fq_id LIMIT 1"
+            )
+            if not _fq_row:
+                await interaction.followup.send(
+                    "⚠️ No forest quest area found — enter the Forest Quest zone at least once first.",
+                    ephemeral=True,
+                )
+                return
+            _fq_id_tp = _fq_row["fq_id"]
+            _tp_x, _tp_y = 10, _fq_puz_y0   # (10, 18) — top of Sokoban sunken area
+
+            await update_player_stats(
+                db, ADMIN_PLAYER_ID,
+                in_cave=0, cave_id=None, cave_x=0, cave_y=0,
+                in_village=0, village_id=None,
+                in_house=0, house_id=None,
+                in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+            )
+            await db.execute(
+                "UPDATE players SET "
+                "in_temple=0, temple_id=NULL, temple_x=0, temple_y=0, "
+                "in_sky=0, sky_id=NULL, sky_x=0, sky_y=0, "
+                "in_forest=0, forest_id=NULL, forest_x=0, forest_y=0, "
+                "in_tree_city=0, in_hermit_hut=0, hermit_hut_forest_id=NULL, "
+                "in_bandit_camp=0, bandit_camp_id=NULL, bc_x=0, bc_y=0, bandit_bribe_remaining=0, "
+                "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, grove_forest_id=NULL, "
+                "in_maze=0, maze_id=NULL, maze_x=0, maze_y=0, "
+                "in_forest_quest=1, fq_area_id=?, fq_x=?, fq_y=? "
+                "WHERE user_id=?",
+                (_fq_id_tp, _tp_x, _tp_y, ADMIN_PLAYER_ID)
+            )
+            await db.commit()
+
+            player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+            player.gold = 999999
+            _fq_grid_tp = await _lfqv_tp(_fq_id_tp, _tp_x, _tp_y, db)
+            content = render_grid(_fq_grid_tp, player,
+                                  "🧩 Teleported to the Sokoban puzzle.")
+            view = GameView(guild_id, ADMIN_PLAYER_ID)
+            msg = await interaction.followup.send(
+                embed=discord.Embed(description=content), view=view
+            )
+            await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+            return
+
         # ── Named forest locations ────────────────────────────────────────────────
         if loc in ("forestcity", "hermit"):
             if loc == "forestcity":

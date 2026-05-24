@@ -281,7 +281,8 @@ ITEM_EMOJI = {
     "small_gear": _ge("gear_small_still", "⚙️"),
     "large_gear": _ge("gear_small_still", "⚙️"),
     # Forest items
-    "forest_nut":     "\U0001F330",           # 🌰 restores 8 HP
+    "forest_nut":     "\U0001F330",           # 🌰 raw forest nut (+3 HP)
+    "roasted_nut":    "\U0001F95C",           # 🥜 roasted forest nut (+6 HP)
     "living_root":    "\U0001FAB5",           # 🪵 crafting ingredient
     "bark_shield":    "\U0001F6E1️",     # 🛡️ woven bark shield
     "ancient_seed":   "\U0001F331",           # 🌱 grows into magical sapling
@@ -475,24 +476,31 @@ FQ_RESET_Y     = 22
 FQ_GROVE_EXIT_X = 10  # kept for backward compat; no longer used in tile gen
 FQ_GROVE_EXIT_Y = 999  # moved beyond active zone
 
-# Post-stream corridor (y 31-40)
-FQ_POST_STREAM_X0 = 6
-FQ_POST_STREAM_X1 = 14
+# Post-stream corridor (y 31-40): 3-wide, matching the shop corridor below
+FQ_POST_STREAM_X0 = 9
+FQ_POST_STREAM_X1 = 11
 
 # Shop section (y 41-53): narrow 3-wide corridor + left side room
+# Layout: corridor x=9-11; 2-wide wall x=7-8; room x=3-6; shopkeeper at (6,47)
+# A 1-wide opening at y=FQ_SHOP_OPENING_Y cuts through the wall (x=7 and x=8 are floor)
 FQ_SHOP_Y0          = 41
 FQ_SHOP_Y1          = 53
 FQ_SHOP_ROOM_Y0     = 44   # side room top
 FQ_SHOP_ROOM_Y1     = 50   # side room bottom
-FQ_SHOPKEEPER_X     = 6    # shopkeeper inside the left side room
+FQ_SHOP_OPENING_Y   = 47   # y row where the 1-tile entrance cuts through the 2-wide wall
+FQ_SHOPKEEPER_X     = 6    # shopkeeper at east edge of the room, facing the opening
 FQ_SHOPKEEPER_Y     = 47
 
 # Items sold by the Forest Quest shopkeeper
 FQ_SHOP_CATALOG = [
-    {"id": "forest_nut", "name": "Forest Nut", "emoji": "🌰", "price": 8,
+    {"id": "forest_nut", "name": "Forest Nut", "emoji": "🌰",  "price": 8,
      "description": "Restores 3 HP. Gathered from the ancient canopy."},
-    {"id": "rock",       "name": "Rock",        "emoji": "🪨", "price": 4,
+    {"id": "roasted_nut","name": "Roasted Nut","emoji": "🥜",  "price": 12,
+     "description": "Toasted over the campfire. Restores 6 HP."},
+    {"id": "rock",       "name": "Rock",        "emoji": "🪨",  "price": 4,
      "description": "Smooth stone — loaded into a slingshot."},
+    {"id": "slingshot",  "name": "Slingshot",   "emoji": "\U0001FA83", "price": 22,
+     "description": "A carved-wood ranged weapon. Fires rocks at enemies."},
 ]
 
 # Boss approach (y 54-57): corridor funnels to single-tile entrance
@@ -696,6 +704,7 @@ CONSUMABLE_ITEMS = {
     "meat_stew":    {"hp": 20,  "desc": "+20 HP"},
     "cowards_ale":  {"hp": 0,   "desc": "Guaranteed escape — no parting blow", "escape": True},
     "forest_nut":   {"hp": 3,   "desc": "+3 HP"},
+    "roasted_nut":  {"hp": 6,   "desc": "+6 HP"},
     "baked_potato": {"hp": 5,   "desc": "+5 HP"},
     "carrot":       {"hp": 3,   "desc": "+3 HP"},
 }
@@ -814,6 +823,8 @@ CRAFT_RECIPES: dict[frozenset, dict] = {
     frozenset({("attuned_wayerwood", 1), ("pinecone", 1)}):      {"result": "attuned_wayerwood", "qty": 1, "label": "🪄 Re-attune (Forest)"},
     # Forest Heart Amulet — compressed ent life-force woven into a charm
     frozenset({("ent_core", 4), ("living_root", 2)}):            {"result": "forest_heart_amulet", "qty": 1, "label": "💚 Forest Heart Amulet"},
+    # Roasted Nut — torch-toast a forest nut for extra HP
+    frozenset({("forest_nut", 1), ("torch", 1)}):                {"result": "roasted_nut",         "qty": 1, "label": "🥜 Roast Nut"},
 }
 
 # Terrain that blocks movement inside the combat arena
@@ -1768,6 +1779,7 @@ ITEM_SELL_PRICES = {
     "seaweed":           3,
     # Forest items
     "forest_nut":             3,
+    "roasted_nut":            6,
     "living_root":            10,
     "bark_shield":            48,
     "ancient_seed":           25,
