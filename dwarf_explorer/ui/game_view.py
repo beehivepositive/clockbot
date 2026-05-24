@@ -2734,9 +2734,6 @@ def _compute_context_labels(
     if not grid or len(grid) <= vc:
         return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
-    if getattr(player, "in_hermit_hut", False):
-        print(f"DEBUG ccl-top: in_hermit_hut=True grid_ok={bool(grid)} grid_rows={len(grid)}", flush=True)
-
     # ── Inside a player house ─────────────────────────────────────────────────
     _in_ph = player.in_house and player.house_type == "player_house"
     if _in_ph:
@@ -2746,11 +2743,6 @@ def _compute_context_labels(
         # PH chests are handled after the main block below.
 
     center_tile = grid[vc][vc] if len(grid[vc]) > vc else None
-    if getattr(player, "in_hermit_hut", False):
-        print(f"DEBUG ccl-ct: center_tile={center_tile!r} grid[vc]_len={len(grid[vc]) if grid else 0} vc={vc}", flush=True)
-        if center_tile:
-            _hh_flags = {k: getattr(player, k, None) for k in ("in_ship","in_shipwreck","in_temple","in_sky","in_forest","in_tree_city","in_maze","in_grove","in_forest_quest")}
-            print(f"DEBUG ccl-flags: {_hh_flags}", flush=True)
     if center_tile:
         t = center_tile.terrain
         s = center_tile.structure
@@ -2913,7 +2905,6 @@ def _compute_context_labels(
 
         # Hermit Hut tile context — checked BEFORE bandit camp to avoid stale flag conflicts
         if getattr(player, "in_hermit_hut", False):
-            print(f"DEBUG hermit_ctx: t={t!r} pos=({getattr(player,'hermit_hut_x',0)},{getattr(player,'hermit_hut_y',0)}) adj_tiles={[grid[vc+dy][vc+dx].terrain for dy,dx in ((-1,0),(1,0),(0,-1),(0,1)) if 0<=vc+dy<len(grid) and 0<=vc+dx<len(grid[vc+dy])]}", flush=True)
             if t == "b_door":
                 center_label, center_enabled = "🚪 Exit", True
             elif t == "hut_stair_up":
@@ -2932,7 +2923,6 @@ def _compute_context_labels(
                         if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
                             action_label, action_enabled = "🧙 Talk", True
                             break
-            print(f"DEBUG hermit_ctx result: center={center_label!r}/{center_enabled} action={action_label!r}/{action_enabled}", flush=True)
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
         # Bandit camp tile context
@@ -9532,10 +9522,10 @@ async def handle_interact(
                 load_hut_viewport as _lhv_act,
                 HUT_ENTRY_X as _HEX, HUT_ENTRY_Y as _HEY,
             )
-            print(f"DEBUG hut-enter: forest_id={player.forest_id} pos=({player.forest_x},{player.forest_y})", flush=True)
             await _ehb_act(player.forest_id, db)
             player.in_hermit_hut = True
             player.in_forest = False          # leave forest when entering hut
+            player.in_forest_quest = False    # clear FQ flag so context labels work correctly
             player.hermit_hut_forest_id = player.forest_id
             player.hermit_hut_floor = 1
             player.hermit_hut_x, player.hermit_hut_y = _HEX, _HEY
@@ -9544,16 +9534,14 @@ async def handle_interact(
             player.in_house = False
             player.in_village = False
             await db.execute(
-                "UPDATE players SET in_hermit_hut=1, in_forest=0, in_cave=0, in_house=0, in_village=0, "
+                "UPDATE players SET in_hermit_hut=1, in_forest=0, in_forest_quest=0, "
+                "in_cave=0, in_house=0, in_village=0, "
                 "in_bandit_camp=0, bandit_camp_id=NULL, "
                 "hermit_hut_forest_id=?, "
                 "hermit_hut_floor=1, hermit_hut_x=?, hermit_hut_y=? WHERE user_id=?",
                 (player.forest_id, _HEX, _HEY, user_id),
             )
             grid = await _lhv_act(player.hermit_hut_forest_id, 1, _HEX, _HEY, db)
-            print(f"DEBUG hut-enter: grid rows={len(grid)}, in_hermit_hut={player.in_hermit_hut}, in_forest={player.in_forest}", flush=True)
-            if grid:
-                print(f"DEBUG hut-enter: center tile terrain={grid[len(grid)//2][len(grid[0])//2].terrain}", flush=True)
             content = render_grid(grid, player,
                 "🛖 You push open the creaking door of the hermit's hut...")
             await interaction.response.edit_message(embed=_embed(content), content=None,
