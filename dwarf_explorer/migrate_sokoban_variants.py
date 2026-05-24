@@ -75,6 +75,7 @@ FQ_ID = 1
 def main():
     from dwarf_explorer.config import (
         FQ_PUZZLE_VARIANTS,
+        FQ_PUZZLE_X0, FQ_PUZZLE_X1,
         FQ_PUZZLE_Y0, FQ_PUZZLE_Y1,
         FQ_STREAM_Y, FQ_STREAM_Y2,
     )
@@ -86,15 +87,29 @@ def main():
     db = sqlite3.connect(DB_PATH)
     c = db.cursor()
 
-    # ── Remove old obstacle tiles in puzzle area ───────────────────────────
+    # ── Step 1: Ensure every puzzle-area cell has at least fq_puzzle_floor ──
+    # This prevents "ghost walls" when the old obstacle positions differ from
+    # the new variant's obstacle positions (deleted tiles would otherwise be
+    # missing from the DB and fall back to fq_wall in the viewport).
+    all_puzzle_cells = [
+        (FQ_ID, x, y, "fq_puzzle_floor")
+        for y in range(FQ_PUZZLE_Y0, FQ_PUZZLE_Y1 + 1)
+        for x in range(FQ_PUZZLE_X0, FQ_PUZZLE_X1 + 1)
+    ]
+    c.executemany(
+        "INSERT OR IGNORE INTO forest_quest_tiles "
+        "(fq_id, local_x, local_y, tile_type) VALUES (?,?,?,?)",
+        all_puzzle_cells,
+    )
+    # Reset any existing obstacles back to floor (will be re-added below)
     c.execute(
-        "DELETE FROM forest_quest_tiles "
+        "UPDATE forest_quest_tiles SET tile_type='fq_puzzle_floor' "
         "WHERE fq_id=? AND tile_type='fq_obstacle' AND local_y BETWEEN ? AND ?",
         (FQ_ID, FQ_PUZZLE_Y0, FQ_PUZZLE_Y1),
     )
-    print(f"  Deleted {c.rowcount} old obstacle tiles")
+    print(f"  Puzzle area normalised to fq_puzzle_floor")
 
-    # ── Insert new obstacle tiles ──────────────────────────────────────────
+    # ── Step 2: Stamp new obstacle tiles on top of the floor ──────────────
     new_obs = [(FQ_ID, ox, oy, "fq_obstacle") for (ox, oy) in variant["obstacles"]]
     c.executemany(
         "INSERT OR REPLACE INTO forest_quest_tiles "
