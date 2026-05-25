@@ -17883,6 +17883,10 @@ async def handle_npc_talk(
             "\"You hear things on the road. Caravans talk. We listen. It's a living.\"",
             "\"There's a code out here. Harm the old, harm children, harm healers — and you answer to us. Remember that.\"",
             "\"Don't mistake us for murderers. We're businessmen. Expensive businessmen.\"",
+            "\"We had a camp near the old forest once. Lost six men in a week. "
+            "The two who came back won't talk about it. We don't go near it anymore.\"",
+            "\"The flying ruins? Our boss sent a scout up there once. Came back religious. "
+            "Said there was writing on the walls in a language nobody's ever seen. We leave those alone.\"",
         ]
         _greet = _bandit_greets[_bh_seed % len(_bandit_greets)]
         _lore  = _bandit_lore[(_bh_seed >> 4) % len(_bandit_lore)]
@@ -18244,6 +18248,15 @@ async def handle_npc_talk(
         "The wells have been running lower than usual. Nobody's talking about it, but everyone's noticed.",
         "Three caravans took the northern pass this season. Only two came back the usual way.",
         "There's a bounty board in the market square. Pays decent coin if you've got the stomach for it.",
+        # Foreshadowing — forest / Archivist / Founders arc
+        "My grandfather swore there was a city in the old forest canopy. Said he saw it from a distance once, "
+        "through the trees. Thought it was clouds until they didn't move.",
+        "There are sundials in the old ruins north of here. They still work — but they show the wrong time. "
+        "Always the same wrong time. Nobody knows which moment they stopped at.",
+        "There's a hermit who lives near the forest edge. Been there thirty years at least. "
+        "People say he's guarding something. Others say he's waiting for someone.",
+        "Travellers who go deep into the old forest say they hear something strange. "
+        "Like a voice, but in their chest instead of their ears. Most don't go back a second time.",
     ]
     _qph = _hash(f"qph{player.village_id}{player.world_x}{player.world_y}")
     _vil_qp_label = _vil_quest_phrases[_qph % len(_vil_quest_phrases)]
