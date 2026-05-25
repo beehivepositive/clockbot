@@ -4,6 +4,7 @@ import asyncio
 import re as _re
 import random as _random
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import discord
 
@@ -803,9 +804,18 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
+        # ── Temp: cutscene test button (remove before final ship) ────────────
+        cutscene_test_btn = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="🌋",
+            custom_id=_custom_id(self.guild_id, self.user_id, "cutscene_test"),
+            row=0,
+        )
+
         row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
+        row0.append(cutscene_test_btn)
         for btn in [
             *row0,                              # row 0
             sp1_btn, up_btn, action_btn, h1_btn, h2_btn,  # row 1
@@ -19969,3 +19979,62 @@ async def handle_puzzle_close(
         content = render_grid(grid, player)
         view    = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+
+
+# ── Cutscene test (temporary dev button — remove before final ship) ───────────
+
+_CUTSCENE_GIF      = Path(__file__).parent.parent / "assets" / "cutscenes" / "volcano_eruption.gif"
+_CUTSCENE_DURATION = 9.8   # seconds — matches the GIF length
+
+
+def _cutscene_playing_view(guild_id: int, user_id: int) -> discord.ui.View:
+    """Minimal view shown while a cutscene plays — single disabled status button."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="🎬 Cutscene playing…",
+        disabled=True,
+        custom_id=_custom_id(guild_id, user_id, "sp_cutscene"),
+        row=0,
+    ))
+    return view
+
+
+async def handle_cutscene_test(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Temporary dev handler — plays the volcano eruption cutscene."""
+    if not _CUTSCENE_GIF.exists():
+        await interaction.response.send_message("⚠️ Cutscene GIF not found on server.", ephemeral=True)
+        return
+
+    db     = await get_database(guild_id)
+    seed   = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    embed    = discord.Embed(description="🌋 *The ground trembles beneath you…*", colour=0xFF4500)
+    embed.set_image(url="attachment://eruption.gif")
+    gif_file = discord.File(str(_CUTSCENE_GIF), filename="eruption.gif")
+
+    # Show the GIF in-place and gray out all controls
+    await interaction.response.edit_message(
+        embed=embed,
+        attachments=[gif_file],
+        content=None,
+        view=_cutscene_playing_view(guild_id, user_id),
+    )
+
+    # After the animation finishes, restore the normal viewport
+    async def _restore() -> None:
+        await asyncio.sleep(_CUTSCENE_DURATION)
+        grid    = await load_viewport(player.world_x, player.world_y, seed, db)
+        content = render_grid(grid, player)
+        view    = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.edit_original_response(
+            embed=_embed(content),
+            attachments=[],
+            content=None,
+            view=view,
+        )
+
+    asyncio.create_task(_restore())
