@@ -15524,12 +15524,13 @@ async def _open_tc_archivist(
         # First meeting — before Forest Quest begins
         dialogue = (
             "📜 **The Archivist** barely looks up from an enormous, ink-stained ledger.\n\n"
-            "*\"A traveller. You came up from the forest floor? You look like you found the hard path.\"*\n\n"
-            "She marks her place with a ribbon and folds her hands.\n\n"
-            "*\"I study this forest. Every ring of this tree, every root system, every old path. "
-            "If you're planning to go deeper — and you have that look about you — "
-            "find the hermit first. He lives near the eastern edge. He knows things I don't.\"*\n\n"
-            "*\"Don't tell him I sent you. He and I have a complicated history.\"*"
+            "*\"A traveller. You came up from the forest floor?\"*\n\n"
+            "She marks her place with a ribbon.\n\n"
+            "*\"If you're planning to go deeper — and you have that look about you — "
+            "there's a hermit on the eastern edge. Old man, been out there alone for decades. "
+            "He knows the paths well enough. Bit paranoid, if I'm honest — makes everything sound "
+            "very dramatic. Follow his directions, take the rest with a grain of salt.\"*\n\n"
+            "*\"Don't mention me. He has certain opinions about scholars.\"*"
         )
     content = render_grid(grid, player, dialogue)
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -15548,32 +15549,31 @@ async def _open_rift_archivist(
         dialogue = (
             "📜 **A Young Scholar** looks up from a workbench covered in crystalline instruments. "
             "Her eyes go immediately to the crystal in your pack.\n\n"
-            "*\"You have one. One of the grove crystals.\"*\n\n"
-            "She crosses the room quickly, studying it without touching it.\n\n"
-            "*\"Then you've already been further than I have. Good.\"*\n\n"
-            "She glances up at you, and something flickers — recognition, maybe, or its shadow.\n\n"
-            "*\"I need you to listen carefully. There is a woman — older than she looks, "
-            "far older — who has been watching this grove for longer than anyone knows. "
-            "She is patient. She is helpful. And she needs something from you that "
-            "she hasn't told you about yet.\"*\n\n"
-            "*\"I know this because I become her.\"*\n\n"
-            "*\"Don't let her take the crystal. Whatever she tells you — don't let her take it.\"*"
+            "*\"You found it. The grove.\"*\n\n"
+            "She crosses the room and looks at the crystal carefully, not touching it.\n\n"
+            "*\"That's further than I've managed.\"*\n\n"
+            "A long pause. Something works behind her expression.\n\n"
+            "*\"I've been in here long enough to understand something about myself. "
+            "What I'm going to become matters more than what I am right now. "
+            "It's not a comfortable thing to know.\"*\n\n"
+            "*\"Just — be careful who you let guide you. Especially anyone who already seems "
+            "to know your path better than you do.\"*\n\n"
+            "She turns back to her instruments.\n\n"
+            "*\"The mountains north of the forest. That's the next piece. I'm certain of that much.\"*"
         )
     else:
         dialogue = (
             "📜 **A Young Scholar** spins around at your approach, scattering papers everywhere.\n\n"
-            "*\"Oh — I didn't hear you come in. The resonance dampens sound in here.\"*\n\n"
-            "She straightens her papers with quick, precise movements.\n\n"
-            "*\"This is a Temporal Rift — a fold in the timeline. I'm here studying the Founders' "
-            "failsafe mechanisms. Fascinating work, if somewhat alarming.\"*\n\n"
-            "*\"You're from further along the timeline than me, I can tell. The way you're looking "
-            "at this place — like you already know what it becomes.\"*\n\n"
-            "She pauses, then lowers her voice.\n\n"
-            "*\"Be careful of anyone who seems to know too much about where you're going. "
-            "In my experience — and I'm developing considerable experience in paranoia — "
-            "that kind of knowledge is never accidental.\"*\n\n"
-            "*\"The grove in the forest has what you need. A stone idol at the heart of it. "
-            "Trust the hermit, not the scholar.\"*"
+            "*\"Oh — I didn't hear you. The resonance dampens sound in here.\"*\n\n"
+            "She gathers her papers with efficient movements.\n\n"
+            "*\"Temporal Rift — a fold in the timeline. The Founders built these as failsafes. "
+            "This one got stuck.\"*\n\n"
+            "*\"There's a grove in the forest, if you haven't found it. Stone idol at the heart. "
+            "Whatever it gives you, it matters more than it looks.\"*\n\n"
+            "She hesitates, then:\n\n"
+            "*\"I've been in here long enough to see a few things clearly. People who study "
+            "old places fall into two kinds: those who want to understand them, and those "
+            "who want to use them. The difference isn't always obvious from the outside.\"*"
         )
     content = render_grid(grid, player, dialogue)
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -17980,15 +17980,16 @@ async def handle_npc_talk(
                 )
             elif _fq_stg_arch in ("hermit_met", "map_marked", "puzzle_solved"):
                 lore_text = (
-                    "Still making progress? Good. The hermit gives good directions, I'll grant him that. "
-                    "Follow them precisely. The grove doesn't reward improvisation."
+                    "Still at it? The hermit's directions hold up, I'll grant him that much. "
+                    "The grove doesn't reward improvisation — whatever else he gets wrong."
                 )
             else:
                 lore_text = (
-                    "I've catalogued every ring of this tree. Sixty years of rings, give or take. "
-                    "If you're heading deeper into the forest, find the hermit first — eastern edge, "
-                    "near the old marker stones. He knows the paths better than the paths know themselves. "
-                    "Don't mention I sent you. We have a history."
+                    "I've catalogued every ring of this tree. Years of it. "
+                    "If you're heading deeper, find the hermit first — eastern edge, near the old markers. "
+                    "He knows the paths. Been alone out there so long he's grown rather suspicious of everything, "
+                    "so take the dramatic parts with a grain of salt. The directions themselves are reliable. "
+                    "Don't mention me. He has opinions."
                 )
         elif "tc_villager" in adj_npc:
             npc_name = "Tree Dweller"
@@ -18063,21 +18064,21 @@ async def handle_npc_talk(
             npc_name = "Young Scholar"
             if has_crystal:
                 lore_text = (
-                    "You have one of the grove crystals. Then you've already been where I'm trying to go. "
-                    "Listen — there is a woman in the tree city above. Ink-stained hands, half-moon spectacles. "
-                    "She's been watching the grove for longer than anyone knows. She seems helpful. "
-                    "She is patient in a way that should unsettle you. "
-                    "I know this because I will become her, and I am telling you now while I still can: "
-                    "do not let her take that crystal. Whatever she tells you. Whatever she promises."
+                    "You found the grove. Good — that's further than I've managed from in here. "
+                    "I've had a great deal of time to think, and what I keep returning to is this: "
+                    "there's a difference between someone who helps you and someone who needs you to succeed. "
+                    "They can look identical from the outside. "
+                    "Be careful who you let guide you from here. That's all I can tell you."
                 )
             else:
                 lore_text = (
                     "I was pulled here studying the old sundial — a temporal fold, the Founders called it. "
-                    "I call it a trap that nobody warned me about. "
-                    "There is a grove deeper in the forest. A stone idol at its heart. "
-                    "Touch it and you'll receive something that makes navigating this kind of place safer. "
-                    "But be careful of the scholar in the tree city. She will be very interested in what you find. "
-                    "Trust the hermit. He's the only one who's been here longer than her and isn't trying to use you."
+                    "I've been here long enough to see a few things clearly. "
+                    "There's a grove in the forest. Stone idol at its heart. "
+                    "What it gives you matters more than it looks. "
+                    "The hermit on the forest's edge knows the paths — he's odd, but the directions are sound. "
+                    "People who study old places fall into two kinds: those who want to understand them, "
+                    "and those who want to use them. Worth keeping in mind."
                 )
             options = [
                 {"label": "Tell me what you know", "action": "lore"},
