@@ -8438,18 +8438,16 @@ async def handle_interact(
                 content = render_grid(grid, player, "A locked vault. Speak with the banker.")
 
             elif htile.terrain == "b_blacksmith_npc" and player.house_type == "blacksmith":
-                stick_rows = await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='stick'", (user_id,)
+                _bs_rows = await db.fetch_all(
+                    "SELECT item_id, COALESCE(SUM(quantity), 0) AS total FROM inventory"
+                    " WHERE user_id=? AND item_id IN ('stick','resin','iron_ingot')"
+                    " GROUP BY item_id",
+                    (user_id,)
                 )
-                resin_rows = await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='resin'", (user_id,)
-                )
-                ingot_rows = await db.fetch_all(
-                    "SELECT quantity FROM inventory WHERE user_id=? AND item_id='iron_ingot'", (user_id,)
-                )
-                stick_count = sum(r["quantity"] for r in stick_rows)
-                resin_count = sum(r["quantity"] for r in resin_rows)
-                ingot_count = sum(r["quantity"] for r in ingot_rows)
+                _bs_counts = {r["item_id"]: r["total"] for r in _bs_rows}
+                stick_count = _bs_counts.get("stick", 0)
+                resin_count = _bs_counts.get("resin", 0)
+                ingot_count = _bs_counts.get("iron_ingot", 0)
                 torch_batches = min(stick_count, resin_count)
                 cannonball_batches = ingot_count // 2
                 grid = await _load_house_grid()
@@ -11864,12 +11862,10 @@ async def handle_action(
                 if _adj_terrain_act == "tc_shop":
                     await _open_tree_city_shop(interaction, guild_id, user_id, player)
                     return
-        _tc_grid_act2 = await _ltcv_act(player.tc_forest_id, player.tc_floor,
-                                        player.tc_x, player.tc_y, db)
-        content = render_grid(_tc_grid_act2, player, "🌲 Nothing to use here.")
+        content = render_grid(_tc_grid_act, player, "🌲 Nothing to use here.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player,
-                                                                grid=_tc_grid_act2))
+                                                                grid=_tc_grid_act))
         return
 
     # ── Grove: exit door or adjacent statue ─────────────────────────────────
