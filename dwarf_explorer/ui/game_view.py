@@ -2916,14 +2916,18 @@ def _compute_context_labels(
             elif t == "hermit_npc":
                 # Player is standing ON the hermit tile — use center interact button
                 center_label, center_enabled = "🧙 Talk", True
-            # Show Talk action button when adjacent to the hermit NPC.
-            # Uses action_label (custom_id "action" → handle_action) which has the hermit handler.
+            # Show action button when adjacent to NPC or interactable tile.
+            # Uses action_label (custom_id "action" → handle_action).
             if not action_enabled:
                 for _dy_hh, _dx_hh in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                     _ar_hh, _ac_hh = vc + _dy_hh, vc + _dx_hh
                     if 0 <= _ar_hh < len(grid) and 0 <= _ac_hh < len(grid[_ar_hh]):
-                        if grid[_ar_hh][_ac_hh].terrain == "hermit_npc":
+                        _hh_adj_t = grid[_ar_hh][_ac_hh].terrain
+                        if _hh_adj_t == "hermit_npc":
                             action_label, action_enabled = "🧙 Talk", True
+                            break
+                        elif _hh_adj_t == "b_stove":
+                            action_label, action_enabled = "🔥 Hearth", True
                             break
             return center_label, center_enabled, action_label, action_enabled, edit_enabled, "", False, False, False, False, "", False, "sp_action2", "", False
 
@@ -11431,7 +11435,7 @@ async def handle_action(
     if player.hand_2:
         hand_items.add(player.hand_2)
 
-    # ── Hermit Hut: adjacent hermit NPC ─────────────────────────────────────────
+    # ── Hermit Hut: adjacent tile interactions (hermit NPC, hearth) ─────────────
     if getattr(player, "in_hermit_hut", False):
         from dwarf_explorer.world.hermit_hut import (
             load_hut_viewport as _lhv_hha,
@@ -11441,14 +11445,16 @@ async def handle_action(
         _hh_grid_act = await _lhv_hha(player.hermit_hut_forest_id, player.hermit_hut_floor,
                                       player.hermit_hut_x, player.hermit_hut_y, db)
         vc = 4
-        _hh_hermit_adj = any(
-            _hh_grid_act[vc + dy][vc + dx].terrain == "hermit_npc"
-            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
-            if 0 <= vc + dy < len(_hh_grid_act) and 0 <= vc + dx < len(_hh_grid_act[vc + dy])
-        )
-        if _hh_hermit_adj:
-            await _open_hermit_dialogue(interaction, guild_id, user_id, player, db, _hh_grid_act)
-            return
+        for _dy_hha, _dx_hha in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            _ar_hha, _ac_hha = vc + _dy_hha, vc + _dx_hha
+            if not (0 <= _ar_hha < len(_hh_grid_act) and 0 <= _ac_hha < len(_hh_grid_act[_ar_hha])):
+                continue
+            _hh_adj_t = _hh_grid_act[_ar_hha][_ac_hha].terrain
+            if _hh_adj_t == "hermit_npc":
+                await _open_hermit_dialogue(interaction, guild_id, user_id, player, db, _hh_grid_act)
+                return
+            if _hh_adj_t == "b_stove":
+                return await _open_hearth(interaction, guild_id, user_id, player, db, _hh_grid_act)
         content = render_grid(_hh_grid_act, player, "🛖 Nothing to interact with here.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=_hh_grid_act))

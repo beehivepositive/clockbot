@@ -58,10 +58,10 @@ _Sd = "hut_stair_down"
 _FLOOR1: list[list[str]] = [
     # y=0  solid outer wall
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
-    # y=1  top row: x=1,2 walled off; bookshelf at x=3; open to x=6; stair at x=7 (right edge)
-    [_W, _W, _W, _Bk, _F, _F, _F, _Su, _W],
-    # y=2  hermit nook: wall at x=1; hermit at x=2; stove at x=4; bookshelf at x=5
-    [_W, _W, _Hm, _F, _Sv, _Bk, _F, _F, _W],
+    # y=1  top row: x=1,2 walled off; bk at x=3; hearth against north wall at x=5; stair at x=7
+    [_W, _W, _W, _Bk, _F, _Sv, _F, _Su, _W],
+    # y=2  hermit nook: wall at x=1; hermit at x=2; floor at x=3-4; bookshelf at x=5
+    [_W, _W, _Hm, _F, _F, _Bk, _F, _F, _W],
     # y=3  main room; table at x=3; chair at x=5; wall protrusion at x=6
     [_W, _F, _F, _Tb, _F, _Ch, _W, _F, _W],
     # y=4  open corridor
