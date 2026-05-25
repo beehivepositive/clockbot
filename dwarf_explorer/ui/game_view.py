@@ -309,12 +309,12 @@ def _vp_cache_key(player) -> tuple:
         return ("maze", getattr(player, "maze_id", 0), getattr(player, "maze_x", 0), getattr(player, "maze_y", 0))
     if getattr(player, "in_grove", False):
         return ("grove", getattr(player, "grove_id", 0), getattr(player, "grove_x", 0), getattr(player, "grove_y", 0))
+    if getattr(player, "in_forest_quest", False):
+        return ("forest_quest", getattr(player, "fq_area_id", 0), getattr(player, "fq_x", 0), getattr(player, "fq_y", 0))
     if getattr(player, "in_forest", False):
         return ("forest", getattr(player, "forest_id", 0), getattr(player, "forest_x", 0), getattr(player, "forest_y", 0))
     if getattr(player, "in_bandit_camp", False):
         return ("bandit_camp", getattr(player, "bandit_camp_id", 0), getattr(player, "bc_x", 0), getattr(player, "bc_y", 0))
-    if getattr(player, "in_forest_quest", False):
-        return ("forest_quest", getattr(player, "fq_area_id", 0), getattr(player, "fq_x", 0), getattr(player, "fq_y", 0))
     return ("world", player.world_x, player.world_y)
 
 
@@ -4155,9 +4155,10 @@ async def _move_steps(
         if target.terrain == "grove_exit":
             # Return to forest
             player.in_grove = False
+            player.in_forest = True            # restore forest flag on grove exit
             player.grove_id = None
             await db.execute(
-                "UPDATE players SET in_grove=0, grove_id=NULL WHERE user_id=?", (user_id,)
+                "UPDATE players SET in_grove=0, in_forest=1, grove_id=NULL WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_gr
             forest_grid2 = await _lfv_gr(player.forest_id, player.forest_x, player.forest_y, db)
@@ -4622,12 +4623,13 @@ async def _move_steps(
                         # Enter at south exit tile of grove (cy + R = 9+7=16, cx=9)
                         _gx, _gy = 9, 16
                         player.in_grove = True
+                        player.in_forest = False       # clear forest flag — only one zone active
                         player.grove_id = _grove_id
                         player.grove_x = _gx
                         player.grove_y = _gy
                         player.grove_forest_id = player.forest_id
                         await db.execute(
-                            "UPDATE players SET in_grove=1, grove_id=?, grove_x=?, grove_y=?, "
+                            "UPDATE players SET in_grove=1, in_forest=0, grove_id=?, grove_x=?, grove_y=?, "
                             "grove_forest_id=?, forest_x=?, forest_y=? WHERE user_id=?",
                             (_grove_id, _gx, _gy, player.forest_id,
                              player.forest_x, player.forest_y, user_id),
@@ -12585,10 +12587,14 @@ async def handle_hearth_close(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
     db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
+    grid = await _cached_grid(user_id, player, seed, db)
     content = render_grid(grid, player, "You step away from the hearth.")
-    view = _game_view(guild_id, user_id, player, grid=grid)
+    if player.in_cave:
+        view = await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+    else:
+        view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 

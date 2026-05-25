@@ -101,10 +101,10 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         location = "tree_city"
     elif getattr(player, "in_maze", False):
         location = "maze"
-    elif getattr(player, "in_forest", False):
-        location = "forest"
     elif getattr(player, "in_grove", False):
         location = "grove"
+    elif getattr(player, "in_forest", False):
+        location = "forest"
     elif getattr(player, "in_bandit_camp", False):
         location = "bandit_camp"
     elif getattr(player, "in_forest_quest", False):
