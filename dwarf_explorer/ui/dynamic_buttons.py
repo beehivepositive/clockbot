@@ -782,6 +782,14 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_warp_open(interaction, gid, uid)
             elif act == "warp_close":
                 await handle_warp_close(interaction, gid, uid)
+            elif act.startswith("warp_crystal_"):
+                # Chapter crystal button in NavView — open warp picker for that chapter.
+                # Only forest is active in Chapter 1; others are disabled in the UI.
+                chapter = act[len("warp_crystal_"):]
+                if chapter == "forest":
+                    await handle_warp_open(interaction, gid, uid)
+                else:
+                    await interaction.response.defer()
             elif act.startswith("warp_"):
                 wp_id = act[len("warp_"):]
                 await _execute_warp(interaction, gid, uid, wp_id)

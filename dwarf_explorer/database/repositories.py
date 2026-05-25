@@ -215,6 +215,9 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             grove_y=row["grove_y"] if "grove_y" in cols else 0,
             grove_forest_id=row["grove_forest_id"] if "grove_forest_id" in cols else None,
             has_warp_crystal=bool(row["has_warp_crystal"]) if "has_warp_crystal" in cols else False,
+            has_mountain_crystal=bool(row["has_mountain_crystal"]) if "has_mountain_crystal" in cols else False,
+            has_tide_crystal=bool(row["has_tide_crystal"]) if "has_tide_crystal" in cols else False,
+            has_sky_crystal=bool(row["has_sky_crystal"]) if "has_sky_crystal" in cols else False,
             watering_can_uses=int(row["watering_can_uses"]) if "watering_can_uses" in cols else 0,
             # Forest Quest zone state
             in_forest_quest=bool(row["in_forest_quest"]) if "in_forest_quest" in cols else False,
@@ -1754,12 +1757,39 @@ async def get_player_waypoints(db: Database, user_id: int) -> set[str]:
 
 
 async def grant_warp_crystal(db: Database, user_id: int) -> None:
-    """Give the player a warp crystal and unlock the three starter waypoints."""
+    """Give the player the Forest Crystal (Chapter 1) and unlock the three starter waypoints."""
     await db.execute(
         "UPDATE players SET has_warp_crystal = 1 WHERE user_id = ?", (user_id,)
     )
     for wp_id in ("spawn", "forest", "grove"):
         await unlock_waypoint(db, user_id, wp_id)
+
+
+async def grant_chapter_crystal(db: Database, user_id: int, crystal: str) -> None:
+    """Grant a chapter crystal by name: 'forest'|'mountain'|'tide'|'sky'.
+
+    'forest' is an alias for the original warp crystal (has_warp_crystal).
+    The others set the corresponding has_*_crystal column on players.
+    """
+    if crystal == "forest":
+        await grant_warp_crystal(db, user_id)
+        return
+    col = f"has_{crystal}_crystal"
+    await db.execute(f"UPDATE players SET {col} = 1 WHERE user_id = ?", (user_id,))
+
+
+def get_player_crystal_set(player) -> set[str]:
+    """Return the set of crystal names currently held by this player."""
+    crystals: set[str] = set()
+    if getattr(player, "has_warp_crystal", False):
+        crystals.add("forest")
+    if getattr(player, "has_mountain_crystal", False):
+        crystals.add("mountain")
+    if getattr(player, "has_tide_crystal", False):
+        crystals.add("tide")
+    if getattr(player, "has_sky_crystal", False):
+        crystals.add("sky")
+    return crystals
 
 
 # ── Avatar cache ──────────────────────────────────────────────────────────────

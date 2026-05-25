@@ -1240,7 +1240,7 @@ BANDIT_CAMP_WALKABLE: frozenset[str] = frozenset({
 })
 
 # ── Warp Crystal destinations ──────────────────────────────────────────────────
-# Unlocked progressively; all initial three unlock when the crystal is first obtained.
+# Unlocked progressively; forest waypoints unlock when the forest crystal is obtained.
 WAYPOINTS: dict[str, dict] = {
     "spawn":  {"name": "The World's Navel",  "emoji": "🌍",
                "desc": "Where all journeys begin — the heart of the overworld."},
@@ -1249,6 +1249,45 @@ WAYPOINTS: dict[str, dict] = {
     "grove":  {"name": "The Still Grove",    "emoji": "✨",
                "desc": "The sacred clearing where the wayerwood rests."},
 }
+
+# ── Chapter completion crystals ────────────────────────────────────────────────
+# One crystal per chapter. Displayed in the navigation menu as a status row.
+# When all four are held, the Time Rift can be entered.
+CHAPTER_CRYSTALS: dict[str, dict] = {
+    "forest":   {"emoji": "🟢", "name": "Forest Crystal",
+                 "desc": "Attuned to the ancient forest. Grants passage to all forest waypoints.",
+                 "locked_label": "Forest Crystal — Chapter 1"},
+    "mountain": {"emoji": "🔴", "name": "Mountain Crystal",
+                 "desc": "A fragment of deep stone. Grants passage to mountain waypoints.",
+                 "locked_label": "Mountain Crystal — Chapter 2"},
+    "tide":     {"emoji": "🔵", "name": "Tide Crystal",
+                 "desc": "Cold as the deep ocean. Grants passage to sea waypoints.",
+                 "locked_label": "Tide Crystal — Chapter 3"},
+    "sky":      {"emoji": "⚪", "name": "Sky Crystal",
+                 "desc": "Lighter than air. Grants passage to sky waypoints.",
+                 "locked_label": "Sky Crystal — Chapter 4"},
+}
+
+# ── Forest names ──────────────────────────────────────────────────────────────
+# Assigned at world generation. Each forest gets one name from this pool.
+# Names are chosen deterministically from the forest's world position seed.
+FOREST_NAMES: list[str] = [
+    "The Greywood",
+    "The Ashfen",
+    "Briarhold",
+    "The Verdant Sprawl",
+    "Hollowreach",
+    "Emberveil",
+    "The Thornmere",
+    "Deepmantle",
+    "The Whisper Wood",
+    "Ironbough",
+    "The Pale Canopy",
+    "Duskroot",
+    "The Wandering Green",
+    "Cinderholm",
+    "The Elder Dark",
+]
 
 TC_WALKABLE: frozenset[str] = frozenset({
     "tc_floor", "tc_rug", "tc_door", "tc_stair_up", "tc_stair_down", "tc_bed",

@@ -1146,6 +1146,27 @@ class Database:
             except Exception as e:
                 _log.warning("Hermit hut migration warning: %s", e)
 
+            # ── Chapter crystals on players ───────────────────────────────────
+            try:
+                _cc = {r[1] for r in conn.execute("PRAGMA table_info(players)").fetchall()}
+                for _col in ("has_mountain_crystal", "has_tide_crystal", "has_sky_crystal"):
+                    if _col not in _cc:
+                        conn.execute(
+                            f"ALTER TABLE players ADD COLUMN {_col} INTEGER NOT NULL DEFAULT 0"
+                        )
+                conn.commit()
+            except Exception as e:
+                _log.warning("Chapter crystal column migration warning: %s", e)
+
+            # ── forest_areas.name column ───────────────────────────────────────
+            try:
+                _fac = {r[1] for r in conn.execute("PRAGMA table_info(forest_areas)").fetchall()}
+                if "name" not in _fac:
+                    conn.execute("ALTER TABLE forest_areas ADD COLUMN name TEXT")
+                    conn.commit()
+            except Exception as e:
+                _log.warning("forest_areas.name migration warning: %s", e)
+
         await asyncio.to_thread(_migrate)
 
     async def close(self) -> None:

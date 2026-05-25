@@ -9,6 +9,7 @@ import sys
 
 from dwarf_explorer.config import (
     FOREST_WALKABLE, MAZE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
+    FOREST_NAMES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
@@ -636,6 +637,14 @@ async def create_forest_area(
         "INSERT INTO forest_areas (width, height) VALUES (1, 1)"
     )
     forest_id = cur.lastrowid
+
+    # Assign a deterministic name from the pool using the world seed + overworld position
+    _name_seed = seed ^ (overworld_positions[0][0] * 31337) ^ (overworld_positions[0][1] * 7919)
+    _forest_name = FOREST_NAMES[_name_seed % len(FOREST_NAMES)]
+    await db.execute(
+        "UPDATE forest_areas SET name=? WHERE forest_id=?",
+        (_forest_name, forest_id),
+    )
 
     # Generate forest grid in a thread (CPU-heavy)
     width, height, forest_tiles, exit_positions, wayerwood_target, hermit_pos, fq_entrance_pos = await asyncio.to_thread(

@@ -23,6 +23,7 @@ from dwarf_explorer.config import (
     SHIPWRECK_ENTRY_X, SHIPWRECK_ENTRY_Y, SHIPWRECK_SIZE, BREATH_MAX, BREATH_PER_STEP,
     SPAWN_X, SPAWN_Y,
     WAYPOINTS,
+    CHAPTER_CRYSTALS,
     SKY_ENCOUNTER_RATES,
     TEMPLE_WALKABLE, TEMPLE_EMOJI, SKY_LORE,
     TC_WALKABLE,
@@ -105,6 +106,7 @@ from dwarf_explorer.database.repositories import (
     update_player_temple_state,
     grant_warp_crystal,
     get_player_waypoints,
+    get_player_crystal_set,
     unlock_waypoint,
     get_avatar_cache,
     store_avatar_cache,
@@ -15487,28 +15489,47 @@ async def _open_tree_city_shop(
 async def _open_tc_archivist(
     interaction: discord.Interaction, guild_id: int, user_id: int, player,
 ) -> None:
-    """The Archivist in the Tree City (present day) — cryptic keeper of lore."""
+    """The Archivist in the Tree City (present day) — scholar, guide, and hidden antagonist."""
     from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_arch
-    grid = await _ltcv_arch(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y,
-                            await get_database(guild_id))
+    db = await get_database(guild_id)
+    grid = await _ltcv_arch(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
     has_crystal = getattr(player, "has_warp_crystal", False)
+    quest_stage = getattr(player, "fq_quest_stage", "none")
     if has_crystal:
+        # Player has completed the grove — Archivist is warm but subtly prying
         dialogue = (
-            "📜 **The Archivist** sets down a hefty tome and peers at you over half-moon spectacles.\n\n"
-            "*\"Ah — you've been to the grove. You carry its light now. The resonance is faint... "
-            "but growing.\"*\n\n"
-            "*\"Guard that crystal well. The seals are not as permanent as the Founders believed. "
-            "Something stirs in the deep strata.\"*\n\n"
-            "*\"If you must ask what I know — I know less than I did yesterday, "
-            "and far less than I will tomorrow. Such is the price of honest scholarship.\"*"
+            "📜 **The Archivist** looks up from her ledger, and something shifts behind her eyes.\n\n"
+            "*\"The grove. You actually reached it.\"*\n\n"
+            "She sets down her pen with deliberate care.\n\n"
+            "*\"That crystal you carry — keep it safe. I would very much like to study it "
+            "when you have the time. There are... resonance properties I've been trying to "
+            "document for years.\"*\n\n"
+            "*\"In the meantime — have you considered what lies beyond the forest? "
+            "The mountains to the north have their own old places. Older than this tree, "
+            "older than the hermit's memory.\"*\n\n"
+            "*\"Come back when you've seen them. We'll have more to discuss then.\"*"
+        )
+    elif quest_stage in ("hermit_met", "map_marked", "puzzle_solved"):
+        # Player is mid-quest — Archivist is steering them forward
+        dialogue = (
+            "📜 **The Archivist** glances up from a hand-drawn map covered in annotations.\n\n"
+            "*\"Still at it? Good. The hermit pointed you somewhere worth going, I hope.\"*\n\n"
+            "She doesn't wait for your answer.\n\n"
+            "*\"The grove is at the forest's heart — but the forest decides when it's ready "
+            "to show you. The paths shift. I've walked this canopy for decades and I still "
+            "don't trust the eastern trails after dark.\"*\n\n"
+            "*\"Trust the hermit's directions. He's been here longer than anyone.\"*"
         )
     else:
+        # First meeting — before Forest Quest begins
         dialogue = (
             "📜 **The Archivist** barely looks up from an enormous, ink-stained ledger.\n\n"
-            "*\"Hm? A traveller. Rare, these days.\"*\n\n"
-            "*\"The grove lies deeper in the forest — if the forest deigns to let you reach it. "
-            "I wouldn't attempt it without knowing the paths.\"*\n\n"
-            "*\"Come back when you've found something worth discussing.\"*"
+            "*\"A traveller. You came up from the forest floor? You look like you found the hard path.\"*\n\n"
+            "She marks her place with a ribbon and folds her hands.\n\n"
+            "*\"I study this forest. Every ring of this tree, every root system, every old path. "
+            "If you're planning to go deeper — and you have that look about you — "
+            "find the hermit first. He lives near the eastern edge. He knows things I don't.\"*\n\n"
+            "*\"Don't tell him I sent you. He and I have a complicated history.\"*"
         )
     content = render_grid(grid, player, dialogue)
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -15518,33 +15539,41 @@ async def _open_tc_archivist(
 async def _open_rift_archivist(
     interaction: discord.Interaction, guild_id: int, user_id: int, player,
 ) -> None:
-    """The Archivist in the Time Rift (the past) — panicked, warning of dimensional collapse."""
+    """The Archivist in the Time Rift — her younger self, before the catastrophe."""
     db = await get_database(guild_id)
     from dwarf_explorer.world.caves import load_cave_viewport as _lcv_rift_arch
     grid = await _lcv_rift_arch(player.cave_id, player.cave_x, player.cave_y, db)
     has_crystal = getattr(player, "has_warp_crystal", False)
     if has_crystal:
         dialogue = (
-            "📜 **A Frantic Scholar** clutches a stack of papers, eyes wide with recognition.\n\n"
-            "*\"You — you have one! A warp crystal from the grove! But that's impossible "
-            "unless... unless you already traversed the rift from a point further along "
-            "the timeline—\"*\n\n"
-            "*\"Don't try to explain it. Paradoxes only resolve if you stop pulling at the threads.\"*\n\n"
-            "*\"Listen: the Temporal Echo you'll face — it is what remains of a Founder "
-            "who tried to stop the collapse himself. He failed. That's why we're all here "
-            "in this conversation.\"*\n\n"
-            "*\"The crystal will help you find your way back. Don't lose it.\"*"
+            "📜 **A Young Scholar** looks up from a workbench covered in crystalline instruments. "
+            "Her eyes go immediately to the crystal in your pack.\n\n"
+            "*\"You have one. One of the grove crystals.\"*\n\n"
+            "She crosses the room quickly, studying it without touching it.\n\n"
+            "*\"Then you've already been further than I have. Good.\"*\n\n"
+            "She glances up at you, and something flickers — recognition, maybe, or its shadow.\n\n"
+            "*\"I need you to listen carefully. There is a woman — older than she looks, "
+            "far older — who has been watching this grove for longer than anyone knows. "
+            "She is patient. She is helpful. And she needs something from you that "
+            "she hasn't told you about yet.\"*\n\n"
+            "*\"I know this because I become her.\"*\n\n"
+            "*\"Don't let her take the crystal. Whatever she tells you — don't let her take it.\"*"
         )
     else:
         dialogue = (
-            "📜 **A Frantic Scholar** spins around at your approach, scattering papers everywhere.\n\n"
-            "*\"Stop — don't go further! The resonance field beyond that arch is unstable. "
-            "The Echo has been active for— I don't even know how long.\"*\n\n"
-            "*\"I'm recording everything I can before the rift collapses this section "
-            "of the timeline. The Founders built this place as a failsafe, but something "
-            "went wrong in the grove. Something is always going wrong in the grove.\"*\n\n"
-            "*\"You need more than courage to face what lies ahead. Have you found "
-            "the grove yet? The statue there holds a key.\"*"
+            "📜 **A Young Scholar** spins around at your approach, scattering papers everywhere.\n\n"
+            "*\"Oh — I didn't hear you come in. The resonance dampens sound in here.\"*\n\n"
+            "She straightens her papers with quick, precise movements.\n\n"
+            "*\"This is a Temporal Rift — a fold in the timeline. I'm here studying the Founders' "
+            "failsafe mechanisms. Fascinating work, if somewhat alarming.\"*\n\n"
+            "*\"You're from further along the timeline than me, I can tell. The way you're looking "
+            "at this place — like you already know what it becomes.\"*\n\n"
+            "She pauses, then lowers her voice.\n\n"
+            "*\"Be careful of anyone who seems to know too much about where you're going. "
+            "In my experience — and I'm developing considerable experience in paranoia — "
+            "that kind of knowledge is never accidental.\"*\n\n"
+            "*\"The grove in the forest has what you need. A stone idol at the heart of it. "
+            "Trust the hermit, not the scholar.\"*"
         )
     content = render_grid(grid, player, dialogue)
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -15566,12 +15595,12 @@ async def _open_grove_statue(
         )
         msg = (
             "🗿 **The Wayerwood Statue**\n\n"
-            "The crystal in your pack pulses warmly as you touch the ancient stone.\n\n"
+            "The Forest Crystal pulses warmly as you touch the ancient stone.\n\n"
             "Your known waypoints:\n" + wp_lines + "\n\n"
-            "*Use the 🔮 Warp button in the main view to teleport between them.*"
+            "*Use the Navigation menu to warp between them.*"
         )
     else:
-        # First time — grant the crystal
+        # First time — grant the forest crystal
         await grant_warp_crystal(db, user_id)
         player.has_warp_crystal = True
         wp_lines = "\n".join(
@@ -15583,9 +15612,9 @@ async def _open_grove_statue(
             "You place your hand on the moss-covered stone. A pulse of warm light "
             "travels up your arm — and in your palm appears a small, faceted crystal "
             "that hums with distant harmonics.\n\n"
-            "✨ **You received a Warp Crystal!**\n\n"
+            "🟢 **You received the Forest Crystal!**\n\n"
             "Three waypoints have been unlocked:\n" + wp_lines + "\n\n"
-            "*The 🔮 Warp button now appears in your main view.*"
+            "*The Forest Crystal appears in your Navigation menu.*"
         )
     content = render_grid(grid, player, msg)
     await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -15622,18 +15651,27 @@ class WarpView(discord.ui.View):
 async def handle_warp_open(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Open the warp crystal destination list."""
+    """Open the Forest Crystal warp destination list."""
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
     if not getattr(player, "has_warp_crystal", False):
         await interaction.response.defer()
         return
+    # Look up the forest's proper name for the "forest" waypoint label
+    _forest_name_row = await db.fetch_one("SELECT name FROM forest_areas LIMIT 1")
+    _forest_display = (_forest_name_row["name"] if _forest_name_row and _forest_name_row["name"]
+                       else WAYPOINTS["forest"]["name"])
     waypoints = await get_player_waypoints(db, user_id)
+    _wp_display = {
+        "spawn":  WAYPOINTS["spawn"],
+        "forest": {**WAYPOINTS["forest"], "name": _forest_display},
+        "grove":  WAYPOINTS["grove"],
+    }
     wp_lines = "\n".join(
-        f"{WAYPOINTS[wp_id]['emoji']} **{WAYPOINTS[wp_id]['name']}** — {WAYPOINTS[wp_id]['desc']}"
+        f"{_wp_display[wp_id]['emoji']} **{_wp_display[wp_id]['name']}** — {_wp_display[wp_id]['desc']}"
         for wp_id in ("spawn", "forest", "grove") if wp_id in waypoints
     ) or "*No waypoints unlocked yet.*"
-    content = f"🔮 **Warp Crystal**\n\nChoose a destination:\n\n{wp_lines}"
+    content = f"🟢 **Forest Crystal**\n\nChoose a destination:\n\n{wp_lines}"
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=WarpView(guild_id, user_id, waypoints))
 
@@ -15793,26 +15831,30 @@ async def handle_warp_close(
 
 
 class NavView(discord.ui.View):
-    """Navigation overlay: World Map | Warp (if crystal) | Forest Map (if unlocked) | Close."""
+    """Navigation overlay.
 
-    def __init__(self, guild_id: int, user_id: int, has_warp_crystal: bool = False,
-                 has_forest_map: bool = False):
+    Row 0: Map | Forest Map (if in forest and unlocked) | Close
+    Row 1: Crystal status row — one button per chapter crystal.
+           Earned + not stolen  → coloured, clickable (opens warp picker for that chapter).
+           Not yet earned       → grey, disabled.
+    """
+
+    def __init__(self, guild_id: int, user_id: int,
+                 has_warp_crystal: bool = False,
+                 has_forest_map: bool = False,
+                 crystals: set[str] | None = None):
         super().__init__(timeout=None)
-        map_btn = discord.ui.Button(
+        if crystals is None:
+            # Backwards-compat: if only has_warp_crystal passed, synthesise the set
+            crystals = {"forest"} if has_warp_crystal else set()
+
+        # ── Row 0: utility buttons ────────────────────────────────────────────
+        self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="Map", emoji="\U0001F5FA️",
+            label="Map", emoji="🗺️",
             custom_id=_custom_id(guild_id, user_id, "map"),
             row=0,
-        )
-        self.add_item(map_btn)
-        if has_warp_crystal:
-            warp_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                label="Warp", emoji="\U0001F52E",
-                custom_id=_custom_id(guild_id, user_id, "warp_open"),
-                row=0,
-            )
-            self.add_item(warp_btn)
+        ))
         if has_forest_map:
             self.add_item(discord.ui.Button(
                 style=discord.ButtonStyle.success,
@@ -15820,13 +15862,32 @@ class NavView(discord.ui.View):
                 custom_id=_custom_id(guild_id, user_id, "forest_map"),
                 row=0,
             ))
-        close_btn = discord.ui.Button(
+        self.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="✖ Close",
             custom_id=_custom_id(guild_id, user_id, "nav_close"),
             row=0,
-        )
-        self.add_item(close_btn)
+        ))
+
+        # ── Row 1: chapter crystal status ─────────────────────────────────────
+        _CRYSTAL_ORDER = ("forest", "mountain", "tide", "sky")
+        _CRYSTAL_STYLES = {
+            "forest":   discord.ButtonStyle.success,
+            "mountain": discord.ButtonStyle.danger,
+            "tide":     discord.ButtonStyle.primary,
+            "sky":      discord.ButtonStyle.secondary,
+        }
+        for ch in _CRYSTAL_ORDER:
+            info = CHAPTER_CRYSTALS[ch]
+            has_it = ch in crystals
+            self.add_item(discord.ui.Button(
+                style=_CRYSTAL_STYLES[ch] if has_it else discord.ButtonStyle.secondary,
+                emoji=info["emoji"],
+                label=info["name"] if has_it else "???",
+                custom_id=_custom_id(guild_id, user_id, f"warp_crystal_{ch}"),
+                disabled=not has_it,
+                row=1,
+            ))
 
 
 class _HermitMapBackView(discord.ui.View):
@@ -15882,11 +15943,11 @@ async def _fetch_or_cache_avatar(
 async def handle_nav_open(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Show the navigation overlay with map/warp/forest map buttons."""
+    """Show the navigation overlay with map/crystal status/forest map buttons."""
     await interaction.response.defer()
     db = await get_database(guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
-    has_crystal = getattr(player, "has_warp_crystal", False)
+    crystals = get_player_crystal_set(player)
     has_forest_map = False
     if player.in_forest and player.forest_id:
         _fmap = await db.fetch_one(
@@ -15894,7 +15955,7 @@ async def handle_nav_open(
             (user_id, player.forest_id)
         )
         has_forest_map = (_fmap is not None)
-    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=has_forest_map)
+    view = NavView(guild_id, user_id, crystals=crystals, has_forest_map=has_forest_map)
     await interaction.edit_original_response(content=None, embed=None, attachments=[], view=view)
 
 
@@ -16028,8 +16089,8 @@ async def handle_forest_map(
     _fm_img.save(_fm_buf, format="PNG")
     _fm_buf.seek(0)
     _fm_file = discord.File(_fm_buf, filename="forest_map.png")
-    has_crystal = getattr(player, "has_warp_crystal", False)
-    view = NavView(guild_id, user_id, has_warp_crystal=has_crystal, has_forest_map=True)
+    _fm_crystals = get_player_crystal_set(player)
+    view = NavView(guild_id, user_id, crystals=_fm_crystals, has_forest_map=True)
     await interaction.edit_original_response(
         content=None, embed=None, attachments=[_fm_file], view=view
     )
@@ -17907,18 +17968,27 @@ async def handle_npc_talk(
                 _tc_pool = await _gvp_tc(db, player.tc_forest_id, seed)
                 pool = _tc_pool[:1]
         elif "tc_archivist" in adj_npc:
-            npc_name = "Tree City Archivist"
+            npc_name = "The Archivist"
             has_crystal = getattr(player, "has_warp_crystal", False)
+            _fq_stg_arch = getattr(player, "fq_quest_stage", "none")
             if has_crystal:
                 lore_text = (
-                    "You already hold a Chronolite shard — I see its resonance in the air around you. "
-                    "Good. Guard it well. The Temporal Rifts grow unstable. Each activation weakens the boundary."
+                    "You found the grove. I knew you would — you have that particular look about you. "
+                    "The crystal suits you. Tell me... have you given any thought to what lies north? "
+                    "The mountains hold old places. Older than this tree. I've been meaning to study them "
+                    "for years, but I find myself... unable to reach certain chambers alone."
+                )
+            elif _fq_stg_arch in ("hermit_met", "map_marked", "puzzle_solved"):
+                lore_text = (
+                    "Still making progress? Good. The hermit gives good directions, I'll grant him that. "
+                    "Follow them precisely. The grove doesn't reward improvisation."
                 )
             else:
                 lore_text = (
-                    "I have catalogued every ring of this ancient tree. Did you know there is a grove "
-                    "deep in the forest where time moves strangely? A stone idol stands at its heart. "
-                    "Those who touch it... change. A Chronolite shard, they call what emerges."
+                    "I've catalogued every ring of this tree. Sixty years of rings, give or take. "
+                    "If you're heading deeper into the forest, find the hermit first — eastern edge, "
+                    "near the old marker stones. He knows the paths better than the paths know themselves. "
+                    "Don't mention I sent you. We have a history."
                 )
         elif "tc_villager" in adj_npc:
             npc_name = "Tree Dweller"
@@ -17990,20 +18060,24 @@ async def handle_npc_talk(
 
         if "rift_archivist" in adj_npc_cave:
             has_crystal = getattr(player, "has_warp_crystal", False)
+            npc_name = "Young Scholar"
             if has_crystal:
-                npc_name = "Panicked Scholar"
                 lore_text = (
-                    "You already carry Chronolite resonance — then you understand the danger! "
-                    "The temporal echo that haunts this rift was once a person, like you and I. "
-                    "Time fractured around them. Please — do not linger here."
+                    "You have one of the grove crystals. Then you've already been where I'm trying to go. "
+                    "Listen — there is a woman in the tree city above. Ink-stained hands, half-moon spectacles. "
+                    "She's been watching the grove for longer than anyone knows. She seems helpful. "
+                    "She is patient in a way that should unsettle you. "
+                    "I know this because I will become her, and I am telling you now while I still can: "
+                    "do not let her take that crystal. Whatever she tells you. Whatever she promises."
                 )
             else:
-                npc_name = "Panicked Scholar"
                 lore_text = (
-                    "I was studying the sundial when it activated and pulled me here! "
-                    "This is a Temporal Rift — a fold in time itself. The creature deeper in "
-                    "this place is dangerous beyond measure. There is a grove in the forest... "
-                    "a stone idol there holds the key to navigating these rifts safely."
+                    "I was pulled here studying the old sundial — a temporal fold, the Founders called it. "
+                    "I call it a trap that nobody warned me about. "
+                    "There is a grove deeper in the forest. A stone idol at its heart. "
+                    "Touch it and you'll receive something that makes navigating this kind of place safer. "
+                    "But be careful of the scholar in the tree city. She will be very interested in what you find. "
+                    "Trust the hermit. He's the only one who's been here longer than her and isn't trying to use you."
                 )
             options = [
                 {"label": "Tell me what you know", "action": "lore"},
@@ -18012,7 +18086,7 @@ async def handle_npc_talk(
             state = {
                 "type": "npc_dialogue", "npc_type": "rift_npc",
                 "npc_name": npc_name,
-                "text": "Oh thank goodness — a living person! Please, you must listen!",
+                "text": "You — you're real. You're actually from outside. Please, you have to listen.",
                 "options": options, "selected": 0,
                 "context": "rift",
                 "lore_text": lore_text, "source_label": npc_name,

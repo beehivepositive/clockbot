@@ -146,8 +146,11 @@ class Player:
     coin_purse: str | None = None
     avatar_emoji: str | None = None
     watering_can_uses: int = 0  # 0 = empty, 1-9 = uses remaining
-    # Warp crystal state
-    has_warp_crystal: bool = False
+    # Warp crystal / chapter crystal state
+    has_warp_crystal: bool = False       # Forest Crystal (Chapter 1) — kept for compat
+    has_mountain_crystal: bool = False   # Mountain Crystal (Chapter 2)
+    has_tide_crystal: bool = False       # Tide Crystal (Chapter 3)
+    has_sky_crystal: bool = False        # Sky Crystal (Chapter 4)
     # Forest Quest zone state
     in_forest_quest: bool = False
     fq_area_id: int | None = None

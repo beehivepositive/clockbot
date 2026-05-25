@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS forest_areas (
     forest_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     width          INTEGER NOT NULL,
     height         INTEGER NOT NULL,
+    name           TEXT,          -- unique flavour name assigned at generation
     hermit_tx      INTEGER,       -- local_x of hermit house tile
     hermit_ty      INTEGER,       -- local_y of hermit house tile
     fq_entrance_tx INTEGER,       -- local_x of FQ zone entrance tile
