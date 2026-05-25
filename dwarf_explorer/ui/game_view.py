@@ -19264,14 +19264,10 @@ async def handle_dialogue_confirm(
         )
         return
 
-    # Unknown action — close
-    grid = await load_building_viewport(player.house_id, player.house_x, player.house_y, db)
-    content = render_grid(grid, player, "Goodbye.")
+    # Unknown action — close; return to the correct zone view
+    ctx = state.get("context", "building")
     _ui_state.pop(user_id, None)
-    await interaction.response.edit_message(
-        embed=_embed(content), content=None,
-        view=_game_view(guild_id, user_id, player, grid=grid),
-    )
+    await _dialogue_return_to_view(interaction, guild_id, user_id, player, ctx, db, "Goodbye.")
 
 
 async def handle_dialogue_cancel(
