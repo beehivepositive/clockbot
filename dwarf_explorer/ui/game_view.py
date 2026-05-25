@@ -2838,8 +2838,8 @@ def _compute_context_labels(
                 center_label, center_enabled = "🌀 Enter", True
             elif t == "fst_hermit_house":
                 center_label, center_enabled = "🛖 Enter", True
-            elif t in ("fst_chest", "fst_mimic", "fst_map_chest"):
-                # fst_mimic and fst_map_chest look identical to fst_chest
+            elif t in ("fst_chest", "fst_mimic", "fst_map_chest", "fst_chamber_chest"):
+                # fst_mimic, fst_map_chest, fst_chamber_chest all look like fst_chest
                 from dwarf_explorer.config import FOREST_EMOJI as _FE
                 _ce = _FE.get("fst_chest", "📦")
                 center_label, center_enabled = f"{_ce} Open", True
@@ -9804,6 +9804,33 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
+        elif ftile.terrain == "fst_maze_door":
+            # Enter the maze from the forest interact button (no directional context → use north entry)
+            from dwarf_explorer.world.forest import (
+                get_maze_for_forest as _gmff_i,
+                load_maze_viewport as _lmv_i3,
+                MAZE_ENTRY_X as _MEX_i, MAZE_H as _MH_i,
+            )
+            _mz_id_i = await _gmff_i(db, player.forest_id)
+            if _mz_id_i is None:
+                content = render_grid(grid, player, "🌀 The hedge door seems sealed — the maze is out of reach.")
+                await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                        view=_game_view(guild_id, user_id, player, grid=grid))
+                return
+            player.in_maze = True
+            player.maze_id = _mz_id_i
+            player.maze_x, player.maze_y = _MEX_i, 1   # north-edge entry
+            await db.execute(
+                "UPDATE players SET in_maze=1, maze_id=?, maze_x=?, maze_y=?, "
+                "forest_x=?, forest_y=? WHERE user_id=?",
+                (_mz_id_i, _MEX_i, 1, player.forest_x, player.forest_y, user_id),
+            )
+            grid = await _lmv_i3(_mz_id_i, _MEX_i, 1, db)
+            content = render_grid(grid, player, "🌀 You push through the hedge door into the twisting maze.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
         elif ftile.terrain == "fst_tree_city":
             # Enter the tree city interior
             from dwarf_explorer.world.forest import ensure_tree_city_built, load_tree_city_viewport as _ltcv_enter
@@ -9979,11 +10006,84 @@ async def handle_interact(
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
 
+        elif tctile.terrain == "tc_stair_up":
+            # Ascend a floor (mirrors the movement handler so the interact button works too)
+            from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_si
+            _tc_floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
+            if player.tc_floor < 4:
+                player.tc_floor += 1
+                player.tc_x, player.tc_y = 14, 16
+                await db.execute(
+                    "UPDATE players SET tc_floor=?, tc_x=14, tc_y=16 WHERE user_id=?",
+                    (player.tc_floor, user_id),
+                )
+                grid = await _ltcv_si(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+                fname = _tc_floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
+                content = render_grid(grid, player, f"🔼 You climb the stairs to the **{fname}**.")
+            else:
+                content = render_grid(grid, player, "🌲 This is the highest floor.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
+        elif tctile.terrain == "tc_stair_down":
+            # Descend a floor
+            from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_sd
+            _tc_floor_names_d = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
+            if player.tc_floor > 1:
+                player.tc_floor -= 1
+                player.tc_x, player.tc_y = 14, 9
+                await db.execute(
+                    "UPDATE players SET tc_floor=?, tc_x=14, tc_y=9 WHERE user_id=?",
+                    (player.tc_floor, user_id),
+                )
+                grid = await _ltcv_sd(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
+                fname = _tc_floor_names_d.get(player.tc_floor, f"Floor {player.tc_floor}")
+                content = render_grid(grid, player, f"🔽 You descend to the **{fname}**.")
+            else:
+                content = render_grid(grid, player, "🌲 This is the ground floor.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=grid))
+            return
+
         else:
             content = render_grid(grid, player, "🌲 The ancient wood is smooth and warm to the touch.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return
+
+    elif getattr(player, "in_bandit_camp", False) and player.bandit_camp_id is not None:
+        from dwarf_explorer.world.bandit_camp import (
+            generate_camp_grid as _bcgrid_int,
+            load_camp_viewport as _lbcv_int,
+        )
+        _bc_row_int = await db.fetch_one(
+            "SELECT world_x, world_y FROM bandit_camps WHERE id=?", (player.bandit_camp_id,)
+        )
+        _bc_wx_int = int(_bc_row_int["world_x"]) if _bc_row_int else player.world_x
+        _bc_wy_int = int(_bc_row_int["world_y"]) if _bc_row_int else player.world_y
+        _bc_full_int = _bcgrid_int(_bc_wx_int, _bc_wy_int)
+        _bc_cur_tile = _bc_full_int[player.bc_y][player.bc_x]
+        _bc_vp_int = _lbcv_int(player.bc_x, player.bc_y, _bc_wx_int, _bc_wy_int)
+
+        if _bc_cur_tile == "bc_exit":
+            player.in_bandit_camp = False
+            player.bandit_camp_id = None
+            player.bandit_bribe_remaining = 0
+            await db.execute(
+                "UPDATE players SET in_bandit_camp=0, bandit_camp_id=NULL, "
+                "bandit_bribe_remaining=0 WHERE user_id=?", (user_id,)
+            )
+            _bc_exit_grid = await load_viewport(player.world_x, player.world_y, seed, db)
+            content = render_grid(_bc_exit_grid, player, "🚪 You leave the bandit camp.")
+            view = _game_view(guild_id, user_id, player, grid=_bc_exit_grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        content = render_grid(_bc_vp_int, player, "⛺ Nothing to interact with here.")
+        await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                view=_game_view(guild_id, user_id, player, grid=_bc_vp_int))
+        return
 
     elif player.in_cave:
         _int_cave_nav = _ui_state.get(user_id, {}).get("nav_target")
