@@ -354,6 +354,13 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
         )
         is_main = temple_row and temple_row["temple_type"] == "main"
         grid = await load_temple_viewport(player.temple_id, player.temple_x, player.temple_y, db, is_main=bool(is_main))
+    elif getattr(player, "in_sky", False):
+        grid = await load_sky_viewport(
+            getattr(player, "sky_id", 0),
+            getattr(player, "sky_x", 0),
+            getattr(player, "sky_y", 0),
+            db,
+        )
     elif getattr(player, "in_tree_city", False):
         from dwarf_explorer.world.forest import load_tree_city_viewport as _ltcv_cache
         grid = await _ltcv_cache(player.tc_forest_id, player.tc_floor, player.tc_x, player.tc_y, db)
@@ -375,7 +382,16 @@ async def _cached_grid(uid: int, player, seed: int, db) -> list:
                                   boss_state=_bst_cache, aim_cursor=_ac_cache)
     elif getattr(player, "in_forest", False):
         from dwarf_explorer.world.forest import load_forest_viewport as _lfv_cache
-        grid = await _lfv_cache(player.forest_id, player.forest_x, player.forest_y, db)
+        _fc_x, _fc_y = player.forest_x, player.forest_y
+        # (0, 0) is the uninitialised default — fall back to the recorded entry point.
+        if not _fc_x and not _fc_y and player.forest_id:
+            _fe_row = await db.fetch_one(
+                "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                (player.forest_id,),
+            )
+            if _fe_row:
+                _fc_x, _fc_y = _fe_row["local_x"], _fe_row["local_y"]
+        grid = await _lfv_cache(player.forest_id, _fc_x, _fc_y, db)
     elif getattr(player, "in_bandit_camp", False):
         from dwarf_explorer.world.bandit_camp import load_camp_viewport as _lbcv_cache
         _bc_row_cache = await db.fetch_one(
@@ -4157,11 +4173,24 @@ async def _move_steps(
             player.in_grove = False
             player.in_forest = True            # restore forest flag on grove exit
             player.grove_id = None
+            # Guard: if forest_x/y are (0, 0) (unset, e.g. after a warp-to-grove), resolve
+            # the real entry tile from the forest_entrances table so the viewport isn't all trees.
+            _gx_fx, _gx_fy = player.forest_x, player.forest_y
+            if not _gx_fx and not _gx_fy and player.forest_id:
+                _gx_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (player.forest_id,),
+                )
+                if _gx_fe:
+                    _gx_fx, _gx_fy = _gx_fe["local_x"], _gx_fe["local_y"]
+                    player.forest_x, player.forest_y = _gx_fx, _gx_fy
             await db.execute(
-                "UPDATE players SET in_grove=0, in_forest=1, grove_id=NULL WHERE user_id=?", (user_id,)
+                "UPDATE players SET in_grove=0, in_forest=1, grove_id=NULL, "
+                "forest_x=?, forest_y=? WHERE user_id=?",
+                (_gx_fx, _gx_fy, user_id),
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_gr
-            forest_grid2 = await _lfv_gr(player.forest_id, player.forest_x, player.forest_y, db)
+            forest_grid2 = await _lfv_gr(player.forest_id, _gx_fx, _gx_fy, db)
             content = render_grid(forest_grid2, player, "🌿 You step back through the bark into the forest.")
             return content, _game_view(guild_id, user_id, player, grid=forest_grid2)
         player.grove_x, player.grove_y = nx, ny
