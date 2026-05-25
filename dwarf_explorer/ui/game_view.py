@@ -4573,7 +4573,6 @@ async def _move_steps(
                     "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
                     (_nx2_fq, _ny2_fq, user_id),
                 )
-                _fq_step_counter[user_id] = _fq_step_counter.get(user_id, 0) + 1
 
         # ── Warden eye state: time-based, managed by background task ─────────
         # On each player move we only compute the current display state from
@@ -4740,19 +4739,34 @@ async def _move_steps(
                            _game_view(guild_id, user_id, player, grid=grid)
                 player.in_maze = True
                 player.maze_id = maze_id
-                # Entry position stored in maze_areas; fall back to (1,1) for legacy mazes
-                _maze_meta = await db.fetch_one(
-                    "SELECT entry_x, entry_y FROM maze_areas WHERE maze_id=?", (maze_id,)
+                # Determine entry position based on approach direction so the player
+                # starts at the correct edge of the maze.  The maze is a perfect
+                # (fully-connected) DFS maze so all interior cells are reachable from
+                # any starting point.
+                from dwarf_explorer.world.forest import (
+                    load_maze_viewport as _lmv,
+                    MAZE_ENTRY_X as _MEX, MAZE_W as _MW, MAZE_H as _MH,
                 )
-                _mex = _maze_meta["entry_x"] if _maze_meta and _maze_meta["entry_x"] else 1
-                _mey = _maze_meta["entry_y"] if _maze_meta and _maze_meta["entry_y"] else 1
+                if dy == -1:
+                    # Moving north → entered from south → spawn at bottom
+                    _mex, _mey = _MEX, _MH - 2
+                elif dy == 1:
+                    # Moving south → entered from north → spawn at top
+                    _mex, _mey = _MEX, 1
+                elif dx == 1:
+                    # Moving east → entered from west → spawn at left edge
+                    _mex, _mey = 1, _MH // 2
+                elif dx == -1:
+                    # Moving west → entered from east → spawn at right edge
+                    _mex, _mey = _MW - 2, _MH // 2
+                else:
+                    _mex, _mey = _MEX, 1
                 player.maze_x, player.maze_y = _mex, _mey
                 await db.execute(
                     "UPDATE players SET in_maze=1, maze_id=?, maze_x=?, maze_y=?, "
                     "forest_x=?, forest_y=? WHERE user_id=?",
                     (maze_id, _mex, _mey, nx, ny, user_id)
                 )
-                from dwarf_explorer.world.forest import load_maze_viewport as _lmv
                 grid = await _lmv(maze_id, _mex, _mey, db)
                 return render_grid(grid, player,
                     "🌀 The hedge twists around you — you've entered the **Forest Maze**. "

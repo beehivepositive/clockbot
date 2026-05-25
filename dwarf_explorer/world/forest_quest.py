@@ -241,6 +241,14 @@ def _tile_for(x: int, y: int, _log_positions, obstacles=None) -> str:
         if FQ_CORRIDOR_X0 <= x <= FQ_CORRIDOR_X1:
             if x == FQ_ENTRY_X and y == FQ_ENTRY_Y:
                 return "fq_exit"
+            # Scatter 🌳 tree obstacles for ent cover.
+            # Rules: keep center column (FQ_ENTRY_X=10) fully clear as a guaranteed
+            # walkable path; keep y=0..1 open so the exit tile and its immediate
+            # approach are never obstructed.
+            if x != FQ_ENTRY_X and y >= 2:
+                _ch = (x * 7919 + y * 3571) & 0xFFFF_FFFF
+                if _ch % 4 == 0:
+                    return "fq_wall"  # dense tree — blocks player and ent movement
             return "fq_floor"
         return "fq_wall"
 
