@@ -4464,7 +4464,10 @@ async def _move_steps(
                     canal_solved = await _cfqc(db, fq_id)
                     if canal_solved:
                         _cstage = getattr(player, "fq_quest_stage", "none")
-                        if _cstage not in ("canal_solved", "quest_complete"):
+                        # Only advance to canal_solved from warden_defeated —
+                        # never skip the boss fight stage or downgrade an already
+                        # completed run.
+                        if _cstage == "warden_defeated":
                             player.fq_quest_stage = "canal_solved"
                             await db.execute(
                                 "UPDATE players SET fq_quest_stage='canal_solved' WHERE user_id=?",
@@ -5806,7 +5809,9 @@ async def _finish_combat(
         player.in_tree_city = False
         player.tc_forest_id = None
         player.tc_x = player.tc_y = 0
+        player.in_island = False
         await update_player_ocean_state(db, user_id, False, 0, 0)
+        await update_player_island_state(db, user_id, False)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
         await update_player_shipwreck_state(db, user_id, False, 0, 0, 0, 0, BREATH_MAX)
@@ -9390,8 +9395,39 @@ async def handle_interact(
         return
 
     elif getattr(player, "in_grove", False):
-        from dwarf_explorer.world.forest import load_grove_viewport as _lgv_i
+        from dwarf_explorer.world.forest import (
+            load_grove_viewport as _lgv_i,
+            load_grove_single_tile as _lgst_i2,
+        )
+        _grove_tile_i = await _lgst_i2(player.grove_id, player.grove_x, player.grove_y, db)
         grid = await _lgv_i(player.grove_id, player.grove_x, player.grove_y, db)
+
+        if _grove_tile_i.terrain == "grove_exit":
+            # Centre "🚪 Exit" button pressed while standing on the exit tile
+            player.in_grove = False
+            player.in_forest = True
+            player.grove_id = None
+            _gri_fx, _gri_fy = player.forest_x, player.forest_y
+            if not _gri_fx and not _gri_fy and player.forest_id:
+                _gri_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (player.forest_id,),
+                )
+                if _gri_fe:
+                    _gri_fx, _gri_fy = _gri_fe["local_x"], _gri_fe["local_y"]
+                    player.forest_x, player.forest_y = _gri_fx, _gri_fy
+            await db.execute(
+                "UPDATE players SET in_grove=0, in_forest=1, grove_id=NULL, "
+                "forest_x=?, forest_y=? WHERE user_id=?",
+                (_gri_fx, _gri_fy, user_id),
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_gri
+            _gri_fgrid = await _lfv_gri(player.forest_id, _gri_fx, _gri_fy, db)
+            content = render_grid(_gri_fgrid, player, "🚪 You step back out of the grove into the forest.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=_gri_fgrid))
+            return
+
         content = render_grid(grid, player, "🌿 Nothing to interact with in the grove here.")
         await interaction.response.edit_message(embed=_embed(content), content=None,
                                                 view=_game_view(guild_id, user_id, player, grid=grid))
@@ -15517,6 +15553,7 @@ async def _execute_warp(
             "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, "
             "in_maze=0, maze_id=NULL, in_tree_city=0, tc_floor=1, tc_x=0, tc_y=0, "
             "in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+            "in_island=0, in_shipwreck=0, in_temple=0, in_canoe=0, in_combat=0, "
             "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
             "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0, "
             "world_x=?, world_y=? WHERE user_id=?",
@@ -15525,6 +15562,8 @@ async def _execute_warp(
         player.in_cave = player.in_village = player.in_house = False
         player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
         player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+        player.in_island = player.in_shipwreck = player.in_temple = player.in_canoe = False
+        player.in_combat = False
         player.in_hermit_hut = False
         player.in_bandit_camp = False
         player.bandit_camp_id = None
@@ -15549,6 +15588,7 @@ async def _execute_warp(
                 "in_house=0, house_id=NULL, in_forest=0, forest_id=NULL, "
                 "in_grove=0, grove_id=NULL, in_maze=0, maze_id=NULL, "
                 "in_tree_city=0, in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+                "in_island=0, in_shipwreck=0, in_temple=0, in_canoe=0, in_combat=0, "
                 "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
                 "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0, "
                 "world_x=?, world_y=? WHERE user_id=?",
@@ -15557,6 +15597,8 @@ async def _execute_warp(
             player.in_cave = player.in_village = player.in_house = False
             player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
             player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.in_island = player.in_shipwreck = player.in_temple = player.in_canoe = False
+            player.in_combat = False
             player.in_hermit_hut = False
             player.in_bandit_camp = False
             player.bandit_camp_id = None
@@ -15594,6 +15636,7 @@ async def _execute_warp(
                 "in_grove=1, grove_id=?, grove_x=?, grove_y=?, grove_forest_id=?, "
                 "in_maze=0, maze_id=NULL, in_tree_city=0, in_sky=0, sky_id=NULL, "
                 "in_ship=0, in_ocean=0, in_high_seas=0, "
+                "in_island=0, in_shipwreck=0, in_temple=0, in_canoe=0, in_combat=0, "
                 "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
                 "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0 "
                 "WHERE user_id=?",
@@ -15610,6 +15653,8 @@ async def _execute_warp(
             player.grove_forest_id = grove_forest_id
             player.in_maze = player.in_tree_city = False
             player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.in_island = player.in_shipwreck = player.in_temple = player.in_canoe = False
+            player.in_combat = False
             player.in_hermit_hut = False
             player.in_bandit_camp = False
             player.bandit_camp_id = None
