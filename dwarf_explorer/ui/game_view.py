@@ -2908,8 +2908,10 @@ def _compute_context_labels(
                 center_label, center_enabled = "🔄 Reset", True
             elif t == "fq_canal_reset":
                 center_label, center_enabled = "🔄 Reset", True
-            elif t in ("fq_boss_chest", "fq_fork_chest"):
+            elif t in ("fq_boss_chest", "fq_fork_chest", "fq_ancient_chest"):
                 center_label, center_enabled = "📦 Open", True
+            elif t in ("fq_ancient_tree", "fq_ancient_tree_done"):
+                center_label, center_enabled = "🌳 Touch", True
             # Adjacent shopkeeper → action button (row 1, "top right" above ➡️)
             for _dy_fq, _dx_fq in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 _ar_fq, _ac_fq = vc + _dy_fq, vc + _dx_fq
@@ -9151,6 +9153,17 @@ async def handle_interact(
             fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
             content = render_grid(fq_grid_i, player,
                 "🪨 *The ancient stone hums. The logs roll back to their starting positions.*")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
+            return
+
+        if fq_tile_i.terrain == "fq_canal_reset":
+            from dwarf_explorer.world.forest_quest import reset_canal_logs as _rcanal_i
+            await _rcanal_i(db, player.fq_area_id)
+            _invalidate_vp(user_id)
+            fq_grid_i = await _lfqv_i(player.fq_area_id, player.fq_x, player.fq_y, db)
+            content = render_grid(fq_grid_i, player,
+                "🪨 *The reset stone hums. The canal blocks slide back to their starting positions.*")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=fq_grid_i))
             return
