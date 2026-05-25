@@ -166,7 +166,7 @@ _IGNORED_ACTIONS = {
     "sp1", "sp2", "sp3", "sp4", "sp5", "c_wait", "csp0", "csp1", "c_free",
     "csp_a", "csp_b", "csp_c", "csp_d",
     "csp_5", "csp_6", "csp_7", "csp_8", "csp_9",
-    "c_potion",
+    "puzzle_claim",   # claim_available is always False currently; safe defer if ever fired
     # House edit spacers
     "hesp1", "hesp2", "hesp3",
     # Ocean spacers
@@ -765,7 +765,7 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await handle_hermit_map_close(interaction, gid, uid)
             elif act == "fill_watering_can":
                 await handle_fill_watering_can(interaction, gid, uid)
-            elif act == "fish_secondary":
+            elif act in ("fish", "fish_secondary"):
                 await handle_fish_secondary(interaction, gid, uid)
             elif act == "forest_map":
                 await handle_forest_map(interaction, gid, uid)

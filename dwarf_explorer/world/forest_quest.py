@@ -11,10 +11,10 @@ Zone layout (21 wide × 200 tall):
   y  31-40  : post-stream corridor (3 wide at x=9-11, same as shop corridor)
   y  41-53  : shop section (3-wide corridor x=9-11; 2-wide wall x=7-8; side room x=3-6, y=44-50; 1-tile opening at y=47; shopkeeper at x=6, y=47)
   y  54-57  : boss approach (corridor widens to full room width)
-  y  58-79  : Thornwarden boss chamber (19 wide at x=1-19)
-               Warden body: x=8-12, y=65-67; eyes at corners
-               Boss door at (10, 79) — locked until warden defeated
-  y  80-87  : post-boss corridor (7 wide at x=7-13)
+  y  58-68  : Thornwarden boss chamber (19 wide at x=1-19)
+               Warden body: x=8-12, y=61-63; eyes at (8,61),(12,61),(8,63),(12,63)
+               Loot chest at (10, 62); boss door at (10, 68) — locked until warden defeated
+  y  69-87  : post-boss corridor (7 wide at x=7-13)
   y  88+    : future sections (Y-fork, puzzle gauntlet, final room)
 """
 from __future__ import annotations

@@ -162,6 +162,7 @@ class Player:
     fq_boss_aim_mode: bool = False
     fq_boss_aim_x: int = 10
     fq_boss_aim_y: int = 66      # default aim position (center of boss chamber)
+    fq_boss_eye_opened_at: float = 0.0  # Unix timestamp when current eye cycle started
     # Bandit camp interior state
     in_bandit_camp: bool = False
     bandit_camp_id: int | None = None  # DB id from bandit_camps table

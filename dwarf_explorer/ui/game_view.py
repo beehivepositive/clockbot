@@ -4200,7 +4200,12 @@ async def _move_steps(
             FQ_WARDEN_THORN_DAMAGE_MAX as _FQ_DMAX,
             FQ_ENT_CORE_DROP_ENT as _FQ_ECDE,
             FQ_FINAL_ROOM_Y0 as _FQ_FINAL_Y0,
+            FQ_WIDTH, FQ_HEIGHT,
         )
+        # Eye state vars — computed properly later in the move handler; initialised
+        # here so early-exit paths (north-gate check) can reference them safely.
+        _warn_eye_mv = None
+        _open_eye_mv = None
         fq_id = player.fq_area_id
 
         # ── Aim mode: arrows move slingshot cursor, not player ────────────
@@ -4398,7 +4403,7 @@ async def _move_steps(
                     solved = await _cfqp(db, fq_id)
                     if solved:
                         # Advance quest stage if needed
-                        if getattr(player, "fq_quest_stage", "none") == "map_marked":
+                        if getattr(player, "fq_quest_stage", "none") in ("map_marked", "none"):
                             player.fq_quest_stage = "puzzle_solved"
                             await db.execute(
                                 "UPDATE players SET fq_quest_stage='puzzle_solved' WHERE user_id=?",
@@ -4573,6 +4578,73 @@ async def _move_steps(
                     "UPDATE players SET fq_x=?, fq_y=? WHERE user_id=?",
                     (_nx2_fq, _ny2_fq, user_id),
                 )
+                # ── Ent collision on second sprint tile (no extra ent step) ────
+                # Ents already moved for this turn; just check if the player
+                # landed on an ent's tile.
+                if player.fq_y < _FQ_CY0:
+                    _ent_s2 = await db.fetch_one(
+                        "SELECT id FROM fq_ents "
+                        "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1 AND ent_type='regular'",
+                        (fq_id, player.fq_x, player.fq_y),
+                    )
+                    if _ent_s2:
+                        fq_grid_s2 = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        _s2_ent_rng = _random.Random(
+                            hash((user_id, player.fq_x, player.fq_y, "ent_combat_s2"))
+                        )
+                        arena_s2, _s2ex, _s2ey = build_arena_from_viewport(
+                            fq_grid_s2, "ent", _s2_ent_rng
+                        )
+                        _ui_state[user_id] = {"type": "combat", "arena": arena_s2}
+                        player.in_combat = True
+                        player.combat_enemy_type = "ent"
+                        player.combat_enemy_hp = ENEMY_STATS["ent"][0]
+                        player.combat_enemy_x = _s2ex
+                        player.combat_enemy_y = _s2ey
+                        player.combat_player_x = ARENA_SIZE // 2
+                        player.combat_player_y = ARENA_SIZE // 2
+                        player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                            1 if player.accessory == "ring_of_time" else 0
+                        )
+                        await save_combat_state(db, user_id, player)
+                        content_s2 = render_arena(arena_s2, player)
+                        view_s2 = CombatView(guild_id, user_id,
+                                             trapped=arena_s2["player_trapped"],
+                                             moves_left=player.combat_moves_left,
+                                             enemy_type="ent")
+                        return content_s2, view_s2
+                elif player.fq_y >= _FQ_FINAL_Y0:
+                    _anc_s2 = await db.fetch_one(
+                        "SELECT id FROM fq_ents "
+                        "WHERE fq_id=? AND local_x=? AND local_y=? AND alive=1 AND ent_type='ancient'",
+                        (fq_id, player.fq_x, player.fq_y),
+                    )
+                    if _anc_s2:
+                        fq_grid_s2a = await _lfqv(fq_id, player.fq_x, player.fq_y, db)
+                        _s2a_rng = _random.Random(
+                            hash((user_id, player.fq_x, player.fq_y, "ancient_ent_combat_s2"))
+                        )
+                        arena_s2a, _s2aex, _s2aey = build_arena_from_viewport(
+                            fq_grid_s2a, "ancient_ent", _s2a_rng
+                        )
+                        _ui_state[user_id] = {"type": "combat", "arena": arena_s2a}
+                        player.in_combat = True
+                        player.combat_enemy_type = "ancient_ent"
+                        player.combat_enemy_hp = ENEMY_STATS["ancient_ent"][0]
+                        player.combat_enemy_x = _s2aex
+                        player.combat_enemy_y = _s2aey
+                        player.combat_player_x = ARENA_SIZE // 2
+                        player.combat_player_y = ARENA_SIZE // 2
+                        player.combat_moves_left = COMBAT_MOVES_DEFAULT + (
+                            1 if player.accessory == "ring_of_time" else 0
+                        )
+                        await save_combat_state(db, user_id, player)
+                        content_s2a = render_arena(arena_s2a, player)
+                        view_s2a = CombatView(guild_id, user_id,
+                                              trapped=arena_s2a["player_trapped"],
+                                              moves_left=player.combat_moves_left,
+                                              enemy_type="ancient_ent")
+                        return content_s2a, view_s2a
 
         # ── Warden eye state: time-based, managed by background task ─────────
         # On each player move we only compute the current display state from
@@ -5072,6 +5144,7 @@ async def _move_steps(
         else:
             enc_rates = CAVE_LEVEL_ENCOUNTER_RATES.get(cave_level, CAVE_ENCOUNTER_RATES)
 
+        cave_status_msg: str = ""
         for _ in range(steps):
             nx, ny = player.cave_x + dx, player.cave_y + dy
             target = await load_cave_single_tile(player.cave_id, nx, ny, db)
@@ -5141,13 +5214,13 @@ async def _move_steps(
                         (user_id,),
                     )
                     if not key_row:
-                        msgs.append(
+                        cave_status_msg = (
                             "🔒 A heavy stone door seals the chamber. You need a **Cave Key** to enter.\n"
                             "*Defeat trolls or wyverns deeper in the cave to find one.*"
                         )
                         break
                     await remove_from_inventory(db, user_id, "cave_key", 1)
-                    msgs.append("🗝️ You use the **Cave Key** — the stone door grinds open. Good luck.")
+                    cave_status_msg = "🗝️ You use the **Cave Key** — the stone door grinds open. Good luck."
                 # Fall through; door tile is walkable; door tile is NOT altered in DB
 
             # ── Boss trigger: stepping here always spawns the Stone Guardian ──
@@ -5268,7 +5341,7 @@ async def _move_steps(
                                       moves_left=player.combat_moves_left)
                     return content, view
         grid = await load_cave_viewport(player.cave_id, player.cave_x, player.cave_y, db)
-        return render_grid(grid, player), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
+        return render_grid(grid, player, cave_status_msg), await _cave_game_view(guild_id, user_id, player, db, grid=grid)
 
     else:
         _ow_has_canoe = await _player_has_canoe(db, user_id)
@@ -5655,6 +5728,22 @@ async def _finish_combat(
         player.in_forest_quest = False
         player.fq_area_id = None
         player.fq_x = player.fq_y = 0
+        player.in_fq_boss_combat = False
+        player.in_forest = False
+        player.forest_id = None
+        player.forest_x = player.forest_y = 0
+        player.in_grove = False
+        player.grove_id = None
+        player.grove_x = player.grove_y = 0
+        player.in_maze = False
+        player.maze_id = None
+        player.maze_x = player.maze_y = 0
+        player.in_hermit_hut = False
+        player.in_bandit_camp = False
+        player.bandit_camp_id = None
+        player.in_tree_city = False
+        player.tc_forest_id = None
+        player.tc_x = player.tc_y = 0
         await update_player_ocean_state(db, user_id, False, 0, 0)
         await update_player_cave_state(db, user_id, False, None, 0, 0)
         await update_player_house_state(db, user_id, False, None, 0, 0, 0, 0)
@@ -5662,8 +5751,15 @@ async def _finish_combat(
         await update_player_sky_state(db, user_id, False, None, 0, 0)
         await update_player_temple_state(db, user_id, False, None, 0, 0)
         await db.execute(
-            "UPDATE players SET in_forest_quest=0, fq_area_id=NULL, "
-            "fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+            "UPDATE players SET "
+            "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0, "
+            "in_forest=0, forest_id=NULL, forest_x=0, forest_y=0, "
+            "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, "
+            "in_maze=0, maze_id=NULL, maze_x=0, maze_y=0, "
+            "in_hermit_hut=0, "
+            "in_bandit_camp=0, bandit_camp_id=NULL, "
+            "in_tree_city=0, tc_forest_id=NULL, tc_x=0, tc_y=0 "
+            "WHERE user_id=?", (user_id,)
         )
         # Respawn in the nearest village at full health
         death_x, death_y = player.world_x, player.world_y
@@ -9007,9 +9103,10 @@ async def handle_interact(
             player.in_fq_boss_combat = False
             player.fq_area_id = None
             player.fq_x = player.fq_y = 0
+            player.in_forest = True   # restore forest context on exit
             await db.execute(
                 "UPDATE players SET in_forest_quest=0, in_fq_boss_combat=0, "
-                "fq_area_id=NULL, fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
+                "fq_area_id=NULL, fq_x=0, fq_y=0, in_forest=1 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fqi
             forest_grid_fqi = await _lfv_fqi(player.forest_id, player.forest_x, player.forest_y, db)
@@ -15284,13 +15381,19 @@ async def _execute_warp(
             "in_grove=0, grove_id=NULL, grove_x=0, grove_y=0, "
             "in_maze=0, maze_id=NULL, in_tree_city=0, tc_floor=1, tc_x=0, tc_y=0, "
             "in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+            "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
+            "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0, "
             "world_x=?, world_y=? WHERE user_id=?",
             (SPAWN_X, SPAWN_Y, user_id)
         )
         player.in_cave = player.in_village = player.in_house = False
         player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
         player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+        player.in_hermit_hut = False
+        player.in_bandit_camp = False
+        player.bandit_camp_id = None
         player.in_forest_quest = False
+        player.in_fq_boss_combat = False
         player.fq_area_id = None
         player.fq_x = player.fq_y = 0
         player.world_x, player.world_y = SPAWN_X, SPAWN_Y
@@ -15310,13 +15413,19 @@ async def _execute_warp(
                 "in_house=0, house_id=NULL, in_forest=0, forest_id=NULL, "
                 "in_grove=0, grove_id=NULL, in_maze=0, maze_id=NULL, "
                 "in_tree_city=0, in_sky=0, sky_id=NULL, in_ship=0, in_ocean=0, in_high_seas=0, "
+                "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
+                "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0, "
                 "world_x=?, world_y=? WHERE user_id=?",
                 (wx, wy, user_id)
             )
             player.in_cave = player.in_village = player.in_house = False
             player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
             player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.in_hermit_hut = False
+            player.in_bandit_camp = False
+            player.bandit_camp_id = None
             player.in_forest_quest = False
+            player.in_fq_boss_combat = False
             player.fq_area_id = None
             player.fq_x = player.fq_y = 0
             player.world_x, player.world_y = wx, wy
@@ -15348,7 +15457,10 @@ async def _execute_warp(
                 "in_house=0, house_id=NULL, in_forest=1, forest_id=?, forest_x=?, forest_y=?, "
                 "in_grove=1, grove_id=?, grove_x=?, grove_y=?, grove_forest_id=?, "
                 "in_maze=0, maze_id=NULL, in_tree_city=0, in_sky=0, sky_id=NULL, "
-                "in_ship=0, in_ocean=0, in_high_seas=0 WHERE user_id=?",
+                "in_ship=0, in_ocean=0, in_high_seas=0, "
+                "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
+                "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0 "
+                "WHERE user_id=?",
                 (grove_forest_id, fx, fy, grove_id, gx, gy, grove_forest_id, user_id)
             )
             player.in_cave = player.in_village = player.in_house = False
@@ -15362,6 +15474,13 @@ async def _execute_warp(
             player.grove_forest_id = grove_forest_id
             player.in_maze = player.in_tree_city = False
             player.in_sky = player.in_ship = player.in_ocean = player.in_high_seas = False
+            player.in_hermit_hut = False
+            player.in_bandit_camp = False
+            player.bandit_camp_id = None
+            player.in_forest_quest = False
+            player.in_fq_boss_combat = False
+            player.fq_area_id = None
+            player.fq_x = player.fq_y = 0
             from dwarf_explorer.world.forest import load_grove_viewport as _lgv_warp
             grid = await _lgv_warp(grove_id, gx, gy, db)
             msg = f"✨ **Warp: {WAYPOINTS['grove']['name']}**\nThe crystal sings and the grove unfolds around you."

@@ -522,10 +522,10 @@ FQ_WARDEN_Y0 = 61
 FQ_WARDEN_Y1 = 63
 
 # Warden eye positions (zone-absolute coords)
-FQ_WARDEN_EYE_NW = (FQ_WARDEN_X0, FQ_WARDEN_Y0)  # (8,  65)
-FQ_WARDEN_EYE_NE = (FQ_WARDEN_X1, FQ_WARDEN_Y0)  # (12, 65)
-FQ_WARDEN_EYE_SW = (FQ_WARDEN_X0, FQ_WARDEN_Y1)  # (8,  67)
-FQ_WARDEN_EYE_SE = (FQ_WARDEN_X1, FQ_WARDEN_Y1)  # (12, 67)
+FQ_WARDEN_EYE_NW = (FQ_WARDEN_X0, FQ_WARDEN_Y0)  # (8,  61)
+FQ_WARDEN_EYE_NE = (FQ_WARDEN_X1, FQ_WARDEN_Y0)  # (12, 61)
+FQ_WARDEN_EYE_SW = (FQ_WARDEN_X0, FQ_WARDEN_Y1)  # (8,  63)
+FQ_WARDEN_EYE_SE = (FQ_WARDEN_X1, FQ_WARDEN_Y1)  # (12, 63)
 FQ_WARDEN_EYE_POSITIONS: dict[str, tuple[int, int]] = {
     "NW": FQ_WARDEN_EYE_NW,
     "NE": FQ_WARDEN_EYE_NE,
@@ -1171,6 +1171,7 @@ FOREST_WALKABLE: frozenset[str] = frozenset({
     "fst_maze_door", "fst_nut_tree", "fst_chest", "fst_mimic", "fst_map_chest",
     "fst_hermit_house",
     "fst_secret_wall", "fst_chamber_floor", "fst_chamber_chest",
+    "fst_fq_entrance",  # Forest Quest zone entrance — looks like a tree wall but is walkable
     "bomb_lit",         # placed lit bomb — walkable (blast imminent)
 })
 
@@ -1266,7 +1267,7 @@ FOREST_ENCOUNTER_MOBS = {
 # Tree city merchant shop (unique items, gold prices)
 TREE_CITY_SHOP = [
     {"id": "forest_nut",   "name": "Forest Nut",   "price": 5,
-     "description": "A sweet nut from the ancient canopy. Restores 8 HP."},
+     "description": "A sweet nut from the ancient canopy. Restores 3 HP."},
     {"id": "living_root",  "name": "Living Root",  "price": 20,
      "description": "A glowing root still warm with forest magic. Crafting ingredient."},
     {"id": "bark_shield",  "name": "Bark Shield",  "price": 80,

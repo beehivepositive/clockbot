@@ -755,7 +755,7 @@ class Database:
             try:
                 _plant_block = conn.execute(
                     "SELECT COUNT(*) FROM tree_city_tiles"
-                    " WHERE floor=1 AND local_x=9 AND local_y=12 AND tile_type='tc_plant'"
+                    " WHERE floor_num=1 AND local_x=9 AND local_y=12 AND tile_type='tc_plant'"
                 ).fetchone()[0]
                 if _plant_block > 0:
                     _tc_forests2 = conn.execute(
@@ -1045,7 +1045,7 @@ class Database:
                         fq_id    INTEGER PRIMARY KEY AUTOINCREMENT,
                         guild_id INTEGER NOT NULL UNIQUE,
                         width    INTEGER NOT NULL DEFAULT 21,
-                        height   INTEGER NOT NULL DEFAULT 42,
+                        height   INTEGER NOT NULL DEFAULT 200,
                         solved   INTEGER NOT NULL DEFAULT 0
                     )
                 """)

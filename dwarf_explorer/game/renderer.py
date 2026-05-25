@@ -5,6 +5,7 @@ from dwarf_explorer.config import (
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
     EQUIP_BONUSES, SHIPWRECK_EMOJI, BREATH_MAX, SKY_EMOJI, TEMPLE_EMOJI,
     FOREST_EMOJI, TC_EMOJI, WORLD_SIZE, OCEAN_SIZE,
+    BANDIT_CAMP_EMOJI,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -35,6 +36,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
     if location == "grove":
         from dwarf_explorer.config import GROVE_EMOJI as _GE
         return _GE.get(tile.terrain, _GE.get("grove_wall", "\U0001F333"))
+    if location == "bandit_camp":
+        return BANDIT_CAMP_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
@@ -260,8 +263,8 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
         _sw_breath = getattr(player, "breath", BREATH_MAX)
         pos = f"\U0001F4CD Shipwreck ({getattr(player, 'shipwreck_x', 0)},{getattr(player, 'shipwreck_y', 0)})  \U0001FAB7 {_sw_breath}"
     elif getattr(player, "in_tree_city", False):
-        floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Elder's Chamber"}
-        fname = floor_names.get(player.tc_floor, f"Upper Hall")
+        floor_names = {1: "Ground Hall", 2: "Living Quarters", 3: "Upper Hall", 4: "Elder's Chamber"}
+        fname = floor_names.get(player.tc_floor, f"Floor {player.tc_floor}")
         pos = f"🌲 Tree City — {fname} (Fl. {player.tc_floor})  ({player.tc_x},{player.tc_y})"
     elif getattr(player, "in_maze", False):
         pos = "🌀 Forest Maze"   # deliberately no coordinates

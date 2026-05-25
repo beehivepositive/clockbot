@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS world (
     initialized  INTEGER NOT NULL DEFAULT 0
 );
 
--- Visited chunks
+-- Visited chunks (dead: no application code references this table — kept for DB compatibility)
 CREATE TABLE IF NOT EXISTS chunks (
     chunk_x          INTEGER NOT NULL,
     chunk_y          INTEGER NOT NULL,
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS house_entrances (
     UNIQUE(village_id, village_x, village_y)
 );
 
--- Player equipment (weapon, boots slots)
+-- Player equipment (hand_1, hand_2, head, body, feet, accessory, bag, … slots)
 CREATE TABLE IF NOT EXISTS equipment (
     user_id  INTEGER NOT NULL REFERENCES players(user_id),
     slot     TEXT    NOT NULL,

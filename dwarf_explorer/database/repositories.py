@@ -230,6 +230,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             fq_boss_aim_mode=bool(row["fq_boss_aim_mode"]) if "fq_boss_aim_mode" in cols else False,
             fq_boss_aim_x=row["fq_boss_aim_x"] if "fq_boss_aim_x" in cols else 10,
             fq_boss_aim_y=row["fq_boss_aim_y"] if "fq_boss_aim_y" in cols else 66,
+            fq_boss_eye_opened_at=float(row["fq_boss_eye_opened_at"] or 0.0) if "fq_boss_eye_opened_at" in cols else 0.0,
             # Bandit camp interior state
             in_bandit_camp=bool(row["in_bandit_camp"]) if "in_bandit_camp" in cols else False,
             bandit_camp_id=row["bandit_camp_id"] if "bandit_camp_id" in cols else None,
