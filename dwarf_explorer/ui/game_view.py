@@ -3082,6 +3082,10 @@ def _compute_context_labels(
             center_label, center_enabled = "🔒 Open", True
         elif t == "b_farmer_npc":
             center_label, center_enabled = "🌾 Shop", True
+        elif t == "b_armory_npc":
+            center_label, center_enabled = "⚔️ Shop", True
+        elif t == "b_barrel":
+            center_label, center_enabled = "🛢️ Inspect", True
         elif t == "b_pet":
             center_label, center_enabled = "🐱", True
         elif t == "vil_well":
@@ -4278,7 +4282,16 @@ async def _move_steps(
                 "fq_area_id=NULL, fq_x=0, fq_y=0 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fq
-            forest_grid_fq = await _lfv_fq(player.forest_id, player.forest_x, player.forest_y, db)
+            _fqex_fx, _fqex_fy = player.forest_x, player.forest_y
+            if not _fqex_fx and not _fqex_fy and player.forest_id:
+                _fqex_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (player.forest_id,),
+                )
+                if _fqex_fe:
+                    _fqex_fx, _fqex_fy = _fqex_fe["local_x"], _fqex_fe["local_y"]
+                    player.forest_x, player.forest_y = _fqex_fx, _fqex_fy
+            forest_grid_fq = await _lfv_fq(player.forest_id, _fqex_fx, _fqex_fy, db)
             content = render_grid(forest_grid_fq, player,
                 "🌲 You push back through the ancient wall into the forest.")
             return content, _game_view(guild_id, user_id, player, grid=forest_grid_fq)
@@ -5005,6 +5018,15 @@ async def _move_steps(
                 fx = player.forest_x
                 fy = player.forest_y
                 fid = player.tc_forest_id
+                # Guard: (0, 0) is the uninitialised default — fall back to recorded entry point.
+                if not fx and not fy and fid:
+                    _tcm_fe = await db.fetch_one(
+                        "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                        (fid,),
+                    )
+                    if _tcm_fe:
+                        fx, fy = _tcm_fe["local_x"], _tcm_fe["local_y"]
+                        player.forest_x, player.forest_y = fx, fy
                 player.in_tree_city = False
                 player.tc_forest_id = None
                 player.tc_floor = 1
@@ -5101,6 +5123,15 @@ async def _move_steps(
             if target.terrain == "b_door":
                 fx, fy = player.forest_x, player.forest_y
                 fid = player.hermit_hut_forest_id
+                # Guard: (0, 0) is the uninitialised default — fall back to recorded entry point.
+                if not fx and not fy and fid:
+                    _hhm_fe = await db.fetch_one(
+                        "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                        (fid,),
+                    )
+                    if _hhm_fe:
+                        fx, fy = _hhm_fe["local_x"], _hhm_fe["local_y"]
+                        player.forest_x, player.forest_y = fx, fy
                 player.in_hermit_hut = False
                 player.in_forest = True           # restore forest flag on exit
                 player.hermit_hut_forest_id = None
@@ -9140,7 +9171,16 @@ async def handle_interact(
                 "fq_area_id=NULL, fq_x=0, fq_y=0, in_forest=1 WHERE user_id=?", (user_id,)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_fqi
-            forest_grid_fqi = await _lfv_fqi(player.forest_id, player.forest_x, player.forest_y, db)
+            _fqexi_fx, _fqexi_fy = player.forest_x, player.forest_y
+            if not _fqexi_fx and not _fqexi_fy and player.forest_id:
+                _fqexi_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (player.forest_id,),
+                )
+                if _fqexi_fe:
+                    _fqexi_fx, _fqexi_fy = _fqexi_fe["local_x"], _fqexi_fe["local_y"]
+                    player.forest_x, player.forest_y = _fqexi_fx, _fqexi_fy
+            forest_grid_fqi = await _lfv_fqi(player.forest_id, _fqexi_fx, _fqexi_fy, db)
             content = render_grid(forest_grid_fqi, player,
                 "🌲 You push back through the ancient wall into the forest.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
@@ -9788,6 +9828,15 @@ async def handle_interact(
             # Exit back to forest
             fx, fy = player.forest_x, player.forest_y
             fid = player.hermit_hut_forest_id
+            # Guard: (0, 0) is the uninitialised default — fall back to recorded entry point.
+            if not fx and not fy and fid:
+                _hhi_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (fid,),
+                )
+                if _hhi_fe:
+                    fx, fy = _hhi_fe["local_x"], _hhi_fe["local_y"]
+                    player.forest_x, player.forest_y = fx, fy
             player.in_hermit_hut = False
             player.in_forest = True           # restore forest flag on exit
             player.hermit_hut_forest_id = None
@@ -9796,7 +9845,8 @@ async def handle_interact(
             await db.execute(
                 "UPDATE players SET in_hermit_hut=0, in_forest=1, "
                 "hermit_hut_forest_id=NULL, "
-                "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0 WHERE user_id=?", (user_id,)
+                "hermit_hut_floor=1, hermit_hut_x=0, hermit_hut_y=0, "
+                "forest_x=?, forest_y=? WHERE user_id=?", (fx, fy, user_id)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_hhi
             grid = await _lfv_hhi(fid, fx, fy, db)
@@ -9848,12 +9898,25 @@ async def handle_interact(
 
         if tctile.terrain == "tc_door":
             # Exit back to forest
-            fx, fy, fid = player.forest_x, player.forest_y, player.tc_forest_id
+            fx, fy = player.forest_x, player.forest_y
+            fid = player.tc_forest_id
+            # Guard: (0, 0) is the uninitialised default — fall back to recorded entry point.
+            if not fx and not fy and fid:
+                _tci_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (fid,),
+                )
+                if _tci_fe:
+                    fx, fy = _tci_fe["local_x"], _tci_fe["local_y"]
+                    player.forest_x, player.forest_y = fx, fy
             player.in_tree_city = False
             player.tc_forest_id = None
+            player.tc_floor = 1
+            player.tc_x = player.tc_y = 0
             await db.execute(
                 "UPDATE players SET in_tree_city=0, tc_forest_id=NULL, tc_floor=1, "
-                "tc_x=0, tc_y=0 WHERE user_id=?", (user_id,)
+                "tc_x=0, tc_y=0, forest_x=?, forest_y=? WHERE user_id=?",
+                (fx, fy, user_id)
             )
             from dwarf_explorer.world.forest import load_forest_viewport as _lfv_i
             grid = await _lfv_i(fid, fx, fy, db)
@@ -11667,11 +11730,42 @@ async def handle_action(
                                                                 grid=_tc_grid_act2))
         return
 
-    # ── Grove: adjacent statue ───────────────────────────────────────────────
+    # ── Grove: exit door or adjacent statue ─────────────────────────────────
     if getattr(player, "in_grove", False):
-        from dwarf_explorer.world.forest import load_grove_viewport as _lgv_act, load_grove_single_tile as _lgst_act
+        from dwarf_explorer.world.forest import (
+            load_grove_viewport as _lgv_act,
+            load_grove_single_tile as _lgst_act,
+        )
         vc = 4
         grove_grid_act = await _lgv_act(player.grove_id, player.grove_x, player.grove_y, db)
+        _gr_ct = grove_grid_act[vc][vc].terrain if len(grove_grid_act) > vc and len(grove_grid_act[vc]) > vc else None
+
+        # Standing on the exit tile → exit grove
+        if _gr_ct == "grove_exit":
+            player.in_grove = False
+            player.in_forest = True
+            player.grove_id = None
+            _gr_fx, _gr_fy = player.forest_x, player.forest_y
+            if not _gr_fx and not _gr_fy and player.forest_id:
+                _gr_fe = await db.fetch_one(
+                    "SELECT local_x, local_y FROM forest_entrances WHERE forest_id=? LIMIT 1",
+                    (player.forest_id,),
+                )
+                if _gr_fe:
+                    _gr_fx, _gr_fy = _gr_fe["local_x"], _gr_fe["local_y"]
+                    player.forest_x, player.forest_y = _gr_fx, _gr_fy
+            await db.execute(
+                "UPDATE players SET in_grove=0, in_forest=1, grove_id=NULL, "
+                "forest_x=?, forest_y=? WHERE user_id=?",
+                (_gr_fx, _gr_fy, user_id),
+            )
+            from dwarf_explorer.world.forest import load_forest_viewport as _lfv_gr_act
+            _gr_fgrid = await _lfv_gr_act(player.forest_id, _gr_fx, _gr_fy, db)
+            content = render_grid(_gr_fgrid, player, "🚪 You step back out of the grove into the forest.")
+            await interaction.response.edit_message(embed=_embed(content), content=None,
+                                                    view=_game_view(guild_id, user_id, player, grid=_gr_fgrid))
+            return
+
         statue_adjacent = any(
             grove_grid_act[vc + dy][vc + dx].terrain == "grove_statue"
             for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1))
