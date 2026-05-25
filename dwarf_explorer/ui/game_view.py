@@ -3015,6 +3015,12 @@ def _compute_context_labels(
             center_label, center_enabled = "🏛️ Enter Temple", True
         elif s == "sky_temple_main":
             center_label, center_enabled = "🏰 Enter Temple", True
+        elif s == "sundial":
+            center_label, center_enabled = "🕛 Sundial", True
+        elif s == "forest_entrance":
+            center_label, center_enabled = "🌲 Enter Forest", True
+        elif s == "bandit_camp":
+            center_label, center_enabled = "⛺ Enter Camp", True
         # Cave boss door — show lock; key check handled in movement
         elif t == "cave_boss_door":
             center_label, center_enabled = "🔒 Locked", False
