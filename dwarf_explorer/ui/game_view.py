@@ -2908,9 +2908,11 @@ def _compute_context_labels(
             if t == "b_door":
                 center_label, center_enabled = "🚪 Exit", True
             elif t == "hut_stair_up":
-                center_label, center_enabled = "🔼 Ascend", True
+                _hsc = BUILDING_EMOJI.get("hut_stair_up", "🔼")
+                center_label, center_enabled = f"{_hsc} Ascend", True
             elif t == "hut_stair_down":
-                center_label, center_enabled = "🔽 Descend", True
+                _hsc = BUILDING_EMOJI.get("hut_stair_down", "🔽")
+                center_label, center_enabled = f"{_hsc} Descend", True
             elif t == "hermit_npc":
                 # Player is standing ON the hermit tile — use center interact button
                 center_label, center_enabled = "🧙 Talk", True
@@ -5003,8 +5005,9 @@ async def _move_steps(
                     (HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y, user_id),
                 )
                 grid = await _lhv_mv(player.hermit_hut_forest_id, 2, HUT_F2_ENTRY_X, HUT_F2_ENTRY_Y, db)
+                _hsc_up = BUILDING_EMOJI.get("hut_stair_up", "🔼")
                 return render_grid(grid, player,
-                    "🔼 You climb the creaky stairs into the **upper room**. "
+                    f"{_hsc_up} You climb the creaky stairs into the **upper room**. "
                     "Vines and old tomes fill every corner."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
@@ -5017,8 +5020,9 @@ async def _move_steps(
                     (HUT_F1_RETURN_X, HUT_F1_RETURN_Y, user_id),
                 )
                 grid = await _lhv_mv(player.hermit_hut_forest_id, 1, HUT_F1_RETURN_X, HUT_F1_RETURN_Y, db)
+                _hsc_dn = BUILDING_EMOJI.get("hut_stair_down", "🔽")
                 return render_grid(grid, player,
-                    "🔽 You descend back to the ground floor of the hut."), \
+                    f"{_hsc_dn} You descend back to the ground floor of the hut."), \
                        _game_view(guild_id, user_id, player, grid=grid)
 
             # Normal step
@@ -9650,8 +9654,9 @@ async def handle_interact(
                 (_HF2EX, _HF2EY, user_id),
             )
             grid = await _lhv_i(player.hermit_hut_forest_id, 2, _HF2EX, _HF2EY, db)
+            _hsc_up = BUILDING_EMOJI.get("hut_stair_up", "🔼")
             content = render_grid(grid, player,
-                "🔼 You climb the creaky stairs into the **upper room**. "
+                f"{_hsc_up} You climb the creaky stairs into the **upper room**. "
                 "Vines and old tomes fill every corner.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
@@ -9665,7 +9670,8 @@ async def handle_interact(
                 (_HF1RX, _HF1RY, user_id),
             )
             grid = await _lhv_i(player.hermit_hut_forest_id, 1, _HF1RX, _HF1RY, db)
-            content = render_grid(grid, player, "🔽 You descend back to the ground floor of the hut.")
+            _hsc_dn = BUILDING_EMOJI.get("hut_stair_down", "🔽")
+            content = render_grid(grid, player, f"{_hsc_dn} You descend back to the ground floor of the hut.")
             await interaction.response.edit_message(embed=_embed(content), content=None,
                                                     view=_game_view(guild_id, user_id, player, grid=grid))
             return

@@ -2184,10 +2184,12 @@ def apply_custom_emojis(guild_emojis: list) -> None:
         FOREST_EMOJI["fst_map_chest"] = cache["chest"] # map chest looks identical to regular chest
     if "fst_floor" in cache:
         FOREST_EMOJI["fst_floor"] = cache["fst_floor"]
-    # Tree city staircase custom emoji
+    # Tree city + hermit hut staircase custom emoji
     if "staircase" in cache:
-        TC_EMOJI["tc_stair_up"]   = cache["staircase"]
-        TC_EMOJI["tc_stair_down"] = cache["staircase"]
+        TC_EMOJI["tc_stair_up"]          = cache["staircase"]
+        TC_EMOJI["tc_stair_down"]        = cache["staircase"]
+        BUILDING_EMOJI["hut_stair_up"]   = cache["staircase"]
+        BUILDING_EMOJI["hut_stair_down"] = cache["staircase"]
 
     # Canoe 2-piece custom emojis — left half, right half, and whole (on-water player icon)
     for canoe_key in ("canoe_left", "canoe_right", "canoe_whole"):

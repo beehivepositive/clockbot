@@ -17,19 +17,19 @@ HUT_ENTRY_Y = 6    # one step in from the door tile
 HUT_DOOR_X = 4
 HUT_DOOR_Y = 7
 
-# Floor 1 stair-up position
-HUT_F1_STAIR_X = 2
-HUT_F1_STAIR_Y = 4
+# Floor 1 stair-up position — right-edge, against outer wall
+HUT_F1_STAIR_X = 7
+HUT_F1_STAIR_Y = 1
 
-# Floor 2 stair-down position
-HUT_F2_STAIR_X = 6
-HUT_F2_STAIR_Y = 4
+# Floor 2 stair-down position — left-edge, against outer wall
+HUT_F2_STAIR_X = 1
+HUT_F2_STAIR_Y = 3
 
 # Landing positions when changing floors
-HUT_F2_ENTRY_X = 5    # appear here on floor 2 after going up
-HUT_F2_ENTRY_Y = 4
-HUT_F1_RETURN_X = 3   # appear here on floor 1 after going down
-HUT_F1_RETURN_Y = 4
+HUT_F2_ENTRY_X = 2    # appear here on floor 2 after going up
+HUT_F2_ENTRY_Y = 3
+HUT_F1_RETURN_X = 6   # appear here on floor 1 after going down
+HUT_F1_RETURN_Y = 1
 
 # Hermit NPC tile on floor 1
 HUT_HERMIT_X = 2
@@ -52,48 +52,48 @@ _Sd = "hut_stair_down"
 
 # ── Floor layouts (9×9, row-major y=0..8, col x=0..8) ────────────────────────
 
-# Floor 1: irregular upper-left nook created by wall bump at x=1 rows y=1..2
-#   The hermit lives in this alcove; bookshelf wall above, stove at desk,
-#   heavy vines creeping toward the door, candle near bottom-right.
+# Floor 1: irregular ground floor with jagged north wall, wall protrusion mid-east,
+#   and a wall bump on the west at y=5.  The hermit's alcove sits in the north-west
+#   corner (x=1..2 walled off at y=1..2).  Stairs hug the north-east corner (x=7,y=1).
 _FLOOR1: list[list[str]] = [
-    # y=0  top wall
+    # y=0  solid outer wall
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
-    # y=1  wall bump at x=1 creates nook; bookshelves at x=4,6
-    [_W, _W, _F, _F, _Bk, _F, _Bk, _F, _W],
-    # y=2  hermit alcove; stove at x=4 (wall bump continues at x=1)
-    [_W, _W, _Hm, _F, _Sv, _F, _F, _F, _W],
-    # y=3  main room — table and chair in middle
-    [_W, _F, _F, _Tb, _F, _Ch, _F, _F, _W],
-    # y=4  stair up at x=2
-    [_W, _F, _Su, _F, _F, _F, _F, _F, _W],
-    # y=5  vines creeping in from west and east sides
-    [_W, _F, _Vn, _F, _F, _F, _Vn, _F, _W],
-    # y=6  vine cluster near south; candle at x=7 — player spawns here (x=4,y=6)
-    [_W, _F, _F, _Vn, _F, _F, _F, _Cn, _W],
-    # y=7  door at x=4 (exit)
+    # y=1  top row: x=1,2 walled off; bookshelf at x=3; open to x=6; stair at x=7 (right edge)
+    [_W, _W, _W, _Bk, _F, _F, _F, _Su, _W],
+    # y=2  hermit nook: wall at x=1; hermit at x=2; stove at x=4; bookshelf at x=5
+    [_W, _W, _Hm, _F, _Sv, _Bk, _F, _F, _W],
+    # y=3  main room; table at x=3; chair at x=5; wall protrusion at x=6
+    [_W, _F, _F, _Tb, _F, _Ch, _W, _F, _W],
+    # y=4  open corridor
+    [_W, _F, _F, _F, _F, _F, _F, _F, _W],
+    # y=5  wall bump at x=1 (west side jags in); vines at x=3 and x=6
+    [_W, _W, _F, _Vn, _F, _F, _Vn, _F, _W],
+    # y=6  candle at x=5; player spawn (x=4,y=6)
+    [_W, _F, _F, _F, _F, _Cn, _F, _F, _W],
+    # y=7  door at x=4 (exit to forest)
     [_W, _F, _F, _F, _D, _F, _F, _F, _W],
-    # y=8  bottom wall
+    # y=8  solid outer wall
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
 ]
 
-# Floor 2: cramped upper room with heavy vine infestation
-#   Room spans roughly x=2..6, y=2..6; rest is solid wall.
-#   Stair down at x=6,y=4; bed at x=3,y=3; dense vines & candle.
+# Floor 2: cramped attic study, shifted to the left half of the grid.
+#   Stair down hugs the west wall (x=1,y=3).  The upper half narrows further at y=5
+#   with a wall bump, then pinches to a single vine-choked passage at y=6.
 _FLOOR2: list[list[str]] = [
     # y=0  solid
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
     # y=1  solid
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
-    # y=2  top of room — bookshelves wall x=3..5
+    # y=2  top wall of attic — bookshelves x=3..5 form a back wall
     [_W, _W, _W, _Bk, _Bk, _Bk, _W, _W, _W],
-    # y=3  bed at x=3; vines claiming the corners
-    [_W, _W, _Vn, _Bd, _F, _F, _Vn, _W, _W],
-    # y=4  stair down at x=6; room at x=2..5  (player lands at x=5,y=4 after going up)
-    [_W, _W, _F, _F, _F, _F, _Sd, _W, _W],
-    # y=5  candle centre; vines flanking
-    [_W, _W, _F, _Vn, _Cn, _Vn, _F, _W, _W],
-    # y=6  narrower — vines closing in
-    [_W, _W, _W, _Vn, _F, _Vn, _W, _W, _W],
+    # y=3  stair down at x=1 (left edge); room spans x=1..6
+    [_W, _Sd, _F, _F, _F, _F, _F, _W, _W],
+    # y=4  bed at x=3; vine at x=4; candle at x=5
+    [_W, _F, _F, _Bd, _Vn, _Cn, _F, _W, _W],
+    # y=5  wall bump at x=1 (west jags in); floor x=2..6
+    [_W, _W, _F, _F, _F, _F, _F, _W, _W],
+    # y=6  mostly solid; lone vine at x=4 peeks through
+    [_W, _W, _W, _W, _Vn, _W, _W, _W, _W],
     # y=7  solid
     [_W, _W, _W, _W, _W, _W, _W, _W, _W],
     # y=8  solid
