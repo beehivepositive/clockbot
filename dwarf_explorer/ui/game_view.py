@@ -139,8 +139,9 @@ from dwarf_explorer.world.villages import (
     load_building_viewport, load_building_single_tile,
     get_recruitable_npc_positions, is_npc_recruitable_for_player,
     get_replacement_npc_position,
+    get_or_create_ruins,
 )
-from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_building, can_move_ship, can_move_shipwreck, can_move_grove
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_ruins, can_move_building, can_move_ship, can_move_shipwreck, can_move_grove
 from dwarf_explorer.world.shipwrecks import load_shipwreck_viewport, get_tile_at as get_shipwreck_tile
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
@@ -3108,6 +3109,14 @@ def _compute_context_labels(
             center_label, center_enabled = "🐱", True
         elif t == "vil_well":
             center_label, center_enabled = "⛲", True
+        elif t == "vil_bell_tower":
+            center_label, center_enabled = "🔔", True
+        elif t == "vil_merchant_cart":
+            center_label, center_enabled = "🛒", True
+        elif t == "ruin_bell_tower":
+            center_label, center_enabled = "🔔", True
+        elif t == "ruin_chest":
+            center_label, center_enabled = "📦", True
         elif t == "vil_puzzle_board":
             center_label, center_enabled = "🎮 Play", True
         elif t == "vil_dock":
@@ -3779,6 +3788,7 @@ async def _move_steps(
 
     elif player.in_village:
         _vil_nav = _ui_state.get(user_id, {}).get("nav_target")
+        _in_ruins = getattr(player, "village_type", "village") == "ruins"
         for _ in range(steps):
             nx, ny = player.village_x + dx, player.village_y + dy
             target = await load_village_single_tile(player.village_id, nx, ny, db)
@@ -3786,12 +3796,14 @@ async def _move_steps(
                 wx, wy = player.village_wx, player.village_wy
                 player.in_village = False
                 player.village_id = None
+                player.village_type = "village"
                 player.world_x, player.world_y = wx, wy
                 await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
                 await update_player_position(db, user_id, wx, wy)
                 grid = await load_viewport(wx, wy, seed, db)
-                return render_grid(grid, player, "You leave the village.", nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
-            allowed, reason = can_move_village(target)
+                exit_msg = "You leave the ruins." if _in_ruins else "You leave the village."
+                return render_grid(grid, player, exit_msg, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
+            allowed, reason = can_move_ruins(target) if _in_ruins else can_move_village(target)
             if not allowed:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 return render_grid(grid, player, reason, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
@@ -3799,27 +3811,29 @@ async def _move_steps(
             await update_player_village_state(
                 db, user_id, True, player.village_id,
                 nx, ny, player.village_wx, player.village_wy,
+                village_type=getattr(player, "village_type", "village"),
             )
 
-        # ── Errand quest completion: check current tile ──────────────────────
-        cur_vtile = await load_village_single_tile(
-            player.village_id, player.village_x, player.village_y, db
-        )
+        # ── Errand quest completion: check current tile (village only) ─────────
         errand_msg = ""
-        if cur_vtile.terrain:
-            from dwarf_explorer.game.quests import get_completable_errand_quests, complete_quest
-            from dwarf_explorer.database.repositories import give_quest_reward
-            errand_qs = await get_completable_errand_quests(
-                db, user_id, cur_vtile.terrain, player.village_id
+        if not _in_ruins:
+            cur_vtile = await load_village_single_tile(
+                player.village_id, player.village_x, player.village_y, db
             )
-            if errand_qs:
-                q = errand_qs[0]
-                reward = await complete_quest(db, user_id, q["pq_id"])
-                if reward:
-                    reward_str = await give_quest_reward(
-                        db, user_id, reward["gold"], reward["xp"], reward.get("item")
-                    )
-                    errand_msg = f"📜 Quest complete: **{q['title']}**! {reward_str}"
+            if cur_vtile.terrain:
+                from dwarf_explorer.game.quests import get_completable_errand_quests, complete_quest
+                from dwarf_explorer.database.repositories import give_quest_reward
+                errand_qs = await get_completable_errand_quests(
+                    db, user_id, cur_vtile.terrain, player.village_id
+                )
+                if errand_qs:
+                    q = errand_qs[0]
+                    reward = await complete_quest(db, user_id, q["pq_id"])
+                    if reward:
+                        reward_str = await give_quest_reward(
+                            db, user_id, reward["gold"], reward["xp"], reward.get("item")
+                        )
+                        errand_msg = f"📜 Quest complete: **{q['title']}**! {reward_str}"
 
         grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
         return render_grid(grid, player, errand_msg, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
@@ -8645,6 +8659,67 @@ async def handle_interact(
 
     elif player.in_village:
         vtile = await load_village_single_tile(player.village_id, player.village_x, player.village_y, db)
+        _vt = getattr(player, "village_type", "village")
+
+        # ── Ruins interior interactions ───────────────────────────────────────
+        if _vt == "ruins":
+            _hand_items_ri = {player.hand_1, player.hand_2} - {None}
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            if vtile.terrain == "ruin_bell_tower":
+                if "hammer" in _hand_items_ri:
+                    import random as _rb_rng
+                    _bell_outcomes = [
+                        "A flock of startled crows erupts from the tower, blotting out the sky.",
+                        "Dust cascades from the cracked stone. Somewhere deeper in the ruins, something stirs.",
+                        "The resonance lingers for several seconds. You feel the vibration in your chest.",
+                        "Far off, a wolf howls in response. The sound echoes through the broken archways.",
+                        "Ancient carvings on the tower glow faintly, then fade.",
+                    ]
+                    _bell_msg = _rb_rng.choice(_bell_outcomes)
+                    content = render_grid(grid, player,
+                        f"🔔 **BONG!** The old bell sings out across the ruins.\n*{_bell_msg}*")
+                else:
+                    content = render_grid(grid, player,
+                        "🔔 A cracked bell tower. The bronze bell is within reach. *(equip a hammer to ring it)*")
+            elif vtile.terrain == "ruin_chest":
+                _rc_seed = _random.Random(hash((player.village_id, player.village_x, player.village_y)))
+                # Use player_village_overrides to track looted state
+                _rc_looted = await db.fetch_one(
+                    "SELECT 1 FROM player_village_overrides "
+                    "WHERE user_id=? AND village_id=? AND tile_x=? AND tile_y=?",
+                    (user_id, player.village_id, player.village_x, player.village_y),
+                )
+                if _rc_looted:
+                    content = render_grid(grid, player, "📦 The chest is empty. Already picked clean.")
+                else:
+                    # Mark looted
+                    await db.execute(
+                        "INSERT OR IGNORE INTO player_village_overrides "
+                        "(user_id, village_id, tile_x, tile_y, tile_type) VALUES (?,?,?,?,?)",
+                        (user_id, player.village_id, player.village_x, player.village_y, "ruin_rubble"),
+                    )
+                    _rc_gold = _rc_seed.randint(8, 35)
+                    _apply_gold_cap(player, _rc_gold)
+                    await update_player_stats(db, user_id, gold=player.gold)
+                    _rc_extras = []
+                    if _rc_seed.random() < 0.4:
+                        await add_to_inventory(db, user_id, "map_fragment", 1)
+                        _rc_extras.append("a map fragment")
+                    if _rc_seed.random() < 0.25:
+                        await add_to_inventory(db, user_id, "iron_ingot", 1)
+                        _rc_extras.append("an iron ingot")
+                    if _rc_seed.random() < 0.15:
+                        await add_to_inventory(db, user_id, "gem", 1)
+                        _rc_extras.append("a gem")
+                    _rc_extra_str = (", ".join(_rc_extras) + "!" ) if _rc_extras else ""
+                    content = render_grid(grid, player,
+                        f"📦 You pry the chest open! Found **{_rc_gold}g**."
+                        + (f" Also: {_rc_extra_str}" if _rc_extra_str else ""))
+            else:
+                content = render_grid(grid, player, "🏚️ Crumbling stonework. The ruins keep their secrets.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
                               "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill",
@@ -8679,6 +8754,58 @@ async def handle_interact(
         elif vtile.terrain == "vil_puzzle_board":
             await _open_puzzle(interaction, guild_id, user_id)
             return
+
+        elif vtile.terrain == "vil_bell_tower":
+            # ── Village bell tower: ring for flavor ──────────────────────────
+            _hand_items_vbt = {player.hand_1, player.hand_2} - {None}
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            if "hammer" in _hand_items_vbt:
+                _vbt_reactions = [
+                    "\"OI! Keep it down up there!\"",
+                    "\"SOME of us are trying to sleep!\"",
+                    "\"Not AGAIN. Who gave the traveller a hammer?\"",
+                    "\"That's the third time this week!\"",
+                    "\"My goat stopped giving milk after that. I'm blaming you.\"",
+                ]
+                import random as _vbt_rng
+                _complaint = _vbt_rng.choice(_vbt_reactions)
+                content = render_grid(grid, player,
+                    f"🔔 **BONG!** The bell rings out across the village.\n*A nearby villager shouts: {_complaint}*")
+            else:
+                content = render_grid(grid, player,
+                    "🔔 The old bell tower looms above. *(equip a hammer to ring it)*")
+
+        elif vtile.terrain == "vil_merchant_cart":
+            # ── Merchant cart: hammer to scatter loose items ──────────────────
+            _hand_items_mc = {player.hand_1, player.hand_2} - {None}
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            if "hammer" in _hand_items_mc:
+                import random as _mc_rng
+                _mc_drops = [
+                    ("gold_coin", _mc_rng.randint(1, 5)),
+                    ("bread", 1),
+                    ("carrot", _mc_rng.randint(1, 3)),
+                    ("potato", _mc_rng.randint(1, 2)),
+                    ("wood", 1),
+                ]
+                _mc_seed = _mc_rng.Random(hash((user_id, player.village_id, player.village_x, player.village_y)))
+                _mc_picked = _mc_seed.sample(_mc_drops, k=_mc_seed.randint(2, 3))
+                _mc_msgs = []
+                for _mc_item, _mc_qty in _mc_picked:
+                    if _mc_item == "gold_coin":
+                        _apply_gold_cap(player, _mc_qty)
+                        await update_player_stats(db, user_id, gold=player.gold)
+                        _mc_msgs.append(f"{_mc_qty}g")
+                    else:
+                        await add_to_inventory(db, user_id, _mc_item, _mc_qty)
+                        from dwarf_explorer.config import ITEM_EMOJI as _MC_IE
+                        _mc_e = _MC_IE.get(_mc_item, "📦")
+                        _mc_msgs.append(f"{_mc_qty}× {_mc_e}")
+                content = render_grid(grid, player,
+                    f"🛒 **CRASH!** Items scatter everywhere! You grab: {', '.join(_mc_msgs)}.\n*A villager sighs deeply in the distance.*")
+            else:
+                content = render_grid(grid, player,
+                    "🛒 A weathered merchant cart, half-full of odds and ends. *(equip a hammer to knock things loose)*")
 
         elif vtile.terrain == "vil_well":
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
@@ -10599,9 +10726,10 @@ async def handle_interact(
             vid, vx, vy = await get_or_create_village(seed, wx, wy, db)
             player.in_village = True
             player.village_id = vid
+            player.village_type = "village"
             player.village_x, player.village_y = vx, vy
             player.village_wx, player.village_wy = wx, wy
-            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
+            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy, village_type="village")
             grid = await load_village_viewport(vid, vx, vy, db, user_id=user_id)
             delivery_msg = await _complete_delivery_quests_for_village(db, user_id, wx, wy)
             _entry_msg = f"You enter the village.{' ' + delivery_msg if delivery_msg else ''}"
@@ -10804,41 +10932,33 @@ async def handle_interact(
                 await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
                 return
 
-        elif tile.structure == "ruins_looted":
-            grid = await load_viewport(wx, wy, seed, db)
+        elif tile.structure in ("ruins_looted", "ruins"):
+            # ── Ruins: enter the ruins interior ────────────────────────────────
+            rid, rex, rey = await get_or_create_ruins(seed, wx, wy, db)
+            player.in_village = True
+            player.village_id = rid
+            player.village_type = "ruins"
+            player.village_x, player.village_y = rex, rey
+            player.village_wx, player.village_wy = wx, wy
+            await update_player_village_state(
+                db, user_id, True, rid, rex, rey, wx, wy, village_type="ruins"
+            )
+            grid = await load_village_viewport(rid, rex, rey, db, user_id=user_id)
             content = render_grid(grid, player,
-                "🏚️ These ruins have already been picked clean.")
-
-        elif tile.structure == "ruins":
-            # ── Ruins: one-time buried loot ────────────────────────────────────
-            rng_r = _random.Random(hash((user_id, wx, wy, seed, "ruins")))
-            gold_found = rng_r.randint(15, 60)
-            _apply_gold_cap(player, gold_found)
-            await update_player_stats(db, user_id, gold=player.gold)
-            await set_tile_override(db, wx, wy, "ruins_looted")
-            extras: list[str] = []
-            if rng_r.random() < 0.45:
-                await add_to_inventory(db, user_id, "map_fragment", 1)
-                extras.append("a map fragment")
-            if rng_r.random() < 0.20:
-                await add_to_inventory(db, user_id, "gem", 1)
-                extras.append("a gem")
-            elif rng_r.random() < 0.35:
-                await add_to_inventory(db, user_id, "iron_ingot", 1)
-                extras.append("an iron ingot")
-            extra_str = (" You also find " + ", ".join(extras) + "!") if extras else ""
-            grid = await load_viewport(wx, wy, seed, db)
-            content = render_grid(grid, player,
-                f"🏚️ You sift through the rubble and find **{gold_found}g**.{extra_str}")
+                "🏚️ You step through the crumbling archway into the ancient ruins.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
 
         elif tile.structure == "harbor":
             # ── Harbor village: enter the harbour village from the overworld ──
             vid, vx, vy, _dk_x, _dk_y = await get_or_create_harbor_village(seed, wx, wy, db)
             player.in_village = True
             player.village_id = vid
+            player.village_type = "village"
             player.village_x, player.village_y = vx, vy
             player.village_wx, player.village_wy = wx, wy
-            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy)
+            await update_player_village_state(db, user_id, True, vid, vx, vy, wx, wy, village_type="village")
             grid = await load_village_viewport(vid, vx, vy, db, user_id=user_id)
             content = render_grid(grid, player,
                 "🚢 You enter the harbour village. Head to the ⚓ dock to set sail.")
@@ -10855,6 +10975,36 @@ async def handle_interact(
                 content = render_grid(grid, player, f"🤲 Picked up: {desc}.")
             else:
                 content = render_grid(grid, player, "🤲 The box is empty.")
+
+        elif terrain in ("nut_tree", "jungle_palm", "conifer"):
+            # ── Shakeable trees: hammer to knock down items ───────────────────
+            if "hammer" in hand_items:
+                import random as _st_rng
+                _tree_drops = {
+                    "nut_tree":    ("chestnut",  (2, 5)),
+                    "jungle_palm": ("coconut",   (1, 3)),
+                    "conifer":     ("pinecone",  (2, 6)),
+                }
+                _drop_item, (_drop_lo, _drop_hi) = _tree_drops[terrain]
+                _drop_qty = _st_rng.randint(_drop_lo, _drop_hi)
+                await add_to_inventory(db, user_id, _drop_item, _drop_qty)
+                grid = await load_viewport(wx, wy, seed, db)
+                from dwarf_explorer.config import ITEM_EMOJI as _ST_IE
+                _st_e = _ST_IE.get(_drop_item, "📦")
+                _tree_msgs = {
+                    "nut_tree":    f"🔨 You strike the trunk. {_st_e} **{_drop_qty}× chestnut** tumble down!",
+                    "jungle_palm": f"🔨 THWACK! {_st_e} **{_drop_qty}× coconut** crash to the ground!",
+                    "conifer":     f"🔨 The tree shakes. {_st_e} **{_drop_qty}× pinecone** rain down!",
+                }
+                content = render_grid(grid, player, _tree_msgs[terrain])
+            else:
+                grid = await load_viewport(wx, wy, seed, db)
+                _tree_desc = {
+                    "nut_tree":    "🌰 A sturdy nut tree, heavy with chestnuts. *(equip a hammer to shake it)*",
+                    "jungle_palm": "🌴 A tall jungle palm with coconuts nestled at the top. *(equip a hammer to knock them down)*",
+                    "conifer":     "🌲 A tall conifer, its branches thick with pinecones. *(equip a hammer to shake it)*",
+                }
+                content = render_grid(grid, player, _tree_desc[terrain])
 
         elif terrain == "path" and "seed" in hand_items:
             # Plant seed → seedling

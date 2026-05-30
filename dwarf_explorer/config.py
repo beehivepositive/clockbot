@@ -61,6 +61,10 @@ TERRAIN_EMOJI = {
     "ancient_tree_top_right":    "\U0001F332",
     "ancient_tree_bottom_left":  "\U0001F332",
     "ancient_tree_bottom_right": "\U0001F332",
+    # Shakeable overworld trees (hammer-interact to knock down items)
+    "nut_tree":     "\U0001F330",   # 🌰 nut tree — plains/grass, shake for chestnuts
+    "jungle_palm":  "\U0001F334",   # 🌴 jungle palm — sand/coastal, shake for coconuts
+    "conifer":      "\U0001F332",   # 🌲 conifer — hills/mountain approach, shake for pinecones
     # Forest Quest zone tiles
     "fq_floor":        "\U0001F7EB",  # 🟫 earthy corridor/chamber floor
     "fq_wall":         "\U0001F333",  # 🌳 dense ancient forest wall
@@ -293,6 +297,10 @@ ITEM_EMOJI = {
     "forest_heart_amulet":   "\U0001F49A",    # 💚 amulet crafted from ent cores (+15 max HP)
     # Bomb system
     "bomb":           "\U0001F4A3",           # 💣 throwable explosive
+    # Shakeable-tree drops
+    "chestnut": "\U0001F330",       # 🌰 from nut_tree (shake with hammer)
+    "coconut":  "\U0001F965",       # 🥥 from jungle_palm (shake with hammer)
+    # pinecone already defined above — reused as drop from conifer
 }
 
 # Maps seed item_id → crop progression for village farmland
@@ -330,6 +338,9 @@ WALKABLE_TILES = {
     "sky_temple_main",   # main portal temple — walkable overworld tile
     "forest_entrance",   # forest entrance — walkable (triggers forest interior load)
     "bandit_camp",       # bandit camp — walkable overworld tile (triggers combat when adjacent)
+    "nut_tree",          # shakeable nut tree — hammer interact for chestnuts
+    "jungle_palm",       # shakeable jungle palm — hammer interact for coconuts
+    "conifer",           # shakeable conifer — hammer interact for pinecones
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
     # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
     "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
@@ -444,7 +455,13 @@ ARENA_EMOJI = {
     "cobweb": "\U0001F578\uFE0F",   # 🕸️
 }
 
-FOOD_HP_RESTORE = {"fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20}
+FOOD_HP_RESTORE = {
+    "fish": 5, "cooked_fish": 15, "bread": 10, "meat_stew": 20,
+    "forest_nut": 3, "roasted_nut": 6,
+    "chestnut": 4,    # gathered by shaking nut_tree
+    "coconut": 6,     # gathered by shaking jungle_palm
+    "baked_potato": 8,
+}
 
 # ── Forest Quest Zone ──────────────────────────────────────────────────────────
 
@@ -1483,6 +1500,30 @@ VILLAGE_EMOJI = {
     "vil_water":        "\U0001F30A",        # 🌊  ocean water at village edge
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
     "drop_box":         "\U0001F4E6",        # 📦  player-dropped items
+    # Interactive village objects
+    "vil_bell_tower":   "\U0001F514",        # 🔔  bell tower (hammer to ring)
+    "vil_merchant_cart":"\U0001F6D2",        # 🛒  merchant cart (hammer to scatter items)
+}
+
+# --- Ruins Interior System ---
+
+RUINS_EMOJI = {
+    "ruin_floor":       "\U00002B1B",        # ⬛  cracked stone floor
+    "ruin_wall":        "\U0001F9F1",        # 🧱  intact stone wall
+    "ruin_rubble":      "\U0001FAA8",        # 🪨  collapsed rubble (walkable)
+    "ruin_grass":       "\U0001F33F",        # 🌿  overgrown grass through cracks
+    "ruin_path":        "\U0001F7EB",        # 🟫  ancient broken path
+    "ruin_bell_tower":  "\U0001F514",        # 🔔  the ruins bell tower (hammer to ring)
+    "ruin_chest":       "\U0001F4E6",        # 📦  half-buried chest
+    "ruin_pond":        "\U0001F4A7",        # 💧  stagnant puddle (impassable)
+    "ruin_pillar":      "\U0001F3DB️",  # 🏛️  collapsed pillar stump (impassable)
+    "ruin_archway":     "\U0001F3DA️",  # 🏚️  ruined archway (walkable)
+    "void":             "⬛",            # ⬛  out of bounds
+}
+
+RUINS_WALKABLE = {
+    "ruin_floor", "ruin_rubble", "ruin_grass", "ruin_path",
+    "ruin_bell_tower", "ruin_chest", "ruin_archway",
 }
 
 # All building interior tiles use BUILDING_EMOJI
@@ -1582,6 +1623,8 @@ VILLAGE_WALKABLE = {
     "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
     "vil_armory",         # enterable armory building
     "drop_box",           # player-dropped items box — walkable, triggers pickup
+    "vil_bell_tower",     # bell tower — walkable, hammer to ring
+    "vil_merchant_cart",  # merchant cart — walkable, hammer to scatter items
     # Note: vil_fence is a solid obstacle (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
 }

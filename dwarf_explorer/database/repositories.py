@@ -123,6 +123,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             village_y=row["village_y"] or 0,
             village_wx=row["village_wx"] or 0,
             village_wy=row["village_wy"] or 0,
+            village_type=row["village_type"] if "village_type" in row.keys() else "village",
             in_house=bool(row["in_house"]),
             house_id=row["house_id"],
             house_x=row["house_x"] or 0,
@@ -465,11 +466,12 @@ async def update_player_village_state(
     in_village: bool, village_id: int | None,
     village_x: int, village_y: int,
     village_wx: int, village_wy: int,
+    village_type: str = "village",
 ) -> None:
     await db.execute(
         "UPDATE players SET in_village = ?, village_id = ?, village_x = ?, village_y = ?, "
-        "village_wx = ?, village_wy = ?, last_active = datetime('now') WHERE user_id = ?",
-        (int(in_village), village_id, village_x, village_y, village_wx, village_wy, user_id),
+        "village_wx = ?, village_wy = ?, village_type = ?, last_active = datetime('now') WHERE user_id = ?",
+        (int(in_village), village_id, village_x, village_y, village_wx, village_wy, village_type, user_id),
     )
 
 

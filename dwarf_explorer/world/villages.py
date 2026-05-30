@@ -25,6 +25,7 @@ _PROTECTED_TILES = {
     "vil_farmland",
     "vil_seeds_wheat", "vil_seeds_carrot", "vil_seeds_potato",
     "vil_crop_wheat", "vil_crop_carrot", "vil_crop_potato",
+    "vil_bell_tower", "vil_merchant_cart",
 }
 
 
@@ -410,6 +411,33 @@ def _generate_village_interior(
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
 
+    # ── Bell tower (always present, placed near center on path) ──────────────
+    for _ in range(300):
+        bx = rng.randint(cx - 8, cx + 8)
+        by = rng.randint(cy - 8, cy + 8)
+        if (bx, by) in occupied or (bx, by) == (cx, cy):
+            continue
+        adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+        if any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
+               for ax, ay in adj):
+            grid[by][bx] = "vil_bell_tower"
+            occupied.add((bx, by))
+            break
+
+    # ── Merchant cart (50% chance, placed near a path tile) ──────────────────
+    if rng.random() < 0.50:
+        for _ in range(300):
+            mx = rng.randint(5, W - 6)
+            my = rng.randint(5, H - 6)
+            if (mx, my) in occupied:
+                continue
+            adj = [(mx + 1, my), (mx - 1, my), (mx, my + 1), (mx, my - 1)]
+            if any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
+                   for ax, ay in adj):
+                grid[my][mx] = "vil_merchant_cart"
+                occupied.add((mx, my))
+                break
+
     # ── Outside NPCs: villagers + guards ─────────────────────────────────────
     # Villagers wander near path/grass tiles
     villager_count = rng.randint(4, 8)
@@ -724,6 +752,19 @@ def _generate_harbor_village_interior(
         if (tx, ty) not in occupied and grid[ty][tx] != "vil_water":
             grid[ty][tx] = "vil_tree"
             occupied.add((tx, ty))
+
+    # ── Bell tower ────────────────────────────────────────────────────────────
+    for _ in range(300):
+        bx = rng.randint(cx - 8, cx + 8)
+        by = rng.randint(cy - 8, cy + 8)
+        if (bx, by) in occupied or grid[by][bx] == "vil_water":
+            continue
+        adj = [(bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)]
+        if any(0 <= ax < W and 0 <= ay < H and grid[ay][ax] == "vil_path"
+               for ax, ay in adj):
+            grid[by][bx] = "vil_bell_tower"
+            occupied.add((bx, by))
+            break
 
     tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
     return W, H, tiles, (entry_x, entry_y), (dock_x, dock_y), buildings
@@ -1462,3 +1503,184 @@ async def load_building_single_tile(
         (house_id, local_x, local_y),
     )
     return TileData(terrain=row["tile_type"] if row else "void", world_x=local_x, world_y=local_y)
+
+
+# ── Ruins Interior Generator ──────────────────────────────────────────────────
+
+_RUINS_SEED_OFFSET = 9000
+
+
+def _generate_ruins_interior(
+    ruins_id: int, seed: int, world_x: int, world_y: int,
+) -> tuple[int, int, list[tuple[int, int, str]], tuple[int, int]]:
+    """Generate a 24×24 ruins interior with crumbled structures and a bell tower.
+
+    Returns (width, height, tiles, entry_pos).
+    Entry is at the south edge centre.
+    """
+    rng = random.Random(seed + _RUINS_SEED_OFFSET + ruins_id + world_x * 997 + world_y * 1009)
+
+    W = H = 24
+    grid: list[list[str]] = [["ruin_grass"] * W for _ in range(H)]
+    occupied: set[tuple[int, int]] = set()
+
+    cx, cy = W // 2, H // 2
+
+    # ── Cracked stone floor patches ──────────────────────────────────────────
+    for _ in range(6):
+        fx = rng.randint(3, W - 6)
+        fy = rng.randint(3, H - 6)
+        fw = rng.randint(3, 7)
+        fh = rng.randint(3, 7)
+        for dx in range(fw):
+            for dy in range(fh):
+                gx, gy = fx + dx, fy + dy
+                if 1 <= gx < W - 1 and 1 <= gy < H - 1:
+                    grid[gy][gx] = "ruin_floor"
+
+    # ── Partial ruined walls (L-shapes / line segments) ──────────────────────
+    for _ in range(rng.randint(4, 7)):
+        wx2 = rng.randint(3, W - 5)
+        wy2 = rng.randint(3, H - 5)
+        length = rng.randint(3, 6)
+        horizontal = rng.random() < 0.5
+        for i in range(length):
+            # Leave random gaps for a ruined feel
+            if rng.random() < 0.25:
+                continue
+            gx = wx2 + (i if horizontal else 0)
+            gy = wy2 + (0 if horizontal else i)
+            if 1 <= gx < W - 1 and 1 <= gy < H - 1 and (gx, gy) not in occupied:
+                grid[gy][gx] = "ruin_wall"
+                occupied.add((gx, gy))
+
+        # Perpendicular stub for L-shape (50% chance)
+        if rng.random() < 0.5:
+            stub_len = rng.randint(2, 4)
+            for i in range(stub_len):
+                if rng.random() < 0.25:
+                    continue
+                gx = wx2 + (length - 1 if horizontal else i)
+                gy = wy2 + (i if horizontal else length - 1)
+                if 1 <= gx < W - 1 and 1 <= gy < H - 1 and (gx, gy) not in occupied:
+                    grid[gy][gx] = "ruin_wall"
+                    occupied.add((gx, gy))
+
+    # ── Rubble clusters ───────────────────────────────────────────────────────
+    for _ in range(rng.randint(5, 9)):
+        rx = rng.randint(2, W - 4)
+        ry = rng.randint(2, H - 4)
+        size = rng.randint(1, 3)
+        for dx in range(size):
+            for dy in range(size):
+                gx, gy = rx + dx, ry + dy
+                if 1 <= gx < W - 1 and 1 <= gy < H - 1 and (gx, gy) not in occupied:
+                    grid[gy][gx] = "ruin_rubble"
+                    occupied.add((gx, gy))
+
+    # ── Stagnant pond ─────────────────────────────────────────────────────────
+    px = rng.choice([2, W - 4])
+    py = rng.choice([2, H - 4])
+    for dx in range(2):
+        for dy in range(2):
+            gx, gy = px + dx, py + dy
+            if 0 <= gx < W and 0 <= gy < H and (gx, gy) not in occupied:
+                grid[gy][gx] = "ruin_pond"
+                occupied.add((gx, gy))
+
+    # ── Collapsed pillars ─────────────────────────────────────────────────────
+    pillar_count = rng.randint(2, 4)
+    for _ in range(80):
+        if pillar_count <= 0:
+            break
+        ppx = rng.randint(3, W - 4)
+        ppy = rng.randint(3, H - 4)
+        if (ppx, ppy) not in occupied:
+            grid[ppy][ppx] = "ruin_pillar"
+            occupied.add((ppx, ppy))
+            pillar_count -= 1
+
+    # ── Bell tower (near north–centre, prominent, on clear floor) ─────────────
+    bell_placed = False
+    for _ in range(200):
+        bx = rng.randint(cx - 5, cx + 5)
+        by = rng.randint(3, cy - 2)
+        if (bx, by) in occupied:
+            continue
+        grid[by][bx] = "ruin_bell_tower"
+        occupied.add((bx, by))
+        bell_placed = True
+        break
+    if not bell_placed:
+        # fallback
+        grid[4][cx] = "ruin_bell_tower"
+        occupied.add((cx, 4))
+
+    # ── Buried chests (1–2) ───────────────────────────────────────────────────
+    chest_count = rng.randint(1, 2)
+    for _ in range(150):
+        if chest_count <= 0:
+            break
+        chx = rng.randint(2, W - 3)
+        chy = rng.randint(2, H - 5)
+        if (chx, chy) in occupied:
+            continue
+        grid[chy][chx] = "ruin_chest"
+        occupied.add((chx, chy))
+        chest_count -= 1
+
+    # ── Ancient archways flanking entry path ──────────────────────────────────
+    for ax_off in [-2, 2]:
+        ax, ay = cx + ax_off, H - 4
+        if 0 <= ax < W and (ax, ay) not in occupied:
+            grid[ay][ax] = "ruin_archway"
+            occupied.add((ax, ay))
+
+    # ── Entry path from south border to interior ──────────────────────────────
+    for path_y in range(H - 3, H - 1):
+        if (cx, path_y) not in occupied:
+            grid[path_y][cx] = "ruin_path"
+
+    entry_x, entry_y = cx, H - 1
+    grid[H - 1][cx] = "ruin_path"   # border entry tile
+
+    tiles = [(x, y, grid[y][x]) for y in range(H) for x in range(W)]
+    return W, H, tiles, (entry_x, entry_y)
+
+
+async def get_or_create_ruins(
+    seed: int, world_x: int, world_y: int, db,
+) -> tuple[int, int, int]:
+    """Return (ruins_village_id, entry_local_x, entry_local_y).
+
+    Ruins share the villages/village_tiles/village_entrances DB tables but are
+    tagged with village_type='ruins' on the players row when entered.
+    """
+    row = await db.fetch_one(
+        "SELECT village_id, entry_x, entry_y FROM village_entrances "
+        "WHERE world_x = ? AND world_y = ?",
+        (world_x, world_y),
+    )
+    if row:
+        return row["village_id"], row["entry_x"], row["entry_y"]
+
+    cursor = await db.execute("INSERT INTO villages (width, height) VALUES (1, 1)")
+    ruins_id = cursor.lastrowid
+
+    W, H, tiles, entry = await asyncio.to_thread(
+        _generate_ruins_interior, ruins_id, seed, world_x, world_y
+    )
+    await db.execute(
+        "UPDATE villages SET width = ?, height = ? WHERE village_id = ?",
+        (W, H, ruins_id),
+    )
+    await db.executemany(
+        "INSERT OR IGNORE INTO village_tiles (village_id, local_x, local_y, tile_type) VALUES (?, ?, ?, ?)",
+        [(ruins_id, lx, ly, tt) for lx, ly, tt in tiles],
+    )
+    await db.execute(
+        "INSERT OR IGNORE INTO village_entrances (village_id, entry_x, entry_y, world_x, world_y) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ruins_id, entry[0], entry[1], world_x, world_y),
+    )
+    return ruins_id, entry[0], entry[1]

@@ -390,6 +390,64 @@ def _generate_structures_sync(
             overrides.append((x, y, 'ruins'))
             found += 1
 
+    # --- Shakeable overworld trees ---
+    # nut_tree: plains/grass, spaced at least 8 tiles from any village
+    _nut_tree_target = rng.randint(15, 25)
+    _nut_trees: list[tuple[int, int]] = []
+    for _ in range(_nut_tree_target * 30):
+        if len(_nut_trees) >= _nut_tree_target:
+            break
+        x = rng.randint(3, WORLD_SIZE - 4)
+        y = rng.randint(3, WORLD_SIZE - 4)
+        if _near_spawn(x, y):
+            continue
+        if get_biome(x, y, seed) not in ("plains", "grass", "forest"):
+            continue
+        if any(abs(x - vx) + abs(y - vy) < 8 for vx, vy in village_centers):
+            continue
+        if any(abs(x - nx) + abs(y - ny) < 6 for nx, ny in _nut_trees):
+            continue
+        overrides.append((x, y, "nut_tree"))
+        _nut_trees.append((x, y))
+
+    # jungle_palm: sand biome (coastal), spaced apart
+    _palm_target = rng.randint(8, 14)
+    _palms: list[tuple[int, int]] = []
+    for _ in range(_palm_target * 40):
+        if len(_palms) >= _palm_target:
+            break
+        x = rng.randint(3, WORLD_SIZE - 4)
+        y = rng.randint(3, WORLD_SIZE - 4)
+        if _near_spawn(x, y):
+            continue
+        if get_biome(x, y, seed) != "sand":
+            continue
+        if any(abs(x - px) + abs(y - py) < 5 for px, py in _palms):
+            continue
+        overrides.append((x, y, "jungle_palm"))
+        _palms.append((x, y))
+
+    # conifer: hills biome (near mountain approaches), spaced apart
+    _conifer_target = rng.randint(12, 20)
+    _conifers: list[tuple[int, int]] = []
+    for _ in range(_conifer_target * 30):
+        if len(_conifers) >= _conifer_target:
+            break
+        x = rng.randint(3, WORLD_SIZE - 4)
+        y = rng.randint(3, WORLD_SIZE - 4)
+        if _near_spawn(x, y):
+            continue
+        biome = get_biome(x, y, seed)
+        if biome not in ("hills", "forest"):
+            continue
+        # Prefer tiles adjacent to mountain
+        if not _is_adjacent_to(x, y, seed, "mountain") and rng.random() < 0.5:
+            continue
+        if any(abs(x - cx2) + abs(y - cy2) < 5 for cx2, cy2 in _conifers):
+            continue
+        overrides.append((x, y, "conifer"))
+        _conifers.append((x, y))
+
     # --- Harbors: 2-3 villages adjacent to the ocean coastline, spaced apart ---
     _ocean_biomes    = {'deep_water', 'shallow_water'}
     _bad_biomes      = {'mountain', 'snow', 'deep_water', 'shallow_water'}

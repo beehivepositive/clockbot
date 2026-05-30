@@ -12,6 +12,7 @@ from dwarf_explorer.config import (
     BANDIT_CAMP_WALKABLE,
     FQ_WALKABLE,
     HERMIT_HUT_WALKABLE,
+    RUINS_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -44,6 +45,7 @@ class Player:
     village_y: int = 0
     village_wx: int = 0
     village_wy: int = 0
+    village_type: str = "village"   # "village" | "ruins" — selects emoji dict
     # Building (house/church/bank/shop) state
     in_house: bool = False
     house_id: int | None = None
@@ -193,6 +195,15 @@ def can_move_village(target_tile: TileData) -> tuple[bool, str]:
         return True, ""   # game_view handles the exit
     if target_tile.terrain not in VILLAGE_WALKABLE:
         return False, "That's in the way."
+    return True, ""
+
+
+def can_move_ruins(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside a ruins interior. void triggers exit."""
+    if target_tile.terrain == "void":
+        return True, ""   # game_view handles the exit
+    if target_tile.terrain not in RUINS_WALKABLE:
+        return False, "Rubble blocks the way."
     return True, ""
 
 

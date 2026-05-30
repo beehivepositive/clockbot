@@ -5,7 +5,7 @@ from dwarf_explorer.config import (
     CAVE_EMOJI, VILLAGE_EMOJI, BUILDING_EMOJI, SHIP_EMOJI, POUCH_SIZES,
     EQUIP_BONUSES, SHIPWRECK_EMOJI, BREATH_MAX, SKY_EMOJI, TEMPLE_EMOJI,
     FOREST_EMOJI, TC_EMOJI, WORLD_SIZE, OCEAN_SIZE,
-    BANDIT_CAMP_EMOJI,
+    BANDIT_CAMP_EMOJI, RUINS_EMOJI,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.game.player import Player
@@ -38,6 +38,8 @@ def _tile_emoji(tile: TileData, location: str = "wilderness") -> str:
         return _GE.get(tile.terrain, _GE.get("grove_wall", "\U0001F333"))
     if location == "bandit_camp":
         return BANDIT_CAMP_EMOJI.get(tile.terrain, _BLACK)
+    if location == "ruins":
+        return RUINS_EMOJI.get(tile.terrain, _BLACK)
     if location == "village":
         return VILLAGE_EMOJI.get(tile.terrain, _BLACK)
     if location in ("house", "church", "bank", "shop", "blacksmith",
@@ -89,7 +91,7 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
     elif player.in_house:
         location = player.house_type  # "house" | "church" | "bank" | "shop"
     elif player.in_village:
-        location = "village"
+        location = getattr(player, "village_type", "village")
     elif getattr(player, "in_hermit_hut", False):
         location = "hermit_hut"
     elif player.in_cave:
