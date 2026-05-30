@@ -1780,7 +1780,7 @@ SHOP_CATALOG = [
         "emoji": "\U0001F528",
         "price": 80,
         "equip_slot": "hand",
-        "description": "Repair ship hull damage tiles. Requires nails + planks.",
+        "description": "+2 attack. Repair ship hulls, ring bell towers, shake trees & carts for loot.",
     },
 ]
 
@@ -1875,6 +1875,7 @@ EQUIP_BONUSES = {
     "ring_of_defense":     {"defense": 5},
     "ring_of_sight":       {},    # 9x9 cave view without torch — handled in cave code
     "ring_of_luck":        {},    # better drops — handled in drop code
+    "hammer":              {"attack": 2},
     "flint_and_steel":     {},
     "bomb":                {},
     "arrow":               {},
