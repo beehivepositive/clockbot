@@ -674,8 +674,17 @@ def render_inventory(
         if item_id == "watering_can":
             stat_parts.append(f"{watering_can_uses}/9")
         stat_str = f" ({', '.join(stat_parts)})" if stat_parts else ""
+        # Equip hint — show slot name so the player knows to press the centre button
+        from dwarf_explorer.config import ITEM_EQUIP_SLOTS as _IES_r
+        _eq_slot = _IES_r.get(item_id)
+        _slot_labels = {
+            "hand": "hand", "head": "head", "chest": "chest",
+            "legs": "legs", "boots": "boots", "accessory": "accessory",
+            "pouch": "pouch", "coin_purse": "coin purse",
+        }
+        _eq_hint = f" · equip → {_slot_labels.get(_eq_slot, _eq_slot)}" if _eq_slot else ""
         lines.append(
-            f"Cursor: **{display_name}** ×{item['quantity']}{stat_str}{sel_marker}"
+            f"Cursor: **{display_name}** ×{item['quantity']}{stat_str}{_eq_hint}{sel_marker}"
         )
     else:
         lines.append("Cursor: *(empty slot)*")

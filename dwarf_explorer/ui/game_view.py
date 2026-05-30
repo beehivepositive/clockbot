@@ -520,7 +520,7 @@ async def _do_resonance_strike(
     affected = _resonance_tiles(px, py, strength, rings)
     viz = _resonance_viz(px, py, affected)
     _strength_labels = {"weak": "💛 Weak", "medium": "🟠 Med", "strong": "🔴 Strong"}
-    header = f"⚒️ **Resonance** · {_strength_labels[strength]} · {'○' * rings}\n{viz}"
+    header = f"🔨 **Resonance** · {_strength_labels[strength]} · {'○' * rings}\n{viz}"
 
     activations: list[str] = []
     for tx, ty in affected:
@@ -12011,7 +12011,7 @@ async def handle_res_strength_cycle(
     affected = _resonance_tiles(player.world_x, player.world_y, strength, rings)
     viz = _resonance_viz(player.world_x, player.world_y, affected)
     _snames = {"weak": "💛 Weak", "medium": "🟠 Medium", "strong": "🔴 Strong"}
-    msg = f"⚒️ Resonance set to **{_snames[strength]}**\n{viz}"
+    msg = f"🔨 Resonance set to **{_snames[strength]}**\n{viz}"
 
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     content = render_grid(grid, player, msg)

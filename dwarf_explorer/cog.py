@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID, WORLD_SIZE
+from dwarf_explorer.config import SPAWN_X, SPAWN_Y, ADMIN_PLAYER_ID, ADMIN_DISCORD_ID, WORLD_SIZE, ITEM_EMOJI as _ITEM_EMOJI
 from dwarf_explorer.database.connection import get_database
 from dwarf_explorer.database.repositories import (
     get_or_create_player, get_or_create_world, update_player_message,
@@ -14,6 +14,7 @@ from dwarf_explorer.database.repositories import (
     is_world_initialized, mark_world_initialized,
     reset_world_seed,
     add_to_inventory,
+    remove_from_inventory,
 )
 from dwarf_explorer.world.generator import load_viewport, init_world, find_walkable_spawn, find_walkable_near, find_village_spawn, find_nearest_village
 from dwarf_explorer.world.villages import load_village_viewport
@@ -970,20 +971,85 @@ class DwarfExplorer(commands.Cog):
         guild_id = interaction.guild.id
         db = await get_database(guild_id)
 
+        # Validate item ID — must exist in the item registry
+        clean_id = item_id.strip()
+        if clean_id not in _ITEM_EMOJI:
+            # Helpful hint if the user used spaces instead of underscores
+            suggested = clean_id.replace(" ", "_")
+            hint = (
+                f" Did you mean `{suggested}`?"
+                if suggested != clean_id and suggested in _ITEM_EMOJI
+                else ""
+            )
+            await interaction.response.send_message(
+                f"❌ Unknown item `{clean_id}`.{hint}\n"
+                f"Item IDs use underscores (e.g. `resonance_hammer`, `iron_sword`).",
+                ephemeral=True,
+            )
+            return
+
         # Ensure admin player exists
         await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
 
-        leftover = await add_to_inventory(db, ADMIN_PLAYER_ID, item_id.strip(), quantity)
+        leftover = await add_to_inventory(db, ADMIN_PLAYER_ID, clean_id, quantity)
 
         if leftover == 0:
             await interaction.response.send_message(
-                f"✅ Added **{quantity}x {item_id}** to the admin inventory.", ephemeral=True
+                f"✅ Added **{quantity}x {clean_id}** to the admin inventory.", ephemeral=True
             )
         else:
             added = quantity - leftover
             await interaction.response.send_message(
-                f"⚠️ Added **{added}x {item_id}** to the admin inventory "
+                f"⚠️ Added **{added}x {clean_id}** to the admin inventory "
                 f"({leftover} could not fit — inventory full).", ephemeral=True
+            )
+
+
+    @app_commands.command(name="take", description="Remove an item from the admin inventory (admin only).")
+    @app_commands.describe(item_id="Item ID to remove (underscores, e.g. resonance_hammer)", quantity="How many to remove (default 1, -1 = all)")
+    async def take(self, interaction: discord.Interaction, item_id: str, quantity: int = 1) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.", ephemeral=True
+            )
+            return
+        if interaction.user.id != ADMIN_DISCORD_ID:
+            await interaction.response.send_message(
+                "Only the admin can use this command.", ephemeral=True
+            )
+            return
+
+        guild_id = interaction.guild.id
+        db = await get_database(guild_id)
+
+        clean_id = item_id.strip()
+
+        # Special case: quantity -1 means remove all
+        if quantity == -1:
+            # Delete all rows of this item regardless of validity
+            await db.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND item_id = ?",
+                (ADMIN_PLAYER_ID, clean_id),
+            )
+            await interaction.response.send_message(
+                f"🗑️ Removed all `{clean_id}` from the admin inventory.", ephemeral=True
+            )
+            return
+
+        if quantity < 1:
+            await interaction.response.send_message(
+                "Quantity must be at least 1 (or -1 to remove all).", ephemeral=True
+            )
+            return
+
+        success = await remove_from_inventory(db, ADMIN_PLAYER_ID, clean_id, quantity)
+        if success:
+            await interaction.response.send_message(
+                f"🗑️ Removed **{quantity}x {clean_id}** from the admin inventory.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Could not remove `{clean_id}` — not enough in inventory.", ephemeral=True
             )
 
 
