@@ -67,7 +67,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 other_players: list[tuple[int, int, str]] | None = None,
                 cursor_pos: tuple[int, int] | None = None,
                 quest_markers: list[tuple[int, int, str]] | None = None,
-                nav_target: tuple[int, int] | None = None) -> str:
+                nav_target: tuple[int, int] | None = None,
+                resonance_tiles: set[tuple[int, int]] | None = None,
+                resonance_indicator: str = "💫") -> str:
     """Render viewport with player at centre, plus status bar.
 
     Viewport size is inferred from the grid dimensions so caves/buildings
@@ -223,6 +225,9 @@ def render_grid(grid: list[list[TileData]], player: Player, status_msg: str = ""
                 elif (cursor_pos and not is_center
                       and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) == cursor_pos):
                     row_emojis.append("\U0001F7E6")  # 🟦 edit cursor
+                elif (resonance_tiles is not None
+                      and (grid[row_y][col_x].world_x, grid[row_y][col_x].world_y) in resonance_tiles):
+                    row_emojis.append(resonance_indicator)
                 else:
                     row_emojis.append(_tile_emoji(grid[row_y][col_x], location=location))
 

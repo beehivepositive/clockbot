@@ -511,16 +511,22 @@ _RESONANCE_SHAKE_LOOT: dict[str, tuple[str, tuple[int, int]]] = {
 
 async def _do_resonance_strike(
     player: "Player", guild_id: int, user_id: int, db, seed: int
-) -> tuple[str, list]:
-    """Fire a resonance wave and collect effects. Returns (message, viewport_grid)."""
+) -> tuple[str, list, set]:
+    """Fire a resonance wave and collect effects.
+
+    Returns (message, viewport_grid, affected_world_coords).
+    The caller should pass affected_world_coords to render_grid as resonance_tiles
+    so the ring pattern is visible in the viewport itself.
+    """
     strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
     rings = getattr(player, "resonance_rings", 2)
     px, py = player.world_x, player.world_y
 
     affected = _resonance_tiles(px, py, strength, rings)
-    viz = _resonance_viz(px, py, affected)
+    affected_set: set[tuple[int, int]] = set(affected)
+
     _strength_labels = {"weak": "💛 Weak", "medium": "🟠 Med", "strong": "🔴 Strong"}
-    header = f"🔨 **Resonance** · {_strength_labels[strength]} · {'○' * rings}\n{viz}"
+    header = f"🔨 **Resonance** · {_strength_labels[strength]} · {'○' * rings}"
 
     activations: list[str] = []
     for tx, ty in affected:
@@ -545,7 +551,7 @@ async def _do_resonance_strike(
     }
     body = "\n".join(activations) if activations else f"*{_no_hit[strength]}*"
     grid = await load_viewport(px, py, seed, db)
-    return header + "\n" + body, grid
+    return header + "\n" + body, grid, affected_set
 
 
 class GameView(discord.ui.View):
@@ -3484,6 +3490,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                         or item == "shovel"  # treasure dig fallback
                         or item == "bomb"       # bomb always enabled when in hand (handler checks for flint_and_steel)
                         or item in ("wayerwood", "attuned_wayerwood")  # always enabled
+                        or item == "resonance_hammer"  # always enabled — strike from any terrain
                     )
 
                 h1_action_enabled = _tool_action_enabled(h1_item)
@@ -3530,17 +3537,13 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             # Has slingshot but not aiming: show Aim button via action2
             action2_label, action2_enabled, action2_id = "🎯 Aim", True, "fq_aim"
 
-    # ── Resonance hammer: strength cycle button + always-on interact ──────────
+    # ── Resonance hammer: strength cycle button on row 2 ─────────────────────
     res_hammer_hand: str | None = None
     if h1_item == "resonance_hammer":
         res_hammer_hand = "h1"
     elif h2_item == "resonance_hammer":
         res_hammer_hand = "h2"
     res_strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
-    # Ensure the center Interact button is lit even on bare tiles
-    if res_hammer_hand is not None and not center_enabled:
-        center_label = "⚒️"
-        center_enabled = True
 
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
@@ -10704,14 +10707,6 @@ async def handle_interact(
         if player.hand_2:
             hand_items.add(player.hand_2)
 
-        # ── Resonance hammer: fires from current position regardless of terrain ─
-        if "resonance_hammer" in hand_items:
-            msg, grid = await _do_resonance_strike(player, guild_id, user_id, db, seed)
-            content = render_grid(grid, player, msg)
-            view = _game_view(guild_id, user_id, player, grid=grid)
-            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
-            return
-
         terrain = tile.terrain
 
         # Treasure map: dig at location if shovel equipped
@@ -11483,6 +11478,15 @@ async def _execute_tool_action(
 ) -> None:
     """Shared tool-on-tile logic for both hand slots."""
     wx, wy = player.world_x, player.world_y
+
+    # ── Resonance hammer — radial ring strike ─────────────────────────────────
+    if tool == "resonance_hammer":
+        msg, grid, affected_set = await _do_resonance_strike(player, guild_id, user_id, db, seed)
+        content = render_grid(grid, player, msg, resonance_tiles=affected_set)
+        view = _game_view(guild_id, user_id, player, grid=grid)
+        await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+        return
+
     tile = await load_single_tile(wx, wy, seed, db)
     terrain = tile.terrain
     grid = None
@@ -12009,12 +12013,14 @@ async def handle_res_strength_cycle(
     strength = state["res_strength"]
     rings = getattr(player, "resonance_rings", 2)
     affected = _resonance_tiles(player.world_x, player.world_y, strength, rings)
-    viz = _resonance_viz(player.world_x, player.world_y, affected)
+    affected_set: set[tuple[int, int]] = set(affected)
     _snames = {"weak": "💛 Weak", "medium": "🟠 Medium", "strong": "🔴 Strong"}
-    msg = f"🔨 Resonance set to **{_snames[strength]}**\n{viz}"
+    msg = f"🔨 Resonance → **{_snames[strength]}** (preview — press 🔨 to strike)"
 
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
-    content = render_grid(grid, player, msg)
+    # 🔵 = preview dots; not yet struck
+    content = render_grid(grid, player, msg,
+                          resonance_tiles=affected_set, resonance_indicator="🔵")
     view = _game_view(guild_id, user_id, player, grid=grid)
     await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
