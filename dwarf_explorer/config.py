@@ -1910,9 +1910,31 @@ COIN_PURSE_CAPACITY: dict[str | None, int] = {
 # Maximum stack size per inventory slot
 MAX_STACK_SIZE = 9
 
-# Resonance hammer strike patterns: step = interval in clockwise ring traversal
-# weak = every 2nd tile (dense), medium = every 3rd, strong = every 4th (precise)
-RESONANCE_STEPS: dict[str, int] = {"weak": 2, "medium": 3, "strong": 4}
+# Resonance hammer strike patterns: named spatial patterns as (dx, dy) offset lists.
+# Offsets are relative to the player position; positive y = south.
+RESONANCE_PATTERNS: dict[str, list[tuple[int, int]]] = {
+    # X-cross: diagonal arms radiating 2 tiles out
+    "x": [
+        (-2, -2), (2, -2),
+        (-1, -1), (1, -1),
+        (-1,  1), (1,  1),
+        (-2,  2), (2,  2),
+    ],
+    # Checkerboard: alternating tiles filling the 5×5 area
+    "checker": [
+        (-1, -2), (1, -2),
+        (-2, -1), (0, -1), (2, -1),
+        (-1,  0), (1,  0),
+        (-2,  1), (0,  1), (2,  1),
+        (-1,  2), (1,  2),
+    ],
+    # Square ring: all 8 immediate neighbours (Chebyshev distance 1)
+    "square": [
+        (-1, -1), (0, -1), (1, -1),
+        (-1,  0),           (1,  0),
+        (-1,  1), (0,  1), (1,  1),
+    ],
+}
 
 # Cave random encounter rates per step: {enemy_type: chance 0-1}
 CAVE_ENCOUNTER_RATES = {

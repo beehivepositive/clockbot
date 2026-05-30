@@ -458,47 +458,11 @@ def _custom_id(guild_id: int, user_id: int, action: str) -> str:
 
 # ── Resonance hammer helpers ──────────────────────────────────────────────────
 
-def _chebyshev_ring_cw(r: int) -> list[tuple[int, int]]:
-    """All tiles at Chebyshev distance r, ordered clockwise starting from North."""
-    tiles = [
-        (dx, dy)
-        for dx in range(-r, r + 1)
-        for dy in range(-r, r + 1)
-        if max(abs(dx), abs(dy)) == r
-    ]
-    # Sort by angle clockwise from North: atan2(dx, -dy) wraps 0 → 2π
-    tiles.sort(key=lambda p: _math.atan2(p[0], -p[1]) % (_math.pi * 2))
-    return tiles
-
-
-def _resonance_tiles(px: int, py: int, strength: str, rings: int = 2) -> list[tuple[int, int]]:
+def _resonance_tiles(px: int, py: int, pattern: str) -> list[tuple[int, int]]:
     """World-space positions hit by a resonance strike at (px, py)."""
-    from dwarf_explorer.config import RESONANCE_STEPS
-    step = RESONANCE_STEPS[strength]
-    result: list[tuple[int, int]] = []
-    for r in range(1, rings + 1):
-        ring = _chebyshev_ring_cw(r)
-        for i in range(0, len(ring), step):
-            dx, dy = ring[i]
-            result.append((px + dx, py + dy))
-    return result
-
-
-def _resonance_viz(px: int, py: int, affected: list[tuple[int, int]]) -> str:
-    """5×5 emoji grid showing the resonance pattern centred on the player."""
-    aff = set(affected)
-    rows: list[str] = []
-    for dy in range(-2, 3):
-        row = ""
-        for dx in range(-2, 3):
-            if dx == 0 and dy == 0:
-                row += "👤"
-            elif (px + dx, py + dy) in aff:
-                row += "🌀"
-            else:
-                row += "⬛"
-        rows.append(row)
-    return "\n".join(rows)
+    from dwarf_explorer.config import RESONANCE_PATTERNS
+    offsets = RESONANCE_PATTERNS.get(pattern, RESONANCE_PATTERNS["x"])
+    return [(px + dx, py + dy) for dx, dy in offsets]
 
 
 # Shakeable tiles that the resonance hammer activates
@@ -518,15 +482,14 @@ async def _do_resonance_strike(
     The caller should pass affected_world_coords to render_grid as resonance_tiles
     so the ring pattern is visible in the viewport itself.
     """
-    strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
-    rings = getattr(player, "resonance_rings", 2)
+    pattern = _ui_state.get(user_id, {}).get("res_pattern", "x")
     px, py = player.world_x, player.world_y
 
-    affected = _resonance_tiles(px, py, strength, rings)
+    affected = _resonance_tiles(px, py, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
 
-    _strength_labels = {"weak": "💛 Weak", "medium": "🟠 Med", "strong": "🔴 Strong"}
-    header = f"🔨 **Resonance** · {_strength_labels[strength]} · {'○' * rings}"
+    _pattern_labels = {"x": "✕ Cross", "checker": "⬜ Checker", "square": "□ Ring"}
+    header = f"🔨 **Resonance** · {_pattern_labels.get(pattern, pattern)}"
 
     activations: list[str] = []
     for tx, ty in affected:
@@ -545,11 +508,11 @@ async def _do_resonance_strike(
             )
 
     _no_hit = {
-        "weak":   "The vibrations ripple out and fade harmlessly.",
-        "medium": "The resonance hums through the ground, finding nothing.",
-        "strong": "A focused pulse rolls outward... nothing answers.",
+        "x":       "The diagonal vibrations ripple out and fade harmlessly.",
+        "checker": "The resonance hums across the ground, finding nothing.",
+        "square":  "A tight pulse rolls outward from your feet... nothing answers.",
     }
-    body = "\n".join(activations) if activations else f"*{_no_hit[strength]}*"
+    body = "\n".join(activations) if activations else f"*{_no_hit.get(pattern, 'The resonance fades harmlessly.')}*"
     grid = await load_viewport(px, py, seed, db)
     return header + "\n" + body, grid, affected_set
 
@@ -588,7 +551,7 @@ class GameView(discord.ui.View):
                  canoe_dirs: frozenset[str] = frozenset(),
                  chop_dirs: frozenset[str] = frozenset(),
                  res_hammer_hand: str | None = None,
-                 res_strength: str = "weak"):
+                 res_pattern: str = "x"):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -602,7 +565,7 @@ class GameView(discord.ui.View):
                             action2_label, action2_enabled, action2_id,
                             interact2_label, interact2_enabled,
                             h1_item, h2_item, h1_action_enabled, h2_action_enabled,
-                            res_hammer_hand, res_strength)
+                            res_hammer_hand, res_pattern)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -654,7 +617,7 @@ class GameView(discord.ui.View):
                        h1_action_enabled: bool = False,
                        h2_action_enabled: bool = False,
                        res_hammer_hand: str | None = None,
-                       res_strength: str = "weak",
+                       res_pattern: str = "x",
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -917,9 +880,9 @@ class GameView(discord.ui.View):
             row=0,
         )
 
-        # ── Resonance strength cycle button (row 2, aligned below h1 or h2) ───
-        _res_labels = {"weak": "💛W", "medium": "🟠M", "strong": "🔴S"}
-        _res_label_v = _res_labels.get(res_strength, "💛W")
+        # ── Resonance pattern cycle button (row 2, aligned below h1 or h2) ───
+        _res_labels = {"x": "✕ X", "checker": "⬜ Ch", "square": "□ Sq"}
+        _res_label_v = _res_labels.get(res_pattern, "✕ X")
         if res_hammer_hand == "h1":
             # Position 3 of row 2 (directly below h1 in row 1)
             _res_sp_btn: discord.ui.Button | None = None
@@ -3543,7 +3506,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
         res_hammer_hand = "h1"
     elif h2_item == "resonance_hammer":
         res_hammer_hand = "h2"
-    res_strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
+    res_pattern = _ui_state.get(user_id, {}).get("res_pattern", "x")
 
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
@@ -3571,7 +3534,7 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     canoe_dirs=canoe_dirs,
                     chop_dirs=chop_dirs,
                     res_hammer_hand=res_hammer_hand,
-                    res_strength=res_strength)
+                    res_pattern=res_pattern)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -12000,22 +11963,21 @@ async def handle_use_hand2(
 async def handle_res_strength_cycle(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Cycle the resonance hammer strike strength: weak → medium → strong → weak."""
-    _cycle = ("weak", "medium", "strong")
+    """Cycle the resonance hammer strike pattern: x → checker → square → x."""
+    _cycle = ("x", "checker", "square")
     state = _ui_state.setdefault(user_id, {})
-    cur = state.get("res_strength", "weak")
-    state["res_strength"] = _cycle[(_cycle.index(cur) + 1) % len(_cycle)]
+    cur = state.get("res_pattern", "x")
+    state["res_pattern"] = _cycle[(_cycle.index(cur) + 1) % len(_cycle)]
 
     db = await get_database(guild_id)
     seed = await get_or_create_world(db, guild_id)
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
-    strength = state["res_strength"]
-    rings = getattr(player, "resonance_rings", 2)
-    affected = _resonance_tiles(player.world_x, player.world_y, strength, rings)
+    pattern = state["res_pattern"]
+    affected = _resonance_tiles(player.world_x, player.world_y, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
-    _snames = {"weak": "💛 Weak", "medium": "🟠 Medium", "strong": "🔴 Strong"}
-    msg = f"🔨 Resonance → **{_snames[strength]}** (preview — press 🔨 to strike)"
+    _snames = {"x": "✕ Cross", "checker": "⬜ Checker", "square": "□ Ring"}
+    msg = f"🔨 Resonance → **{_snames.get(pattern, pattern)}** (preview — press 🔨 to strike)"
 
     grid = await load_viewport(player.world_x, player.world_y, seed, db)
     # 🔵 = preview dots; not yet struck
