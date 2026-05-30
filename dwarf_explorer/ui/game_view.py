@@ -483,20 +483,33 @@ async def _do_resonance_strike(
     so the ring pattern is visible in the viewport itself.
     """
     pattern = _ui_state.get(user_id, {}).get("res_pattern", "x")
-    px, py = player.world_x, player.world_y
+
+    # When inside a village/ruins, operate on interior coordinates
+    in_interior = getattr(player, "in_village", False)
+    if in_interior:
+        px, py = player.village_x, player.village_y
+    else:
+        px, py = player.world_x, player.world_y
 
     affected = _resonance_tiles(px, py, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
 
-    _pattern_labels = {"x": "✕ Cross", "checker": "⬜ Checker", "square": "□ Ring"}
+    _pattern_labels = {"x": "✕ Cross", "halo": "○ Halo", "square": "□ Ring"}
     header = f"🔨 **Resonance** · {_pattern_labels.get(pattern, pattern)}"
 
     activations: list[str] = []
+    bell_rung_terrain: str | None = None
+
     for tx, ty in affected:
-        if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
-            continue
-        tile = await load_single_tile(tx, ty, seed, db)
+        if in_interior:
+            tile = await load_village_single_tile(player.village_id, tx, ty, db)
+        else:
+            if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
+                continue
+            tile = await load_single_tile(tx, ty, seed, db)
+
         terrain = tile.structure or tile.terrain
+
         if terrain in _RESONANCE_SHAKE_LOOT:
             item_id, (lo, hi) = _RESONANCE_SHAKE_LOOT[terrain]
             qty = _random.randint(lo, hi)
@@ -507,13 +520,46 @@ async def _do_resonance_strike(
                 f"{emj} **{terrain.replace('_', ' ').title()}** shakes — {qty}× {item_id.replace('_', ' ')}!"
             )
 
+        if terrain in ("vil_bell_tower", "ruin_bell_tower") and not bell_rung_terrain:
+            bell_rung_terrain = terrain
+
+    # Bell ringing from resonance wave
+    if bell_rung_terrain:
+        import random as _rb_rng2
+        if bell_rung_terrain == "ruin_bell_tower":
+            _ruin_outcomes = [
+                "A flock of startled crows erupts from the tower, blotting out the sky.",
+                "Dust cascades from the cracked stone. Somewhere deeper in the ruins, something stirs.",
+                "The resonance lingers for several seconds. You feel the vibration in your chest.",
+                "Far off, a wolf howls in response. The sound echoes through the broken archways.",
+                "Ancient carvings on the tower glow faintly, then fade.",
+            ]
+            activations.append(f"🔔 **BONG!** The resonance strikes the bell!\n*{_rb_rng2.choice(_ruin_outcomes)}*")
+        else:
+            _vil_reactions = [
+                "\"OI! Keep it down up there!\"",
+                "\"SOME of us are trying to sleep!\"",
+                "\"Not AGAIN. Who gave the traveller a hammer?\"",
+                "\"That's the third time this week!\"",
+                "\"My goat stopped giving milk after that. I'm blaming you.\"",
+            ]
+            activations.append(
+                f"🔔 **BONG!** The resonance wave strikes the bell!\n*A nearby villager shouts: {_rb_rng2.choice(_vil_reactions)}*"
+            )
+
     _no_hit = {
-        "x":       "The diagonal vibrations ripple out and fade harmlessly.",
-        "checker": "The resonance hums across the ground, finding nothing.",
-        "square":  "A tight pulse rolls outward from your feet... nothing answers.",
+        "x":      "The diagonal vibrations ripple out and fade harmlessly.",
+        "halo":   "The resonance arcs outward, finding nothing.",
+        "square": "A tight pulse rolls outward from your feet... nothing answers.",
     }
     body = "\n".join(activations) if activations else f"*{_no_hit.get(pattern, 'The resonance fades harmlessly.')}*"
-    grid = await load_viewport(px, py, seed, db)
+
+    # Load the correct viewport (interior vs world)
+    if in_interior:
+        grid = await load_village_viewport(player.village_id, px, py, db, user_id=user_id)
+    else:
+        grid = await load_viewport(px, py, seed, db)
+
     return header + "\n" + body, grid, affected_set
 
 
@@ -872,16 +918,9 @@ class GameView(discord.ui.View):
                 row=3,
             )
 
-        # ── Temp: cutscene test button (remove before final ship) ────────────
-        cutscene_test_btn = discord.ui.Button(
-            style=discord.ButtonStyle.danger,
-            label="🌋",
-            custom_id=_custom_id(self.guild_id, self.user_id, "cutscene_test"),
-            row=0,
-        )
 
         # ── Resonance pattern cycle button (row 2, aligned below h1 or h2) ───
-        _res_labels = {"x": "✕ X", "checker": "⬜ Ch", "square": "□ Sq"}
+        _res_labels = {"x": "✕ X", "halo": "○ Ha", "square": "□ Sq"}
         _res_label_v = _res_labels.get(res_pattern, "✕ X")
         if res_hammer_hand == "h1":
             # Position 3 of row 2 (directly below h1 in row 1)
@@ -914,7 +953,6 @@ class GameView(discord.ui.View):
         row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
-        row0.append(cutscene_test_btn)
         for btn in [
             *row0,                                          # row 0
             sp1_btn, up_btn, action_btn, h1_btn, h2_btn,   # row 1
@@ -8772,24 +8810,19 @@ async def handle_interact(
 
         # ── Ruins interior interactions ───────────────────────────────────────
         if _vt == "ruins":
-            _hand_items_ri = {player.hand_1, player.hand_2} - {None}
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
             if vtile.terrain == "ruin_bell_tower":
-                if "hammer" in _hand_items_ri:
-                    import random as _rb_rng
-                    _bell_outcomes = [
-                        "A flock of startled crows erupts from the tower, blotting out the sky.",
-                        "Dust cascades from the cracked stone. Somewhere deeper in the ruins, something stirs.",
-                        "The resonance lingers for several seconds. You feel the vibration in your chest.",
-                        "Far off, a wolf howls in response. The sound echoes through the broken archways.",
-                        "Ancient carvings on the tower glow faintly, then fade.",
-                    ]
-                    _bell_msg = _rb_rng.choice(_bell_outcomes)
-                    content = render_grid(grid, player,
-                        f"🔔 **BONG!** The old bell sings out across the ruins.\n*{_bell_msg}*")
-                else:
-                    content = render_grid(grid, player,
-                        "🔔 A cracked bell tower. The bronze bell is within reach. *(equip a hammer to ring it)*")
+                import random as _rb_rng
+                _bell_outcomes = [
+                    "A flock of startled crows erupts from the tower, blotting out the sky.",
+                    "Dust cascades from the cracked stone. Somewhere deeper in the ruins, something stirs.",
+                    "The resonance lingers for several seconds. You feel the vibration in your chest.",
+                    "Far off, a wolf howls in response. The sound echoes through the broken archways.",
+                    "Ancient carvings on the tower glow faintly, then fade.",
+                ]
+                _bell_msg = _rb_rng.choice(_bell_outcomes)
+                content = render_grid(grid, player,
+                    f"🔔 **BONG!** The old bell sings out across the ruins.\n*{_bell_msg}*")
             elif vtile.terrain == "ruin_chest":
                 _rc_seed = _random.Random(hash((player.village_id, player.village_x, player.village_y)))
                 # Use player_village_overrides to track looted state
@@ -8866,23 +8899,18 @@ async def handle_interact(
 
         elif vtile.terrain == "vil_bell_tower":
             # ── Village bell tower: ring for flavor ──────────────────────────
-            _hand_items_vbt = {player.hand_1, player.hand_2} - {None}
             grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
-            if "hammer" in _hand_items_vbt:
-                _vbt_reactions = [
-                    "\"OI! Keep it down up there!\"",
-                    "\"SOME of us are trying to sleep!\"",
-                    "\"Not AGAIN. Who gave the traveller a hammer?\"",
-                    "\"That's the third time this week!\"",
-                    "\"My goat stopped giving milk after that. I'm blaming you.\"",
-                ]
-                import random as _vbt_rng
-                _complaint = _vbt_rng.choice(_vbt_reactions)
-                content = render_grid(grid, player,
-                    f"🔔 **BONG!** The bell rings out across the village.\n*A nearby villager shouts: {_complaint}*")
-            else:
-                content = render_grid(grid, player,
-                    "🔔 The old bell tower looms above. *(equip a hammer to ring it)*")
+            import random as _vbt_rng
+            _vbt_reactions = [
+                "\"OI! Keep it down up there!\"",
+                "\"SOME of us are trying to sleep!\"",
+                "\"Not AGAIN. Who gave the traveller a hammer?\"",
+                "\"That's the third time this week!\"",
+                "\"My goat stopped giving milk after that. I'm blaming you.\"",
+            ]
+            _complaint = _vbt_rng.choice(_vbt_reactions)
+            content = render_grid(grid, player,
+                f"🔔 **BONG!** The bell rings out across the village.\n*A nearby villager shouts: {_complaint}*")
 
         elif vtile.terrain == "vil_merchant_cart":
             # ── Merchant cart: hammer to scatter loose items ──────────────────
@@ -11963,8 +11991,8 @@ async def handle_use_hand2(
 async def handle_res_strength_cycle(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Cycle the resonance hammer strike pattern: x → checker → square → x."""
-    _cycle = ("x", "checker", "square")
+    """Cycle the resonance hammer strike pattern: x → halo → square → x."""
+    _cycle = ("x", "halo", "square")
     state = _ui_state.setdefault(user_id, {})
     cur = state.get("res_pattern", "x")
     state["res_pattern"] = _cycle[(_cycle.index(cur) + 1) % len(_cycle)]
@@ -11974,12 +12002,23 @@ async def handle_res_strength_cycle(
     player = await get_or_create_player(db, user_id, interaction.user.display_name)
 
     pattern = state["res_pattern"]
-    affected = _resonance_tiles(player.world_x, player.world_y, pattern)
+
+    in_interior = getattr(player, "in_village", False)
+    if in_interior:
+        px, py = player.village_x, player.village_y
+    else:
+        px, py = player.world_x, player.world_y
+
+    affected = _resonance_tiles(px, py, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
-    _snames = {"x": "✕ Cross", "checker": "⬜ Checker", "square": "□ Ring"}
+    _snames = {"x": "✕ Cross", "halo": "○ Halo", "square": "□ Ring"}
     msg = f"🔨 Resonance → **{_snames.get(pattern, pattern)}** (preview — press 🔨 to strike)"
 
-    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    if in_interior:
+        grid = await load_village_viewport(player.village_id, px, py, db, user_id=user_id)
+    else:
+        grid = await load_viewport(px, py, seed, db)
+
     # 🔵 = preview dots; not yet struck
     content = render_grid(grid, player, msg,
                           resonance_tiles=affected_set, resonance_indicator="🔵")

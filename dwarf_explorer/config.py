@@ -1506,7 +1506,7 @@ VILLAGE_EMOJI = {
     "vil_dock":         "\u2693",            # ⚓  dock / boarding point
     "drop_box":         "\U0001F4E6",        # 📦  player-dropped items
     # Interactive village objects
-    "vil_bell_tower":   "\U0001F514",        # 🔔  bell tower (hammer to ring)
+    "vil_bell_tower":   "\U0001F514",        # 🔔  bell tower (interact or resonance to ring)
     "vil_merchant_cart":"\U0001F6D2",        # 🛒  merchant cart (hammer to scatter items)
 }
 
@@ -1628,7 +1628,7 @@ VILLAGE_WALKABLE = {
     "vil_puzzle_board",   # puzzle board — walkable, triggers puzzle UI
     "vil_armory",         # enterable armory building
     "drop_box",           # player-dropped items box — walkable, triggers pickup
-    "vil_bell_tower",     # bell tower — walkable, hammer to ring
+    "vil_bell_tower",     # bell tower — walkable, interact or resonance to ring
     "vil_merchant_cart",  # merchant cart — walkable, hammer to scatter items
     # Note: vil_fence is a solid obstacle (not walkable)
     # Note: "vil_water" is intentionally absent — impassable harbour water
@@ -1920,12 +1920,11 @@ RESONANCE_PATTERNS: dict[str, list[tuple[int, int]]] = {
         (-1,  1), (1,  1),
         (-2,  2), (2,  2),
     ],
-    # Checkerboard: alternating tiles filling the 5×5 area
-    "checker": [
+    # Halo: 8 points forming a rough circle at radius 2 (between-diagonal positions)
+    "halo": [
         (-1, -2), (1, -2),
-        (-2, -1), (0, -1), (2, -1),
-        (-1,  0), (1,  0),
-        (-2,  1), (0,  1), (2,  1),
+        (-2, -1),           (2, -1),
+        (-2,  1),           (2,  1),
         (-1,  2), (1,  2),
     ],
     # Square ring: all 8 immediate neighbours (Chebyshev distance 1)
