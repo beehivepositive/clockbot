@@ -1,12 +1,12 @@
-﻿CHUNK_SIZE = 7
-WORLD_CHUNKS = 64
-WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 448
+﻿CHUNK_SIZE = 5
+WORLD_CHUNKS = 100
+WORLD_SIZE = CHUNK_SIZE * WORLD_CHUNKS  # 500
 
 VIEWPORT_SIZE = 9
 VIEWPORT_CENTER = 4  # 0-indexed center of 9x9 grid
 
 
-SPAWN_X = WORLD_SIZE // 2  # 112
+SPAWN_X = WORLD_SIZE // 2  # 250
 SPAWN_Y = WORLD_SIZE // 2
 
 # Admin account — persists across /newworld resets.
@@ -1994,7 +1994,7 @@ ITEM_SELL_PRICES = {
 
 # --- World Map Image ---
 
-MAP_PIXEL_SCALE = 3  # Each tile = 3x3 pixels → 672x672 image
+MAP_PIXEL_SCALE = 3  # Each tile = 3x3 pixels → 1500x1500 image
 
 TILE_COLORS = {
     "deep_water": (20, 50, 120),

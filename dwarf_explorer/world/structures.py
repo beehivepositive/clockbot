@@ -395,7 +395,7 @@ def _generate_structures_sync(
     _bad_biomes      = {'mountain', 'snow', 'deep_water', 'shallow_water'}
     ocean_edge, coast_boundary = get_coast_boundary(seed)
     _HARBOR_TARGET   = rng.randint(3, 5)
-    _HARBOR_MIN_SEP  = 60   # 5 harbors × 60 = 300 tiles — fits comfortably on 448-tile coast
+    _HARBOR_MIN_SEP  = 60   # 5 harbors × 60 = 300 tiles — fits comfortably on 500-tile coast
     harbor_positions: list[tuple[int, int]] = []
 
     def _coast_index(hx: int, hy: int) -> int:
