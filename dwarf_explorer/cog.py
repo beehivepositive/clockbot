@@ -516,6 +516,7 @@ class DwarfExplorer(commands.Cog):
             return
 
         guild_id = interaction.guild.id
+        await interaction.response.defer()
         db = await get_database(guild_id)
         seed = await get_or_create_world(db, guild_id)
 
@@ -535,7 +536,7 @@ class DwarfExplorer(commands.Cog):
         grid = await _player_grid(player, seed, db)
         content = render_grid(grid, player)
         view = GameView(guild_id, ADMIN_PLAYER_ID)
-        await interaction.response.send_message(embed=discord.Embed(description=content), view=view)
+        await interaction.followup.send(embed=discord.Embed(description=content), view=view)
 
         msg = await interaction.original_response()
         await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
@@ -581,7 +582,7 @@ class DwarfExplorer(commands.Cog):
         )
         hx, hy = nearest["world_x"], nearest["world_y"]
 
-        # Clear any in-cave/village/house/ocean state
+        # Clear any in-cave/village/house/ocean/forest-quest state
         player.in_cave = False
         player.in_village = False
         player.in_house = False
@@ -589,6 +590,9 @@ class DwarfExplorer(commands.Cog):
         player.in_high_seas = False
         player.in_island = False
         player.in_ship = False
+        player.in_forest = False
+        player.in_forest_quest = False
+        player.in_fq_boss_combat = False
         player.world_x, player.world_y = hx, hy
         await update_player_stats(
             db, ADMIN_PLAYER_ID,
@@ -597,6 +601,7 @@ class DwarfExplorer(commands.Cog):
             in_village=0, village_id=None,
             in_house=0, house_id=None,
             in_ocean=0, in_high_seas=0, in_island=0, in_ship=0,
+            in_forest=0, in_forest_quest=0, in_fq_boss_combat=0,
         )
 
         grid = await load_viewport(hx, hy, seed, db)

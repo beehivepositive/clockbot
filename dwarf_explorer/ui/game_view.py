@@ -4322,19 +4322,29 @@ async def _move_steps(
                 "The ancient trees seem to welcome you… but the path ahead is not yet revealed.*")
             return content, _game_view(guild_id, user_id, player, grid=fq_grid_ge)
 
-        # ── North gate: once inside the chamber you can't retreat ────────────
+        # ── North gate: fleeing the chamber resets the Thornwarden ─────────
+        _warden_reset = False
         if ny_fq < _FQ_BCY0 and player.fq_y >= _FQ_BCY0:
             _wdef_ng = await _gwdef(db, fq_id)
-            if not _wdef_ng:
-                _bst_ng = ({"eyes": player.fq_boss_eyes,
-                            "warn_eye": _warn_eye_mv, "open_eye": _open_eye_mv}
-                           if getattr(player, "in_fq_boss_combat", False) else None)
-                fq_grid_ng = await _lfqv(fq_id, player.fq_x, player.fq_y, db,
-                                         boss_state=_bst_ng)
-                return (render_grid(fq_grid_ng, player,
-                        "🌿 Thorned vines seal the way back. "
-                        "Defeat the Thornwarden to leave the chamber."),
-                        _game_view(guild_id, user_id, player, grid=fq_grid_ng))
+            if not _wdef_ng and getattr(player, "in_fq_boss_combat", False):
+                # Restore any eye tiles destroyed mid-fight
+                for _eye_name, (_ex, _ey) in _FQ_WEP.items():
+                    await db.execute(
+                        "UPDATE forest_quest_tiles SET tile_type=? "
+                        "WHERE fq_id=? AND local_x=? AND local_y=? AND tile_type='fq_warden_dead'",
+                        (f"fq_warden_eye_{_eye_name.lower()}", fq_id, _ex, _ey),
+                    )
+                player.in_fq_boss_combat = False
+                player.fq_boss_eyes = "1111"
+                player.fq_boss_eye_idx = 0
+                player.fq_boss_aim_mode = False
+                await db.execute(
+                    "UPDATE players SET in_fq_boss_combat=0, fq_boss_eyes='1111', "
+                    "fq_boss_eye_idx=0, fq_boss_aim_mode=0 WHERE user_id=?",
+                    (user_id,),
+                )
+                _warden_reset = True
+                # fall through — player may leave the chamber
 
         # ── Boss door (locked) ─────────────────────────────────────────────
         if target_fq.terrain == "fq_boss_door":
@@ -4537,7 +4547,10 @@ async def _move_steps(
 
         # Reset Sokoban logs when player re-enters the puzzle chamber
         _extra_fq_msg = ""
-        if _entering_chamber:
+        if _warden_reset:
+            _extra_fq_msg = ("🌿 *You flee the Thornwarden's chamber. "
+                             "The ancient creature sinks back into shadow...*\n")
+        elif _entering_chamber:
             await _rfql(db, fq_id)
             _extra_fq_msg = ("🌿 *You step into the ancient hollow. "
                              "The chamber hums and the logs roll back to their resting places…*\n")
