@@ -220,7 +220,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             has_sky_crystal=bool(row["has_sky_crystal"]) if "has_sky_crystal" in cols else False,
             watering_can_uses=int(row["watering_can_uses"]) if "watering_can_uses" in cols else 0,
             # Forest Quest zone state
-            in_forest_quest=bool(row["in_forest_quest"]) if "in_forest_quest" in cols else False,
+            in_forest_quest=bool(int(row["in_forest_quest"] or 0)) if "in_forest_quest" in cols else False,
             fq_area_id=row["fq_area_id"] if "fq_area_id" in cols else None,
             fq_x=row["fq_x"] if "fq_x" in cols else 0,
             fq_y=row["fq_y"] if "fq_y" in cols else 0,
