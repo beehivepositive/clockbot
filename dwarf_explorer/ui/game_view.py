@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import math as _math
 import re as _re
 import random as _random
 from datetime import datetime, timedelta
@@ -455,6 +456,98 @@ def _custom_id(guild_id: int, user_id: int, action: str) -> str:
     return f"dex:{guild_id}:{user_id}:{action}"
 
 
+# ── Resonance hammer helpers ──────────────────────────────────────────────────
+
+def _chebyshev_ring_cw(r: int) -> list[tuple[int, int]]:
+    """All tiles at Chebyshev distance r, ordered clockwise starting from North."""
+    tiles = [
+        (dx, dy)
+        for dx in range(-r, r + 1)
+        for dy in range(-r, r + 1)
+        if max(abs(dx), abs(dy)) == r
+    ]
+    # Sort by angle clockwise from North: atan2(dx, -dy) wraps 0 → 2π
+    tiles.sort(key=lambda p: _math.atan2(p[0], -p[1]) % (_math.pi * 2))
+    return tiles
+
+
+def _resonance_tiles(px: int, py: int, strength: str, rings: int = 2) -> list[tuple[int, int]]:
+    """World-space positions hit by a resonance strike at (px, py)."""
+    from dwarf_explorer.config import RESONANCE_STEPS
+    step = RESONANCE_STEPS[strength]
+    result: list[tuple[int, int]] = []
+    for r in range(1, rings + 1):
+        ring = _chebyshev_ring_cw(r)
+        for i in range(0, len(ring), step):
+            dx, dy = ring[i]
+            result.append((px + dx, py + dy))
+    return result
+
+
+def _resonance_viz(px: int, py: int, affected: list[tuple[int, int]]) -> str:
+    """5×5 emoji grid showing the resonance pattern centred on the player."""
+    aff = set(affected)
+    rows: list[str] = []
+    for dy in range(-2, 3):
+        row = ""
+        for dx in range(-2, 3):
+            if dx == 0 and dy == 0:
+                row += "👤"
+            elif (px + dx, py + dy) in aff:
+                row += "🌀"
+            else:
+                row += "⬛"
+        rows.append(row)
+    return "\n".join(rows)
+
+
+# Shakeable tiles that the resonance hammer activates
+_RESONANCE_SHAKE_LOOT: dict[str, tuple[str, tuple[int, int]]] = {
+    "nut_tree":    ("chestnut",  (2, 5)),
+    "jungle_palm": ("coconut",   (1, 3)),
+    "conifer":     ("pinecone",  (2, 6)),
+}
+
+
+async def _do_resonance_strike(
+    player: "Player", guild_id: int, user_id: int, db, seed: int
+) -> tuple[str, list]:
+    """Fire a resonance wave and collect effects. Returns (message, viewport_grid)."""
+    strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
+    rings = getattr(player, "resonance_rings", 2)
+    px, py = player.world_x, player.world_y
+
+    affected = _resonance_tiles(px, py, strength, rings)
+    viz = _resonance_viz(px, py, affected)
+    _strength_labels = {"weak": "💛 Weak", "medium": "🟠 Med", "strong": "🔴 Strong"}
+    header = f"⚒️ **Resonance** · {_strength_labels[strength]} · {'○' * rings}\n{viz}"
+
+    activations: list[str] = []
+    for tx, ty in affected:
+        if not (0 <= tx < WORLD_SIZE and 0 <= ty < WORLD_SIZE):
+            continue
+        tile = await load_single_tile(tx, ty, seed, db)
+        terrain = tile.structure or tile.terrain
+        if terrain in _RESONANCE_SHAKE_LOOT:
+            item_id, (lo, hi) = _RESONANCE_SHAKE_LOOT[terrain]
+            qty = _random.randint(lo, hi)
+            await add_to_inventory(db, user_id, item_id, qty)
+            from dwarf_explorer.config import ITEM_EMOJI as _IE_rs
+            emj = _IE_rs.get(item_id, "📦")
+            activations.append(
+                f"{emj} **{terrain.replace('_', ' ').title()}** shakes — {qty}× {item_id.replace('_', ' ')}!"
+            )
+
+    _no_hit = {
+        "weak":   "The vibrations ripple out and fade harmlessly.",
+        "medium": "The resonance hums through the ground, finding nothing.",
+        "strong": "A focused pulse rolls outward... nothing answers.",
+    }
+    body = "\n".join(activations) if activations else f"*{_no_hit[strength]}*"
+    grid = await load_viewport(px, py, seed, db)
+    return header + "\n" + body, grid
+
+
 class GameView(discord.ui.View):
     """Main game view.
 
@@ -487,7 +580,9 @@ class GameView(discord.ui.View):
                  h1_action_enabled: bool = False,
                  h2_action_enabled: bool = False,
                  canoe_dirs: frozenset[str] = frozenset(),
-                 chop_dirs: frozenset[str] = frozenset()):
+                 chop_dirs: frozenset[str] = frozenset(),
+                 res_hammer_hand: str | None = None,
+                 res_strength: str = "weak"):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.user_id = user_id
@@ -500,7 +595,8 @@ class GameView(discord.ui.View):
                             embark_enabled, feed_enabled, plant_enabled,
                             action2_label, action2_enabled, action2_id,
                             interact2_label, interact2_enabled,
-                            h1_item, h2_item, h1_action_enabled, h2_action_enabled)
+                            h1_item, h2_item, h1_action_enabled, h2_action_enabled,
+                            res_hammer_hand, res_strength)
 
     def _dir_btn(self, direction: str, arrow_emoji: str, row: int,
                  mine: bool) -> discord.ui.Button:
@@ -551,6 +647,8 @@ class GameView(discord.ui.View):
                        h2_item: str | None = None,
                        h1_action_enabled: bool = False,
                        h2_action_enabled: bool = False,
+                       res_hammer_hand: str | None = None,
+                       res_strength: str = "weak",
                        ) -> None:
         sprint_style = discord.ButtonStyle.success if sprinting else discord.ButtonStyle.secondary
 
@@ -813,15 +911,46 @@ class GameView(discord.ui.View):
             row=0,
         )
 
+        # ── Resonance strength cycle button (row 2, aligned below h1 or h2) ───
+        _res_labels = {"weak": "💛W", "medium": "🟠M", "strong": "🔴S"}
+        _res_label_v = _res_labels.get(res_strength, "💛W")
+        if res_hammer_hand == "h1":
+            # Position 3 of row 2 (directly below h1 in row 1)
+            _res_sp_btn: discord.ui.Button | None = None
+            _res_btn: discord.ui.Button | None = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=_res_label_v,
+                custom_id=_custom_id(self.guild_id, self.user_id, "res_strength"),
+                row=2,
+            )
+        elif res_hammer_hand == "h2":
+            # Spacer at pos 3 then button at pos 4 (below h2 in row 1)
+            _res_sp_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="​", disabled=True,
+                custom_id=_custom_id(self.guild_id, self.user_id, "res_sp"),
+                row=2,
+            )
+            _res_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=_res_label_v,
+                custom_id=_custom_id(self.guild_id, self.user_id, "res_strength"),
+                row=2,
+            )
+        else:
+            _res_sp_btn = None
+            _res_btn = None
+        _row2_extra = [b for b in (_res_sp_btn, _res_btn) if b is not None]
+
         row0 = [inventory_btn, nav_btn, quests_btn]
         if edit_btn is not None:
             row0.append(edit_btn)
         row0.append(cutscene_test_btn)
         for btn in [
-            *row0,                              # row 0
-            sp1_btn, up_btn, action_btn, h1_btn, h2_btn,  # row 1
-            left_btn, center_btn, right_btn,    # row 2
-            sp5_btn, down_btn, npc_btn,         # row 3: [embark/feed/spacer][⬇][npc]
+            *row0,                                          # row 0
+            sp1_btn, up_btn, action_btn, h1_btn, h2_btn,   # row 1
+            left_btn, center_btn, right_btn, *_row2_extra, # row 2 (+optional res btn)
+            sp5_btn, down_btn, npc_btn,                    # row 3
         ]:
             self.add_item(btn)
 
@@ -3401,6 +3530,18 @@ def _game_view(guild_id: int, user_id: int, player: Player,
             # Has slingshot but not aiming: show Aim button via action2
             action2_label, action2_enabled, action2_id = "🎯 Aim", True, "fq_aim"
 
+    # ── Resonance hammer: strength cycle button + always-on interact ──────────
+    res_hammer_hand: str | None = None
+    if h1_item == "resonance_hammer":
+        res_hammer_hand = "h1"
+    elif h2_item == "resonance_hammer":
+        res_hammer_hand = "h2"
+    res_strength = _ui_state.get(user_id, {}).get("res_strength", "weak")
+    # Ensure the center Interact button is lit even on bare tiles
+    if res_hammer_hand is not None and not center_enabled:
+        center_label = "⚒️"
+        center_enabled = True
+
     return GameView(guild_id, user_id,
                     boots_equipped=(player.boots == "hiking_boots"),
                     sprinting=player.sprinting,
@@ -3425,7 +3566,9 @@ def _game_view(guild_id: int, user_id: int, player: Player,
                     h1_action_enabled=h1_action_enabled,
                     h2_action_enabled=h2_action_enabled,
                     canoe_dirs=canoe_dirs,
-                    chop_dirs=chop_dirs)
+                    chop_dirs=chop_dirs,
+                    res_hammer_hand=res_hammer_hand,
+                    res_strength=res_strength)
 
 
 async def _cave_game_view(guild_id: int, user_id: int, player: Player, db,
@@ -10561,6 +10704,14 @@ async def handle_interact(
         if player.hand_2:
             hand_items.add(player.hand_2)
 
+        # ── Resonance hammer: fires from current position regardless of terrain ─
+        if "resonance_hammer" in hand_items:
+            msg, grid = await _do_resonance_strike(player, guild_id, user_id, db, seed)
+            content = render_grid(grid, player, msg)
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
         terrain = tile.terrain
 
         # Treasure map: dig at location if shovel equipped
@@ -11840,6 +11991,32 @@ async def handle_use_hand2(
         return
 
     await _execute_tool_action(interaction, guild_id, user_id, tool, player, db, seed)
+
+
+async def handle_res_strength_cycle(
+    interaction: discord.Interaction, guild_id: int, user_id: int
+) -> None:
+    """Cycle the resonance hammer strike strength: weak → medium → strong → weak."""
+    _cycle = ("weak", "medium", "strong")
+    state = _ui_state.setdefault(user_id, {})
+    cur = state.get("res_strength", "weak")
+    state["res_strength"] = _cycle[(_cycle.index(cur) + 1) % len(_cycle)]
+
+    db = await get_database(guild_id)
+    seed = await get_or_create_world(db, guild_id)
+    player = await get_or_create_player(db, user_id, interaction.user.display_name)
+
+    strength = state["res_strength"]
+    rings = getattr(player, "resonance_rings", 2)
+    affected = _resonance_tiles(player.world_x, player.world_y, strength, rings)
+    viz = _resonance_viz(player.world_x, player.world_y, affected)
+    _snames = {"weak": "💛 Weak", "medium": "🟠 Medium", "strong": "🔴 Strong"}
+    msg = f"⚒️ Resonance set to **{_snames[strength]}**\n{viz}"
+
+    grid = await load_viewport(player.world_x, player.world_y, seed, db)
+    content = render_grid(grid, player, msg)
+    view = _game_view(guild_id, user_id, player, grid=grid)
+    await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
 
 
 async def handle_swap_hands(

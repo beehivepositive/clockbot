@@ -277,6 +277,7 @@ ITEM_EMOJI = {
     "canoe":            "🛶",       # canoe as a single item (used in equip row, tooltips); overridden with canoe_whole emoji
     "canoe_whole":      "🛶",       # player-on-water display (overridden by custom emoji)
     "hammer":           "🔨",       # 🔨  hammer (ship repair)
+    "resonance_hammer": "⚒️",  # ⚒️  resonance hammer (Ch.2 quest tool)
     "nail":             "📌",       # 📌  nail (ship repair)
     "breath_of_the_sea": "🫧",     # 🫧  breath of the sea (restores breath underwater)
     "gust_of_aevos":    "🌬️",     # 🌬️  rare ingredient for breath_of_the_sea
@@ -519,6 +520,10 @@ FQ_SHOP_CATALOG = [
      "description": "Smooth stone — loaded into a slingshot."},
     {"id": "slingshot",  "name": "Slingshot",   "emoji": "\U0001FA83", "price": 22,
      "description": "A carved-wood ranged weapon. Fires rocks at enemies."},
+    # TODO: move to Ch.2 quest reward once mountain questline is built
+    {"id": "resonance_hammer", "name": "Resonance Hammer", "emoji": "⚒️", "price": 300,
+     "equip_slot": "hand",
+     "description": "+6 attack. Sends resonance waves in rings — Interact to strike."},
 ]
 
 # Boss approach (y 54-57): corridor funnels to single-tile entrance
@@ -1832,6 +1837,7 @@ ITEM_EQUIP_SLOTS = {
     "bomb":                "hand",
     "hoe":                 "hand",
     "hammer":              "hand",
+    "resonance_hammer":    "hand",
     "bark_shield":         "hand",
     "forest_heart_amulet": "accessory",
 }
@@ -1876,6 +1882,7 @@ EQUIP_BONUSES = {
     "ring_of_sight":       {},    # 9x9 cave view without torch — handled in cave code
     "ring_of_luck":        {},    # better drops — handled in drop code
     "hammer":              {"attack": 2},
+    "resonance_hammer":    {"attack": 6},
     "flint_and_steel":     {},
     "bomb":                {},
     "arrow":               {},
@@ -1902,6 +1909,10 @@ COIN_PURSE_CAPACITY: dict[str | None, int] = {
 
 # Maximum stack size per inventory slot
 MAX_STACK_SIZE = 9
+
+# Resonance hammer strike patterns: step = interval in clockwise ring traversal
+# weak = every 2nd tile (dense), medium = every 3rd, strong = every 4th (precise)
+RESONANCE_STEPS: dict[str, int] = {"weak": 2, "medium": 3, "strong": 4}
 
 # Cave random encounter rates per step: {enemy_type: chance 0-1}
 CAVE_ENCOUNTER_RATES = {

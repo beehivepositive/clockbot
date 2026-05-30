@@ -180,6 +180,8 @@ class Player:
     hermit_hut_floor: int = 1                # 1 = ground floor, 2 = upper room
     hermit_hut_x: int = 0
     hermit_hut_y: int = 0
+    # Resonance hammer state
+    resonance_rings: int = 2  # rings expanded by each strike (upgradeable in Ch.2)
 
 
 def can_move_ship(target_tile: TileData) -> tuple[bool, str]:

@@ -247,6 +247,7 @@ async def get_or_create_player(db: Database, user_id: int, display_name: str) ->
             hermit_hut_floor=row["hermit_hut_floor"] if "hermit_hut_floor" in cols else 1,
             hermit_hut_x=row["hermit_hut_x"] if "hermit_hut_x" in cols else 0,
             hermit_hut_y=row["hermit_hut_y"] if "hermit_hut_y" in cols else 0,
+            resonance_rings=int(row["resonance_rings"]) if "resonance_rings" in cols else 2,
         )
     await db.execute(
         "INSERT INTO players (user_id, display_name, world_x, world_y, hp, max_hp, attack, defense) "

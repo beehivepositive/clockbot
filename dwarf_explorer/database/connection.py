@@ -97,6 +97,8 @@ class Database:
                 "ALTER TABLE players ADD COLUMN house_type TEXT NOT NULL DEFAULT 'house'",
                 # Village sub-type (village / ruins) — differentiates interior rendering
                 "ALTER TABLE players ADD COLUMN village_type TEXT NOT NULL DEFAULT 'village'",
+                # Resonance hammer ring count (upgradeable in Ch.2)
+                "ALTER TABLE players ADD COLUMN resonance_rings INTEGER NOT NULL DEFAULT 2",
                 "ALTER TABLE players ADD COLUMN sprinting INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE players ADD COLUMN weapon TEXT",
                 "ALTER TABLE players ADD COLUMN boots TEXT",

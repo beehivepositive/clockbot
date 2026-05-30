@@ -143,6 +143,7 @@ from dwarf_explorer.ui.game_view import (
     handle_hermit_map_close,
     handle_npc_talk,
     handle_cutscene_test,
+    handle_res_strength_cycle,
 )
 
 _MOVE_ACTIONS   = {"up", "down", "left", "right"}
@@ -796,6 +797,8 @@ class GameButton(discord.ui.DynamicItem[discord.ui.Button],
                 await _execute_warp(interaction, gid, uid, wp_id)
             elif act == "cutscene_test":
                 await handle_cutscene_test(interaction, gid, uid)
+            elif act == "res_strength":
+                await handle_res_strength_cycle(interaction, gid, uid)
             elif act.startswith("gear_slot_"):
                 try:
                     slot_idx = int(act[len("gear_slot_"):])
