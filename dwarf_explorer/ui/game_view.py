@@ -3742,14 +3742,23 @@ _MERCHANT_DISCOUNT_RATE = 0.80  # 20% discount vs normal shop price
 _MERCHANT_RARE_WEIGHT   = 0.40  # 40% of slots come from rare pool, rest from SHOP_CATALOG
 
 
-def _generate_merchant_catalog(rng: _random.Random) -> list[dict]:
+def _generate_merchant_catalog(rng: _random.Random, player=None) -> list[dict]:
     """Generate a 6-item merchant catalog: mix of discounted shop items and rare goods."""
     catalog: list[dict] = []
     n_rare   = round(6 * _MERCHANT_RARE_WEIGHT)   # ~2-3 rare items
     n_shop   = 6 - n_rare
 
+    # Filter SHOP_CATALOG by player's unlocked crystals before sampling
+    _crystals: set[str] = set()
+    if player and getattr(player, "has_warp_crystal", False):
+        _crystals.add("forest")
+    _available_shop = [
+        item for item in SHOP_CATALOG
+        if "requires_crystal" not in item or item["requires_crystal"] in _crystals
+    ]
+
     rare_picks = rng.sample(_MERCHANT_RARE_ITEMS, min(n_rare, len(_MERCHANT_RARE_ITEMS)))
-    shop_picks = rng.sample(SHOP_CATALOG, min(n_shop, len(SHOP_CATALOG)))
+    shop_picks = rng.sample(_available_shop, min(n_shop, len(_available_shop)))
 
     # Discount shop items; rare items keep their listed price (already fair)
     for item in shop_picks:
@@ -5683,7 +5692,7 @@ async def _move_steps(
             # 0.2% travelling merchant encounter
             merch_rng = _random.Random(hash((user_id, nx, ny, player.xp // 20, "merchant")))
             if merch_rng.random() < 0.002 and not player.in_combat:
-                catalog = _generate_merchant_catalog(merch_rng)
+                catalog = _generate_merchant_catalog(merch_rng, player)
                 _ui_state[user_id] = {"type": "merchant", "catalog": catalog, "selected": 0}
                 grid = await load_viewport(nx, ny, seed, db)
                 content = _render_merchant(catalog, 0, player)
@@ -10582,7 +10591,10 @@ async def handle_interact(
             player_items = await get_inventory(db, user_id)
             equipped = _equipped_dict(player)
             inv_rows, inv_cols = _inv_capacity(player)
-            _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
+            _ui_state[user_id] = {
+                "type": "shop", "selected": 0, "shop_view": "shop", "qty": 1,
+                "has_warp_crystal": getattr(player, "has_warp_crystal", False),
+            }
             content_shop = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
             await interaction.response.edit_message(
                 embed=_embed(content_shop), content=None,
@@ -15360,7 +15372,13 @@ async def handle_inv_qty_modal(
 # ── Shop helpers ──────────────────────────────────────────────────────────────
 
 def _get_shop_catalog(state: dict) -> list:
-    """Return the correct shop catalog based on ui_state mode flags."""
+    """Return the correct shop catalog based on ui_state mode flags.
+
+    Items with a ``requires_crystal`` key are hidden until the player has
+    collected the matching chapter crystal.  The shop-opening handlers stamp
+    ``has_warp_crystal`` (and future crystal flags) into *state* so this
+    function can filter without needing a Player object.
+    """
     if state.get("custom_catalog") is not None:
         return state["custom_catalog"]
     if state.get("tree_city_mode"):
@@ -15374,7 +15392,14 @@ def _get_shop_catalog(state: dict) -> list:
         from dwarf_explorer.config import ARMORY_CATALOG as _AC_gc
         return _AC_gc
     else:
-        return SHOP_CATALOG
+        _crystals: set[str] = set()
+        if state.get("has_warp_crystal"):
+            _crystals.add("forest")
+        # Future crystals: if state.get("has_mountain_crystal"): _crystals.add("mountain")
+        return [
+            item for item in SHOP_CATALOG
+            if "requires_crystal" not in item or item["requires_crystal"] in _crystals
+        ]
 
 
 def _shop_view_kwargs(state: dict) -> dict:
@@ -15410,7 +15435,10 @@ async def _open_shop(
     player_items = await get_inventory(db, user_id)
     equipped = _equipped_dict(player)
     inv_rows, inv_cols = _inv_capacity(player)
-    _ui_state[user_id] = {"type": "shop", "selected": 0, "shop_view": "shop", "qty": 1}
+    _ui_state[user_id] = {
+        "type": "shop", "selected": 0, "shop_view": "shop", "qty": 1,
+        "has_warp_crystal": getattr(player, "has_warp_crystal", False),
+    }
     content = _shop_render(_ui_state[user_id], player_items, equipped, player.gold, inv_rows, inv_cols)
     await interaction.response.edit_message(embed=_embed(content), content=None,
                                             view=ShopView(guild_id, user_id, "shop"))

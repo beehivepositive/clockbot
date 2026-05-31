@@ -1690,6 +1690,7 @@ SHOP_CATALOG = [
         "price": 150,
         "equip_slot": "boots",
         "description": "Reinforced boots. Traverse mountain tiles. Required for sky biome portals.",
+        "requires_crystal": "forest",   # Chapter 1 completion gate
     },
     {
         "id": "axe",
