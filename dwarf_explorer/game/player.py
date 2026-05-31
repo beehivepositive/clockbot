@@ -13,6 +13,7 @@ from dwarf_explorer.config import (
     FQ_WALKABLE,
     HERMIT_HUT_WALKABLE,
     RUINS_WALKABLE,
+    DWARVEN_WALKABLE,
 )
 from dwarf_explorer.world.generator import TileData
 
@@ -373,6 +374,22 @@ def can_move_hermit_hut(target_tile: TileData) -> tuple[bool, str]:
     if t == "b_wall":
         return False, "🪵 Rough log walls bar your path."
     if t not in HERMIT_HUT_WALKABLE:
+        return False, "Something is in the way."
+    return True, ""
+
+
+def can_move_dwarven_hall(target_tile: TileData) -> tuple[bool, str]:
+    """Walkability inside the dwarven hall interior."""
+    t = target_tile.terrain
+    if t == "dw_gate":
+        return False, "⛩️ A massive iron gate bars the way — sealed by ancient mechanisms."
+    if t == "dw_pillar":
+        return False, "🏛️ A carved stone column blocks your path."
+    if t == "dw_wall":
+        return False, "⬛ Solid hewn stone. You can't pass through."
+    if t == "void":
+        return True, ""   # exit trigger handled by game_view
+    if t not in DWARVEN_WALKABLE:
         return False, "Something is in the way."
     return True, ""
 

@@ -582,6 +582,19 @@ def _generate_structures_sync(
                 for tp in filter(None, [outer_1, outer_2, outer_3]):
                     overrides.append((tp[0], tp[1], 'sky_temple_outer'))
 
+    # --- Dwarven hall entrance: 1 cracked_mountain_wall on a mountain tile,
+    #     ≥40 tiles from all sky temples, not near spawn ---
+    _temple_positions = [(ox, oy) for ox, oy, ot in overrides
+                         if ot in ('sky_temple_main', 'sky_temple_outer')]
+    for candidate in rng.sample(all_mountain_candidates, min(len(all_mountain_candidates), 200)):
+        cx2, cy2 = candidate
+        if _near_spawn(cx2, cy2):
+            continue
+        if any(math.hypot(cx2 - tx, cy2 - ty) < 40 for tx, ty in _temple_positions):
+            continue
+        overrides.append((cx2, cy2, 'cracked_mountain_wall'))
+        break
+
     # --- Bandit camps: 8-12 on plains/grass/forest, spread from villages and each other ---
     _bandit_camp_count = rng.randint(8, 12)
     _bandit_camps: list[tuple[int, int]] = []

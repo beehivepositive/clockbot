@@ -125,6 +125,8 @@ STRUCTURE_EMOJI = {
     "sky_temple_main":  "\U0001F3F0",        # 🏰 main/portal temple (overworld)
     "forest_entrance":  "\U0001F332",        # 🌲 forest entrance (overridable with :forest_entrance:)
     "bandit_camp":      "⛺", # ⛺ tent — bandit camp
+    "cracked_mountain_wall": "\U0001F9F1",   # 🧱 cracked stone wall (bomb to open)
+    "dwarven_entrance": "\U0001F573️",  # 🕳️ opened passage into dwarven hall
 }
 
 ENTITY_EMOJI = {
@@ -342,7 +344,9 @@ WALKABLE_TILES = {
     "nut_tree",          # shakeable nut tree — hammer interact for chestnuts
     "jungle_palm",       # shakeable jungle palm — hammer interact for coconuts
     "conifer",           # shakeable conifer — hammer interact for pinecones
+    "dwarven_entrance",  # opened cracked mountain wall — walk/interact to enter dwarven hall
     # NOTE: "snow" and "mountain" are intentionally absent — impassable
+    # cracked_mountain_wall is also absent — examine only; bomb to open
     # Shipwreck interior tiles (so TileData.walkable property works for sw_ tiles)
     "sw_floor", "sw_chest", "sw_entrance", "sw_debris",
 }
@@ -363,7 +367,7 @@ ISLAND_WALKABLE = {"island_sand", "island_grass", "island_forest", "island_tree"
 VOLCANO_ISLAND_SIZE = 100  # width/height of volcano island grid
 
 # Tile types that come from STRUCTURE_EMOJI (drawn as structures, not terrain)
-STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main", "forest_entrance", "bandit_camp"}
+STRUCTURE_TILES = {"village", "ruins", "ruins_looted", "shrine", "cave", "bridge", "player_house", "harbor", "shipwreck", "island", "volcano_island", "sundial", "sky_portal", "sky_temple_outer", "sky_temple_main", "forest_entrance", "bandit_camp", "cracked_mountain_wall", "dwarven_entrance"}
 
 # Direction vectors: (dx, dy)
 DIRECTIONS = {
@@ -1239,6 +1243,31 @@ GROVE_EMOJI: dict[str, str] = {
 }
 
 GROVE_WALKABLE: frozenset[str] = frozenset({"grove_floor", "grove_exit"})
+
+# ── Dwarven Hall Interior ─────────────────────────────────────────────────────
+# Ancient underground hall accessible via cracked_mountain_wall (bombed open).
+# Shares the villages / village_tiles / village_entrances DB tables
+# with village_type = "dwarven_hall" on the player record when entered.
+DWARVEN_HALL_W = 18
+DWARVEN_HALL_H = 14
+
+DWARVEN_EMOJI: dict[str, str] = {
+    "dw_wall":         "⬛",            # ⬛ hewn stone wall
+    "dw_floor":        "\U0001F7EB",        # 🟫 worn stone floor
+    "dw_pillar":       "\U0001F3DB️",  # 🏛️ carved column
+    "dw_forge":        "⚒️",      # ⚒️ cold ancient forge
+    "dw_altar":        "⛩️",      # ⛩️ carved altar
+    "dw_gate":         "\U0001F512",        # 🔒 sealed iron gate
+    "dw_chest":        "\U0001F4E6",        # 📦 dwarven chest
+    "dw_bell_tower":   "\U0001F514",        # 🔔 resonance bell
+    "dw_exit":         "\U0001F6AA",        # 🚪 passage back out
+    "void":            "⬛",            # ⬛ out of bounds fallback
+}
+
+DWARVEN_WALKABLE: frozenset[str] = frozenset({
+    "dw_floor", "dw_exit", "dw_chest", "dw_bell_tower",
+    "dw_forge", "dw_altar",
+})
 
 # ── Bandit Camp Interior ──────────────────────────────────────────────────────
 BANDIT_CAMP_SIZE = 11  # 11×11 interior grid

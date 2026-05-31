@@ -142,7 +142,8 @@ from dwarf_explorer.world.villages import (
     get_replacement_npc_position,
     get_or_create_ruins,
 )
-from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_ruins, can_move_building, can_move_ship, can_move_shipwreck, can_move_grove
+from dwarf_explorer.world.dwarven_hall import get_or_create_dwarven_hall
+from dwarf_explorer.game.player import Player, can_move, can_move_village, can_move_ruins, can_move_building, can_move_ship, can_move_shipwreck, can_move_grove, can_move_dwarven_hall
 from dwarf_explorer.world.shipwrecks import load_shipwreck_viewport, get_tile_at as get_shipwreck_tile
 from dwarf_explorer.game.renderer import (
     render_grid, render_inventory, render_bank, render_shop, render_chest,
@@ -520,7 +521,7 @@ async def _do_resonance_strike(
                 f"{emj} **{terrain.replace('_', ' ').title()}** shakes — {qty}× {item_id.replace('_', ' ')}!"
             )
 
-        if terrain in ("vil_bell_tower", "ruin_bell_tower") and not bell_rung_terrain:
+        if terrain in ("vil_bell_tower", "ruin_bell_tower", "dw_bell_tower") and not bell_rung_terrain:
             bell_rung_terrain = terrain
 
     # Bell ringing from resonance wave
@@ -535,6 +536,15 @@ async def _do_resonance_strike(
                 "Ancient carvings on the tower glow faintly, then fade.",
             ]
             activations.append(f"🔔 **BONG!** The resonance strikes the bell!\n*{_rb_rng2.choice(_ruin_outcomes)}*")
+        elif bell_rung_terrain == "dw_bell_tower":
+            _dw_bell_outcomes = [
+                "The resonance lingers in the stone columns long after the tone fades.",
+                "Your boots vibrate on the floor. The whole hall hums with the note.",
+                "Somewhere in the darkness beyond the gate, something echoes back.",
+                "Ancient carvings on the bell glow faint amber, then dark again.",
+                "Dust shakes loose from the ceiling. A memory stirs in the stone.",
+            ]
+            activations.append(f"🔔 **BONG!** The resonance rings the ancient dwarven bell!\n*{_rb_rng2.choice(_dw_bell_outcomes)}*")
         else:
             _vil_reactions = [
                 "\"OI! Keep it down up there!\"",
@@ -3171,6 +3181,10 @@ def _compute_context_labels(
             center_label, center_enabled = "🌲 Enter Forest", True
         elif s == "bandit_camp":
             center_label, center_enabled = "⛺ Enter Camp", True
+        elif s == "cracked_mountain_wall":
+            center_label, center_enabled = "🧱 Inspect", True
+        elif s == "dwarven_entrance":
+            center_label, center_enabled = "🕳️ Enter", True
         # Cave boss door — show lock; key check handled in movement
         elif t == "cave_boss_door":
             center_label, center_enabled = "🔒 Locked", False
@@ -3254,6 +3268,18 @@ def _compute_context_labels(
             center_label, center_enabled = "🔔", True
         elif t == "ruin_chest":
             center_label, center_enabled = "📦", True
+        elif t == "dw_bell_tower":
+            center_label, center_enabled = "🔔", True
+        elif t == "dw_chest":
+            center_label, center_enabled = "📦", True
+        elif t == "dw_forge":
+            center_label, center_enabled = "⚒️", True
+        elif t == "dw_altar":
+            center_label, center_enabled = "⛩️", True
+        elif t == "dw_gate":
+            center_label, center_enabled = "🔒", True
+        elif t == "dw_exit":
+            center_label, center_enabled = "🚪 Exit", True
         elif t == "vil_puzzle_board":
             center_label, center_enabled = "🎮 Play", True
         elif t == "vil_dock":
@@ -3945,11 +3971,15 @@ async def _move_steps(
 
     elif player.in_village:
         _vil_nav = _ui_state.get(user_id, {}).get("nav_target")
-        _in_ruins = getattr(player, "village_type", "village") == "ruins"
+        _vtype = getattr(player, "village_type", "village")
+        _in_ruins = _vtype == "ruins"
+        _in_dwarven_hall = _vtype == "dwarven_hall"
         for _ in range(steps):
             nx, ny = player.village_x + dx, player.village_y + dy
             target = await load_village_single_tile(player.village_id, nx, ny, db)
-            if target.terrain == "void":
+            # dw_exit tile triggers exit (dwarven hall has walls all round; no void border)
+            _is_exit = (_in_dwarven_hall and target.terrain == "dw_exit")
+            if target.terrain == "void" or _is_exit:
                 wx, wy = player.village_wx, player.village_wy
                 player.in_village = False
                 player.village_id = None
@@ -3958,9 +3988,19 @@ async def _move_steps(
                 await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
                 await update_player_position(db, user_id, wx, wy)
                 grid = await load_viewport(wx, wy, seed, db)
-                exit_msg = "You leave the ruins." if _in_ruins else "You leave the village."
+                if _in_ruins:
+                    exit_msg = "You leave the ruins."
+                elif _in_dwarven_hall:
+                    exit_msg = "🕳️ You squeeze back through the passage into the cold mountain air."
+                else:
+                    exit_msg = "You leave the village."
                 return render_grid(grid, player, exit_msg, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
-            allowed, reason = can_move_ruins(target) if _in_ruins else can_move_village(target)
+            if _in_dwarven_hall:
+                allowed, reason = can_move_dwarven_hall(target)
+            elif _in_ruins:
+                allowed, reason = can_move_ruins(target)
+            else:
+                allowed, reason = can_move_village(target)
             if not allowed:
                 grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
                 return render_grid(grid, player, reason, nav_target=_vil_nav), _game_view(guild_id, user_id, player, grid=grid)
@@ -3973,7 +4013,7 @@ async def _move_steps(
 
         # ── Errand quest completion: check current tile (village only) ─────────
         errand_msg = ""
-        if not _in_ruins:
+        if not _in_ruins and not _in_dwarven_hall:
             cur_vtile = await load_village_single_tile(
                 player.village_id, player.village_x, player.village_y, db
             )
@@ -8873,6 +8913,87 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        # ── Dwarven Hall interior interactions ────────────────────────────────
+        if _vt == "dwarven_hall":
+            grid = await load_village_viewport(player.village_id, player.village_x, player.village_y, db, user_id=user_id)
+            _dh_t = vtile.terrain
+            if _dh_t == "dw_bell_tower":
+                import random as _dh_bell_rng
+                _dh_bell_outcomes = [
+                    "The resonance lingers in the stone columns long after the tone fades.",
+                    "Your boots vibrate on the floor. The whole hall hums with the note.",
+                    "Somewhere in the darkness beyond the gate, something echoes back.",
+                    "Ancient carvings on the bell glow faint amber, then dark again.",
+                    "Dust shakes loose from the ceiling. A memory stirs in the stone.",
+                ]
+                content = render_grid(grid, player,
+                    f"🔔 **BONG!** The ancient bell rings, deep and clear.\n*{_dh_bell_rng.choice(_dh_bell_outcomes)}*")
+            elif _dh_t == "dw_forge":
+                content = render_grid(grid, player,
+                    "⚒️ An ancient dwarven forge, long cold. The bellows crumbled to dust ages ago. "
+                    "The stone around it is still faintly warm.")
+            elif _dh_t == "dw_altar":
+                content = render_grid(grid, player,
+                    "⛩️ A carved altar marked with dwarven runes. Faint grooves form a pattern "
+                    "on the surface — perhaps meant for a resonance offering.")
+            elif _dh_t == "dw_gate":
+                content = render_grid(grid, player,
+                    "🔒 A massive iron gate, sealed by an ancient mechanism. "
+                    "The keystone above it bears a resonance glyph — *the correct pattern will open the way.*")
+            elif _dh_t == "dw_chest":
+                _dh_looted = await db.fetch_one(
+                    "SELECT 1 FROM player_village_overrides "
+                    "WHERE user_id=? AND village_id=? AND tile_x=? AND tile_y=?",
+                    (user_id, player.village_id, player.village_x, player.village_y),
+                )
+                if _dh_looted:
+                    content = render_grid(grid, player, "📦 The dwarven chest is empty — you already took everything.")
+                else:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO player_village_overrides "
+                        "(user_id, village_id, tile_x, tile_y, tile_type) VALUES (?,?,?,?,?)",
+                        (user_id, player.village_id, player.village_x, player.village_y, "dw_floor"),
+                    )
+                    import random as _dh_chest_rng
+                    _dh_seed = _dh_chest_rng.Random(hash((player.village_id, player.village_x, player.village_y, user_id)))
+                    _dh_gold = _dh_seed.randint(15, 50)
+                    _apply_gold_cap(player, _dh_gold)
+                    await update_player_stats(db, user_id, gold=player.gold)
+                    _dh_extras = []
+                    if _dh_seed.random() < 0.6:
+                        await add_to_inventory(db, user_id, "iron_ingot", _dh_seed.randint(1, 3))
+                        _dh_extras.append("iron ingots")
+                    if _dh_seed.random() < 0.35:
+                        await add_to_inventory(db, user_id, "gem", 1)
+                        _dh_extras.append("a gem")
+                    if _dh_seed.random() < 0.2:
+                        await add_to_inventory(db, user_id, "map_fragment", 1)
+                        _dh_extras.append("a map fragment")
+                    _dh_extra_str = (", " + ", ".join(_dh_extras)) if _dh_extras else ""
+                    content = render_grid(grid, player,
+                        f"📦 You wrench open the dwarven chest! Found **{_dh_gold}g**{_dh_extra_str}.")
+            elif _dh_t == "dw_exit":
+                # Pressing interact on the exit tile actually exits the hall
+                wx2, wy2 = player.village_wx, player.village_wy
+                player.in_village = False
+                player.village_id = None
+                player.village_type = "village"
+                player.world_x, player.world_y = wx2, wy2
+                await update_player_village_state(db, user_id, False, None, 0, 0, 0, 0)
+                await update_player_position(db, user_id, wx2, wy2)
+                ow_grid = await load_viewport(wx2, wy2, seed, db)
+                content = render_grid(ow_grid, player,
+                    "🕳️ You squeeze back through the passage into the cold mountain air.")
+                view = _game_view(guild_id, user_id, player, grid=ow_grid)
+                await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+                return
+            else:
+                content = render_grid(grid, player,
+                    "⚒️ Solid hewn stone. Dwarven craft — built to last an age.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
         if vtile.terrain in ("vil_house", "vil_church", "vil_bank", "vil_shop",
                               "vil_blacksmith", "vil_tavern", "vil_hospital", "vil_mill",
                               "vil_lumber_mill", "vil_farmhouse", "vil_armory"):
@@ -11100,6 +11221,35 @@ async def handle_interact(
             await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
             return
 
+        elif tile.structure == "cracked_mountain_wall":
+            # ── Cracked mountain wall: examine only — needs a bomb to open ────
+            grid = await load_viewport(wx, wy, seed, db)
+            content = render_grid(grid, player,
+                "🧱 A cracked stone wall covered in ancient dwarven runes. "
+                "The mortar is crumbling... *a well-placed bomb might open it.*")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
+        elif tile.structure == "dwarven_entrance":
+            # ── Dwarven entrance: enter the dwarven hall interior ─────────────
+            hall_id, hex_, hey = await get_or_create_dwarven_hall(wx, wy, db)
+            player.in_village = True
+            player.village_id = hall_id
+            player.village_type = "dwarven_hall"
+            player.village_x, player.village_y = hex_, hey
+            player.village_wx, player.village_wy = wx, wy
+            await update_player_village_state(
+                db, user_id, True, hall_id, hex_, hey, wx, wy, village_type="dwarven_hall"
+            )
+            grid = await load_village_viewport(hall_id, hex_, hey, db, user_id=user_id)
+            content = render_grid(grid, player,
+                "🕳️ You squeeze through the blasted passage into the ancient dwarven hall. "
+                "The air is cool and smells of old stone and forgotten fires.")
+            view = _game_view(guild_id, user_id, player, grid=grid)
+            await interaction.response.edit_message(embed=_embed(content), content=None, view=view)
+            return
+
         elif tile.structure == "harbor":
             # ── Harbor village: enter the harbour village from the overworld ──
             vid, vx, vy, _dk_x, _dk_y = await get_or_create_harbor_village(seed, wx, wy, db)
@@ -11261,7 +11411,13 @@ async def _bomb_blast_overworld(
                 continue
             tile = await load_single_tile(tx, ty, seed, db)
             t = tile.terrain
-            if t in _BOMB_BLAST_OVERWORLD_DESTROYS:
+            if tile.structure == "cracked_mountain_wall":
+                # Bomb opens the dwarven hall entrance
+                await set_tile_override(db, tx, ty, "dwarven_entrance")
+                blast_msg_parts.append(
+                    "💥 **The cracked wall crumbles!** An ancient passage is revealed..."
+                )
+            elif t in _BOMB_BLAST_OVERWORLD_DESTROYS:
                 await set_tile_override(db, tx, ty, "dirt")
             elif t == "bomb_lit":
                 await set_tile_override(db, tx, ty, "dirt")
