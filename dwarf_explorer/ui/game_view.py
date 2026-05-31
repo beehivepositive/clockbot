@@ -494,7 +494,7 @@ async def _do_resonance_strike(
     affected = _resonance_tiles(px, py, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
 
-    _pattern_labels = {"x": "✕ Cross", "halo": "○ Halo", "square": "□ Ring"}
+    _pattern_labels = {"x": "✕ Diagonal", "halo": "○ Halo", "square": "□ Ring", "cross": "✚ Cross"}
     header = f"🔨 **Resonance** · {_pattern_labels.get(pattern, pattern)}"
 
     activations: list[str] = []
@@ -551,6 +551,7 @@ async def _do_resonance_strike(
         "x":      "The diagonal vibrations ripple out and fade harmlessly.",
         "halo":   "The resonance arcs outward, finding nothing.",
         "square": "A tight pulse rolls outward from your feet... nothing answers.",
+        "cross":  "The cardinal wave rolls out in four directions and dissipates.",
     }
     body = "\n".join(activations) if activations else f"*{_no_hit.get(pattern, 'The resonance fades harmlessly.')}*"
 
@@ -920,7 +921,7 @@ class GameView(discord.ui.View):
 
 
         # ── Resonance pattern cycle button (row 2, aligned below h1 or h2) ───
-        _res_labels = {"x": "✕ X", "halo": "○ Ha", "square": "□ Sq"}
+        _res_labels = {"x": "✕ X", "halo": "○ Ha", "square": "□ Sq", "cross": "✚ Cr"}
         _res_label_v = _res_labels.get(res_pattern, "✕ X")
         if res_hammer_hand == "h1":
             # Position 3 of row 2 (directly below h1 in row 1)
@@ -11991,8 +11992,8 @@ async def handle_use_hand2(
 async def handle_res_strength_cycle(
     interaction: discord.Interaction, guild_id: int, user_id: int
 ) -> None:
-    """Cycle the resonance hammer strike pattern: x → halo → square → x."""
-    _cycle = ("x", "halo", "square")
+    """Cycle the resonance hammer strike pattern: x → halo → square → cross → x."""
+    _cycle = ("x", "halo", "square", "cross")
     state = _ui_state.setdefault(user_id, {})
     cur = state.get("res_pattern", "x")
     state["res_pattern"] = _cycle[(_cycle.index(cur) + 1) % len(_cycle)]
@@ -12011,7 +12012,7 @@ async def handle_res_strength_cycle(
 
     affected = _resonance_tiles(px, py, pattern)
     affected_set: set[tuple[int, int]] = set(affected)
-    _snames = {"x": "✕ Cross", "halo": "○ Halo", "square": "□ Ring"}
+    _snames = {"x": "✕ Diagonal", "halo": "○ Halo", "square": "□ Ring", "cross": "✚ Cross"}
     msg = f"🔨 Resonance → **{_snames.get(pattern, pattern)}** (preview — press 🔨 to strike)"
 
     if in_interior:

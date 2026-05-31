@@ -1933,6 +1933,14 @@ RESONANCE_PATTERNS: dict[str, list[tuple[int, int]]] = {
         (-1,  0),           (1,  0),
         (-1,  1), (0,  1), (1,  1),
     ],
+    # Cross: cardinal arms extending 2 tiles out (N/S/E/W)
+    "cross": [
+                  (0, -2),
+                  (0, -1),
+        (-2,  0), (-1, 0), (1, 0), (2, 0),
+                  (0,  1),
+                  (0,  2),
+    ],
 }
 
 # Cave random encounter rates per step: {enemy_type: chance 0-1}
