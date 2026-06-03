@@ -681,7 +681,7 @@ class DwarfExplorer(commands.Cog):
     @app_commands.describe(
         x="World X coordinate (0–447)",
         y="World Y coordinate (0–447)",
-        location="Named location: 'forestcity', 'hermit', or 'warden' (overrides x/y when provided)",
+        location="Named location: 'forestcity', 'hermit', 'warden', 'sokoban', or 'hall' (overrides x/y when provided)",
     )
     async def tp(
         self, interaction: discord.Interaction,
@@ -803,6 +803,81 @@ class DwarfExplorer(commands.Cog):
             _fq_grid_tp = await _lfqv_tp(_fq_id_tp, _tp_x, _tp_y, db)
             content = render_grid(_fq_grid_tp, player,
                                   "🧩 Teleported to the Sokoban puzzle.")
+            view = GameView(guild_id, ADMIN_PLAYER_ID)
+            msg = await interaction.followup.send(
+                embed=discord.Embed(description=content), view=view
+            )
+            await update_player_message(db, ADMIN_PLAYER_ID, msg.id, interaction.channel_id)
+            return
+
+        # ── Dwarven Hall ──────────────────────────────────────────────────────────
+        if loc in ("hall", "dwarvenhall", "dwarven"):
+            from dwarf_explorer.world.dwarven_hall import get_or_create_dwarven_hall as _get_hall
+            from dwarf_explorer.world.villages import load_village_viewport as _lvv_hall
+            from dwarf_explorer.database.repositories import update_player_village_state as _upvs
+
+            # Find the cracked_mountain_wall or dwarven_entrance tile_override
+            _hall_pos = await db.fetch_one(
+                "SELECT world_x, world_y FROM tile_overrides "
+                "WHERE tile_type IN ('cracked_mountain_wall', 'dwarven_entrance') LIMIT 1"
+            )
+            if not _hall_pos:
+                await interaction.followup.send(
+                    "⚠️ No dwarven hall entrance found in this world. "
+                    "Use `/newworld` to regenerate, or the wall may not have been placed yet.",
+                    ephemeral=True,
+                )
+                return
+
+            _hwx, _hwy = _hall_pos["world_x"], _hall_pos["world_y"]
+            _hall_id, _hex, _hey = await _get_hall(_hwx, _hwy, db)
+
+            # If the entrance tile is still cracked_mountain_wall, bomb it open for the admin
+            _entry_tile_row = await db.fetch_one(
+                "SELECT tile_type FROM tile_overrides WHERE world_x=? AND world_y=?",
+                (_hwx, _hwy),
+            )
+            if _entry_tile_row and _entry_tile_row["tile_type"] == "cracked_mountain_wall":
+                await db.execute(
+                    "UPDATE tile_overrides SET tile_type='dwarven_entrance' "
+                    "WHERE world_x=? AND world_y=?",
+                    (_hwx, _hwy),
+                )
+                await db.commit()
+
+            # Place admin inside the hall
+            player = await get_or_create_player(db, ADMIN_PLAYER_ID, interaction.user.display_name)
+            player.gold = 999999
+            player.in_cave = player.in_house = False
+            player.in_village = True
+            player.village_id = _hall_id
+            player.village_type = "dwarven_hall"
+            player.village_x, player.village_y = _hex, _hey
+            player.village_wx, player.village_wy = _hwx, _hwy
+            player.in_ocean = player.in_high_seas = player.in_island = player.in_ship = False
+            player.in_forest = player.in_grove = player.in_maze = player.in_tree_city = False
+            player.in_sky = player.in_shipwreck = player.in_temple = player.in_canoe = False
+            player.in_combat = player.in_hermit_hut = player.in_bandit_camp = False
+            player.in_forest_quest = player.in_fq_boss_combat = False
+            await db.execute(
+                "UPDATE players SET "
+                "in_cave=0, cave_id=NULL, cave_x=0, cave_y=0, "
+                "in_village=1, village_id=?, village_x=?, village_y=?, "
+                "village_wx=?, village_wy=?, village_type='dwarven_hall', "
+                "in_house=0, house_id=NULL, in_ocean=0, in_high_seas=0, in_island=0, in_ship=0, "
+                "in_forest=0, forest_id=NULL, in_grove=0, grove_id=NULL, "
+                "in_maze=0, maze_id=NULL, in_tree_city=0, in_sky=0, sky_id=NULL, "
+                "in_shipwreck=0, in_temple=0, in_canoe=0, in_combat=0, "
+                "in_hermit_hut=0, in_bandit_camp=0, bandit_camp_id=NULL, "
+                "in_forest_quest=0, fq_area_id=NULL, fq_x=0, fq_y=0, in_fq_boss_combat=0 "
+                "WHERE user_id=?",
+                (_hall_id, _hex, _hey, _hwx, _hwy, ADMIN_PLAYER_ID),
+            )
+            await db.commit()
+
+            grid = await _lvv_hall(_hall_id, _hex, _hey, db, user_id=ADMIN_PLAYER_ID)
+            content = render_grid(grid, player,
+                "⚒️ Teleported to the **Ancient Dwarven Hall**.")
             view = GameView(guild_id, ADMIN_PLAYER_ID)
             msg = await interaction.followup.send(
                 embed=discord.Embed(description=content), view=view
