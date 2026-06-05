@@ -1655,4 +1655,38 @@ async def getgamejson_cmd(
         file=discord.File(buf, filename="game_state.json"),
     )
 
+@bot.tree.command(name="syncchannels", description="Sync every channel in this category to the category's permissions", guild=discord.Object(id=GUILD_ID))
+@app_commands.checks.has_permissions(manage_channels=True)
+async def syncchannels_cmd(interaction: discord.Interaction):
+    category = interaction.channel.category
+    if category is None:
+        await interaction.response.send_message("This channel isn't inside a category.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    synced, failed = [], []
+    for ch in category.channels:
+        try:
+            await ch.edit(sync_permissions=True)
+            synced.append(ch.mention)
+        except discord.Forbidden:
+            failed.append(f"`{ch.name}` (missing permissions)")
+        except Exception as e:
+            failed.append(f"`{ch.name}` ({e})")
+
+    lines = [f"Synced **{len(synced)}** channel(s) in **{category.name}** to category permissions."]
+    if failed:
+        lines.append("Failed: " + ", ".join(failed))
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+@syncchannels_cmd.error
+async def syncchannels_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("You need the **Manage Channels** permission to use this.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Error: {error}", ephemeral=True)
+
+
 bot.run(TOKEN)
