@@ -9,7 +9,7 @@ import sys
 
 from dwarf_explorer.config import (
     FOREST_WALKABLE, MAZE_WALKABLE, VIEWPORT_SIZE, VIEWPORT_CENTER, WORLD_SIZE,
-    FOREST_NAMES,
+    FOREST_NAMES, STRUCTURE_TILES,
 )
 from dwarf_explorer.world.generator import TileData
 from dwarf_explorer.world.terrain import get_biome
@@ -705,11 +705,21 @@ async def create_forest_area(
             " VALUES (?, ?, ?, ?, ?)",
             (forest_id, ex, ey, wx, wy),
         )
-        await db.execute(
-            "INSERT OR IGNORE INTO tile_overrides (world_x, world_y, tile_type)"
-            " VALUES (?, ?, 'forest_entrance')",
+        # Claim the overworld entrance tile. A plain INSERT OR IGNORE silently
+        # fails when this tile already carries a terrain override (e.g. a 'river'
+        # written earlier in init_world), leaving a "ghost" forest with no door.
+        # So overwrite terrain, but never clobber a real structure tile.
+        _ex_row = await db.fetch_one(
+            "SELECT tile_type FROM tile_overrides WHERE world_x=? AND world_y=?",
             (wx, wy),
         )
+        _ex_type = _ex_row["tile_type"] if _ex_row else None
+        if _ex_type != "forest_entrance" and (_ex_type is None or _ex_type not in STRUCTURE_TILES):
+            await db.execute(
+                "INSERT OR REPLACE INTO tile_overrides (world_x, world_y, tile_type)"
+                " VALUES (?, ?, 'forest_entrance')",
+                (wx, wy),
+            )
 
 
 async def place_forest_areas(seed: int, db) -> None:
@@ -817,17 +827,15 @@ async def get_city_forest_info(db) -> dict | None:
     return dict(row) if row else None
 
 
-async def get_hermit_forest_info(db) -> dict | None:
-    """Return info about the hermit's forest (the has_hermit forest).
+async def _query_hermit_forest(db):
+    """Strict lookup: a has_hermit forest whose overworld entrance tile exists.
 
-    Returns dict with keys: forest_id, hermit_tx, hermit_ty, fq_entrance_tx,
-    fq_entrance_ty, world_x, world_y (overworld entrance tile).
-    Returns None if not yet generated.
+    Only returns a forest whose entrance tile_override actually exists on the
+    overworld. This guards against ghost forests that have has_hermit=1 but whose
+    entrance tile was never written to tile_overrides (e.g. an INSERT OR IGNORE
+    collision at generation time, or tile_overrides cleared on a world reset).
     """
-    # Only return a forest whose entrance tile_override actually exists on the overworld.
-    # This guards against ghost forests that have has_hermit=1 but whose entrance tile
-    # was never written to tile_overrides (e.g. due to INSERT OR IGNORE collision).
-    row = await db.fetch_one(
+    return await db.fetch_one(
         "SELECT fa.forest_id, fa.hermit_tx, fa.hermit_ty, "
         "fa.fq_entrance_tx, fa.fq_entrance_ty, "
         "fe.world_x, fe.world_y "
@@ -840,6 +848,60 @@ async def get_hermit_forest_info(db) -> dict | None:
         "ORDER BY fa.forest_id "
         "LIMIT 1"
     )
+
+
+async def _repair_hermit_forest_entrance(db) -> None:
+    """Self-heal: ensure at least one has_hermit forest has a usable overworld door.
+
+    A hermit forest can exist in the DB yet have no overworld 'forest_entrance'
+    tile — e.g. its entrance collided with a 'river' override at generation time,
+    or tile_overrides was wiped on a world reset while forest rows survived. When
+    that happens the Chapter 1 quest can never start. This promotes the lowest-id
+    hermit forest whose stored entrance tile is free or carries only terrain by
+    (re)writing its 'forest_entrance' override. No-op when a working hermit
+    entrance already exists or no promotable ghost is found (never clobbers a real
+    structure tile).
+    """
+    if await _query_hermit_forest(db) is not None:
+        return
+    ghosts = await db.fetch_all(
+        "SELECT fa.forest_id, fe.world_x, fe.world_y "
+        "FROM forest_areas fa "
+        "JOIN forest_entrances fe ON fe.forest_id = fa.forest_id "
+        "WHERE fa.has_hermit = 1 "
+        "ORDER BY fa.forest_id"
+    )
+    for g in ghosts:
+        wx, wy = g["world_x"], g["world_y"]
+        cur = await db.fetch_one(
+            "SELECT tile_type FROM tile_overrides WHERE world_x=? AND world_y=?",
+            (wx, wy),
+        )
+        cur_type = cur["tile_type"] if cur else None
+        if cur_type == "forest_entrance":
+            return  # already usable
+        if cur_type is None or cur_type not in STRUCTURE_TILES:
+            await db.execute(
+                "INSERT OR REPLACE INTO tile_overrides (world_x, world_y, tile_type)"
+                " VALUES (?, ?, 'forest_entrance')",
+                (wx, wy),
+            )
+            return
+    # No promotable hermit ghost (every candidate sits on a real structure) — give up.
+
+
+async def get_hermit_forest_info(db) -> dict | None:
+    """Return info about the hermit's forest (the has_hermit forest).
+
+    Returns dict with keys: forest_id, hermit_tx, hermit_ty, fq_entrance_tx,
+    fq_entrance_ty, world_x, world_y (overworld entrance tile).
+    Returns None if not yet generated. Self-heals a missing entrance tile when a
+    ghost hermit forest exists, so the Chapter 1 quest can always start.
+    """
+    row = await _query_hermit_forest(db)
+    if row is None:
+        await _repair_hermit_forest_entrance(db)
+        row = await _query_hermit_forest(db)
     return dict(row) if row else None
 
 
