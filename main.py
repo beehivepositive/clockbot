@@ -15,6 +15,7 @@ import datetime, pytz
 from botc_st import start_night, end_night, end_day, handle_dm_action, find_pending_game as find_pending_botc_game, resolve_execution as botc_resolve_execution
 from game_state import load_whisper_state,save_whisper_state,get_game_state,set_game_state,get_game_key,is_excluded,find_dest
 from clocktower_to_script import convert as clocktower_convert
+import botc_games
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
@@ -49,12 +50,20 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
 
 GUILD_ID = 1339575347032621191
+TEST_GUILD_ID = 1291933524760199260
 
 @bot.event
 async def on_ready():
     guild = discord.Object(id=GUILD_ID)
     bot.tree.copy_global_to(guild=guild)
     await bot.tree.sync(guild=guild)
+    for gid in (TEST_GUILD_ID,):
+        try:
+            g = discord.Object(id=gid)
+            bot.tree.copy_global_to(guild=g)
+            await bot.tree.sync(guild=g)
+        except Exception as e:
+            print(f"Test guild sync failed: {e}")
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
     if not game_clock.is_running():
@@ -1689,4 +1698,5 @@ async def syncchannels_error(interaction: discord.Interaction, error: app_comman
         await interaction.response.send_message(f"Error: {error}", ephemeral=True)
 
 
+botc_games.register(bot)
 bot.run(TOKEN)
