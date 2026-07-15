@@ -774,7 +774,11 @@ def register(bot):
                 continue
             if c.name.endswith("-ascension") or c.name.endswith("-ascension-chat"):
                 try:
-                    await c.set_permissions(ev, view_channel=True)
+                    # Merge into the existing @everyone overwrite so the
+                    # send_messages=False deny is preserved (view only).
+                    ow = c.overwrites_for(ev)
+                    ow.view_channel = True
+                    await c.set_permissions(ev, overwrite=ow)
                     revealed.append(c.mention)
                 except Exception:
                     pass
