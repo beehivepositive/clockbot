@@ -887,7 +887,6 @@ def register(bot):
             ephemeral=True)
 
     @bot.tree.command(name="stgamesettings", description="Customize the permissions /newgame applies.")
-    @st_check()
     async def stgamesettings(interaction: discord.Interaction):
         view = MainMenu(interaction.user.id)
         await interaction.response.send_message(view.title(), view=view, ephemeral=True)
