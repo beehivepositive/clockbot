@@ -30,7 +30,27 @@ from discord import app_commands
 _BASE = "/home/discord-bot" if os.path.isdir("/home/discord-bot") else os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(_BASE, "botc_scripts.db")
 IMG_DIR = os.path.join(_BASE, "script_data")
+COMMON_NAMES_PATH = os.path.join(_BASE, "common_names.json")
 os.makedirs(IMG_DIR, exist_ok=True)
+
+
+def load_id_to_common():
+    """Invert common_names.json (name -> user_id) into user_id -> common name.
+    If a user has several aliases, the first one listed wins."""
+    try:
+        with open(COMMON_NAMES_PATH) as f:
+            cn = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for name, uid in cn.items():
+        try:
+            uid = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if uid not in out:
+            out[uid] = name
+    return out
 
 CLOCKMAKER_ROLE = "Clockmaker"
 TOWNSFOLK_ROLE = "Townsfolk"
@@ -319,6 +339,12 @@ def register(bot):
                    if tf in m.roles and (st is None or st not in m.roles) and not m.bot]
         players.sort(key=lambda m: m.display_name.lower())
 
+        # Prefer each player's common name (falling back to display name).
+        id_to_common = load_id_to_common()
+        def pname(m):
+            n = id_to_common.get(m.id)
+            return (n[:1].upper() + n[1:]) if n else m.display_name
+
         try:
             script_json = json.loads(s["json"])
         except Exception:
@@ -336,10 +362,10 @@ def register(bot):
             "edition": {"id": "custom", "name": s["name"], "author": s["uploader_name"]},
             "roles": [{"id": rid} for rid in role_ids],
             "npcs": [],
-            "players": [player_entry(m.display_name) for m in players],
+            "players": [player_entry(pname(m)) for m in players],
         }
         buf = io.BytesIO(json.dumps(state, indent=2, ensure_ascii=False).encode("utf-8"))
-        names = ", ".join(m.display_name for m in players) if players else "none"
+        names = ", ".join(pname(m) for m in players) if players else "none"
         await interaction.response.send_message(
             f"Seating JSON for **{s['name']}** — {len(players)} player(s): {names}",
             file=discord.File(buf, f"{s['name']}_seating.json"))
