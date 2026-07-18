@@ -360,11 +360,13 @@ async def archive_channels(guild, channels, log=None):
     for key, chans in groups.items():
         target = await ensure_archive_target(guild, len(chans))
         ow = archived_overwrites(guild)
-        for ch in chans:
+        # Move in reverse so the group ends up at the TOP of the category in
+        # its original top-to-bottom order (each move(beginning=True) stacks above the last).
+        for ch in reversed(chans):
             try:
-                # Strip existing overwrites, then apply read-only archive perms.
-                await ch.edit(category=target, sync_permissions=False)
-                # Clear every existing overwrite.
+                # Place at the top of the archive category, stripping category sync.
+                await ch.move(beginning=True, category=target, sync_permissions=False)
+                # Clear every existing overwrite, then apply read-only archive perms.
                 for tgt in list(ch.overwrites.keys()):
                     await ch.set_permissions(tgt, overwrite=None)
                 for tgt, perm in ow.items():
