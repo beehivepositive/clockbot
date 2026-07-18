@@ -117,6 +117,22 @@ def get_script(name_or_id):
         return dict(row) if row else None
 
 
+def name_taken(name, exclude_id=None):
+    with _conn() as c:
+        row = c.execute("SELECT id FROM scripts WHERE name=? COLLATE NOCASE", (name,)).fetchone()
+    return row is not None and row["id"] != exclude_id
+
+
+def unique_name(base, exclude_id=None):
+    """Return `base`, or `base-1`, `base-2`, ... — the first name not already taken."""
+    if not name_taken(base, exclude_id):
+        return base
+    n = 1
+    while name_taken(f"{base}-{n}", exclude_id):
+        n += 1
+    return f"{base}-{n}"
+
+
 def script_avg_rating(script_id):
     with _conn() as c:
         row = c.execute("SELECT AVG(rating) a, COUNT(*) n FROM ratings WHERE script_id=?",
@@ -196,9 +212,8 @@ def register(bot):
             await interaction.followup.send(f"That isn't valid JSON: {e}", ephemeral=True)
             return
 
-        if get_script(name):
-            await interaction.followup.send(f"A script named **{name}** already exists. Pick another name or /renamescript it.", ephemeral=True)
-            return
+        # Auto-suffix duplicate names: "Foo", then "Foo-1", "Foo-2", ...
+        final_name = unique_name(name)
 
         # Store the uploader's common name as the author when we have one.
         author_name = load_id_to_common().get(interaction.user.id) or interaction.user.display_name
@@ -206,7 +221,7 @@ def register(bot):
         with _conn() as c:
             cur = c.execute(
                 "INSERT INTO scripts (name, json, uploader_id, uploader_name, created_at) VALUES (?,?,?,?,?)",
-                (name, json.dumps(parsed), interaction.user.id, author_name, created))
+                (final_name, json.dumps(parsed), interaction.user.id, author_name, created))
             sid = cur.lastrowid
 
         # Download + store the two images now (Discord URLs expire).
@@ -223,8 +238,10 @@ def register(bot):
         with _conn() as c:
             c.execute("UPDATE scripts SET char_path=?, night_path=? WHERE id=?", (char_path, night_path, sid))
 
+        note = f" (a script named **{name}** already existed)" if final_name != name else ""
         await interaction.followup.send(
-            f"Added script **{name}** (ID `{sid}`) with character sheet + night order.", ephemeral=True)
+            f"Added script **{final_name}** (ID `{sid}`) with character sheet + night order.{note}",
+            ephemeral=True)
 
     @bot.tree.command(name="myscripts", description="List the scripts you've uploaded.")
     async def myscripts(interaction: discord.Interaction):
@@ -321,13 +338,12 @@ def register(bot):
             await interaction.response.send_message(
                 "That isn't your script — you need the **Clockmaker** role to rename others' scripts.", ephemeral=True)
             return
-        existing = get_script(new_name)
-        if existing and existing["id"] != s["id"]:
-            await interaction.response.send_message(f"A script named **{new_name}** already exists.", ephemeral=True)
-            return
+        final_name = unique_name(new_name, exclude_id=s["id"])
         with _conn() as c:
-            c.execute("UPDATE scripts SET name=? WHERE id=?", (new_name, s["id"]))
-        await interaction.response.send_message(f"Renamed **{s['name']}** → **{new_name}**.", ephemeral=True)
+            c.execute("UPDATE scripts SET name=? WHERE id=?", (final_name, s["id"]))
+        note = f" (a script named **{new_name}** already existed)" if final_name != new_name else ""
+        await interaction.response.send_message(
+            f"Renamed **{s['name']}** → **{final_name}**.{note}", ephemeral=True)
 
     @bot.tree.command(name="seatingjson", description="Build a game-state JSON seating the current players for a script.")
     @app_commands.describe(script="Script name or ID.")
