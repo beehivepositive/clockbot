@@ -18,6 +18,7 @@ script_data/. Discord attachment URLs expire, so images are downloaded and store
 import os
 import io
 import json
+import random
 import sqlite3
 import datetime
 import discord
@@ -345,7 +346,7 @@ def register(bot):
         excluded = {r for r in (st, asc) if r is not None}
         players = [m for m in guild.members
                    if tf in m.roles and not (excluded & set(m.roles)) and not m.bot]
-        players.sort(key=lambda m: m.display_name.lower())
+        random.shuffle(players)
 
         # Prefer each player's common name (falling back to display name).
         id_to_common = load_id_to_common()
