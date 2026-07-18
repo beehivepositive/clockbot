@@ -149,6 +149,63 @@ def _rating_str(script_id):
 # Misc helpers
 # --------------------------------------------------------------------------
 
+SCRIPTS_PER_PAGE = 15
+
+
+def _format_rows(rows):
+    header = f"{'ID':>3}  {'Name':<24} {'Uploaded by':<16} {'Date':<10} Rating"
+    out = [header, "-" * len(header)]
+    for r in rows:
+        out.append(f"{r['id']:>3}  {r['name'][:24]:<24} {r['uploader_name'][:16]:<16} {r['created_at']:<10} {_rating_str(r['id'])}")
+    return out
+
+
+class ScriptListView(discord.ui.View):
+    """Button-paginated table of scripts, restricted to the invoker."""
+
+    def __init__(self, rows, title, owner_id, per_page=SCRIPTS_PER_PAGE):
+        super().__init__(timeout=180)
+        self.rows = rows
+        self.title = title
+        self.owner_id = owner_id
+        self.per = per_page
+        self.page = 0
+        self.pages = max(1, (len(rows) + per_page - 1) // per_page)
+        self._sync()
+
+    def content(self):
+        s = self.page * self.per
+        body = "\n".join(_format_rows(self.rows[s:s + self.per]))
+        return (f"**{self.title}** — page {self.page + 1}/{self.pages}, {len(self.rows)} total\n"
+                f"```\n{body}\n```")
+
+    def _sync(self):
+        self.prev_btn.disabled = self.page <= 0
+        self.next_btn.disabled = self.page >= self.pages - 1
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This list isn't yours to page — run the command yourself.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction, button):
+        self.page = max(0, self.page - 1)
+        self._sync()
+        await interaction.response.edit_message(content=self.content(), view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction, button):
+        self.page = min(self.pages - 1, self.page + 1)
+        self._sync()
+        await interaction.response.edit_message(content=self.content(), view=self)
+
+
 def has_clockmaker(member):
     return any(r.name.lower() == CLOCKMAKER_ROLE.lower() for r in getattr(member, "roles", []))
 
@@ -250,9 +307,9 @@ def register(bot):
         if not rows:
             await interaction.response.send_message("You haven't uploaded any scripts yet.", ephemeral=True)
             return
-        lines = [f"`{r['id']:>3}`  {r['name']}  —  {_rating_str(r['id'])}" for r in rows]
+        view = ScriptListView(rows, "Your scripts", interaction.user.id)
         await interaction.response.send_message(
-            "**Your scripts:**\n" + "\n".join(lines), ephemeral=True)
+            view.content(), view=view if view.pages > 1 else None, ephemeral=True)
 
     @bot.tree.command(name="allscripts", description="List every uploaded script.")
     async def allscripts(interaction: discord.Interaction):
@@ -261,16 +318,9 @@ def register(bot):
         if not rows:
             await interaction.response.send_message("No scripts have been uploaded yet.", ephemeral=True)
             return
-        header = f"{'ID':>3}  {'Name':<24} {'Uploaded by':<16} {'Date':<10} Rating"
-        out = [header, "-" * len(header)]
-        for r in rows:
-            out.append(f"{r['id']:>3}  {r['name'][:24]:<24} {r['uploader_name'][:16]:<16} {r['created_at']:<10} {_rating_str(r['id'])}")
-        text = "```\n" + "\n".join(out) + "\n```"
-        if len(text) > 1990:
-            buf = io.BytesIO(("\n".join(out)).encode("utf-8"))
-            await interaction.response.send_message("All scripts:", file=discord.File(buf, "scripts.txt"))
-        else:
-            await interaction.response.send_message(text)
+        view = ScriptListView(rows, "All scripts", interaction.user.id)
+        await interaction.response.send_message(
+            view.content(), view=view if view.pages > 1 else None)
 
     @bot.tree.command(name="ratescript", description="Rate a script from 1 to 10.")
     @app_commands.describe(script="Script name or ID.", rating="A rating from 1 to 10.")
