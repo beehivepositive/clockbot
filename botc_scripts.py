@@ -31,30 +31,43 @@ _BASE = "/home/discord-bot" if os.path.isdir("/home/discord-bot") else os.path.d
 DB_PATH = os.path.join(_BASE, "botc_scripts.db")
 IMG_DIR = os.path.join(_BASE, "script_data")
 COMMON_NAMES_PATH = os.path.join(_BASE, "common_names.json")
+PLAYER_NAMES_PATH = os.path.join(_BASE, "player_common_names.json")
 os.makedirs(IMG_DIR, exist_ok=True)
 
 
 def load_id_to_common():
-    """Invert common_names.json (name -> user_id) into user_id -> common name.
-    If a user has several aliases, the first one listed wins."""
+    """Build a user_id -> common name map from two sources:
+      1. common_names.json (name -> id): inverted; first alias per id wins.
+      2. player_common_names.json (id -> name): explicit, and authoritative
+         (overrides the inverted map). Handles several accounts sharing a name."""
+    out = {}
     try:
         with open(COMMON_NAMES_PATH) as f:
             cn = json.load(f)
+        for name, uid in cn.items():
+            try:
+                uid = int(uid)
+            except (TypeError, ValueError):
+                continue
+            if uid not in out:
+                out[uid] = name
     except Exception:
-        return {}
-    out = {}
-    for name, uid in cn.items():
-        try:
-            uid = int(uid)
-        except (TypeError, ValueError):
-            continue
-        if uid not in out:
-            out[uid] = name
+        pass
+    try:
+        with open(PLAYER_NAMES_PATH) as f:
+            for uid, name in json.load(f).items():
+                try:
+                    out[int(uid)] = name
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        pass
     return out
 
 CLOCKMAKER_ROLE = "Clockmaker"
 TOWNSFOLK_ROLE = "Townsfolk"
 STORYTELLER_ROLE = "Storyteller"
+ASCENDED_ROLE = "Ascended"
 
 
 # --------------------------------------------------------------------------
@@ -163,27 +176,18 @@ def register(bot):
         name="Unique name for the script.",
         character_sheet="The character sheet image.",
         night_order="The night order sheet image.",
-        script_file="The script JSON as a file (or use script_text).",
-        script_text="The script JSON pasted as text (or use script_file).",
+        script_file="The script JSON file.",
     )
     async def addscript(interaction: discord.Interaction, name: str,
                         character_sheet: discord.Attachment,
                         night_order: discord.Attachment,
-                        script_file: discord.Attachment | None = None,
-                        script_text: str | None = None):
+                        script_file: discord.Attachment):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # Resolve the JSON from either a file or pasted text.
-        if script_file is not None:
-            try:
-                raw = (await script_file.read()).decode("utf-8")
-            except Exception as e:
-                await interaction.followup.send(f"Couldn't read the script file: {e}", ephemeral=True)
-                return
-        elif script_text is not None:
-            raw = script_text
-        else:
-            await interaction.followup.send("Provide the script JSON as either `script_file` or `script_text`.", ephemeral=True)
+        try:
+            raw = (await script_file.read()).decode("utf-8")
+        except Exception as e:
+            await interaction.followup.send(f"Couldn't read the script file: {e}", ephemeral=True)
             return
         try:
             parsed = json.loads(raw)
@@ -195,11 +199,13 @@ def register(bot):
             await interaction.followup.send(f"A script named **{name}** already exists. Pick another name or /renamescript it.", ephemeral=True)
             return
 
+        # Store the uploader's common name as the author when we have one.
+        author_name = load_id_to_common().get(interaction.user.id) or interaction.user.display_name
         created = datetime.datetime.now().strftime("%Y-%m-%d")
         with _conn() as c:
             cur = c.execute(
                 "INSERT INTO scripts (name, json, uploader_id, uploader_name, created_at) VALUES (?,?,?,?,?)",
-                (name, json.dumps(parsed), interaction.user.id, interaction.user.display_name, created))
+                (name, json.dumps(parsed), interaction.user.id, author_name, created))
             sid = cur.lastrowid
 
         # Download + store the two images now (Discord URLs expire).
@@ -332,11 +338,13 @@ def register(bot):
         guild = interaction.guild
         tf = discord.utils.find(lambda r: r.name.lower() == TOWNSFOLK_ROLE.lower(), guild.roles)
         st = discord.utils.find(lambda r: r.name.lower() == STORYTELLER_ROLE.lower(), guild.roles)
+        asc = discord.utils.find(lambda r: r.name.lower() == ASCENDED_ROLE.lower(), guild.roles)
         if tf is None:
             await interaction.response.send_message("No **Townsfolk** role found in this server.", ephemeral=True)
             return
+        excluded = {r for r in (st, asc) if r is not None}
         players = [m for m in guild.members
-                   if tf in m.roles and (st is None or st not in m.roles) and not m.bot]
+                   if tf in m.roles and not (excluded & set(m.roles)) and not m.bot]
         players.sort(key=lambda m: m.display_name.lower())
 
         # Prefer each player's common name (falling back to display name).
