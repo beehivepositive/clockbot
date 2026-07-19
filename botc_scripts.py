@@ -17,6 +17,7 @@ script_data/. Discord attachment URLs expire, so images are downloaded and store
 
 import os
 import io
+import re
 import json
 import random
 import sqlite3
@@ -103,6 +104,10 @@ def init_db():
                 PRIMARY KEY (script_id, user_id)
             )
         """)
+        # Migrate older DBs: add updated_at if it's missing.
+        cols = [r[1] for r in c.execute("PRAGMA table_info(scripts)")]
+        if "updated_at" not in cols:
+            c.execute("ALTER TABLE scripts ADD COLUMN updated_at TEXT")
 
 
 def get_script(name_or_id):
@@ -162,11 +167,19 @@ def _rating_str(script_id):
 SCRIPTS_PER_PAGE = 15
 
 
+def _row_updated(r):
+    try:
+        return bool(r["updated_at"])
+    except (KeyError, IndexError):
+        return False
+
+
 def _format_rows(rows):
     header = f"{'ID':>3}  {'Name':<24} {'Uploaded by':<16} {'Date':<10} Rating"
     out = [header, "-" * len(header)]
     for r in rows:
-        out.append(f"{r['id']:>3}  {r['name'][:24]:<24} {r['uploader_name'][:16]:<16} {r['created_at']:<10} {_rating_str(r['id'])}")
+        mark = " *" if _row_updated(r) else ""
+        out.append(f"{r['id']:>3}  {r['name'][:24]:<24} {r['uploader_name'][:16]:<16} {r['created_at']:<10} {_rating_str(r['id'])}{mark}")
     return out
 
 
@@ -185,9 +198,11 @@ class ScriptListView(discord.ui.View):
 
     def content(self):
         s = self.page * self.per
-        body = "\n".join(_format_rows(self.rows[s:s + self.per]))
+        page_rows = self.rows[s:s + self.per]
+        body = "\n".join(_format_rows(page_rows))
+        note = "\n`*` = updated since upload" if any(_row_updated(r) for r in page_rows) else ""
         return (f"**{self.title}** — page {self.page + 1}/{self.pages}, {len(self.rows)} total\n"
-                f"```\n{body}\n```")
+                f"```\n{body}\n```{note}")
 
     def _sync(self):
         self.prev_btn.disabled = self.page <= 0
@@ -321,21 +336,44 @@ def register(bot):
         await interaction.response.send_message(
             view.content(), view=view if view.pages > 1 else None, ephemeral=True)
 
-    @bot.tree.command(name="scripts", description="List all scripts, optionally sorted.")
-    @app_commands.describe(sort="How to sort the list (default: by ID).")
+    @bot.tree.command(name="scripts", description="List scripts, optionally filtered by uploader and sorted.")
+    @app_commands.describe(
+        sort="How to sort the list (default: by ID).",
+        uploader="Show only this uploader's scripts — a common name or an @mention/ID.",
+    )
     @app_commands.choices(sort=[
         app_commands.Choice(name="Rating (best first)", value="rating"),
-        app_commands.Choice(name="Uploader (A-Z)", value="uploader"),
         app_commands.Choice(name="Newest first", value="new"),
         app_commands.Choice(name="Oldest first", value="old"),
     ])
     async def scripts_cmd(interaction: discord.Interaction,
-                          sort: app_commands.Choice[str] | None = None):
+                          sort: app_commands.Choice[str] | None = None,
+                          uploader: str | None = None):
         with _conn() as c:
             rows = [dict(r) for r in c.execute("SELECT * FROM scripts").fetchall()]
         if not rows:
             await interaction.response.send_message("No scripts have been uploaded yet.", ephemeral=True)
             return
+
+        filt = ""
+        if uploader:
+            q = uploader.strip()
+            m = re.match(r"^<@!?(\d+)>$|^(\d+)$", q)
+            if m:
+                uid = int(m.group(1) or m.group(2))
+                rows = [r for r in rows if r["uploader_id"] == uid]
+                filt = f" by <@{uid}>"
+            else:
+                ql = q.lower()
+                id2c = load_id_to_common()
+                rows = [r for r in rows
+                        if r["uploader_name"].lower() == ql
+                        or id2c.get(r["uploader_id"], "").lower() == ql]
+                filt = f" by {q}"
+            if not rows:
+                await interaction.response.send_message(f"No scripts uploaded{filt}.", ephemeral=True)
+                return
+
         mode = sort.value if sort else None
         if mode == "rating":
             # Best average first; unrated scripts sort below the worst rating.
@@ -343,13 +381,12 @@ def register(bot):
                 avg, n = script_avg_rating(r["id"])
                 return avg if n else -1.0
             rows.sort(key=rk, reverse=True)
-        elif mode == "uploader":
-            rows.sort(key=lambda r: r["uploader_name"].lower())
         elif mode == "new":
             rows.sort(key=lambda r: r["id"], reverse=True)
         else:  # "old" or default
             rows.sort(key=lambda r: r["id"])
-        title = "All scripts" + (f" — {sort.name}" if sort else "")
+
+        title = "Scripts" + filt + (f" — {sort.name}" if sort else "")
         view = ScriptListView(rows, title, interaction.user.id)
         await interaction.response.send_message(
             view.content(), view=view if view.pages > 1 else None)
@@ -383,8 +420,9 @@ def register(bot):
             if path and os.path.exists(path):
                 files.append(discord.File(path, f"{s['name']}_{label}{os.path.splitext(path)[1]}"))
         files.append(discord.File(io.BytesIO(s["json"].encode("utf-8")), f"{s['name']}.json"))
+        upd = f" · updated {s['updated_at']}" if s.get("updated_at") else ""
         await interaction.followup.send(
-            f"**{s['name']}** (ID `{s['id']}`) — uploaded by {s['uploader_name']} on {s['created_at']} — {_rating_str(s['id'])}",
+            f"**{s['name']}** (ID `{s['id']}`) — uploaded by {s['uploader_name']} on {s['created_at']}{upd} — {_rating_str(s['id'])}",
             files=files)
 
     @bot.tree.command(name="deletescript", description="Delete a script (yours, or any with the Clockmaker role).")
@@ -480,6 +518,7 @@ def register(bot):
             if final_name != name:
                 rename_note = f" (a script named **{name}** already existed)"
 
+        sets["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d")
         with _conn() as c:
             assignments = ", ".join(f"{k}=?" for k in sets)
             c.execute(f"UPDATE scripts SET {assignments} WHERE id=?", (*sets.values(), s["id"]))
