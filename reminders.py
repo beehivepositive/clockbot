@@ -1,16 +1,17 @@
 """/remindme — set a reminder that replies to your command when it's due.
 
-Two ways to set the time:
+Ways to set the time:
   * relative: amount + unit (seconds/minutes/hours/days/months/years)
-  * absolute: `at` as a typed date/time (Discord has no calendar-picker option type)
+  * absolute typed: `at` as a typed date/time (e.g. 2026-08-15 14:30)
+  * interactive: run /remindme with no time and pick Date/Hour/Minute from dropdowns
+    (Discord has no calendar-picker component, so this is built from select menus;
+     the date list reaches ~24 days out — use `at` for farther dates)
 
-A slash command doesn't post a user message, so the bot's public confirmation of
-the command is the thing the reminder replies to. Its reference is saved at
-creation; if it's later deleted the reminder still fires (reply is dropped).
-Extra users can be pinged via `also_ping`. Reminders persist to reminders.json
-and are delivered by a background loop, so they survive restarts. Times are
-interpreted in US Central; messages use Discord timestamps so each viewer sees
-their own local time.
+A slash command doesn't post a user message, so the reminder replies to the bot's
+public confirmation of the command (reference saved at creation; if that's deleted
+it still fires). The initiator is pinged when due, plus any `also_ping` users.
+Reminders persist to reminders.json and are delivered by a background loop, so they
+survive restarts. Times are US Central; messages use Discord timestamps.
 """
 
 import os
@@ -52,6 +53,25 @@ def _save(items):
     os.replace(tmp, PATH)
 
 
+def _persist(guild_id, channel_id, user_id, ping_ids, message, due_ts, reply_mid, jump):
+    items = _load()
+    rid = max((r.get("id", 0) for r in items), default=0) + 1
+    items.append({
+        "id": rid, "guild_id": guild_id, "channel_id": channel_id, "user_id": user_id,
+        "ping_ids": ping_ids, "message": message, "due_ts": due_ts,
+        "created_ts": int(datetime.datetime.now(CST).timestamp()),
+        "reply_message_id": reply_mid, "jump_url": jump,
+    })
+    _save(items)
+
+
+def _confirm_text(due_ts, ping_ids, initiator_id, message):
+    others = [u for u in ping_ids if u != initiator_id]
+    extra = (" and " + " ".join(f"<@{u}>" for u in others)) if others else ""
+    return (f"Reminder set for <t:{due_ts}:F> (<t:{due_ts}:R>). "
+            f"I'll reply here and ping you{extra} when it's due:\n> {message}")
+
+
 # --------------------------------------------------------------------------
 # Time math
 # --------------------------------------------------------------------------
@@ -75,6 +95,116 @@ def add_relative(dt, amount, unit):
 
 
 # --------------------------------------------------------------------------
+# Interactive picker (built from select menus — no native calendar exists)
+# --------------------------------------------------------------------------
+
+def _date_options(now):
+    opts = []
+    for i in range(25):  # Discord caps a select at 25 options (~24 days out)
+        d = (now + datetime.timedelta(days=i)).date()
+        if i == 0:
+            label = f"Today — {d.strftime('%b %d')}"
+        elif i == 1:
+            label = f"Tomorrow — {d.strftime('%b %d')}"
+        else:
+            label = d.strftime("%a, %b %d, %Y")
+        opts.append(discord.SelectOption(label=label, value=d.isoformat()))
+    return opts
+
+
+def _hour_options():
+    opts = []
+    for h in range(24):
+        disp = 12 if h % 12 == 0 else h % 12
+        opts.append(discord.SelectOption(label=f"{disp}:00 {'AM' if h < 12 else 'PM'}", value=str(h)))
+    return opts
+
+
+def _minute_options():
+    return [discord.SelectOption(label=f":{m:02d}", value=str(m)) for m in range(0, 60, 5)]
+
+
+class ReminderPicker(discord.ui.View):
+    def __init__(self, message, ping_ids, initiator_id, channel_id, guild_id):
+        super().__init__(timeout=300)
+        self.message = message
+        self.ping_ids = ping_ids
+        self.initiator_id = initiator_id
+        self.channel_id = channel_id
+        self.guild_id = guild_id
+        self.sel_date = None
+        self.sel_hour = None
+        self.sel_min = 0
+
+        self.date_sel = discord.ui.Select(placeholder="📅 Pick a date", options=_date_options(datetime.datetime.now(CST)), row=0)
+        self.hour_sel = discord.ui.Select(placeholder="🕐 Pick an hour", options=_hour_options(), row=1)
+        self.min_sel = discord.ui.Select(placeholder="Minutes (default :00)", options=_minute_options(), row=2)
+        self.date_sel.callback = self._on_date
+        self.hour_sel.callback = self._on_hour
+        self.min_sel.callback = self._on_min
+        self.confirm = discord.ui.Button(label="Set reminder", style=discord.ButtonStyle.success, row=3, disabled=True)
+        self.confirm.callback = self._on_confirm
+        for c in (self.date_sel, self.hour_sel, self.min_sel, self.confirm):
+            self.add_item(c)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("This picker isn't yours.", ephemeral=True)
+            return False
+        return True
+
+    def _refresh(self):
+        if self.sel_date:
+            self.date_sel.placeholder = f"📅 {self.sel_date}"
+        if self.sel_hour is not None:
+            h = int(self.sel_hour)
+            disp = 12 if h % 12 == 0 else h % 12
+            self.hour_sel.placeholder = f"🕐 {disp}:00 {'AM' if h < 12 else 'PM'}"
+        self.min_sel.placeholder = f"Minutes :{int(self.sel_min):02d}"
+        self.confirm.disabled = not (self.sel_date and self.sel_hour is not None)
+
+    async def _on_date(self, interaction):
+        self.sel_date = self.date_sel.values[0]
+        self._refresh()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_hour(self, interaction):
+        self.sel_hour = self.hour_sel.values[0]
+        self._refresh()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_min(self, interaction):
+        self.sel_min = int(self.min_sel.values[0])
+        self._refresh()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_confirm(self, interaction):
+        y, m, d = map(int, self.sel_date.split("-"))
+        due_dt = CST.localize(datetime.datetime(y, m, d, int(self.sel_hour), int(self.sel_min)))
+        due_ts = int(due_dt.timestamp())
+        if due_ts <= int(datetime.datetime.now(CST).timestamp()):
+            await interaction.response.send_message("That time is in the past — pick a later one.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content=f"✅ Reminder set for <t:{due_ts}:F> (<t:{due_ts}:R>).", view=None)
+        public = await interaction.channel.send(
+            _confirm_text(due_ts, self.ping_ids, self.initiator_id, self.message),
+            allowed_mentions=discord.AllowedMentions(users=False))
+        _persist(self.guild_id, self.channel_id, self.initiator_id, self.ping_ids,
+                 self.message, due_ts, public.id, public.jump_url)
+        self.stop()
+
+
+def _parse_ping(initiator_id, also_ping):
+    ping_ids = [initiator_id]
+    if also_ping:
+        for uid in re.findall(r"<@!?(\d+)>", also_ping):
+            if int(uid) not in ping_ids:
+                ping_ids.append(int(uid))
+    return ping_ids
+
+
+# --------------------------------------------------------------------------
 # Registration
 # --------------------------------------------------------------------------
 
@@ -95,10 +225,8 @@ def register(bot):
                 content = (pings + " " if pings else "") + f"⏰ **Reminder:** {r['message']}"
                 ref = None
                 if r.get("reply_message_id"):
-                    # fail_if_not_exists=False → if the original was deleted, still send (no reply).
                     ref = discord.MessageReference(
-                        message_id=r["reply_message_id"],
-                        channel_id=r["channel_id"],
+                        message_id=r["reply_message_id"], channel_id=r["channel_id"],
                         fail_if_not_exists=False)
                 await ch.send(content, reference=ref,
                               allowed_mentions=discord.AllowedMentions(users=True, replied_user=False))
@@ -115,12 +243,12 @@ def register(bot):
 
     bot.add_listener(_start_loop, "on_ready")
 
-    @bot.tree.command(name="remindme", description="Set a reminder; the bot replies to your command when it's due.")
+    @bot.tree.command(name="remindme", description="Set a reminder; the bot replies to your command and pings you when it's due.")
     @app_commands.describe(
         message="What you want to be reminded about.",
         amount="How many <unit> from now (use together with unit).",
         unit="Time unit (use together with amount).",
-        at="Or an exact date/time, e.g. 2026-08-15 14:30 (US Central). Overrides amount/unit.",
+        at="Exact date/time, e.g. 2026-08-15 14:30 (US Central). Overrides amount/unit.",
         also_ping="Extra users to ping when it's due — mention them here.",
     )
     @app_commands.choices(unit=[
@@ -138,7 +266,17 @@ def register(bot):
                        also_ping: str | None = None):
         now = datetime.datetime.now(CST)
 
-        # Resolve the due time.
+        # No time provided → show the interactive dropdown picker.
+        if at is None and amount is None and unit is None:
+            ping_ids = _parse_ping(interaction.user.id, also_ping)
+            view = ReminderPicker(message, ping_ids, interaction.user.id,
+                                  interaction.channel_id, interaction.guild_id)
+            await interaction.response.send_message(
+                f"Pick when to be reminded (or re-run with `amount`+`unit`/`at`):\n> {message}",
+                view=view, ephemeral=True)
+            return
+
+        # Otherwise resolve the due time from at / amount+unit.
         if at:
             due_dt = None
             for fmt in DATE_FORMATS:
@@ -157,13 +295,10 @@ def register(bot):
                 await interaction.response.send_message("Amount must be a positive number.", ephemeral=True)
                 return
             due_dt = add_relative(now, amount, unit.value)
-        elif amount is not None or unit is not None:
-            await interaction.response.send_message(
-                "Provide **both** `amount` and `unit`, or use `at` for an exact date.", ephemeral=True)
-            return
         else:
             await interaction.response.send_message(
-                "Tell me when: either `amount` + `unit`, or an `at` date/time.", ephemeral=True)
+                "Provide **both** `amount` and `unit`, use `at`, or leave time blank to pick from a menu.",
+                ephemeral=True)
             return
 
         due_ts = int(due_dt.timestamp())
@@ -171,38 +306,14 @@ def register(bot):
             await interaction.response.send_message("That time is in the past.", ephemeral=True)
             return
 
-        # Ping the initiator when it's due, plus any extra mentioned users.
-        ping_ids = [interaction.user.id]
-        if also_ping:
-            for uid in re.findall(r"<@!?(\d+)>", also_ping):
-                if int(uid) not in ping_ids:
-                    ping_ids.append(int(uid))
-
-        # Public confirmation — the reminder replies to this message. Render mentions
-        # as text but don't actually ping anyone yet (users=False) — pings happen when it fires.
-        others = [u for u in ping_ids if u != interaction.user.id]
-        extra = (" and " + " ".join(f"<@{u}>" for u in others)) if others else ""
+        ping_ids = _parse_ping(interaction.user.id, also_ping)
         await interaction.response.send_message(
-            f"Reminder set for <t:{due_ts}:F> (<t:{due_ts}:R>). I'll reply here and ping you{extra} when it's due:\n> {message}",
+            _confirm_text(due_ts, ping_ids, interaction.user.id, message),
             allowed_mentions=discord.AllowedMentions(users=False))
         try:
             conf = await interaction.original_response()
             reply_mid, jump = conf.id, conf.jump_url
         except Exception:
             reply_mid, jump = None, None
-
-        items = _load()
-        rid = (max((r.get("id", 0) for r in items), default=0) + 1)
-        items.append({
-            "id": rid,
-            "guild_id": interaction.guild_id,
-            "channel_id": interaction.channel_id,
-            "user_id": interaction.user.id,
-            "ping_ids": ping_ids,
-            "message": message,
-            "due_ts": due_ts,
-            "created_ts": int(now.timestamp()),
-            "reply_message_id": reply_mid,
-            "jump_url": jump,
-        })
-        _save(items)
+        _persist(interaction.guild_id, interaction.channel_id, interaction.user.id,
+                 ping_ids, message, due_ts, reply_mid, jump)
