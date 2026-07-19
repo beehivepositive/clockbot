@@ -174,13 +174,11 @@ def _row_updated(r):
         return False
 
 
-def _format_rows(rows):
-    header = f"{'ID':>3}  {'Name':<24} {'Uploaded by':<16} {'Date':<10} Rating"
-    out = [header, "-" * len(header)]
-    for r in rows:
-        mark = " *" if _row_updated(r) else ""
-        out.append(f"{r['id']:>3}  {r['name'][:24]:<24} {r['uploader_name'][:16]:<16} {r['created_at']:<10} {_rating_str(r['id'])}{mark}")
-    return out
+def _entry_text(r):
+    rating = _rating_str(r["id"])
+    rtxt = "unrated" if rating.startswith("unrated") else f"⭐ {rating}"
+    upd = f" · updated {r['updated_at']}" if _row_updated(r) else ""
+    return f"**`{r['id']}` {r['name']}**\n{r['uploader_name']} · {r['created_at']}{upd} · {rtxt}"
 
 
 class ScriptListView(discord.ui.View):
@@ -196,13 +194,16 @@ class ScriptListView(discord.ui.View):
         self.pages = max(1, (len(rows) + per_page - 1) // per_page)
         self._sync()
 
-    def content(self):
+    def embed(self):
         s = self.page * self.per
         page_rows = self.rows[s:s + self.per]
-        body = "\n".join(_format_rows(page_rows))
-        note = "\n`*` = updated since upload" if any(_row_updated(r) for r in page_rows) else ""
-        return (f"**{self.title}** — page {self.page + 1}/{self.pages}, {len(self.rows)} total\n"
-                f"```\n{body}\n```{note}")
+        e = discord.Embed(
+            title=self.title,
+            description="\n\n".join(_entry_text(r) for r in page_rows),
+            color=discord.Color.blurple(),
+        )
+        e.set_footer(text=f"Page {self.page + 1}/{self.pages} · {len(self.rows)} total")
+        return e
 
     def _sync(self):
         self.prev_btn.disabled = self.page <= 0
@@ -222,13 +223,13 @@ class ScriptListView(discord.ui.View):
     async def prev_btn(self, interaction, button):
         self.page = max(0, self.page - 1)
         self._sync()
-        await interaction.response.edit_message(content=self.content(), view=self)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
     @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
     async def next_btn(self, interaction, button):
         self.page = min(self.pages - 1, self.page + 1)
         self._sync()
-        await interaction.response.edit_message(content=self.content(), view=self)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
 
 def has_clockmaker(member):
@@ -334,7 +335,7 @@ def register(bot):
             return
         view = ScriptListView(rows, "Your scripts", interaction.user.id)
         await interaction.response.send_message(
-            view.content(), view=view if view.pages > 1 else None, ephemeral=True)
+            embed=view.embed(), view=view if view.pages > 1 else None, ephemeral=True)
 
     @bot.tree.command(name="scripts", description="List scripts, optionally filtered by uploader and sorted.")
     @app_commands.describe(
@@ -389,7 +390,7 @@ def register(bot):
         title = "Scripts" + filt + (f" — {sort.name}" if sort else "")
         view = ScriptListView(rows, title, interaction.user.id)
         await interaction.response.send_message(
-            view.content(), view=view if view.pages > 1 else None)
+            embed=view.embed(), view=view if view.pages > 1 else None)
 
     @bot.tree.command(name="ratescript", description="Rate a script from 1 to 10.")
     @app_commands.describe(script="Script name or ID.", rating="A rating from 1 to 10.")
