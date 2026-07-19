@@ -16,6 +16,7 @@ from botc_st import start_night, end_night, end_day, handle_dm_action, find_pend
 from game_state import load_whisper_state,save_whisper_state,get_game_state,set_game_state,get_game_key,is_excluded,find_dest
 import botc_games
 import botc_scripts
+import reminders
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
@@ -469,4 +470,5 @@ async def syncchannels_error(interaction: discord.Interaction, error: app_comman
 
 botc_games.register(bot)
 botc_scripts.register(bot)
+reminders.register(bot)
 bot.run(TOKEN)
