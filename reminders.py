@@ -171,18 +171,20 @@ def register(bot):
             await interaction.response.send_message("That time is in the past.", ephemeral=True)
             return
 
-        # Extra users to ping (the initiator is NOT pinged — the reminder replies to their command).
-        ping_ids = []
+        # Ping the initiator when it's due, plus any extra mentioned users.
+        ping_ids = [interaction.user.id]
         if also_ping:
             for uid in re.findall(r"<@!?(\d+)>", also_ping):
                 if int(uid) not in ping_ids:
                     ping_ids.append(int(uid))
 
-        # Public confirmation — this is the message the reminder will reply to.
-        extra = (" and ping " + " ".join(f"<@{u}>" for u in ping_ids)) if ping_ids else ""
+        # Public confirmation — the reminder replies to this message. Render mentions
+        # as text but don't actually ping anyone yet (users=False) — pings happen when it fires.
+        others = [u for u in ping_ids if u != interaction.user.id]
+        extra = (" and " + " ".join(f"<@{u}>" for u in others)) if others else ""
         await interaction.response.send_message(
-            f"Reminder set for <t:{due_ts}:F> (<t:{due_ts}:R>). I'll reply here when it's due{extra}:\n> {message}",
-            allowed_mentions=discord.AllowedMentions(users=bool(ping_ids)))
+            f"Reminder set for <t:{due_ts}:F> (<t:{due_ts}:R>). I'll reply here and ping you{extra} when it's due:\n> {message}",
+            allowed_mentions=discord.AllowedMentions(users=False))
         try:
             conf = await interaction.original_response()
             reply_mid, jump = conf.id, conf.jump_url
