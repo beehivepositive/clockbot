@@ -843,11 +843,6 @@ def register(bot):
             await interaction.followup.send(
                 f"No recent signup post with {REACTION_THRESHOLD}+ reactions found.", ephemeral=True)
             return
-        if signup.author.id != interaction.user.id:
-            await interaction.followup.send(
-                "The most recent qualifying signup post isn't yours — skipping role assignment.",
-                ephemeral=True)
-            return
 
         # Pick the emoji with the most reactions and gather its reactors.
         top = max(signup.reactions, key=lambda r: r.count)
