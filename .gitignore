@@ -1,3 +1,9 @@
 game209-*.json
 __pycache__/
 *.pyc
+.env
+*.db
+*.db.bak
+st_game_settings.json
+player_common_names.json
+whisper_state.json
