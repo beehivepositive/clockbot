@@ -278,7 +278,7 @@ def archived_overwrites(guild):
     rec = resolve_role(guild, R_RECLUSE)
     ow = {
         ev: discord.PermissionOverwrite(
-            send_messages=False, add_reactions=False,
+            send_messages=True, add_reactions=True,
             create_public_threads=False, create_private_threads=False,
             send_messages_in_threads=False, use_embedded_activities=False,
             use_application_commands=False,
