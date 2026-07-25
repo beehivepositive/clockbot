@@ -17,6 +17,7 @@ from game_state import load_whisper_state,save_whisper_state,get_game_state,set_
 import botc_games
 import botc_scripts
 import reminders
+import votelock
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
@@ -471,4 +472,5 @@ async def syncchannels_error(interaction: discord.Interaction, error: app_comman
 botc_games.register(bot)
 botc_scripts.register(bot)
 reminders.register(bot)
+votelock.register(bot)
 bot.run(TOKEN)

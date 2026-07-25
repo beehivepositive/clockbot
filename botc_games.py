@@ -27,6 +27,7 @@ import re
 import json
 import discord
 from discord import app_commands
+import votelock
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -765,6 +766,7 @@ def register(bot):
     async def endgame(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
+        votelock.deactivate(guild.id)  # stop the daily votelock cycle
         ev = guild.default_role
         # Prefer the game of the channel this was run in; else the latest game.
         target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
@@ -784,10 +786,11 @@ def register(bot):
                     revealed.append(c.mention)
                 except Exception:
                     pass
+        note = "\nVotelock cycle stopped."
         if revealed:
-            await interaction.followup.send("Revealed: " + ", ".join(revealed), ephemeral=True)
+            await interaction.followup.send("Revealed: " + ", ".join(revealed) + note, ephemeral=True)
         else:
-            await interaction.followup.send("No ascension channels found for that game.", ephemeral=True)
+            await interaction.followup.send("No ascension channels found for that game." + note, ephemeral=True)
 
     @bot.tree.command(name="ascend", description="Grant a user the Ascended role (or explicit ascension access).")
     @app_commands.describe(user="The player to ascend.")
