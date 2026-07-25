@@ -21,6 +21,7 @@ import re
 import json
 import random
 import sqlite3
+import difflib
 import datetime
 import discord
 from discord import app_commands
@@ -265,6 +266,80 @@ def _norm_id(cid):
 
 
 # --------------------------------------------------------------------------
+# Fuzzy name resolution — "did you mean …?"
+# --------------------------------------------------------------------------
+
+def suggest_scripts(query, n=5):
+    """Return up to n script rows whose name is a close/substring match for query."""
+    with _conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM scripts").fetchall()]
+    q = query.lower().strip()
+    out, seen = [], set()
+    # Substring matches first (most intuitive), then difflib fuzzy matches.
+    for r in rows:
+        nl = r["name"].lower()
+        if q and (q in nl or nl in q) and r["id"] not in seen:
+            out.append(r)
+            seen.add(r["id"])
+    lower_map = {}
+    for r in rows:
+        lower_map.setdefault(r["name"].lower(), r)
+    for cl in difflib.get_close_matches(q, list(lower_map.keys()), n=n, cutoff=0.5):
+        r = lower_map[cl]
+        if r["id"] not in seen:
+            out.append(r)
+            seen.add(r["id"])
+    return out[:n]
+
+
+class SuggestView(discord.ui.View):
+    """Offers close-name matches; picking one runs the held command with that script."""
+
+    def __init__(self, candidates, owner_id, run):
+        super().__init__(timeout=120)
+        self.owner_id = owner_id
+        self.run = run
+        self._by_id = {str(r["id"]): r for r in candidates}
+        options = [discord.SelectOption(label=f"{r['name']} (ID {r['id']})"[:100], value=str(r["id"]))
+                   for r in candidates[:25]]
+        self.sel = discord.ui.Select(placeholder="Did you mean…", options=options)
+        self.sel.callback = self._pick
+        self.add_item(self.sel)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This prompt isn't yours.", ephemeral=True)
+            return False
+        return True
+
+    async def _pick(self, interaction):
+        row = self._by_id.get(self.sel.values[0])
+        self.stop()
+        if row:
+            await self.run(interaction, row)
+
+
+async def resolve_or_suggest(interaction, script, run):
+    """Resolve `script` (name or id) and call run(interaction, row). With no exact
+    match, offer close-name suggestions — the original command inputs are held in
+    the `run` closure, so picking a suggestion completes the action."""
+    s = get_script(script)
+    if s:
+        await run(interaction, s)
+        return
+    if str(script).strip().isdigit():
+        await interaction.response.send_message(f"No script with ID **{script}**.", ephemeral=True)
+        return
+    cands = suggest_scripts(script)
+    if not cands:
+        await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
+        return
+    await interaction.response.send_message(
+        f"No exact match for **{script}** — did you mean one of these?",
+        view=SuggestView(cands, interaction.user.id, run), ephemeral=True)
+
+
+# --------------------------------------------------------------------------
 # Command registration
 # --------------------------------------------------------------------------
 
@@ -272,6 +347,7 @@ def register(bot):
     init_db()
 
     @bot.tree.command(name="addscript", description="Add a script to the library.")
+    @app_commands.rename(script_file="json")
     @app_commands.describe(
         name="Unique name for the script.",
         character_sheet="The character sheet image.",
@@ -396,59 +472,54 @@ def register(bot):
     @app_commands.describe(script="Script name or ID.", rating="A rating from 1 to 10.")
     async def ratescript(interaction: discord.Interaction, script: str,
                          rating: app_commands.Range[int, 1, 10]):
-        s = get_script(script)
-        if not s:
-            await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
-            return
-        with _conn() as c:
-            c.execute(
-                "INSERT INTO ratings (script_id, user_id, rating) VALUES (?,?,?) "
-                "ON CONFLICT(script_id, user_id) DO UPDATE SET rating=excluded.rating",
-                (s["id"], interaction.user.id, int(rating)))
-        await interaction.response.send_message(
-            f"You rated **{s['name']}** {int(rating)}/10. New average: {_rating_str(s['id'])}.", ephemeral=True)
+        async def run(inter, s):
+            with _conn() as c:
+                c.execute(
+                    "INSERT INTO ratings (script_id, user_id, rating) VALUES (?,?,?) "
+                    "ON CONFLICT(script_id, user_id) DO UPDATE SET rating=excluded.rating",
+                    (s["id"], inter.user.id, int(rating)))
+            await inter.response.send_message(
+                f"You rated **{s['name']}** {int(rating)}/10. New average: {_rating_str(s['id'])}.", ephemeral=True)
+        await resolve_or_suggest(interaction, script, run)
 
     @bot.tree.command(name="getscript", description="Get a script's images and JSON.")
     @app_commands.describe(script="Script name or ID.")
     async def getscript_cmd(interaction: discord.Interaction, script: str):
-        s = get_script(script)
-        if not s:
-            await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
-            return
-        await interaction.response.defer(thinking=True)
-        files = []
-        for path, label in ((s["char_path"], "character"), (s["night_path"], "night_order")):
-            if path and os.path.exists(path):
-                files.append(discord.File(path, f"{s['name']}_{label}{os.path.splitext(path)[1]}"))
-        files.append(discord.File(io.BytesIO(s["json"].encode("utf-8")), f"{s['name']}.json"))
-        upd = f" · updated {s['updated_at']}" if s.get("updated_at") else ""
-        await interaction.followup.send(
-            f"**{s['name']}** (ID `{s['id']}`) — uploaded by {s['uploader_name']} on {s['created_at']}{upd} — {_rating_str(s['id'])}",
-            files=files)
+        async def run(inter, s):
+            await inter.response.defer(thinking=True)
+            files = []
+            for path, label in ((s["char_path"], "character"), (s["night_path"], "night_order")):
+                if path and os.path.exists(path):
+                    files.append(discord.File(path, f"{s['name']}_{label}{os.path.splitext(path)[1]}"))
+            files.append(discord.File(io.BytesIO(s["json"].encode("utf-8")), f"{s['name']}.json"))
+            upd = f" · updated {s['updated_at']}" if s.get("updated_at") else ""
+            await inter.followup.send(
+                f"**{s['name']}** (ID `{s['id']}`) — uploaded by {s['uploader_name']} on {s['created_at']}{upd} — {_rating_str(s['id'])}",
+                files=files)
+        await resolve_or_suggest(interaction, script, run)
 
     @bot.tree.command(name="deletescript", description="Delete a script (yours, or any with the Clockmaker role).")
     @app_commands.describe(script="Script name or ID.")
     async def deletescript(interaction: discord.Interaction, script: str):
-        s = get_script(script)
-        if not s:
-            await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
-            return
-        if s["uploader_id"] != interaction.user.id and not has_clockmaker(interaction.user):
-            await interaction.response.send_message(
-                "That isn't your script — you need the **Clockmaker** role to delete others' scripts.", ephemeral=True)
-            return
-        for path in (s["char_path"], s["night_path"]):
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
-        with _conn() as c:
-            c.execute("DELETE FROM ratings WHERE script_id=?", (s["id"],))
-            c.execute("DELETE FROM scripts WHERE id=?", (s["id"],))
-        await interaction.response.send_message(f"Deleted script **{s['name']}** (ID `{s['id']}`).", ephemeral=True)
+        async def run(inter, s):
+            if s["uploader_id"] != inter.user.id and not has_clockmaker(inter.user):
+                await inter.response.send_message(
+                    "That isn't your script — you need the **Clockmaker** role to delete others' scripts.", ephemeral=True)
+                return
+            for path in (s["char_path"], s["night_path"]):
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            with _conn() as c:
+                c.execute("DELETE FROM ratings WHERE script_id=?", (s["id"],))
+                c.execute("DELETE FROM scripts WHERE id=?", (s["id"],))
+            await inter.response.send_message(f"Deleted script **{s['name']}** (ID `{s['id']}`).", ephemeral=True)
+        await resolve_or_suggest(interaction, script, run)
 
     @bot.tree.command(name="updatescript", description="Update a script's name/images/JSON (yours, or any with Clockmaker).")
+    @app_commands.rename(script_file="json")
     @app_commands.describe(
         script="Script name or ID to update.",
         name="New name (optional).",
@@ -461,118 +532,114 @@ def register(bot):
                            character_sheet: discord.Attachment | None = None,
                            night_order: discord.Attachment | None = None,
                            script_file: discord.Attachment | None = None):
-        s = get_script(script)
-        if not s:
-            await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
-            return
-        if s["uploader_id"] != interaction.user.id and not has_clockmaker(interaction.user):
-            await interaction.response.send_message(
-                "That isn't your script — you need the **Clockmaker** role to update others' scripts.", ephemeral=True)
-            return
-        if not any((name, character_sheet, night_order, script_file)):
-            await interaction.response.send_message("Provide at least one field to update.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        sets, changed = {}, []
-
-        if script_file is not None:
-            try:
-                parsed = json.loads((await script_file.read()).decode("utf-8"))
-            except Exception as e:
-                await interaction.followup.send(f"Couldn't read/parse the script JSON: {e}", ephemeral=True)
+        async def run(inter, s):
+            if s["uploader_id"] != inter.user.id and not has_clockmaker(inter.user):
+                await inter.response.send_message(
+                    "That isn't your script — you need the **Clockmaker** role to update others' scripts.", ephemeral=True)
                 return
-            sets["json"] = json.dumps(parsed)
-            changed.append("JSON")
-
-        if character_sheet is not None:
-            new_path = os.path.join(IMG_DIR, f"{s['id']}_character{_ext(character_sheet.filename)}")
-            try:
-                await character_sheet.save(new_path)
-            except Exception as e:
-                await interaction.followup.send(f"Couldn't save the character sheet: {e}", ephemeral=True)
+            if not any((name, character_sheet, night_order, script_file)):
+                await inter.response.send_message("Provide at least one field to update.", ephemeral=True)
                 return
-            if s["char_path"] and s["char_path"] != new_path and os.path.exists(s["char_path"]):
-                try: os.remove(s["char_path"])
-                except Exception: pass
-            sets["char_path"] = new_path
-            changed.append("character sheet")
+            await inter.response.defer(ephemeral=True, thinking=True)
 
-        if night_order is not None:
-            new_path = os.path.join(IMG_DIR, f"{s['id']}_night{_ext(night_order.filename)}")
-            try:
-                await night_order.save(new_path)
-            except Exception as e:
-                await interaction.followup.send(f"Couldn't save the night order: {e}", ephemeral=True)
-                return
-            if s["night_path"] and s["night_path"] != new_path and os.path.exists(s["night_path"]):
-                try: os.remove(s["night_path"])
-                except Exception: pass
-            sets["night_path"] = new_path
-            changed.append("night order")
+            sets, changed = {}, []
 
-        rename_note = ""
-        if name is not None:
-            final_name = unique_name(name, exclude_id=s["id"])
-            sets["name"] = final_name
-            changed.append(f"name → **{final_name}**")
-            if final_name != name:
-                rename_note = f" (a script named **{name}** already existed)"
+            if script_file is not None:
+                try:
+                    parsed = json.loads((await script_file.read()).decode("utf-8"))
+                except Exception as e:
+                    await inter.followup.send(f"Couldn't read/parse the script JSON: {e}", ephemeral=True)
+                    return
+                sets["json"] = json.dumps(parsed)
+                changed.append("JSON")
 
-        sets["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d")
-        with _conn() as c:
-            assignments = ", ".join(f"{k}=?" for k in sets)
-            c.execute(f"UPDATE scripts SET {assignments} WHERE id=?", (*sets.values(), s["id"]))
+            if character_sheet is not None:
+                new_path = os.path.join(IMG_DIR, f"{s['id']}_character{_ext(character_sheet.filename)}")
+                try:
+                    await character_sheet.save(new_path)
+                except Exception as e:
+                    await inter.followup.send(f"Couldn't save the character sheet: {e}", ephemeral=True)
+                    return
+                if s["char_path"] and s["char_path"] != new_path and os.path.exists(s["char_path"]):
+                    try: os.remove(s["char_path"])
+                    except Exception: pass
+                sets["char_path"] = new_path
+                changed.append("character sheet")
 
-        await interaction.followup.send(
-            f"Updated **{s['name']}** (ID `{s['id']}`): {', '.join(changed)}.{rename_note}", ephemeral=True)
+            if night_order is not None:
+                new_path = os.path.join(IMG_DIR, f"{s['id']}_night{_ext(night_order.filename)}")
+                try:
+                    await night_order.save(new_path)
+                except Exception as e:
+                    await inter.followup.send(f"Couldn't save the night order: {e}", ephemeral=True)
+                    return
+                if s["night_path"] and s["night_path"] != new_path and os.path.exists(s["night_path"]):
+                    try: os.remove(s["night_path"])
+                    except Exception: pass
+                sets["night_path"] = new_path
+                changed.append("night order")
+
+            rename_note = ""
+            if name is not None:
+                final_name = unique_name(name, exclude_id=s["id"])
+                sets["name"] = final_name
+                changed.append(f"name → **{final_name}**")
+                if final_name != name:
+                    rename_note = f" (a script named **{name}** already existed)"
+
+            sets["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d")
+            with _conn() as c:
+                assignments = ", ".join(f"{k}=?" for k in sets)
+                c.execute(f"UPDATE scripts SET {assignments} WHERE id=?", (*sets.values(), s["id"]))
+
+            await inter.followup.send(
+                f"Updated **{s['name']}** (ID `{s['id']}`): {', '.join(changed)}.{rename_note}", ephemeral=True)
+        await resolve_or_suggest(interaction, script, run)
 
     @bot.tree.command(name="seatingjson", description="Build a game-state JSON seating the current players for a script.")
     @app_commands.describe(script="Script name or ID.")
     async def seatingjson(interaction: discord.Interaction, script: str):
-        s = get_script(script)
-        if not s:
-            await interaction.response.send_message(f"No script found matching **{script}**.", ephemeral=True)
-            return
-        guild = interaction.guild
-        tf = discord.utils.find(lambda r: r.name.lower() == TOWNSFOLK_ROLE.lower(), guild.roles)
-        st = discord.utils.find(lambda r: r.name.lower() == STORYTELLER_ROLE.lower(), guild.roles)
-        asc = discord.utils.find(lambda r: r.name.lower() == ASCENDED_ROLE.lower(), guild.roles)
-        if tf is None:
-            await interaction.response.send_message("No **Townsfolk** role found in this server.", ephemeral=True)
-            return
-        excluded = {r for r in (st, asc) if r is not None}
-        players = [m for m in guild.members
-                   if tf in m.roles and not (excluded & set(m.roles)) and not m.bot]
-        random.shuffle(players)
+        async def run(inter, s):
+            guild = inter.guild
+            tf = discord.utils.find(lambda r: r.name.lower() == TOWNSFOLK_ROLE.lower(), guild.roles)
+            st = discord.utils.find(lambda r: r.name.lower() == STORYTELLER_ROLE.lower(), guild.roles)
+            asc = discord.utils.find(lambda r: r.name.lower() == ASCENDED_ROLE.lower(), guild.roles)
+            if tf is None:
+                await inter.response.send_message("No **Townsfolk** role found in this server.", ephemeral=True)
+                return
+            excluded = {r for r in (st, asc) if r is not None}
+            players = [m for m in guild.members
+                       if tf in m.roles and not (excluded & set(m.roles)) and not m.bot]
+            random.shuffle(players)
 
-        # Prefer each player's common name (falling back to display name).
-        id_to_common = load_id_to_common()
-        def pname(m):
-            n = id_to_common.get(m.id)
-            return (n[:1].upper() + n[1:]) if n else m.display_name
+            # Prefer each player's common name (falling back to display name).
+            id_to_common = load_id_to_common()
+            def pname(m):
+                n = id_to_common.get(m.id)
+                return (n[:1].upper() + n[1:]) if n else m.display_name
 
-        try:
-            script_json = json.loads(s["json"])
-        except Exception:
-            script_json = []
-        role_ids = [_norm_id(cid) for cid in _extract_role_ids(script_json)]
+            try:
+                script_json = json.loads(s["json"])
+            except Exception:
+                script_json = []
+            role_ids = [_norm_id(cid) for cid in _extract_role_ids(script_json)]
 
-        def player_entry(name):
-            return {"name": name, "id": "", "connected": False, "role": {},
-                    "alignmentIndex": 0, "reminders": [], "isVoteless": False,
-                    "hasTwoVotes": False, "hasResponded": {}, "isDead": False,
-                    "handRaised": False, "pronouns": ""}
+            def player_entry(name):
+                return {"name": name, "id": "", "connected": False, "role": {},
+                        "alignmentIndex": 0, "reminders": [], "isVoteless": False,
+                        "hasTwoVotes": False, "hasResponded": {}, "isDead": False,
+                        "handRaised": False, "pronouns": ""}
 
-        state = {
-            "bluffs": [None, None, None],
-            "edition": {"id": "custom", "name": s["name"], "author": s["uploader_name"]},
-            "roles": [{"id": rid} for rid in role_ids],
-            "npcs": [],
-            "players": [player_entry(pname(m)) for m in players],
-        }
-        buf = io.BytesIO(json.dumps(state, indent=2, ensure_ascii=False).encode("utf-8"))
-        names = ", ".join(pname(m) for m in players) if players else "none"
-        await interaction.response.send_message(
-            f"Seating JSON for **{s['name']}** — {len(players)} player(s): {names}",
-            file=discord.File(buf, f"{s['name']}_seating.json"))
+            state = {
+                "bluffs": [None, None, None],
+                "edition": {"id": "custom", "name": s["name"], "author": s["uploader_name"]},
+                "roles": [{"id": rid} for rid in role_ids],
+                "npcs": [],
+                "players": [player_entry(pname(m)) for m in players],
+            }
+            buf = io.BytesIO(json.dumps(state, indent=2, ensure_ascii=False).encode("utf-8"))
+            names = ", ".join(pname(m) for m in players) if players else "none"
+            await inter.response.send_message(
+                f"Seating JSON for **{s['name']}** — {len(players)} player(s): {names}",
+                file=discord.File(buf, f"{s['name']}_seating.json"))
+        await resolve_or_suggest(interaction, script, run)
