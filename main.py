@@ -59,14 +59,14 @@ _commands_synced = False
 async def on_ready():
     global _commands_synced
     if not _commands_synced:
-        # Register commands PER-GUILD only (fast updates, no duplicates).
-        for gid in (GUILD_ID, TEST_GUILD_ID):
+        # Register commands PER-GUILD for every server the bot is in (fast updates,
+        # no duplicates, and any newly-added server is covered automatically).
+        for g in bot.guilds:
             try:
-                g = discord.Object(id=gid)
                 bot.tree.copy_global_to(guild=g)
                 await bot.tree.sync(guild=g)
             except Exception as e:
-                print(f"Guild sync failed for {gid}: {e}")
+                print(f"Guild sync failed for {g.id}: {e}")
         # Clear any previously-registered GLOBAL commands so they stop
         # showing up as duplicates alongside the guild copies.
         bot.tree.clear_commands(guild=None)
