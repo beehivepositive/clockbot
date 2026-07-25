@@ -18,6 +18,7 @@ import botc_games
 import botc_scripts
 import reminders
 import votelock
+import ghost
 CST = pytz.timezone('America/Chicago')
 
 load_dotenv()
@@ -473,4 +474,5 @@ botc_games.register(bot)
 botc_scripts.register(bot)
 reminders.register(bot)
 votelock.register(bot)
+ghost.register(bot)
 bot.run(TOKEN)
