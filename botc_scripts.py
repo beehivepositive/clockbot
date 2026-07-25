@@ -24,7 +24,15 @@ import sqlite3
 import difflib
 import datetime
 import discord
+import pytz
 from discord import app_commands
+
+CST = pytz.timezone("America/Chicago")
+
+
+def _today():
+    """Today's date (YYYY-MM-DD) in US Central."""
+    return datetime.datetime.now(CST).strftime("%Y-%m-%d")
 
 # --------------------------------------------------------------------------
 # Paths
@@ -376,7 +384,7 @@ def register(bot):
 
         # Store the uploader's common name as the author when we have one.
         author_name = load_id_to_common().get(interaction.user.id) or interaction.user.display_name
-        created = datetime.datetime.now().strftime("%Y-%m-%d")
+        created = _today()
         sid = next_free_id()  # reuse the lowest free id so deletions get backfilled
         with _conn() as c:
             c.execute(
@@ -587,7 +595,7 @@ def register(bot):
                 if final_name != name:
                     rename_note = f" (a script named **{name}** already existed)"
 
-            sets["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d")
+            sets["updated_at"] = _today()
             with _conn() as c:
                 assignments = ", ".join(f"{k}=?" for k in sets)
                 c.execute(f"UPDATE scripts SET {assignments} WHERE id=?", (*sets.values(), s["id"]))
