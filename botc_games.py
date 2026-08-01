@@ -31,6 +31,7 @@ import json
 import discord
 from discord import app_commands
 import votelock
+import botc_pdf
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -506,13 +507,53 @@ async def archive_channels(guild, channels, log=None):
     for key, chans in groups.items():
         target = await ensure_archive_target(guild, len(chans))
         ow = archived_overwrites(guild)
+        # The game's -logs channel (non-whisper) receives the whisper-logs PDF.
+        logs_ch = next((c for c in chans
+                        if (c.name.endswith("-logs") or c.name.endswith("-log"))
+                        and "whisper" not in c.name.lower()), None)
         # Move in reverse so the group ends up at the TOP of the category in
         # its original top-to-bottom order (each move(beginning=True) stacks above the last).
         for ch in reversed(chans):
             try:
-                # Place at the top of the archive category, stripping category sync.
+                nm = ch.name.lower()
+                is_whisper = "whisper" in nm
+                is_logs = (nm.endswith("-logs") or nm.endswith("-log")) and not is_whisper
+
+                # whisper-logs: PDF into the game's logs channel, then DELETE it.
+                if is_whisper:
+                    outpath = f"/tmp/{ch.name}.pdf"
+                    try:
+                        cnt = await botc_pdf.channel_to_pdf(ch, guild, outpath)
+                        if cnt and logs_ch is not None:
+                            await logs_ch.send(
+                                f"📄 Archived **#{ch.name}** ({cnt} messages) before deletion.",
+                                file=discord.File(outpath, filename=f"{ch.name}.pdf"))
+                    except Exception as e:
+                        if log:
+                            log.append(f"whisper PDF failed for #{ch.name}: {e}")
+                    finally:
+                        try: os.unlink(outpath)
+                        except Exception: pass
+                    await ch.delete(reason="archive: whisper-logs removed after PDF")
+                    continue
+
+                # Non-logs channels: PDF a copy into the channel itself, then keep it.
+                if not is_logs:
+                    outpath = f"/tmp/{ch.name}.pdf"
+                    try:
+                        cnt = await botc_pdf.channel_to_pdf(ch, guild, outpath)
+                        if cnt:
+                            await ch.send(f"📄 Archive of **#{ch.name}** ({cnt} messages)",
+                                          file=discord.File(outpath, filename=f"{ch.name}.pdf"))
+                    except Exception as e:
+                        if log:
+                            log.append(f"PDF failed for #{ch.name}: {e}")
+                    finally:
+                        try: os.unlink(outpath)
+                        except Exception: pass
+
+                # Move (logs + non-logs) to the top of the archive category, read-only.
                 await ch.move(beginning=True, category=target, sync_permissions=False)
-                # Clear every existing overwrite, then apply read-only archive perms.
                 for tgt in list(ch.overwrites.keys()):
                     await ch.set_permissions(tgt, overwrite=None)
                 for tgt, perm in ow.items():
