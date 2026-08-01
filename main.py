@@ -425,8 +425,20 @@ async def handle_announcement_echo(message):
     content = re.sub(r"\s+", " ", (message.content or "")).strip()
     if not content:
         return
+    # Use the game's recorded Storyteller's settings (not the poster's), so the
+    # echo config is consistent no matter who posts in logs. Fall back to the
+    # poster if the game has no recorded ST (e.g. it predates ST tracking).
+    owner = message.author.id
     try:
-        rules = botc_games.load_settings(message.author.id)["announcements"]["daynight"]["rules"]
+        num = botc_games.game_number_from_name(message.channel.name)
+        if num is not None and message.guild is not None:
+            st_id = botc_games.get_game_st(message.guild.id, num)
+            if st_id:
+                owner = st_id
+    except Exception:
+        pass
+    try:
+        rules = botc_games.load_settings(owner)["announcements"]["daynight"]["rules"]
     except Exception:
         rules = []
     for rule in rules:
