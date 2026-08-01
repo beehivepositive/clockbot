@@ -312,7 +312,7 @@ async def archive_channel(session, dest, channel, guild, tmp_files, avatar_cache
         if progress_ch: await progress_ch.send(f"  ❌ Failed **#{channel.name}**: {e}")
 
 
-@bot.tree.command(name="archive", description="Export all messages in a channel to a PDF")
+@bot.tree.command(name="channeltopdf", description="Export all messages in a channel to a PDF")
 @app_commands.describe(channel="The channel to archive")
 @app_commands.check(lambda i: any(r.name.lower() == "pixie" for r in i.user.roles))
 async def archive(interaction: discord.Interaction, channel: discord.TextChannel):

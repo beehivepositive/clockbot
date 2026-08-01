@@ -4,11 +4,12 @@ Commands:
   /newgame [number] [as_user]  Create game channels; archive the previous game first.
                          With as_user, build using that Storyteller's settings (they become the ST).
   /archivegame           Move the current Game Logs + Game Chat channels into an Archive category.
-  /assigntownsfolk       Strip player roles + assign Townsfolk to everyone who signed up in #recruiting.
+  /assignplayers         Strip player roles + assign Townsfolk to signups in #recruiting (grants talk if Explicit).
+  /addtown <user>        Give a user the Townsfolk role + permission to talk in game chat.
   /endgame               Reveal the current game's ascension + ascension-chat to everyone.
   /ascend @user          Grant a user the Ascended role (or explicit per-user access).
   /addst <user>          Give a user the Storyteller role (+ explicit ST permissions if enabled).
-  /stgamesettings        Per-Storyteller settings that customize what /newgame builds.
+  /setupsettings         Per-Storyteller settings that customize what /newgame builds (+ announcements).
 
 Design notes / assumptions (flagged for iteration):
   * Roles/categories are resolved BY NAME (case-insensitive) so the bot can migrate servers.
@@ -138,6 +139,53 @@ def save_settings(user_id, data):
 
 
 # ---------------------------------------------------------------------------
+# Per-game Storyteller record (who /newgame was run as, keyed by game number)
+# ---------------------------------------------------------------------------
+
+GAME_ST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game_st.json")
+if os.path.isdir("/home/discord-bot"):
+    GAME_ST_PATH = "/home/discord-bot/game_st.json"
+
+
+def _load_game_st():
+    if os.path.exists(GAME_ST_PATH):
+        try:
+            with open(GAME_ST_PATH) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def set_game_st(guild_id, number, user_id):
+    data = _load_game_st()
+    data.setdefault(str(guild_id), {})[str(number)] = str(user_id)
+    tmp = GAME_ST_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, GAME_ST_PATH)
+
+
+def get_game_st(guild_id, number):
+    """The recorded Storyteller user-id (int) for a game number, or None."""
+    v = _load_game_st().get(str(guild_id), {}).get(str(number))
+    return int(v) if v else None
+
+
+# Shared common-name aliases (name -> discord id), same file /add-common-name writes.
+COMMON_NAMES_PATH = ("/home/discord-bot/common_names.json" if os.path.isdir("/home/discord-bot")
+                     else os.path.join(os.path.dirname(os.path.abspath(__file__)), "common_names.json"))
+
+
+def _load_common_names():
+    try:
+        with open(COMMON_NAMES_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Resolution helpers (by name, case-insensitive)
 # ---------------------------------------------------------------------------
 
@@ -161,6 +209,13 @@ def resolve_member(guild, text):
         member = guild.get_member(int(m.group(1)))
         return (member, None) if member else (None, "That user isn't in this server.")
     low = text.lower()
+
+    # Common-name aliases (name -> discord id), shared with /add-common-name.
+    cn = _load_common_names()
+    if low in cn:
+        member = guild.get_member(int(cn[low]))
+        if member is not None:
+            return member, None
 
     def gname(mem):
         return (getattr(mem, "global_name", None) or "").lower()
@@ -203,6 +258,27 @@ def is_storyteller(interaction):
 
 def st_check():
     return app_commands.check(lambda i: is_storyteller(i))
+
+
+def is_current_game_st(interaction):
+    """True if the caller is the Storyteller recorded for the current game. The
+    'current game' is the one named by the channel this was run in, else the
+    latest game. If no ST was recorded for that game (e.g. it predates ST
+    tracking), fall back to the plain Storyteller-role check so nothing breaks."""
+    guild = interaction.guild
+    if guild is None:
+        return False
+    num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
+    if num is None:
+        num = latest_game_number(guild)
+    recorded = get_game_st(guild.id, num) if num is not None else None
+    if recorded is not None:
+        return interaction.user.id == recorded
+    return is_storyteller(interaction)
+
+
+def current_game_st_check():
+    return app_commands.check(lambda i: is_current_game_st(i))
 
 
 def game_number_from_name(name):
@@ -297,7 +373,10 @@ def build_overwrites(guild, kind, s, initiator):
 
     if is_gamechat:
         ts = s.get("townsfolk", {})
-        grant(tf, send_messages=True)
+        # Under Explicit Permission the Townsfolk role does NOT auto-grant talk;
+        # players are added individually via /addtown or /assignplayers.
+        if not explicit:
+            grant(tf, send_messages=True)
         if ts.get("threads", True):
             grant(tf, create_public_threads=True, send_messages_in_threads=True)
         if ts.get("activities", True):
@@ -529,7 +608,6 @@ class MainMenu(BaseSettingsView):
             ("Townsfolk", lambda oid: RoleMenu(oid, "townsfolk", "Townsfolk", talk=False)),
             ("Tulpa", lambda oid: RoleMenu(oid, "tulpa", "Tulpa", talk=True)),
             ("Ascended", lambda oid: RoleMenu(oid, "ascended", "Ascended", talk=True)),
-            ("Everyone", EveryoneMenu),
         ]:
             self.add_item(self._nav(label, target))
 
@@ -797,6 +875,7 @@ def register(bot):
             moved = await archive_channels(guild, prev, log)
 
         created = await create_game_channels(guild, number, s, initiator, log)
+        set_game_st(guild.id, number, initiator.id)
 
         msg = [f"**Game {number}** created — {len(created)} channel(s)."]
         if initiator.id != interaction.user.id:
@@ -826,7 +905,7 @@ def register(bot):
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
     @bot.tree.command(name="endgame", description="Reveal the current game's ascension channels to everyone.")
-    @st_check()
+    @current_game_st_check()
     async def endgame(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
@@ -859,7 +938,7 @@ def register(bot):
     @bot.tree.command(name="ascend", description="Grant a user the Ascended role (or explicit ascension access).")
     @app_commands.describe(user="Pick the player to ascend.",
                            name="…or type a name / nickname instead.")
-    @st_check()
+    @current_game_st_check()
     async def ascend(interaction: discord.Interaction,
                      user: discord.Member = None, name: str = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -897,7 +976,7 @@ def register(bot):
     @bot.tree.command(name="addst", description="Give a user the Storyteller role (plus explicit ST permissions if enabled).")
     @app_commands.describe(user="Pick the member to make a Storyteller.",
                            name="…or type a name / nickname instead.")
-    @st_check()
+    @current_game_st_check()
     async def addst(interaction: discord.Interaction,
                     user: discord.Member = None, name: str = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -940,9 +1019,48 @@ def register(bot):
                 msg.append("Explicit permission is on, but no channels for that game were found.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
-    @bot.tree.command(name="assigntownsfolk", description="Assign Townsfolk to everyone who signed up in #recruiting.")
+    @bot.tree.command(name="addtown", description="Give a user the Townsfolk role and permission to talk in game chat.")
+    @app_commands.describe(user="Pick the player.",
+                           name="…or type a name / nickname instead.")
+    @current_game_st_check()
+    async def addtown(interaction: discord.Interaction,
+                      user: discord.Member = None, name: str = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        member, err = pick_member(guild, user, name)
+        if member is None:
+            await interaction.followup.send(err, ephemeral=True)
+            return
+        tf = resolve_role(guild, R_TOWNSFOLK)
+        if tf is None:
+            await interaction.followup.send("No **Townsfolk** role found.", ephemeral=True)
+            return
+        await member.add_roles(tf, reason=f"/addtown by {interaction.user}")
+        # Give a per-member talk overwrite on this game's Game Chat channels. This
+        # is what actually enables talking under Explicit Permission (where the
+        # Townsfolk role no longer auto-grants it); harmless otherwise.
+        target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
+        if target_num is None:
+            target_num = latest_game_number(guild)
+        granted = []
+        for c in current_game_channels(guild):
+            if game_number_from_name(c.name) != target_num:
+                continue
+            if c.category and c.category.name.lower() == CAT_CHAT.lower():
+                try:
+                    await c.set_permissions(member, send_messages=True,
+                                            reason=f"/addtown by {interaction.user}")
+                    granted.append(c.mention)
+                except Exception:
+                    pass
+        msg = [f"Gave **Townsfolk** to {member.mention}."]
+        if granted:
+            msg.append("Can talk in " + ", ".join(granted) + ".")
+        await interaction.followup.send("\n".join(msg), ephemeral=True)
+
+    @bot.tree.command(name="assignplayers", description="Assign Townsfolk to signups in #recruiting (grants talk under Explicit Permission).")
     @st_check()
-    async def assigntownsfolk(interaction: discord.Interaction):
+    async def assignplayers(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
         recruiting = discord.utils.find(
@@ -981,41 +1099,70 @@ def register(bot):
             to_remove = [r for r in strip_roles if r in member.roles]
             if to_remove:
                 try:
-                    await member.remove_roles(*to_remove, reason="/assigntownsfolk reset")
+                    await member.remove_roles(*to_remove, reason="/assignplayers reset")
                     stripped += 1
                 except Exception:
                     pass
 
-        assigned = 0
+        assigned_members = []
         for u in signups:
             member = guild.get_member(u.id)
             if member is None:
                 continue
             try:
-                await member.add_roles(tf, reason="/assigntownsfolk signup")
-                assigned += 1
+                await member.add_roles(tf, reason="/assignplayers signup")
+                assigned_members.append(member)
             except Exception:
                 pass
+        assigned = len(assigned_members)
+
+        # Under Explicit Permission the Townsfolk role doesn't grant talk, so give
+        # each assigned player a per-member talk overwrite on the latest game's chat.
+        note = ""
+        s = load_settings(interaction.user.id)
+        if s.get("explicit_permission", False) and assigned_members:
+            num = latest_game_number(guild)
+            chat_chans = [c for c in current_game_channels(guild)
+                          if game_number_from_name(c.name) == num
+                          and c.category and c.category.name.lower() == CAT_CHAT.lower()]
+            for member in assigned_members:
+                for c in chat_chans:
+                    try:
+                        await c.set_permissions(member, send_messages=True, reason="/assignplayers talk")
+                    except Exception:
+                        pass
+            if chat_chans:
+                note = f"\nExplicit permission on — granted talk in {len(chat_chans)} chat channel(s)."
 
         await interaction.followup.send(
             f"Signup post by {signup.author.display_name} using {top.emoji}.\n"
-            f"Stripped roles from **{stripped}** member(s); assigned **Townsfolk** to **{assigned}** signup(s).",
+            f"Stripped roles from **{stripped}** member(s); assigned **Townsfolk** to **{assigned}** signup(s)." + note,
             ephemeral=True)
 
-    @bot.tree.command(name="stgamesettings", description="Customize the permissions /newgame applies.")
-    async def stgamesettings(interaction: discord.Interaction):
+    @bot.tree.command(name="setupsettings", description="Customize the permissions and announcements /newgame applies.")
+    async def setupsettings(interaction: discord.Interaction):
         view = MainMenu(interaction.user.id)
         await interaction.response.send_message(view.title(), view=view, ephemeral=True)
 
     @newgame.error
     @archivegame.error
-    @endgame.error
-    @ascend.error
-    @addst.error
-    @assigntownsfolk.error
-    @stgamesettings.error
+    @assignplayers.error
+    @setupsettings.error
     async def _err(interaction: discord.Interaction, error: app_commands.AppCommandError):
         msg = ("You need the **Storyteller** role to use this."
+               if isinstance(error, app_commands.CheckFailure)
+               else f"Error: {error}")
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+
+    @ascend.error
+    @addst.error
+    @addtown.error
+    @endgame.error
+    async def _err_game_st(interaction: discord.Interaction, error: app_commands.AppCommandError):
+        msg = ("Only the **current game's Storyteller** can use this."
                if isinstance(error, app_commands.CheckFailure)
                else f"Error: {error}")
         if interaction.response.is_done():
