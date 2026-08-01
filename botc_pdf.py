@@ -18,6 +18,13 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, HRFlowable
                                 Image, Table, TableStyle)
 from reportlab.lib import colors
 
+try:
+    import emoji as _emojilib
+except ImportError:
+    _emojilib = None
+
+TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/"
+
 MAX_IMG_W = 150 * mm
 MAX_IMG_H = 150 * mm
 AVATAR_SIZE = 10 * mm
@@ -99,15 +106,56 @@ async def _prep_emojis(session, content, emoji_cache, tmp_files):
     return imgs
 
 
-def _line_markup(line, emoji_imgs):
-    """Escape a line's text but inline custom-emoji images where available."""
+def _twemoji_codepoints(em):
+    """Twemoji filename stem: hex codepoints joined by '-'; drop the FE0F
+    variation selector unless the emoji is a ZWJ sequence (twemoji's own rule)."""
+    if "‍" not in em:            # keep FE0F only for ZWJ sequences
+        em = em.replace("️", "")
+    return "-".join(f"{ord(c):x}" for c in em)
+
+
+async def _prep_unicode_emojis(session, content, uni_cache, tmp_files):
+    """Download Twemoji PNGs for the unicode emojis in `content`; return {emoji: <img>}."""
+    if _emojilib is None:
+        return {}
+    imgs = {}
+    for match in _emojilib.emoji_list(content):
+        em = match["emoji"]
+        if em in imgs:
+            continue
+        if em not in uni_cache:
+            p = await _download(session, TWEMOJI_BASE + _twemoji_codepoints(em) + ".png", ".png")
+            uni_cache[em] = p
+            if p:
+                tmp_files.append(p)
+        if uni_cache[em]:
+            imgs[em] = f'<img src="{uni_cache[em]}" width="14" height="14" valign="middle"/>'
+    return imgs
+
+
+def _unicode_markup(text, uni_imgs):
+    """Escape text, inlining Twemoji images for any unicode emojis we downloaded."""
+    if not uni_imgs or _emojilib is None:
+        return _esc(text)
+    out, idx = [], 0
+    for match in _emojilib.emoji_list(text):
+        s, e, em = match["match_start"], match["match_end"], match["emoji"]
+        out.append(_esc(text[idx:s]))
+        out.append(uni_imgs.get(em) or _esc(em))
+        idx = e
+    out.append(_esc(text[idx:]))
+    return "".join(out)
+
+
+def _line_markup(line, custom_imgs, uni_imgs):
+    """Escape a line's text, inlining custom-emoji and unicode-emoji images."""
     out = []
     for part in re.split(r"(<a?:\w+:\d+>)", line):
         m = re.fullmatch(r"<a?:\w+:(\d+)>", part)
-        if m and m.group(1) in emoji_imgs:
-            out.append(emoji_imgs[m.group(1)])
+        if m and m.group(1) in custom_imgs:
+            out.append(custom_imgs[m.group(1)])
         else:
-            out.append(_esc(part))
+            out.append(_unicode_markup(part, uni_imgs))
     return "".join(out)
 
 
@@ -127,6 +175,7 @@ async def channel_to_pdf(channel, guild, outpath):
     tmp_files = []
     avatar_cache = {}
     emoji_cache = {}
+    uni_cache = {}
     try:
         story = [
             Paragraph(f"#{_esc(channel.name)}", title_s),
@@ -161,11 +210,12 @@ async def channel_to_pdf(channel, guild, outpath):
                     story.append(Paragraph(_esc(msg.author.display_name), author_s))
                     story.append(Paragraph(ts, ts_s))
                 content = _resolve_mentions(msg.content or "", msg)
-                emoji_imgs = await _prep_emojis(session, content, emoji_cache, tmp_files)
+                custom_imgs = await _prep_emojis(session, content, emoji_cache, tmp_files)
+                uni_imgs = await _prep_unicode_emojis(session, content, uni_cache, tmp_files)
                 if content:
                     for line in content.split("\n"):
                         if line.strip():
-                            story.append(Paragraph(_line_markup(line, emoji_imgs), msg_s))
+                            story.append(Paragraph(_line_markup(line, custom_imgs, uni_imgs), msg_s))
                         else:
                             story.append(Spacer(1, 4))
                 for att in msg.attachments:
