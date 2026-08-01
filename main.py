@@ -402,6 +402,17 @@ def render_echo(tpl, n, d):
 _SAFE_MENTIONS = discord.AllowedMentions(everyone=False)
 
 
+def _compile_trigger(trig):
+    """Build a match regex for a trigger. If it contains {n}, a number is REQUIRED
+    there (e.g. '# Day {n}' fires only on '# Day 3'). Without {n}, a trailing number
+    is optional and enables auto-increment (e.g. 'dusk' fires on 'dusk' or 'dusk 3')."""
+    trig = re.sub(r"\s+", " ", trig).strip()
+    if "{n}" in trig:
+        pat = r"(\d+)".join(re.escape(p) for p in trig.split("{n}"))
+        return re.compile(rf"^{pat}$", re.IGNORECASE)
+    return re.compile(rf"^{re.escape(trig)}(?:\s*(\d+))?$", re.IGNORECASE)
+
+
 async def handle_announcement_echo(message):
     """Configurable Day/Night/custom echo. The Storyteller types a rule's trigger
     (optionally followed by a number) in the -logs channel; the rendered output is
@@ -411,7 +422,7 @@ async def handle_announcement_echo(message):
     game_key = get_game_key(message.channel.name)
     if not game_key:
         return
-    content = (message.content or "").strip()
+    content = re.sub(r"\s+", " ", (message.content or "")).strip()
     if not content:
         return
     try:
@@ -423,7 +434,7 @@ async def handle_announcement_echo(message):
         out_tpl = rule.get("output") or ""
         if not trig or not out_tpl:
             continue
-        m = re.match(rf"^{re.escape(trig)}\s*(\d+)?$", content, re.IGNORECASE)
+        m = _compile_trigger(trig).match(content)
         if not m:
             continue
         kind = rule.get("kind", "custom")

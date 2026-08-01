@@ -106,9 +106,9 @@ def default_settings():
             },
             "daynight": {
                 "rules": [
-                    {"trigger": "day",   "output": "# Day {n}",   "kind": "day"},
-                    {"trigger": "night", "output": "# Night {n}", "kind": "night"},
-                    {"trigger": "",      "output": "",            "kind": "custom"},
+                    {"trigger": "# Day {n}",   "output": "# Day {n}",   "kind": "day"},
+                    {"trigger": "# Night {n}", "output": "# Night {n}", "kind": "night"},
+                    {"trigger": "",            "output": "",            "kind": "custom"},
                 ]
             },
         },
