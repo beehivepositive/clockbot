@@ -104,6 +104,7 @@ def default_settings():
                 "hour": None, "minute": None,
                 "duration_min": 60,
                 "tz": "America/Chicago",
+                "track_votes": False,
             },
             "daynight": {
                 "rules": [
@@ -976,6 +977,10 @@ class VotelockMenu(BaseSettingsView):
             f"{_mark(v.get('enabled', False))} Enabled",
             lambda s: _vl(s).get('enabled', False),
             lambda s, val: _vl(s).__setitem__('enabled', val)))
+        self.add_item(toggle_button(
+            f"{_mark(v.get('track_votes', False))} Track votes",
+            lambda s: _vl(s).get('track_votes', False),
+            lambda s, val: _vl(s).__setitem__('track_votes', val)))
         self.add_item(self._opener("✏ Message", self._edit_message, row=1))
         self.add_item(self._opener("🕐 Time", self._edit_time, row=1))
         self.add_item(self._opener("⏱ Duration", self._edit_duration, row=1))
@@ -1049,6 +1054,8 @@ class VotelockMenu(BaseSettingsView):
         tzname = next((n for n, val in votelock.TZ_CHOICES.items() if val == v.get('tz')), v.get('tz', '—'))
         return ("**Votelock** — automated daily 'votes are locked' post.\n"
                 f"{_mark(v.get('enabled', False))} enabled · **{t}** {tzname} · watch **{v.get('duration_min', 60)}m**\n"
+                f"{_mark(v.get('track_votes', False))} **track votes** — at lock, posts who's voting on what in "
+                "ascension chat, then alerts on any vote added/removed during the window (no grace period).\n"
                 f"message: `{v.get('message', '')}`\n"
                 "Start for a game with **/startgame**; skip a day with **/skiplock**.")
 

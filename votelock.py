@@ -143,6 +143,50 @@ def _render_message(guild, text):
 
 def register(bot):
 
+    def _name(guild, uid):
+        m = guild.get_member(uid)
+        return m.display_name if m else f"User {uid}"
+
+    async def _up_voters(msg):
+        ids = []
+        for r in msg.reactions:
+            if _is_up(r.emoji):
+                try:
+                    async for u in r.users():
+                        if not u.bot:
+                            ids.append(u.id)
+                except Exception:
+                    pass
+        return ids
+
+    async def _snapshot(guild, logs, asc, win):
+        """At lock time: record the current nominations + their up-arrow voters,
+        and post the who's-voting-on-what list to ascension chat."""
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=20)
+        try:
+            msgs = [m async for m in logs.history(limit=200)]
+        except Exception as e:
+            print(f"votelock snapshot history failed: {e}")
+            msgs = []
+        for msg in reversed(msgs):  # oldest -> newest for a readable list
+            if msg.created_at < cutoff:
+                continue
+            if "nominates" in (msg.content or "").lower():
+                win["noms"][msg.id] = {"text": (msg.content or "").strip()[:150],
+                                       "voters": set(await _up_voters(msg))}
+        if asc is None:
+            return
+        lines = ["**🔒 Votes are locked — current votes:**"]
+        if not win["noms"]:
+            lines.append("_No nominations found._")
+        for nom in win["noms"].values():
+            names = [_name(guild, uid) for uid in nom["voters"]]
+            lines.append(f"• {nom['text']}\n   {', '.join(names) if names else '_no votes_'}")
+        try:
+            await asc.send("\n".join(lines)[:1900])
+        except Exception as e:
+            print(f"votelock snapshot post failed: {e}")
+
     async def _fire(gid, cfg):
         guild = bot.get_guild(int(gid))
         if not guild:
@@ -157,14 +201,16 @@ def register(bot):
             print(f"votelock post failed: {e}")
             return
         asc = _find_ascension_chat(guild)
-        _windows[gid] = {
+        win = {
             "end_ts": time.time() + cfg["duration_min"] * 60,
             "logs_id": logs.id,
             "asc_id": asc.id if asc else None,
-            "noms": set(),
-            "nom_text": {},
-            "react_times": {},
+            "tracking": bool(cfg.get("track_votes")),
+            "noms": {},  # msg_id -> {"text": str, "voters": set(user_id)}
         }
+        _windows[gid] = win
+        if win["tracking"]:
+            await _snapshot(guild, logs, asc, win)
 
     @tasks.loop(seconds=20)
     async def votelock_loop():
@@ -202,56 +248,68 @@ def register(bot):
 
     # ---- live tracking listeners ------------------------------------------
 
+    def _asc(guild, w):
+        return guild.get_channel(w["asc_id"]) if w.get("asc_id") else None
+
     async def _on_message(message):
         if message.guild is None:
             return
         w = _windows.get(str(message.guild.id))
-        if not w or time.time() > w["end_ts"]:
+        if not w or not w.get("tracking") or time.time() > w["end_ts"]:
             return
         if message.channel.id != w["logs_id"]:
             return
-        if "nominates" in (message.content or "").lower():
-            w["noms"].add(message.id)
-            w["nom_text"][message.id] = (message.content or "").strip()[:120]
+        # A nomination posted DURING the window: start tracking it (no voters yet).
+        if "nominates" in (message.content or "").lower() and message.id not in w["noms"]:
+            w["noms"][message.id] = {"text": (message.content or "").strip()[:150], "voters": set()}
 
     async def _on_add(payload):
         if payload.guild_id is None or payload.user_id == bot.user.id:
             return
         w = _windows.get(str(payload.guild_id))
-        if not w or time.time() > w["end_ts"] or payload.message_id not in w["noms"]:
+        if not w or not w.get("tracking") or time.time() > w["end_ts"]:
             return
-        if _is_up(payload.emoji):
-            w["react_times"][(payload.message_id, payload.user_id)] = time.time()
+        if payload.message_id not in w["noms"] or not _is_up(payload.emoji):
+            return
+        nom = w["noms"][payload.message_id]
+        if payload.user_id in nom["voters"]:
+            return  # already had a vote on this nomination
+        nom["voters"].add(payload.user_id)  # a NEW vote after lock — track + alert
+        guild = bot.get_guild(payload.guild_id)
+        ch = _asc(guild, w)
+        if ch:
+            try:
+                await ch.send(
+                    f"➕ **{_name(guild, payload.user_id)}** added a vote (<t:{int(time.time())}:t>) on:\n> {nom['text']}",
+                    allowed_mentions=discord.AllowedMentions.none())
+            except Exception as e:
+                print(f"votelock add alert failed: {e}")
 
     async def _on_remove(payload):
         if payload.guild_id is None or payload.user_id == bot.user.id:
             return
         w = _windows.get(str(payload.guild_id))
-        if not w or time.time() > w["end_ts"] or payload.message_id not in w["noms"]:
+        if not w or not w.get("tracking") or time.time() > w["end_ts"]:
             return
-        if not _is_up(payload.emoji):
+        if payload.message_id not in w["noms"] or not _is_up(payload.emoji):
             return
-        added = w["react_times"].pop((payload.message_id, payload.user_id), None)
-        if added is not None and (time.time() - added) < GRACE:
-            return  # add-then-remove misclick grace
+        nom = w["noms"][payload.message_id]
+        if payload.user_id not in nom["voters"]:
+            return  # they weren't a tracked voter on this nomination
+        nom["voters"].discard(payload.user_id)
         guild = bot.get_guild(payload.guild_id)
-        if not guild or not w.get("asc_id"):
-            return
-        ch = guild.get_channel(w["asc_id"])
+        ch = _asc(guild, w)
         if not ch:
             return
-        member = guild.get_member(payload.user_id)
-        who = member.display_name if member else f"User {payload.user_id}"
         st = _role(guild, "Storyteller")
-        st_ping = (st.mention + " ") if st else ""
+        ping = (st.mention + " ") if st else ""
         jump = f"https://discord.com/channels/{payload.guild_id}/{w['logs_id']}/{payload.message_id}"
-        txt = w["nom_text"].get(payload.message_id, "a nomination")
         try:
             await ch.send(
-                f"{st_ping}⚠️ **{who}** removed their ⬆ vote from a locked nomination:\n> {txt}\n{jump}",
-                allowed_mentions=discord.AllowedMentions(roles=[st] if st else False))
+                f"{ping}⚠️ **{_name(guild, payload.user_id)}** removed their vote from:\n> {nom['text']}\n{jump}",
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=[st] if st else False, users=False))
         except Exception as e:
-            print(f"votelock alert failed: {e}")
+            print(f"votelock remove alert failed: {e}")
 
     bot.add_listener(_on_message, "on_message")
     bot.add_listener(_on_add, "on_raw_reaction_add")
@@ -279,6 +337,7 @@ def register(bot):
             "tz": vl.get("tz", "America/Chicago"),
             "duration_min": int(vl.get("duration_min", 60)),
             "message": vl.get("message", "@Townsfolk votes are locked."),
+            "track_votes": bool(vl.get("track_votes", False)),
             "active": True, "last_fired": None,
         }
         _save(d)
