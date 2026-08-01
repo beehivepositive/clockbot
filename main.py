@@ -391,28 +391,66 @@ async def archive(interaction: discord.Interaction, channel: discord.TextChannel
 
 
 
-async def mirror_day_announcement(message):
+def render_echo(tpl, n, d):
+    """Substitute echo variables into an output template."""
+    return (tpl.replace("{n}", str(n))
+               .replace("{day}", str(d.get("day", 0)))
+               .replace("{night}", str(d.get("night", 0))))
+
+
+# @everyone may appear as literal TEXT but must never actually ping the server.
+_SAFE_MENTIONS = discord.AllowedMentions(everyone=False)
+
+
+async def handle_announcement_echo(message):
+    """Configurable Day/Night/custom echo. The Storyteller types a rule's trigger
+    (optionally followed by a number) in the -logs channel; the rendered output is
+    mirrored to the game's chat channels + posted back into logs. Rules + templates
+    come from the poster's /setupsettings; {n} is the number typed, else an
+    auto-incrementing per-game counter. {day}/{night} expose the shared counters."""
     game_key = get_game_key(message.channel.name)
     if not game_key:
         return
-    for ch in message.guild.text_channels:
-        if get_game_key(ch.name) != game_key or ch.id == message.channel.id:
+    content = (message.content or "").strip()
+    if not content:
+        return
+    try:
+        rules = botc_games.load_settings(message.author.id)["announcements"]["daynight"]["rules"]
+    except Exception:
+        rules = []
+    for rule in rules:
+        trig = (rule.get("trigger") or "").strip()
+        out_tpl = rule.get("output") or ""
+        if not trig or not out_tpl:
             continue
-        cat = ch.category
-        if cat and "game chat" in cat.name.lower():
-            try:
-                await ch.send(message.content)
-            except Exception as e:
-                print(f"Mirror failed -> #{ch.name}: {e}")
-    dm=re.search(r"[0-9]+",message.content); d=get_game_state(game_key)
-    if dm: d["day"]=int(dm.group())
-    d["used"]=0; d["player_counts"]={} ; d["nominees"]=[]; d["nominators"]=[]
-    for th in d.get("threads",[]):
+        m = re.match(rf"^{re.escape(trig)}\s*(\d+)?$", content, re.IGNORECASE)
+        if not m:
+            continue
+        kind = rule.get("kind", "custom")
+        d = get_game_state(game_key)
+        ckey = kind if kind in ("day", "night") else "echo_" + trig.lower()
+        typed = m.group(1)
+        n = int(typed) if typed is not None else int(d.get(ckey, 0)) + 1
+        d[ckey] = n
+        # Day rolls over the in-memory per-day nomination counters (no deletions).
+        if kind == "day":
+            d["used"] = 0; d["player_counts"] = {}; d["nominees"] = []; d["nominators"] = []
+        set_game_state(game_key, d)
+        out = render_echo(out_tpl, n, d)
+        for ch in message.guild.text_channels:
+            if get_game_key(ch.name) != game_key or ch.id == message.channel.id:
+                continue
+            cat = ch.category
+            if cat and "game chat" in cat.name.lower():
+                try:
+                    await ch.send(out, allowed_mentions=_SAFE_MENTIONS)
+                except Exception as e:
+                    print(f"Echo mirror failed -> #{ch.name}: {e}")
         try:
-            t=await message.guild.fetch_channel(th["thread_id"])
-            await t.edit(locked=True,archived=True)
-        except Exception: pass
-    set_game_state(game_key,d)
+            await message.channel.send(out, allowed_mentions=_SAFE_MENTIONS)
+        except Exception:
+            pass
+        return  # first matching rule wins
 
 @bot.tree.command(name="add-common-name",description="Map a common name to a player")
 @app_commands.describe(common_name="Common name",player="The player")
@@ -432,9 +470,8 @@ async def on_message(message):
     await bot.process_commands(message)
     ch_name = message.channel.name
     if (ch_name.endswith('-logs') or ch_name.endswith('-log')) \
-            and 'whisper' not in ch_name \
-            and DAY_PATTERN.match(message.content or ''):
-        await mirror_day_announcement(message)
+            and 'whisper' not in ch_name:
+        await handle_announcement_echo(message)
         return
 @bot.tree.command(name="syncchannels", description="Sync every channel in this category to the category's permissions", guild=discord.Object(id=GUILD_ID))
 @app_commands.checks.has_permissions(manage_channels=True)

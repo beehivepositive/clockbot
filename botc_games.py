@@ -96,6 +96,22 @@ def default_settings():
         "townsfolk": {"threads": True, "activities": True},
         "tulpa":     {"talk": False, "threads": True, "activities": True},
         "ascended":  {"talk": False, "threads": True, "activities": True},
+        "announcements": {
+            "votelock": {
+                "enabled": False,
+                "message": "@Townsfolk votes are locked.",
+                "hour": None, "minute": None,
+                "duration_min": 60,
+                "tz": "America/Chicago",
+            },
+            "daynight": {
+                "rules": [
+                    {"trigger": "day",   "output": "# Day {n}",   "kind": "day"},
+                    {"trigger": "night", "output": "# Night {n}", "kind": "night"},
+                    {"trigger": "",      "output": "",            "kind": "custom"},
+                ]
+            },
+        },
     }
 
 
