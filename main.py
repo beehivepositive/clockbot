@@ -430,6 +430,8 @@ async def handle_announcement_echo(message):
     except Exception:
         rules = []
     for rule in rules:
+        if not rule.get("enabled", False):
+            continue
         trig = (rule.get("trigger") or "").strip()
         out_tpl = rule.get("output") or ""
         if not trig or not out_tpl:

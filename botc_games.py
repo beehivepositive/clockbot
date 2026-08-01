@@ -107,9 +107,9 @@ def default_settings():
             },
             "daynight": {
                 "rules": [
-                    {"trigger": "# Day {n}",   "output": "# Day {n}",   "kind": "day"},
-                    {"trigger": "# Night {n}", "output": "# Night {n}", "kind": "night"},
-                    {"trigger": "",            "output": "",            "kind": "custom"},
+                    {"trigger": "# Day {n}",   "output": "# Day {n}",   "kind": "day",    "enabled": False},
+                    {"trigger": "# Night {n}", "output": "# Night {n}", "kind": "night",  "enabled": False},
+                    {"trigger": "",            "output": "",            "kind": "custom", "enabled": False},
                 ]
             },
         },
@@ -1064,11 +1064,27 @@ class DayNightMenu(BaseSettingsView):
         self.clear_items()
         rules = _dn(self.settings).get("rules", [])
         for idx, rule in enumerate(rules):
-            self.add_item(self._edit_btn(idx, self._LABELS.get(rule.get("kind"), f"Rule {idx + 1}")))
+            label = self._LABELS.get(rule.get("kind"), f"Rule {idx + 1}")
+            self.add_item(self._toggle_btn(idx, label, idx))
+            self.add_item(self._edit_btn(idx, label, idx))
         self.add_item(BackButton(AnnouncementsMenu))
 
-    def _edit_btn(self, idx, label):
-        b = discord.ui.Button(label=f"✏ {label}", style=discord.ButtonStyle.secondary)
+    def _toggle_btn(self, idx, label, row):
+        on = _dn(self.settings)["rules"][idx].get("enabled", False)
+        b = discord.ui.Button(label=f"{_mark(on)} {label}", style=discord.ButtonStyle.secondary, row=row)
+
+        async def cb(interaction):
+            r = _dn(self.settings)["rules"][idx]
+            r["enabled"] = not r.get("enabled", False)
+            self.persist()
+            self._build()
+            await interaction.response.edit_message(content=self.title(), view=self)
+
+        b.callback = cb
+        return b
+
+    def _edit_btn(self, idx, label, row):
+        b = discord.ui.Button(label=f"✏ {label}", style=discord.ButtonStyle.secondary, row=row)
 
         async def cb(interaction):
             rule = _dn(self.settings)["rules"][idx]
@@ -1090,11 +1106,13 @@ class DayNightMenu(BaseSettingsView):
         self._build()
 
     def title(self):
-        lines = ["**Day / Night echoes** — type a trigger in the logs channel; the output posts to game chat."]
+        lines = ["**Day / Night echoes** — type a trigger in the logs channel; the output posts to game chat.",
+                 "Toggle each on/off; ✏ edits its trigger/output. All are **off** by default."]
         for rule in _dn(self.settings).get("rules", []):
-            lines.append(f"**{rule.get('kind', 'custom').title()}**: "
+            lines.append(f"{_mark(rule.get('enabled', False))} **{rule.get('kind', 'custom').title()}**: "
                          f"`{rule.get('trigger', '') or '—'}` → `{rule.get('output', '') or '—'}`")
-        lines.append("`{n}` in a trigger requires a number; without it a trailing number is optional (auto-increments).")
+        lines.append("`{n}` = this echo's number (typed, or auto-increments if the trigger has no `{n}`). "
+                     "`{day}`/`{night}` = the latest Day/Night number, for referencing in another echo.")
         return "\n".join(lines)
 
 
