@@ -663,6 +663,7 @@ class MainMenu(BaseSettingsView):
             ("Townsfolk", lambda oid: RoleMenu(oid, "townsfolk", "Townsfolk", talk=False)),
             ("Tulpa", lambda oid: RoleMenu(oid, "tulpa", "Tulpa", talk=True)),
             ("Ascended", lambda oid: RoleMenu(oid, "ascended", "Ascended", talk=True)),
+            ("Announcements", AnnouncementsMenu),
         ]:
             self.add_item(self._nav(label, target))
 
@@ -681,11 +682,13 @@ class MainMenu(BaseSettingsView):
 
 
 class BackButton(discord.ui.Button):
-    def __init__(self):
+    def __init__(self, target=None):
         super().__init__(label="◀ Back", style=discord.ButtonStyle.danger, row=4)
+        self._target = target
 
     async def callback(self, interaction):
-        v = MainMenu(self.view.owner_id)
+        target = self._target or MainMenu
+        v = target(self.view.owner_id)
         await interaction.response.edit_message(content=v.title(), view=v)
 
 
@@ -890,6 +893,209 @@ class FocusedMenu(BaseSettingsView):
 
     def title(self):
         return "**Focused** channel settings:"
+
+
+# ---- Announcements (Votelock + Day/Night) ---------------------------------
+
+def _parse_hhmm(s):
+    m = re.match(r"^(\d{1,2}):(\d{2})$", (s or "").strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return (h, mi) if 0 <= h <= 23 and 0 <= mi <= 59 else None
+
+
+def _ann(s):
+    return s.setdefault("announcements", {})
+
+
+def _vl(s):
+    return _ann(s).setdefault("votelock", {})
+
+
+def _dn(s):
+    return _ann(s).setdefault("daynight", {})
+
+
+class _TextModal(discord.ui.Modal):
+    """Generic 1-2 field text modal that writes back into a settings view.
+    `fields` = list of (label, default, style, required); `apply(settings, values)`
+    mutates settings and returns an error string (or None on success)."""
+
+    def __init__(self, title, fields, parent, apply):
+        super().__init__(title=title)
+        self._parent = parent
+        self._apply = apply
+        self._inputs = []
+        for label, default, style, required in fields:
+            ti = discord.ui.TextInput(label=label, default=(default or ""), style=style,
+                                      required=required, max_length=300)
+            self.add_item(ti)
+            self._inputs.append(ti)
+
+    async def on_submit(self, interaction):
+        err = self._apply(self._parent.settings, [ti.value for ti in self._inputs])
+        if err:
+            await interaction.response.send_message(err, ephemeral=True)
+            return
+        self._parent.persist()
+        self._parent.refresh()
+        await interaction.response.edit_message(content=self._parent.title(), view=self._parent)
+
+
+class AnnouncementsMenu(BaseSettingsView):
+    def __init__(self, owner_id):
+        super().__init__(owner_id)
+        self.add_item(self._nav("Votelock", VotelockMenu))
+        self.add_item(self._nav("Day / Night", DayNightMenu))
+        self.add_item(BackButton())
+
+    def _nav(self, label, target):
+        btn = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
+
+        async def cb(interaction):
+            v = target(self.owner_id)
+            await interaction.response.edit_message(content=v.title(), view=v)
+
+        btn.callback = cb
+        return btn
+
+    def title(self):
+        return "**Announcements** — pick one:"
+
+
+class VotelockMenu(BaseSettingsView):
+    def __init__(self, owner_id):
+        super().__init__(owner_id)
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        v = _vl(self.settings)
+        self.add_item(toggle_button(
+            f"{_mark(v.get('enabled', False))} Enabled",
+            lambda s: _vl(s).get('enabled', False),
+            lambda s, val: _vl(s).__setitem__('enabled', val)))
+        self.add_item(self._opener("✏ Message", self._edit_message, row=1))
+        self.add_item(self._opener("🕐 Time", self._edit_time, row=1))
+        self.add_item(self._opener("⏱ Duration", self._edit_duration, row=1))
+        self.add_item(self._tz_select())
+        self.add_item(BackButton(AnnouncementsMenu))
+
+    def _opener(self, label, cb, row):
+        b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, row=row)
+        b.callback = cb
+        return b
+
+    async def _edit_message(self, interaction):
+        def apply(s, vals):
+            _vl(s)["message"] = vals[0].strip() or "@Townsfolk votes are locked."
+            return None
+        await interaction.response.send_modal(_TextModal(
+            "Votelock message",
+            [("Message (@everyone shows as text, never pings)",
+              _vl(self.settings).get("message", ""), discord.TextStyle.paragraph, False)],
+            self, apply))
+
+    async def _edit_time(self, interaction):
+        v = _vl(self.settings)
+        cur = "" if v.get("hour") is None else f"{v['hour']:02d}:{v['minute']:02d}"
+
+        def apply(s, vals):
+            hm = _parse_hhmm(vals[0])
+            if hm is None:
+                return "Couldn't read that time. Use 24-hour HH:MM, e.g. 12:30 or 23:21."
+            _vl(s)["hour"], _vl(s)["minute"] = hm
+            return None
+        await interaction.response.send_modal(_TextModal(
+            "Votelock start time", [("Time (24h HH:MM)", cur, discord.TextStyle.short, True)], self, apply))
+
+    async def _edit_duration(self, interaction):
+        def apply(s, vals):
+            try:
+                n = int(vals[0].strip())
+                if n <= 0:
+                    raise ValueError
+            except ValueError:
+                return "Duration must be a positive whole number of minutes."
+            _vl(s)["duration_min"] = n
+            return None
+        await interaction.response.send_modal(_TextModal(
+            "Votelock duration",
+            [("Minutes to watch after lock", str(_vl(self.settings).get("duration_min", 60)),
+              discord.TextStyle.short, True)], self, apply))
+
+    def _tz_select(self):
+        cur = _vl(self.settings).get("tz", "America/Chicago")
+        opts = [discord.SelectOption(label=name, value=val, default=(val == cur))
+                for name, val in votelock.TZ_CHOICES.items()]
+        sel = discord.ui.Select(placeholder="Timezone", options=opts, row=2)
+
+        async def cb(interaction):
+            _vl(self.settings)["tz"] = sel.values[0]
+            self.persist()
+            self._build()
+            await interaction.response.edit_message(content=self.title(), view=self)
+
+        sel.callback = cb
+        return sel
+
+    def refresh(self):
+        self._build()
+
+    def title(self):
+        v = _vl(self.settings)
+        t = "not set" if v.get("hour") is None else f"{v['hour']:02d}:{v['minute']:02d}"
+        tzname = next((n for n, val in votelock.TZ_CHOICES.items() if val == v.get('tz')), v.get('tz', '—'))
+        return ("**Votelock** — automated daily 'votes are locked' post.\n"
+                f"{_mark(v.get('enabled', False))} enabled · **{t}** {tzname} · watch **{v.get('duration_min', 60)}m**\n"
+                f"message: `{v.get('message', '')}`\n"
+                "Start for a game with **/startgame**; skip a day with **/skiplock**.")
+
+
+class DayNightMenu(BaseSettingsView):
+    _LABELS = {"day": "Day", "night": "Night", "custom": "Custom"}
+
+    def __init__(self, owner_id):
+        super().__init__(owner_id)
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        rules = _dn(self.settings).get("rules", [])
+        for idx, rule in enumerate(rules):
+            self.add_item(self._edit_btn(idx, self._LABELS.get(rule.get("kind"), f"Rule {idx + 1}")))
+        self.add_item(BackButton(AnnouncementsMenu))
+
+    def _edit_btn(self, idx, label):
+        b = discord.ui.Button(label=f"✏ {label}", style=discord.ButtonStyle.secondary)
+
+        async def cb(interaction):
+            rule = _dn(self.settings)["rules"][idx]
+
+            def apply(s, vals):
+                r = _dn(s)["rules"][idx]
+                r["trigger"], r["output"] = vals[0].strip(), vals[1].strip()
+                return None
+            await interaction.response.send_modal(_TextModal(
+                f"{label} echo",
+                [("Trigger ({n} = require a number there)", rule.get("trigger", ""), discord.TextStyle.short, False),
+                 ("Output (vars: {n}, {day}, {night})", rule.get("output", ""), discord.TextStyle.paragraph, False)],
+                self, apply))
+
+        b.callback = cb
+        return b
+
+    def refresh(self):
+        self._build()
+
+    def title(self):
+        lines = ["**Day / Night echoes** — type a trigger in the logs channel; the output posts to game chat."]
+        for rule in _dn(self.settings).get("rules", []):
+            lines.append(f"**{rule.get('kind', 'custom').title()}**: "
+                         f"`{rule.get('trigger', '') or '—'}` → `{rule.get('output', '') or '—'}`")
+        lines.append("`{n}` in a trigger requires a number; without it a trailing number is optional (auto-increments).")
+        return "\n".join(lines)
 
 
 # ===========================================================================

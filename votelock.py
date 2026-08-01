@@ -1,11 +1,12 @@
 """Votelock: a daily "votes are locked" announcement plus nomination/vote tracking.
 
 Flow (Storyteller-only):
-  /votelock time timezone duration_minutes  -> store the daily lock time + window
-  /startgame                                 -> activate the daily cycle
-  /endgame (in botc_games)                   -> deactivate
+  /setupsettings -> Announcements -> Votelock  -> configure (enabled, message, time, duration, tz)
+  /startgame                                   -> snapshot the ST's votelock settings + activate the cycle
+  /skiplock                                    -> skip today's lock (resumes tomorrow)
+  /endgame (in botc_games)                     -> deactivate
 
-Each day at the lock time (while active) the bot posts "@townsfolk votes are locked."
+Each day at the lock time (while active) the bot posts the configured votelock message
 in the current game's game-logs channel, then for `duration_minutes` it:
   * collects nomination messages (containing "nominates") posted in game-logs,
   * watches the up-arrow (:arrow_up:) reacts on them,
@@ -121,6 +122,21 @@ def _is_st(i):
     return any(r.name.lower() == "storyteller" for r in getattr(i.user, "roles", []))
 
 
+def _render_message(guild, text):
+    """Turn '@RoleName' tokens into real role pings (except @everyone), and return
+    AllowedMentions that permit those role pings but NEVER @everyone/@here."""
+    roles = []
+    out = text or "@Townsfolk votes are locked."
+    for role in guild.roles:
+        if role.is_default():
+            continue
+        tok = "@" + role.name
+        if tok in out:
+            out = out.replace(tok, role.mention)
+            roles.append(role)
+    return out, discord.AllowedMentions(everyone=False, roles=roles, users=False)
+
+
 # --------------------------------------------------------------------------
 # Registration
 # --------------------------------------------------------------------------
@@ -134,11 +150,9 @@ def register(bot):
         logs = _find_logs(guild)
         if not logs:
             return
-        tf = _role(guild, "Townsfolk")
-        ping = tf.mention if tf else "@townsfolk"
+        text, am = _render_message(guild, cfg.get("message"))
         try:
-            await logs.send(f"{ping} votes are locked.",
-                            allowed_mentions=discord.AllowedMentions(roles=[tf] if tf else False))
+            await logs.send(text, allowed_mentions=am)
         except Exception as e:
             print(f"votelock post failed: {e}")
             return
@@ -245,58 +259,54 @@ def register(bot):
 
     # ---- commands ---------------------------------------------------------
 
-    @bot.tree.command(name="votelock", description="Set the daily vote-lock time, timezone, and tracking window.")
-    @app_commands.rename(lock_time="time")
-    @app_commands.describe(
-        lock_time="Lock time, e.g. 15:00 or 3:00 PM.",
-        timezone="Timezone for the lock time.",
-        duration_minutes="Minutes after lock to watch nominations/votes.",
-    )
-    @app_commands.choices(timezone=[app_commands.Choice(name=k, value=v) for k, v in TZ_CHOICES.items()])
+    @bot.tree.command(name="startgame", description="Start the daily votelock cycle using your /setupsettings.")
     @app_commands.check(lambda i: _is_st(i))
-    async def votelock(interaction: discord.Interaction, lock_time: str,
-                       timezone: app_commands.Choice[str], duration_minutes: int):
-        hm = _parse_time(lock_time)
-        if hm is None:
+    async def startgame(interaction: discord.Interaction):
+        import botc_games  # lazy import: avoids a circular import at module load
+        vl = botc_games.load_settings(interaction.user.id).get("announcements", {}).get("votelock", {})
+        if not vl.get("enabled"):
             await interaction.response.send_message(
-                "Couldn't read that time. Try `15:00` or `3:00 PM`.", ephemeral=True)
+                "Votelock is **off**. Turn it on in **/setupsettings → Announcements → Votelock**.", ephemeral=True)
             return
-        if duration_minutes <= 0:
-            await interaction.response.send_message("Duration must be a positive number of minutes.", ephemeral=True)
+        if vl.get("hour") is None:
+            await interaction.response.send_message(
+                "Set a votelock **time** in /setupsettings first.", ephemeral=True)
             return
         d = _load()
         gid = str(interaction.guild_id)
-        cfg = d.get(gid, {})
-        cfg.update({"hour": hm[0], "minute": hm[1], "tz": timezone.value, "duration_min": duration_minutes})
-        cfg.setdefault("active", False)
-        cfg.setdefault("last_fired", None)
-        d[gid] = cfg
+        d[gid] = {
+            "hour": vl["hour"], "minute": vl["minute"],
+            "tz": vl.get("tz", "America/Chicago"),
+            "duration_min": int(vl.get("duration_min", 60)),
+            "message": vl.get("message", "@Townsfolk votes are locked."),
+            "active": True, "last_fired": None,
+        }
         _save(d)
-        state = "Cycle is active." if cfg["active"] else "Run **/startgame** to activate."
         await interaction.response.send_message(
-            f"Votelock set: **{hm[0]:02d}:{hm[1]:02d} {timezone.name}**, watching for **{duration_minutes} min** after. {state}",
+            f"Votelock started: daily at **{vl['hour']:02d}:{vl['minute']:02d}** ({d[gid]['tz']}), "
+            f"watching nominations for **{d[gid]['duration_min']} min**. Stop with **/endgame**; skip a day with **/skiplock**.",
             ephemeral=True)
 
-    @bot.tree.command(name="startgame", description="Start the daily votelock cycle for this server.")
+    @bot.tree.command(name="skiplock", description="Skip today's votelock; it resumes tomorrow.")
     @app_commands.check(lambda i: _is_st(i))
-    async def startgame(interaction: discord.Interaction):
+    async def skiplock(interaction: discord.Interaction):
         d = _load()
         gid = str(interaction.guild_id)
         cfg = d.get(gid)
-        if not cfg or "hour" not in cfg:
-            await interaction.response.send_message("Set a lock time first with **/votelock**.", ephemeral=True)
+        if not cfg or not cfg.get("active"):
+            await interaction.response.send_message("No active votelock to skip.", ephemeral=True)
             return
-        cfg["active"] = True
-        cfg["last_fired"] = None
-        d[gid] = cfg
+        try:
+            today = datetime.datetime.now(pytz.timezone(cfg.get("tz", "America/Chicago"))).strftime("%Y-%m-%d")
+        except Exception:
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+        cfg["last_fired"] = today  # mark as already handled today so the loop skips it
         _save(d)
         await interaction.response.send_message(
-            f"Game started. Votes lock daily at **{cfg['hour']:02d}:{cfg['minute']:02d}** ({cfg['tz']}); "
-            f"I'll watch nominations for **{cfg['duration_min']} min** after. Use **/endgame** to stop.",
-            ephemeral=True)
+            "Today's votelock is **skipped** — it resumes tomorrow.", ephemeral=True)
 
-    @votelock.error
     @startgame.error
+    @skiplock.error
     async def _err(interaction: discord.Interaction, error: app_commands.AppCommandError):
         msg = ("You need the **Storyteller** role to use this."
                if isinstance(error, app_commands.CheckFailure) else f"Error: {error}")
