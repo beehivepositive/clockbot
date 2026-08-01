@@ -1,11 +1,13 @@
 """BotC game-management commands (Storyteller-gated).
 
 Commands:
-  /newgame [number]      Create a fresh set of game channels; archive the previous game first.
+  /newgame [number] [as_user]  Create game channels; archive the previous game first.
+                         With as_user, build using that Storyteller's settings (they become the ST).
   /archivegame           Move the current Game Logs + Game Chat channels into an Archive category.
   /assigntownsfolk       Strip player roles + assign Townsfolk to everyone who signed up in #recruiting.
   /endgame               Reveal the current game's ascension + ascension-chat to everyone.
   /ascend @user          Grant a user the Ascended role (or explicit per-user access).
+  /addst <user>          Give a user the Storyteller role (+ explicit ST permissions if enabled).
   /stgamesettings        Per-Storyteller settings that customize what /newgame builds.
 
 Design notes / assumptions (flagged for iteration):
@@ -145,6 +147,54 @@ def resolve_role(guild, name):
 
 def resolve_category(guild, name):
     return discord.utils.find(lambda c: c.name.lower() == name.lower(), guild.categories)
+
+
+def resolve_member(guild, text):
+    """Resolve a guild member from free text: an @mention, a raw ID, or a common
+    name (nickname / display name / username), case-insensitive. Returns
+    (member, None) on success or (None, error_message) on failure."""
+    text = (text or "").strip()
+    if not text:
+        return None, "No user given."
+    m = re.match(r"<@!?(\d+)>$", text) or re.match(r"(\d{15,25})$", text)
+    if m:
+        member = guild.get_member(int(m.group(1)))
+        return (member, None) if member else (None, "That user isn't in this server.")
+    low = text.lower()
+
+    def gname(mem):
+        return (getattr(mem, "global_name", None) or "").lower()
+
+    # Exact match on nickname / display name / username wins over a partial one.
+    exact = [mem for mem in guild.members
+             if low in (mem.display_name.lower(), mem.name.lower(), gname(mem))]
+    if len(exact) == 1:
+        return exact[0], None
+    if len(exact) > 1:
+        return None, _ambiguous(exact)
+    partial = [mem for mem in guild.members
+               if low in mem.display_name.lower() or low in mem.name.lower()]
+    if len(partial) == 1:
+        return partial[0], None
+    if len(partial) > 1:
+        return None, _ambiguous(partial)
+    return None, f"No member matching “{text}” found."
+
+
+def _ambiguous(members):
+    names = ", ".join(sorted(m.display_name for m in members)[:8])
+    return ("Multiple members match that name — narrow it down or @mention them.\n"
+            f"Matches: {names}")
+
+
+def pick_member(guild, user, name):
+    """Resolve a target member from an optional Member-picker arg and/or an
+    optional free-text common-name arg. The picker wins if both are supplied."""
+    if user is not None:
+        return user, None
+    if name:
+        return resolve_member(guild, name)
+    return None, "Give a user (from the picker) or type a name."
 
 
 def is_storyteller(interaction):
@@ -717,12 +767,24 @@ def register(bot):
     """Attach all game-management commands to the bot's command tree."""
 
     @bot.tree.command(name="newgame", description="Create a fresh set of game channels (archives the previous game).")
-    @app_commands.describe(number="Game number (defaults to last game + 1).")
+    @app_commands.describe(number="Game number (defaults to last game + 1).",
+                           as_user="Build using this Storyteller's settings (they become the ST under Explicit Permission).",
+                           as_name="…or type that Storyteller's name / nickname instead.")
     @st_check()
-    async def newgame(interaction: discord.Interaction, number: int | None = None):
+    async def newgame(interaction: discord.Interaction, number: int | None = None,
+                      as_user: discord.Member = None, as_name: str = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
-        s = load_settings(interaction.user.id)
+
+        # Optionally run "as" another Storyteller: use their settings, and make
+        # them the initiator (the ST who gets powers under Explicit Permission).
+        initiator = interaction.user
+        if as_user is not None or as_name:
+            initiator, err = pick_member(guild, as_user, as_name)
+            if initiator is None:
+                await interaction.followup.send(err, ephemeral=True)
+                return
+        s = load_settings(initiator.id)
 
         if number is None:
             last = latest_game_number(guild)
@@ -734,9 +796,11 @@ def register(bot):
         if prev:
             moved = await archive_channels(guild, prev, log)
 
-        created = await create_game_channels(guild, number, s, interaction.user, log)
+        created = await create_game_channels(guild, number, s, initiator, log)
 
         msg = [f"**Game {number}** created — {len(created)} channel(s)."]
+        if initiator.id != interaction.user.id:
+            msg.append(f"Using **{initiator.display_name}**'s settings.")
         if moved:
             msg.append(f"Archived {moved} channel(s) from the previous game.")
         if created:
@@ -793,19 +857,25 @@ def register(bot):
             await interaction.followup.send("No ascension channels found for that game." + note, ephemeral=True)
 
     @bot.tree.command(name="ascend", description="Grant a user the Ascended role (or explicit ascension access).")
-    @app_commands.describe(user="The player to ascend.")
+    @app_commands.describe(user="Pick the player to ascend.",
+                           name="…or type a name / nickname instead.")
     @st_check()
-    async def ascend(interaction: discord.Interaction, user: discord.Member):
+    async def ascend(interaction: discord.Interaction,
+                     user: discord.Member = None, name: str = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
+        member, err = pick_member(guild, user, name)
+        if member is None:
+            await interaction.followup.send(err, ephemeral=True)
+            return
         s = load_settings(interaction.user.id)
         if not s.get("explicit_permission", False):
             role = resolve_role(guild, R_ASCENDED)
             if role is None:
                 await interaction.followup.send("No **Ascended** role found.", ephemeral=True)
                 return
-            await user.add_roles(role, reason=f"/ascend by {interaction.user}")
-            await interaction.followup.send(f"Gave **Ascended** to {user.mention}.", ephemeral=True)
+            await member.add_roles(role, reason=f"/ascend by {interaction.user}")
+            await interaction.followup.send(f"Gave **Ascended** to {member.mention}.", ephemeral=True)
             return
         # Explicit permission: grant per-user access to this game's ascension channels.
         target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
@@ -816,13 +886,59 @@ def register(bot):
             if game_number_from_name(c.name) != target_num:
                 continue
             if c.name.endswith("-ascension") or c.name.endswith("-ascension-chat"):
-                await c.set_permissions(user, view_channel=True, send_messages=True)
+                await c.set_permissions(member, view_channel=True, send_messages=True)
                 granted.append(c.mention)
         if granted:
             await interaction.followup.send(
-                f"Granted {user.mention} access to " + ", ".join(granted), ephemeral=True)
+                f"Granted {member.mention} access to " + ", ".join(granted), ephemeral=True)
         else:
             await interaction.followup.send("No ascension channels found for that game.", ephemeral=True)
+
+    @bot.tree.command(name="addst", description="Give a user the Storyteller role (plus explicit ST permissions if enabled).")
+    @app_commands.describe(user="Pick the member to make a Storyteller.",
+                           name="…or type a name / nickname instead.")
+    @st_check()
+    async def addst(interaction: discord.Interaction,
+                    user: discord.Member = None, name: str = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        member, err = pick_member(guild, user, name)
+        if member is None:
+            await interaction.followup.send(err, ephemeral=True)
+            return
+        st_role = resolve_role(guild, R_ST)
+        if st_role is None:
+            await interaction.followup.send("No **Storyteller** role found.", ephemeral=True)
+            return
+        await member.add_roles(st_role, reason=f"/addst by {interaction.user}")
+        msg = [f"Gave **Storyteller** to {member.mention}."]
+
+        # Under Explicit Permission the ST role carries no channel access — the
+        # Storyteller's powers live as per-member overwrites (see build_overwrites,
+        # st_target = initiator). So a newly-added ST needs those same explicit
+        # overwrites on this game's channels to actually have ST powers.
+        s = load_settings(interaction.user.id)
+        if s.get("explicit_permission", False):
+            target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
+            if target_num is None:
+                target_num = latest_game_number(guild)
+            granted = []
+            for c in current_game_channels(guild):
+                if game_number_from_name(c.name) != target_num:
+                    continue
+                try:
+                    await c.set_permissions(
+                        member, overwrite=discord.PermissionOverwrite(**ST_PERMS),
+                        reason=f"/addst explicit by {interaction.user}")
+                    granted.append(c.mention)
+                except Exception:
+                    pass
+            if granted:
+                msg.append("Explicit permission is on — granted ST access to "
+                           + ", ".join(granted) + ".")
+            else:
+                msg.append("Explicit permission is on, but no channels for that game were found.")
+        await interaction.followup.send("\n".join(msg), ephemeral=True)
 
     @bot.tree.command(name="assigntownsfolk", description="Assign Townsfolk to everyone who signed up in #recruiting.")
     @st_check()
@@ -895,6 +1011,7 @@ def register(bot):
     @archivegame.error
     @endgame.error
     @ascend.error
+    @addst.error
     @assigntownsfolk.error
     @stgamesettings.error
     async def _err(interaction: discord.Interaction, error: app_commands.AppCommandError):
