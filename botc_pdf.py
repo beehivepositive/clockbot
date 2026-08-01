@@ -82,6 +82,35 @@ def _styles():
     )
 
 
+CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:(\d+)>")
+
+
+async def _prep_emojis(session, content, emoji_cache, tmp_files):
+    """Download any custom emojis referenced in `content`; return {id: <img> tag}."""
+    imgs = {}
+    for eid in set(CUSTOM_EMOJI_RE.findall(content)):
+        if eid not in emoji_cache:
+            p = await _download(session, f"https://cdn.discordapp.com/emojis/{eid}.png", ".png")
+            emoji_cache[eid] = p
+            if p:
+                tmp_files.append(p)
+        if emoji_cache[eid]:
+            imgs[eid] = f'<img src="{emoji_cache[eid]}" width="14" height="14" valign="middle"/>'
+    return imgs
+
+
+def _line_markup(line, emoji_imgs):
+    """Escape a line's text but inline custom-emoji images where available."""
+    out = []
+    for part in re.split(r"(<a?:\w+:\d+>)", line):
+        m = re.fullmatch(r"<a?:\w+:(\d+)>", part)
+        if m and m.group(1) in emoji_imgs:
+            out.append(emoji_imgs[m.group(1)])
+        else:
+            out.append(_esc(part))
+    return "".join(out)
+
+
 async def channel_to_pdf(channel, guild, outpath):
     """Render every message in `channel` to a PDF at `outpath`.
     Returns the message count, or None if the channel had no messages / was unreadable."""
@@ -97,6 +126,7 @@ async def channel_to_pdf(channel, guild, outpath):
 
     tmp_files = []
     avatar_cache = {}
+    emoji_cache = {}
     try:
         story = [
             Paragraph(f"#{_esc(channel.name)}", title_s),
@@ -131,10 +161,11 @@ async def channel_to_pdf(channel, guild, outpath):
                     story.append(Paragraph(_esc(msg.author.display_name), author_s))
                     story.append(Paragraph(ts, ts_s))
                 content = _resolve_mentions(msg.content or "", msg)
+                emoji_imgs = await _prep_emojis(session, content, emoji_cache, tmp_files)
                 if content:
                     for line in content.split("\n"):
                         if line.strip():
-                            story.append(Paragraph(_esc(line), msg_s))
+                            story.append(Paragraph(_line_markup(line, emoji_imgs), msg_s))
                         else:
                             story.append(Spacer(1, 4))
                 for att in msg.attachments:
@@ -154,6 +185,23 @@ async def channel_to_pdf(channel, guild, outpath):
                             story.append(Paragraph("[Image error]", msg_s))
                     else:
                         story.append(Paragraph(f"[Attachment: {_esc(att.filename)}]", msg_s))
+                for st in getattr(msg, "stickers", []):
+                    fmt = (getattr(getattr(st, "format", None), "name", "") or "").lower()
+                    if fmt == "lottie":  # vector animation — can't embed, show name
+                        story.append(Paragraph(f"[Sticker: {_esc(st.name)}]", msg_s))
+                        continue
+                    try:
+                        sp = await _download(session, st.url, ".png")
+                        if sp:
+                            tmp_files.append(sp)
+                            img = _fit_image(sp, 40 * mm, 40 * mm)
+                            img.hAlign = "LEFT"
+                            story.append(img)
+                            story.append(Spacer(1, 4))
+                        else:
+                            story.append(Paragraph(f"[Sticker: {_esc(st.name)}]", msg_s))
+                    except Exception:
+                        story.append(Paragraph(f"[Sticker: {_esc(st.name)}]", msg_s))
                 story.append(Spacer(1, 8))
         doc = SimpleDocTemplate(outpath, pagesize=A4, rightMargin=20 * mm, leftMargin=20 * mm,
                                 topMargin=20 * mm, bottomMargin=20 * mm)
