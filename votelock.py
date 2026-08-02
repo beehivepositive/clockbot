@@ -159,9 +159,31 @@ def register(bot):
                     pass
         return ids
 
+    def _render_list(win):
+        """Build the 'current votes' list. Voters are shown as mentions; a voter
+        added after lock gets a timestamp next to their tag."""
+        lines = ["**🔒 Votes are locked — current votes:**"]
+        if not win["noms"]:
+            lines.append("_No nominations found._")
+        for nom in win["noms"].values():
+            parts = [(f"<@{uid}> (<t:{ts}:t>)" if ts else f"<@{uid}>") for uid, ts in nom["voters"].items()]
+            lines.append(f"• {nom['text']}\n   {', '.join(parts) if parts else '_no votes_'}")
+        return "\n".join(lines)[:1900]
+
+    async def _edit_list(guild, win):
+        """Re-render the pinned 'current votes' message in place (no ping)."""
+        ch = _asc(guild, win)
+        if ch is None or not win.get("list_msg_id"):
+            return
+        try:
+            await ch.get_partial_message(win["list_msg_id"]).edit(
+                content=_render_list(win), allowed_mentions=discord.AllowedMentions.none())
+        except Exception as e:
+            print(f"votelock list edit failed: {e}")
+
     async def _snapshot(guild, logs, asc, win):
         """At lock time: record the current nominations + their up-arrow voters,
-        and post the who's-voting-on-what list to ascension chat."""
+        then post the who's-voting-on-what list to ascension chat (stored for edits)."""
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=20)
         try:
             msgs = [m async for m in logs.history(limit=200)]
@@ -173,17 +195,12 @@ def register(bot):
                 continue
             if "nominates" in (msg.content or "").lower():
                 win["noms"][msg.id] = {"text": (msg.content or "").strip()[:150],
-                                       "voters": set(await _up_voters(msg))}
+                                       "voters": {uid: None for uid in await _up_voters(msg)}}
         if asc is None:
             return
-        lines = ["**🔒 Votes are locked — current votes:**"]
-        if not win["noms"]:
-            lines.append("_No nominations found._")
-        for nom in win["noms"].values():
-            names = [_name(guild, uid) for uid in nom["voters"]]
-            lines.append(f"• {nom['text']}\n   {', '.join(names) if names else '_no votes_'}")
         try:
-            await asc.send("\n".join(lines)[:1900])
+            m = await asc.send(_render_list(win), allowed_mentions=discord.AllowedMentions.none())
+            win["list_msg_id"] = m.id
         except Exception as e:
             print(f"votelock snapshot post failed: {e}")
 
@@ -261,7 +278,7 @@ def register(bot):
             return
         # A nomination posted DURING the window: start tracking it (no voters yet).
         if "nominates" in (message.content or "").lower() and message.id not in w["noms"]:
-            w["noms"][message.id] = {"text": (message.content or "").strip()[:150], "voters": set()}
+            w["noms"][message.id] = {"text": (message.content or "").strip()[:150], "voters": {}}
 
     async def _on_add(payload):
         if payload.guild_id is None or payload.user_id == bot.user.id:
@@ -274,16 +291,9 @@ def register(bot):
         nom = w["noms"][payload.message_id]
         if payload.user_id in nom["voters"]:
             return  # already had a vote on this nomination
-        nom["voters"].add(payload.user_id)  # a NEW vote after lock — track + alert
-        guild = bot.get_guild(payload.guild_id)
-        ch = _asc(guild, w)
-        if ch:
-            try:
-                await ch.send(
-                    f"➕ **{_name(guild, payload.user_id)}** added a vote (<t:{int(time.time())}:t>) on:\n> {nom['text']}",
-                    allowed_mentions=discord.AllowedMentions.none())
-            except Exception as e:
-                print(f"votelock add alert failed: {e}")
+        nom["voters"][payload.user_id] = int(time.time())  # NEW vote — timestamped
+        # Edit the list in place (add their tag + timestamp); no new message for adds.
+        await _edit_list(bot.get_guild(payload.guild_id), w)
 
     async def _on_remove(payload):
         if payload.guild_id is None or payload.user_id == bot.user.id:
@@ -296,17 +306,19 @@ def register(bot):
         nom = w["noms"][payload.message_id]
         if payload.user_id not in nom["voters"]:
             return  # they weren't a tracked voter on this nomination
-        nom["voters"].discard(payload.user_id)
+        nom["voters"].pop(payload.user_id, None)
         guild = bot.get_guild(payload.guild_id)
+        await _edit_list(guild, w)  # keep the list current
         ch = _asc(guild, w)
         if not ch:
             return
+        # Removals DO get a new message, showing the remover's tag; pings the ST only.
         st = _role(guild, "Storyteller")
         ping = (st.mention + " ") if st else ""
         jump = f"https://discord.com/channels/{payload.guild_id}/{w['logs_id']}/{payload.message_id}"
         try:
             await ch.send(
-                f"{ping}⚠️ **{_name(guild, payload.user_id)}** removed their vote from:\n> {nom['text']}\n{jump}",
+                f"{ping}⚠️ <@{payload.user_id}> removed their vote from:\n> {nom['text']}\n{jump}",
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=[st] if st else False, users=False))
         except Exception as e:
             print(f"votelock remove alert failed: {e}")
