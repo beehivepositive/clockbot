@@ -15,6 +15,7 @@ import datetime, pytz
 from botc_st import start_night, end_night, end_day, handle_dm_action, find_pending_game as find_pending_botc_game, resolve_execution as botc_resolve_execution
 from game_state import load_whisper_state,save_whisper_state,get_game_state,set_game_state,get_game_key,is_excluded,find_dest
 import botc_games
+import botc_stchats
 import botc_scripts
 import reminders
 import votelock
@@ -533,6 +534,7 @@ async def syncchannels_error(interaction: discord.Interaction, error: app_comman
 
 
 botc_games.register(bot)
+botc_stchats.register(bot)
 botc_scripts.register(bot)
 reminders.register(bot)
 votelock.register(bot)
