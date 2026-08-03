@@ -139,12 +139,23 @@ async def _exchange_code(code):
             return body.get("access_token"), r.status, body
 
 
+def _bot_headers():
+    return {"Authorization": f"Bot {os.getenv('DISCORD_TOKEN', '')}",
+            "User-Agent": "DiscordBot (https://clockbot.local, 1.0)"}
+
+
 async def _create_group_dm(user_token):
     """Create a group DM containing the token's user. Returns (status, body)."""
-    headers = {"Authorization": f"Bot {os.getenv('DISCORD_TOKEN', '')}"}
     async with aiohttp.ClientSession() as s:
-        async with s.post(_API + "/users/@me/channels", headers=headers,
+        async with s.post(_API + "/users/@me/channels", headers=_bot_headers(),
                           json={"access_tokens": [user_token]}) as r:
+            return r.status, await r.json(content_type=None)
+
+
+async def _patch_channel(channel_id, body):
+    """The bot owns bot-created group DMs, so it can PATCH their name/icon."""
+    async with aiohttp.ClientSession() as s:
+        async with s.patch(f"{_API}/channels/{channel_id}", headers=_bot_headers(), json=body) as r:
             return r.status, await r.json(content_type=None)
 
 
@@ -189,11 +200,10 @@ def register(bot):
         if num is None:
             num = botc_games.latest_game_number(interaction.guild)
         set_st_assignments(interaction.user.id, interaction.guild.id, num, assignments)
-        count = _townsfolk_count(interaction.guild)
         msg = [f"✅ Stored **{len(assignments)}** assignments for game **{num}**."]
         if errors:
             msg.append("⚠️ " + "; ".join(errors[:5]))
-        msg.append(f"\nReady to create **{count}** ST-only group DM(s) (one per Townsfolk player). To do that:")
+        msg.append(f"\nReady to create **{len(assignments)}** named group DM(s) — one per player. To do that:")
         msg.append(f"**1.** Authorize here → {_auth_url()}")
         msg.append("**2.** You'll land on a `localhost` page that fails to load — that's expected. "
                    "Copy the **`code`** value out of the address bar.")
@@ -215,22 +225,26 @@ def register(bot):
                 f"Authorization failed (HTTP {status}). Codes are single-use and expire fast — "
                 f"re-authorize and try again.\n`{str(body)[:250]}`", ephemeral=True)
             return
-        count = _townsfolk_count(interaction.guild)
-        if count == 0:
-            await interaction.followup.send("No Townsfolk players found to size the DMs.", ephemeral=True)
+        players = list((get_st_record(interaction.user.id) or {}).get("assignments", {}).values())
+        if not players:
+            await interaction.followup.send("No stored assignments — run **/createstchats** first.", ephemeral=True)
             return
-        created, failed = 0, []
-        for _ in range(count):
-            st, jb = await _create_group_dm(token)
-            if 200 <= st < 300:
-                created += 1
+        created, failed = [], []
+        for pa in players:
+            st_code, jb = await _create_group_dm(token)
+            if 200 <= st_code < 300 and isinstance(jb, dict) and jb.get("id"):
+                await _patch_channel(jb["id"], {"name": pa["player"][:100]})  # name it after the player
+                created.append(pa["player"])
             else:
-                failed.append(f"HTTP {st}: {str(jb)[:120]}")
-        msg = [f"Created **{created}/{count}** ST-only group DM(s)."]
-        if failed:
-            msg.append("⚠️ Failures: " + " | ".join(failed[:3]))
+                failed.append((pa["player"], f"{st_code}:{str(jb)[:50]}"))
+        msg = [f"Created + named **{len(created)}/{len(players)}** group DM(s)."]
         if created:
-            msg.append("Add the right player to each, then reveal roles with **/assignrole <player>**.")
+            msg.append("📇 " + ", ".join(created[:25]))
+        if failed:
+            msg.append("⚠️ Couldn't create: " + ", ".join(p for p, _ in failed[:8]))
+            msg.append("Group-DM creation is rate-limited (~10 per ~15 min, shared with your own manual creation) — "
+                       "re-run **/finishstchats** with a fresh code after the cooldown for the rest.")
+        msg.append("Add each player to their named DM, then reveal with **/assignrole <player>**.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
     @bot.tree.command(name="assignrole",
