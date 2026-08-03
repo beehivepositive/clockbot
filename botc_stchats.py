@@ -538,19 +538,27 @@ def register(bot):
         info = botc_chardata.char_info(pa["character"], pa["alignment"])
         align, char = pa["alignment"], pa["character"]
         ability = (info or {}).get("ability", "")
-        # Visible reveal — everyone in the chat sees this.
-        await interaction.response.send_message(
-            f"You are **{align}**. You are the **{char}**.\n{ability}")
-        # Ephemeral confirmation for the ST — role icon + [G### Character - player].
         icon = (info or {}).get("icon")
-        tag = f"[G{rec.get('game', '?')} {char} - {pa['player']}]"
+        # Visible reveal — a rich embed with the token image. App interaction
+        # responses can carry embeds/images even in managed group DMs (where a
+        # human member can't), so this is the one way rich content lands here.
+        color = discord.Color.red() if align.lower() == "evil" else discord.Color.green()
+        embed = discord.Embed(title=char,
+                              description=f"You are **{align}**.\n\n{ability}",
+                              color=color)
+        files = []
+        if icon and os.path.exists(icon):
+            fname = "token" + (os.path.splitext(icon)[1] or ".png")
+            files.append(discord.File(icon, filename=fname))
+            embed.set_thumbnail(url=f"attachment://{fname}")
         try:
-            if icon and os.path.exists(icon):
-                await interaction.followup.send(tag, ephemeral=True, file=discord.File(icon))
-            else:
-                await interaction.followup.send(tag, ephemeral=True)
+            await interaction.response.send_message(embed=embed, files=files)
         except Exception:
-            await interaction.followup.send(tag, ephemeral=True)
+            await interaction.response.send_message(
+                f"You are **{align}**. You are the **{char}**.\n{ability}")
+        # Ephemeral confirmation for the ST — [G### Character - player].
+        await interaction.followup.send(
+            f"[G{rec.get('game', '?')} {char} - {pa['player']}]", ephemeral=True)
 
     @createstchats.error
     @finishstchats.error
