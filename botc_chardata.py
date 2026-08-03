@@ -68,4 +68,5 @@ def char_info(name, alignment=None):
         "icon": botc_assets.get_token_path(canon, use_evil=evil),
         "icon_good": botc_assets.get_token_path(canon, use_evil=False),
         "icon_evil": botc_assets.get_token_path(canon, use_evil=True),
+        "icon_url": botc_assets.get_token_url(canon, use_evil=evil),
     }

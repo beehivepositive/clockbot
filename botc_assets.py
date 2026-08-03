@@ -65,6 +65,11 @@ def get_token_path(role_id,use_evil=False):
         try: urllib.request.urlretrieve(CDN+fn,p)
         except: return None
     return p
+def get_token_url(role_id,use_evil=False):
+    mf=get_manifest(); e=mf['roles'].get(_key(role_id))
+    if not e: return None
+    fn=e.get('evil'if use_evil else'good')or e.get('good')or e.get('evil')
+    return CDN+fn if fn else None
 def get_reminder_path(role_id):
     mf=get_manifest(); e=mf['roles'].get(_key(role_id))
     if not e: return None
