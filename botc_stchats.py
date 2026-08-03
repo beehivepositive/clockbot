@@ -159,6 +159,41 @@ async def _patch_channel(channel_id, body):
             return r.status, await r.json(content_type=None)
 
 
+def _icon_data_uri(character):
+    """A character's token as a 128px PNG data URI (flattened on white so the
+    transparent token corners don't render black), or None."""
+    try:
+        p = (botc_chardata.char_info(character) or {}).get("icon")
+        if not p or not os.path.exists(p):
+            return None
+        import io as _io
+        import base64 as _b64
+        from PIL import Image
+        tok = Image.open(p).convert("RGBA")
+        bg = Image.new("RGBA", tok.size, (255, 255, 255, 255))
+        bg.paste(tok, (0, 0), tok)
+        buf = _io.BytesIO()
+        bg.convert("RGB").resize((128, 128)).save(buf, "PNG")
+        return "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
+
+
+def set_channel_ids(st_user_id, key_to_channel):
+    """Record the created group-DM channel id on each player's assignment."""
+    d = _load()
+    rec = d.get(str(st_user_id))
+    if not rec:
+        return
+    for k, cid in key_to_channel.items():
+        if k in rec.get("assignments", {}):
+            rec["assignments"][k]["channel_id"] = cid
+    tmp = _PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, _PATH)
+
+
 def _townsfolk_count(guild):
     role = discord.utils.find(lambda r: r.name.lower() == "townsfolk", guild.roles)
     if role is None:
@@ -225,19 +260,26 @@ def register(bot):
                 f"Authorization failed (HTTP {status}). Codes are single-use and expire fast — "
                 f"re-authorize and try again.\n`{str(body)[:250]}`", ephemeral=True)
             return
-        players = list((get_st_record(interaction.user.id) or {}).get("assignments", {}).values())
-        if not players:
+        assignments = (get_st_record(interaction.user.id) or {}).get("assignments", {})
+        if not assignments:
             await interaction.followup.send("No stored assignments — run **/createstchats** first.", ephemeral=True)
             return
-        created, failed = [], []
-        for pa in players:
+        created, failed, channels = [], [], {}
+        for key, pa in assignments.items():
             st_code, jb = await _create_group_dm(token)
             if 200 <= st_code < 300 and isinstance(jb, dict) and jb.get("id"):
-                await _patch_channel(jb["id"], {"name": pa["player"][:100]})  # name it after the player
+                patch = {"name": pa["player"][:100]}                 # name after the player
+                icon = _icon_data_uri(pa["character"])               # + character icon
+                if icon:
+                    patch["icon"] = icon
+                await _patch_channel(jb["id"], patch)
+                channels[key] = jb["id"]
                 created.append(pa["player"])
             else:
                 failed.append((pa["player"], f"{st_code}:{str(jb)[:50]}"))
-        msg = [f"Created + named **{len(created)}/{len(players)}** group DM(s)."]
+        if channels:
+            set_channel_ids(interaction.user.id, channels)
+        msg = [f"Created + named **{len(created)}/{len(assignments)}** group DM(s)."]
         if created:
             msg.append("📇 " + ", ".join(created[:25]))
         if failed:
