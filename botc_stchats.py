@@ -252,35 +252,41 @@ def _html(title, inner, status=200):
 
 
 async def _handle_callback(request):
-    code = request.query.get("code")
-    state = request.query.get("state")
-    if not code or not state:
-        return _html("Error", "<h1 class='err'>Incomplete link</h1>"
-                     "<p>Ask your Storyteller for a fresh one.</p>", 400)
-    rec = get_add_state(state)
-    if not rec:
-        return _html("Error", "<h1 class='err'>Link expired</h1>"
-                     "<p>Ask your Storyteller to run <b>/addtochat</b> again.</p>", 400)
-    token, status, body = await _exchange_code(code, PUBLIC_REDIRECT_URI)
-    if not token:
-        return _html("Error", "<h1 class='err'>Authorization failed</h1>"
-                     "<p>That link may have already been used. Click your Storyteller's link again.</p>", 400)
-    _, me = await _get_me(token)
-    if isinstance(me, dict) and me.get("id") and str(me["id"]) != rec["player_id"]:
-        who = html.escape(str(me.get("global_name") or me.get("username") or "another account"))
-        return _html("Wrong account",
-                     f"<h1 class='err'>That's not your link</h1><p>This invite is for "
-                     f"<b>{html.escape(rec['player_name'])}</b>, but you're signed in as <b>{who}</b>. "
-                     "Switch to the right Discord account and try again.</p>", 403)
-    add_status, add_text = await _add_recipient(rec["channel_id"], rec["player_id"], token, rec["player_name"])
-    if 200 <= add_status < 300:
-        return _html("You're in!",
-                     f"<h1 class='ok'>You're in! ✅</h1><p>You've been added to your Storyteller "
-                     f"chat for <b>game {html.escape(str(rec['game']))}</b>.</p>"
-                     "<p>Head back to <b>Discord</b> — it's in your Direct Messages.</p>")
-    return _html("Couldn't add you",
-                 f"<h1 class='err'>Couldn't add you</h1><p>Discord said: "
-                 f"<code>{html.escape(add_text[:150])}</code></p><p>Let your Storyteller know.</p>", 400)
+    try:
+        code = request.query.get("code")
+        state = request.query.get("state")
+        if not code or not state:
+            return _html("Error", "<h1 class='err'>Incomplete link</h1>"
+                         "<p>Ask your Storyteller for a fresh one.</p>", 400)
+        rec = get_add_state(state)
+        if not rec:
+            return _html("Error", "<h1 class='err'>Link expired</h1>"
+                         "<p>Ask your Storyteller to run <b>/addtochat</b> again.</p>", 400)
+        token, status, body = await _exchange_code(code, PUBLIC_REDIRECT_URI)
+        if not token:
+            return _html("Error", "<h1 class='err'>Authorization failed</h1>"
+                         "<p>That link may have already been used. Click your Storyteller's link again.</p>", 400)
+        _, me = await _get_me(token)
+        if isinstance(me, dict) and me.get("id") and str(me["id"]) != rec["player_id"]:
+            who = html.escape(str(me.get("global_name") or me.get("username") or "another account"))
+            return _html("Wrong account",
+                         f"<h1 class='err'>That's not your link</h1><p>This invite is for "
+                         f"<b>{html.escape(rec['player_name'])}</b>, but you're signed in as <b>{who}</b>. "
+                         "Switch to the right Discord account and try again.</p>", 403)
+        add_status, add_text = await _add_recipient(rec["channel_id"], rec["player_id"], token, rec["player_name"])
+        if 200 <= add_status < 300:
+            return _html("You're in!",
+                         f"<h1 class='ok'>You're in! ✅</h1><p>You've been added to your Storyteller "
+                         f"chat for <b>game {html.escape(str(rec['game']))}</b>.</p>"
+                         "<p>Head back to <b>Discord</b> — it's in your Direct Messages.</p>")
+        return _html("Couldn't add you",
+                     f"<h1 class='err'>Couldn't add you</h1><p>Discord said: "
+                     f"<code>{html.escape(add_text[:150])}</code></p><p>Let your Storyteller know.</p>", 400)
+    except Exception:
+        import traceback
+        print("[stchats] callback handler error:"); traceback.print_exc()
+        return _html("Error", "<h1 class='err'>Something went wrong</h1>"
+                     "<p>Tell your Storyteller to check the logs.</p>", 500)
 
 
 _web_started = False
@@ -290,6 +296,11 @@ async def _start_callback_server():
     global _web_started
     if _web_started:
         return
+    # A public port draws constant scanner/HTTP-2 probes that aiohttp logs as
+    # unhandled parse tracebacks — silence those so real errors stay visible
+    # (our own handler errors are printed by _handle_callback's except block).
+    import logging
+    logging.getLogger("aiohttp.server").setLevel(logging.CRITICAL)
     app = web.Application()
     app.router.add_get("/callback", _handle_callback)
     runner = web.AppRunner(app)
