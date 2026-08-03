@@ -334,6 +334,22 @@ def set_channel_ids(st_user_id, key_to_channel):
     os.replace(tmp, _PATH)
 
 
+def set_player_ids(st_user_id, key_to_pid):
+    """Cache a resolved Discord id onto each player's assignment (e.g. after a
+    common name is added post-setup and /addtochat resolves it live)."""
+    d = _load()
+    rec = d.get(str(st_user_id))
+    if not rec:
+        return
+    for k, pid in key_to_pid.items():
+        if k in rec.get("assignments", {}):
+            rec["assignments"][k]["player_id"] = pid
+    tmp = _PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, _PATH)
+
+
 def _townsfolk_count(guild):
     role = discord.utils.find(lambda r: r.name.lower() == "townsfolk", guild.roles)
     if role is None:
@@ -472,14 +488,21 @@ def register(bot):
         else:
             targets = list(assignments.items())
 
-        links, dmd, nodm, skipped = [], [], [], []
+        links, dmd, nodm, skipped, resolved_now = [], [], [], [], {}
         for key, pa in targets:
-            cid, pid = pa.get("channel_id"), pa.get("player_id")
+            cid = pa.get("channel_id")
+            pid = pa.get("player_id")
+            if not pid:  # common name added after /createstchats — resolve it live
+                member, _e = botc_games.resolve_member(interaction.guild, pa["player"])
+                if member is not None:
+                    pid = str(member.id)
+                    resolved_now[key] = pid
             if not cid:
                 skipped.append(f"{pa['player']} (no group DM — run /finishstchats)")
                 continue
             if not pid:
-                skipped.append(f"{pa['player']} (no matched Discord account)")
+                skipped.append(f"{pa['player']} (no matched Discord account — map them with "
+                               "/add-common-name, then rerun)")
                 continue
             state = make_add_state(interaction.user.id, game, key, cid, pid, pa["player"], pa["character"])
             link = _add_auth_url(state)
@@ -496,6 +519,8 @@ def register(bot):
             except Exception:
                 nodm.append(pa["player"])
 
+        if resolved_now:  # cache live-resolved ids so this is a one-time cost
+            set_player_ids(interaction.user.id, resolved_now)
         if not links:
             await interaction.followup.send(
                 "Nothing to send.\n" + ("\n".join(skipped) if skipped else ""), ephemeral=True)
