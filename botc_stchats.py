@@ -233,8 +233,42 @@ def register(bot):
             msg.append("Add the right player to each, then reveal roles with **/assignrole <player>**.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
+    @bot.tree.command(name="assignrole",
+                      description="Reveal a player's role in this chat (Storyteller only).")
+    @app_commands.describe(name="The player's name, as in the assignments you loaded.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def assignrole(interaction: discord.Interaction, name: str):
+        rec = get_st_record(interaction.user.id)
+        if not rec:
+            await interaction.response.send_message(
+                "You have no stored assignments — run **/createstchats** in your server first.", ephemeral=True)
+            return
+        pa = get_player(interaction.user.id, name)
+        if not pa:
+            await interaction.response.send_message(
+                f"No player matching **{name}** in your assignments.", ephemeral=True)
+            return
+        info = botc_chardata.char_info(pa["character"], pa["alignment"])
+        align, char = pa["alignment"], pa["character"]
+        ability = (info or {}).get("ability", "")
+        # Visible reveal — everyone in the chat sees this.
+        await interaction.response.send_message(
+            f"You are **{align}**. You are the **{char}**.\n{ability}")
+        # Ephemeral confirmation for the ST — role icon + [G### Character - player].
+        icon = (info or {}).get("icon")
+        tag = f"[G{rec.get('game', '?')} {char} - {pa['player']}]"
+        try:
+            if icon and os.path.exists(icon):
+                await interaction.followup.send(tag, ephemeral=True, file=discord.File(icon))
+            else:
+                await interaction.followup.send(tag, ephemeral=True)
+        except Exception:
+            await interaction.followup.send(tag, ephemeral=True)
+
     @createstchats.error
     @finishstchats.error
+    @assignrole.error
     async def _err(interaction: discord.Interaction, error: app_commands.AppCommandError):
         m = f"Error: {error}"
         if interaction.response.is_done():

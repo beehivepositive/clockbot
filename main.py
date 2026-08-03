@@ -62,17 +62,23 @@ _commands_synced = False
 async def on_ready():
     global _commands_synced
     if not _commands_synced:
-        # Register commands PER-GUILD for every server the bot is in (fast updates,
-        # no duplicates, and any newly-added server is covered automatically).
+        # User-installable commands (e.g. /assignrole) must live in the GLOBAL scope
+        # so they work in DMs where the app is user-installed. Pull them out before
+        # the per-guild copy, then restore them globally afterward.
+        USER_INSTALL = {"assignrole"}
+        pulled = [c for c in (bot.tree.remove_command(n) for n in USER_INSTALL) if c is not None]
+        # Register the remaining commands PER-GUILD (fast updates, no duplicates).
         for g in bot.guilds:
             try:
                 bot.tree.copy_global_to(guild=g)
                 await bot.tree.sync(guild=g)
             except Exception as e:
                 print(f"Guild sync failed for {g.id}: {e}")
-        # Clear any previously-registered GLOBAL commands so they stop
-        # showing up as duplicates alongside the guild copies.
+        # Global scope keeps ONLY the user-install commands (clear the guild-copied
+        # ones from global first so they aren't duplicated).
         bot.tree.clear_commands(guild=None)
+        for c in pulled:
+            bot.tree.add_command(c)
         await bot.tree.sync()
         _commands_synced = True
     print(f"Logged in as {bot.user}")
