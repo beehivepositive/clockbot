@@ -575,18 +575,18 @@ def register(bot):
         align, char = pa["alignment"], pa["character"]
         ability = (info or {}).get("ability", "")
         icon_url = (info or {}).get("icon_url")
-        # Visible reveal — a rich embed with the token image pulled from the CDN
-        # by URL (NOT an uploaded file): a file attachment would need write access
-        # to the group DM, which the app lacks, and Discord silently forces such a
-        # response ephemeral. A URL thumbnail rides in the payload, so it stays public.
-        color = discord.Color.red() if align.lower() == "evil" else discord.Color.green()
-        embed = discord.Embed(title=char,
-                              description=f"You are **{align}**.\n\n{ability}",
-                              color=color)
+        # Visible reveal. A user-installed app in a group DM it isn't a member of
+        # CAN post plain text publicly, but an EMBED gets forced ephemeral — so
+        # format the reveal as plain text (markdown header + bold), and drop the
+        # token URL on its own line so it unfurls into an image preview for all.
+        badge = "😈" if align.lower() == "evil" else "😇"
+        parts = [f"## {char}", f"{badge} You are **{align}**."]
+        if ability:
+            parts.append(ability)
         if icon_url:
-            embed.set_thumbnail(url=icon_url)
+            parts.append(icon_url)
         try:
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message("\n".join(parts))
         except Exception:
             await interaction.response.send_message(
                 f"You are **{align}**. You are the **{char}**.\n{ability}")
