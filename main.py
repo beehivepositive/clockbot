@@ -423,8 +423,8 @@ def _compile_trigger(trig):
 async def handle_announcement_echo(message):
     """Configurable Day/Night/custom echo. The Storyteller types a rule's trigger
     (optionally followed by a number) in the -logs channel; the rendered output is
-    mirrored to the game's chat channels + posted back into logs. Rules + templates
-    come from the poster's /setupsettings; {n} is the number typed, else an
+    mirrored to the game's chat channels only (never re-posted into -logs). Rules +
+    templates come from the poster's /setupsettings; {n} is the number typed, else an
     auto-incrementing per-game counter. {day}/{night} expose the shared counters."""
     game_key = get_game_key(message.channel.name)
     if not game_key:
@@ -478,10 +478,8 @@ async def handle_announcement_echo(message):
                     await ch.send(out, allowed_mentions=_SAFE_MENTIONS)
                 except Exception as e:
                     print(f"Echo mirror failed -> #{ch.name}: {e}")
-        try:
-            await message.channel.send(out, allowed_mentions=_SAFE_MENTIONS)
-        except Exception:
-            pass
+        # Mirrored to the game-chat channels only — intentionally NOT re-posted
+        # back into the -logs channel (the trigger message already lives there).
         return  # first matching rule wins
 
 @bot.tree.command(name="add-common-name",description="Map a common name to a player")

@@ -421,12 +421,13 @@ def build_overwrites(guild, kind, s, initiator):
 
 def archived_overwrites(guild):
     """Read-only overwrites for an archived channel: everyone may view but not
-    participate; Recluse cannot view."""
+    post/react; Recluse cannot view."""
     ev = guild.default_role
     rec = resolve_role(guild, R_RECLUSE)
     ow = {
         ev: discord.PermissionOverwrite(
-            send_messages=True, add_reactions=True,
+            view_channel=True,
+            send_messages=False, add_reactions=False,
             create_public_threads=False, create_private_threads=False,
             send_messages_in_threads=False, use_embedded_activities=False,
             use_application_commands=False,
@@ -1321,7 +1322,17 @@ def register(bot):
         if tf is None:
             await interaction.followup.send("No **Townsfolk** role found.", ephemeral=True)
             return
-        await member.add_roles(tf, reason=f"/addtown by {interaction.user}")
+        try:
+            await member.add_roles(tf, reason=f"/addtown by {interaction.user}")
+        except discord.Forbidden:
+            me = guild.me
+            hint = ("my role isn't high enough — drag **{my}** above **{tf}**"
+                    if me.top_role <= tf else "I'm missing the **Manage Roles** permission")
+            await interaction.followup.send(
+                f"I couldn't assign **{tf.name}** (Discord said *Missing Permissions*). "
+                f"In **{guild.name}**, {hint.format(my=me.top_role.name, tf=tf.name)} "
+                f"in **Server Settings → Roles**, then try again.", ephemeral=True)
+            return
         # Give a per-member talk overwrite on this game's Game Chat channels. This
         # is what actually enables talking under Explicit Permission (where the
         # Townsfolk role no longer auto-grants it); harmless otherwise.
