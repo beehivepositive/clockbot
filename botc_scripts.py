@@ -347,6 +347,84 @@ def _script_meta(parsed):
     return (meta.get("name") or "").strip(), (meta.get("author") or "").strip()
 
 
+async def _latest_botcscripts_version(source_id):
+    """Scrape the script page for the latest version string (read from its own
+    download links), or None. Version-less download URLs 500, so a name/ID update
+    needs this to build a working versioned URL."""
+    url = f"https://www.botcscripts.com/script/{source_id}"
+    headers = {"User-Agent": "Mozilla/5.0 (Clockbot script importer)"}
+    try:
+        async with aiohttp.ClientSession(headers=headers) as sess:
+            async with sess.get(url) as r:
+                if r.status != 200:
+                    return None
+                html = await r.text()
+    except Exception:
+        return None
+    m = re.search(rf"/script/{source_id}/([0-9][0-9.]*)/download", html)
+    return m.group(1) if m else None
+
+
+async def _do_importupdate(interaction, row, base, version):
+    """Download from `base`, compare to the stored `row`, and update the library
+    entry in place if the source is newer/changed. Replies on every outcome."""
+    raw, pdf_bytes, err = await _fetch_botcscripts(base)
+    if err:
+        await interaction.followup.send(err, ephemeral=True)
+        return
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        await interaction.followup.send(f"The downloaded JSON was invalid: {e}", ephemeral=True)
+        return
+    new_json = json.dumps(parsed)
+
+    # Prefer a version comparison; fall back to a JSON-content comparison.
+    stored_ver, new_ver = _parse_ver(row.get("source_version")), _parse_ver(version)
+    if stored_ver is not None and new_ver is not None:
+        if new_ver < stored_ver:
+            await interaction.followup.send(
+                f"The library already has a **newer** version of **{row['name']}** "
+                f"(v{row['source_version']}) — not downgrading to v{version}.", ephemeral=True)
+            return
+        if new_ver == stored_ver:
+            await interaction.followup.send(
+                f"**{row['name']}** is already up to date (v{row['source_version']}).", ephemeral=True)
+            return
+    elif new_json == row["json"]:
+        await interaction.followup.send(
+            f"**{row['name']}** is already up to date (the script data hasn't changed).", ephemeral=True)
+        return
+
+    sid = row["id"]
+    try:
+        char_path, night_path = _split_script_pdf(pdf_bytes, sid)
+    except Exception as e:
+        await interaction.followup.send(f"Couldn't render/split the updated PDF: {e}", ephemeral=True)
+        return
+    for old in (row.get("char_path"), row.get("night_path")):  # drop stale image files
+        if old and old not in (char_path, night_path) and os.path.exists(old):
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+    new_version = version or row.get("source_version")
+    with _conn() as c:
+        c.execute(
+            "UPDATE scripts SET json=?, char_path=?, night_path=?, source_version=?, updated_at=? WHERE id=?",
+            (new_json, char_path, night_path, new_version, _today(), sid))
+
+    files = [discord.File(char_path, f"{row['name']}_character.png")]
+    if night_path:
+        files.append(discord.File(night_path, f"{row['name']}_night_order.png"))
+    old_v = row.get("source_version")
+    vtxt = (f" (v{old_v} → v{version})" if old_v and version else
+            f" (now v{version})" if version else "")
+    await interaction.followup.send(
+        f"Updated **{row['name']}** (ID `{sid}`){vtxt} — refreshed the JSON, character sheet, "
+        "and night order:", files=files, ephemeral=True)
+
+
 def _extract_role_ids(script_json):
     """Pull character ids out of a clocktower script JSON (list form).
     Accepts entries that are plain strings or dicts with an 'id'; skips _meta."""
@@ -574,80 +652,48 @@ def register(bot):
             files=files, ephemeral=True)
 
     @bot.tree.command(name="importupdate",
-                      description="Refresh a library script from its botcscripts.com link if it's out of date.")
-    @app_commands.describe(link="The botcscripts.com link of a script already in the library.")
-    async def importupdate(interaction: discord.Interaction, link: str):
+                      description="Refresh an imported script from botcscripts (by link, name, or ID) if out of date.")
+    @app_commands.describe(script="A botcscripts.com link, or the name / ID of a script already imported.")
+    async def importupdate(interaction: discord.Interaction, script: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        parsed_link = _parse_script_link(link)
-        if not parsed_link:
+        if not has_clockmaker(interaction.user):
             await interaction.followup.send(
-                "Give me a **botcscripts.com** script link, like "
-                "`https://www.botcscripts.com/script/42/5.1.0`.", ephemeral=True)
+                "Only the **Clockmaker** role can update library scripts.", ephemeral=True)
             return
-        source_id, version, base = parsed_link
-        row = get_script_by_source(source_id)
+
+        parsed_link = _parse_script_link(script)
+        if parsed_link:
+            source_id, version, base = parsed_link
+            row = get_script_by_source(source_id)
+            if not row:
+                await interaction.followup.send(
+                    "That botcscripts script isn't in the library yet — use **/importscript** to add it.",
+                    ephemeral=True)
+                return
+            await _do_importupdate(interaction, row, base, version)
+            return
+
+        # Otherwise treat the input as a library name / ID.
+        row = get_script(script)
         if not row:
+            cands = suggest_scripts(script)
+            hint = (" Did you mean: " + ", ".join(f"{r['name']} (ID {r['id']})" for r in cands[:5]) + "?"
+                    ) if cands else ""
+            await interaction.followup.send(f"No script named **{script}** in the library.{hint}", ephemeral=True)
+            return
+        if not row.get("source_id"):
             await interaction.followup.send(
-                "That botcscripts script isn't in the library yet — use **/importscript** to add it.",
+                f"**{row['name']}** wasn't imported from botcscripts, so there's nothing to refresh. "
+                "Use **/updatescript** to change it manually.", ephemeral=True)
+            return
+        version = await _latest_botcscripts_version(row["source_id"])
+        if not version:
+            await interaction.followup.send(
+                "Couldn't find the latest version on botcscripts — try again, or pass the versioned link directly.",
                 ephemeral=True)
             return
-
-        raw, pdf_bytes, err = await _fetch_botcscripts(base)
-        if err:
-            await interaction.followup.send(err, ephemeral=True)
-            return
-        try:
-            parsed = json.loads(raw)
-        except Exception as e:
-            await interaction.followup.send(f"The downloaded JSON was invalid: {e}", ephemeral=True)
-            return
-        new_json = json.dumps(parsed)
-
-        # Is the link actually newer/different? Prefer version compare; else content.
-        stored_ver, new_ver = _parse_ver(row.get("source_version")), _parse_ver(version)
-        if stored_ver is not None and new_ver is not None:
-            if new_ver < stored_ver:
-                await interaction.followup.send(
-                    f"The library already has a **newer** version of **{row['name']}** "
-                    f"(v{row['source_version']}) — not downgrading to v{version}.", ephemeral=True)
-                return
-            if new_ver == stored_ver:
-                await interaction.followup.send(
-                    f"**{row['name']}** is already up to date (v{row['source_version']}).", ephemeral=True)
-                return
-        elif new_json == row["json"]:
-            await interaction.followup.send(
-                f"**{row['name']}** is already up to date (the script data hasn't changed).", ephemeral=True)
-            return
-
-        sid = row["id"]
-        try:
-            char_path, night_path = _split_script_pdf(pdf_bytes, sid)
-        except Exception as e:
-            await interaction.followup.send(f"Couldn't render/split the updated PDF: {e}", ephemeral=True)
-            return
-        # Remove any stale image files left at a different path/extension.
-        for old in (row.get("char_path"), row.get("night_path")):
-            if old and old not in (char_path, night_path) and os.path.exists(old):
-                try:
-                    os.remove(old)
-                except Exception:
-                    pass
-        new_version = version or row.get("source_version")
-        with _conn() as c:
-            c.execute(
-                "UPDATE scripts SET json=?, char_path=?, night_path=?, source_version=?, updated_at=? WHERE id=?",
-                (new_json, char_path, night_path, new_version, _today(), sid))
-
-        files = [discord.File(char_path, f"{row['name']}_character.png")]
-        if night_path:
-            files.append(discord.File(night_path, f"{row['name']}_night_order.png"))
-        old_v = row.get("source_version")
-        vtxt = (f" (v{old_v} → v{version})" if old_v and version else
-                f" (now v{version})" if version else "")
-        await interaction.followup.send(
-            f"Updated **{row['name']}** (ID `{sid}`){vtxt} — refreshed the JSON, character sheet, "
-            "and night order:", files=files, ephemeral=True)
+        base = f"https://www.botcscripts.com/script/{row['source_id']}/{version}"
+        await _do_importupdate(interaction, row, base, version)
 
     @bot.tree.command(name="myscripts", description="List the scripts you've uploaded.")
     async def myscripts(interaction: discord.Interaction):
