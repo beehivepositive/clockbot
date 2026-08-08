@@ -23,6 +23,7 @@ import random
 import sqlite3
 import difflib
 import datetime
+import aiohttp
 import discord
 import pytz
 from discord import app_commands
@@ -250,6 +251,49 @@ def _ext(filename, default=".png"):
     return e if e in (".png", ".jpg", ".jpeg", ".webp", ".gif") else default
 
 
+def _split_script_pdf(pdf_bytes, sid, dpi=150):
+    """Render a botcscripts PDF into (char_path, night_path) PNGs. botcscripts
+    lays the script out with the character sheet first and the night-order fold
+    sheet as the LAST page — so the night order is the last page and the character
+    sheet is every page before it (stacked vertically if there's more than one).
+    night_path is None if the PDF is a single page."""
+    try:
+        import pymupdf
+    except ImportError:  # older PyMuPDF only exposes the `fitz` name
+        import fitz as pymupdf
+    from PIL import Image
+
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        n = doc.page_count
+
+        def render(i):
+            pix = doc[i].get_pixmap(dpi=dpi, alpha=False)
+            return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+        char_idxs = list(range(0, n - 1)) if n >= 2 else [0]
+        char_imgs = [render(i) for i in char_idxs]
+        if len(char_imgs) == 1:
+            char_img = char_imgs[0]
+        else:  # multi-page character sheet: stack the pages vertically
+            w = max(im.width for im in char_imgs)
+            char_img = Image.new("RGB", (w, sum(im.height for im in char_imgs)), "white")
+            y = 0
+            for im in char_imgs:
+                char_img.paste(im, (0, y))
+                y += im.height
+        char_path = os.path.join(IMG_DIR, f"{sid}_character.png")
+        char_img.save(char_path)
+
+        night_path = None
+        if n >= 2:
+            night_path = os.path.join(IMG_DIR, f"{sid}_night.png")
+            render(n - 1).save(night_path)
+        return char_path, night_path
+    finally:
+        doc.close()
+
+
 def _extract_role_ids(script_json):
     """Pull character ids out of a clocktower script JSON (list form).
     Accepts entries that are plain strings or dicts with an 'id'; skips _meta."""
@@ -409,6 +453,81 @@ def register(bot):
         await interaction.followup.send(
             f"Added script **{final_name}** (ID `{sid}`) with character sheet + night order.{note}",
             ephemeral=True)
+
+    @bot.tree.command(name="importscript",
+                      description="Import a script from a botcscripts.com link into the library.")
+    @app_commands.describe(link="A botcscripts.com script link, e.g. https://www.botcscripts.com/script/42/5.1.0")
+    async def importscript(interaction: discord.Interaction, link: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        # Only botcscripts.com for now — build the download URLs from the id/version
+        # in the link (never fetch the raw user string, so this can't be pointed elsewhere).
+        m = re.search(r"botcscripts\.com/script/(\d+)(?:/([\w.]+))?", link.strip(), re.I)
+        if not m:
+            await interaction.followup.send(
+                "Give me a **botcscripts.com** script link, like "
+                "`https://www.botcscripts.com/script/42/5.1.0`.", ephemeral=True)
+            return
+        num, ver = m.group(1), m.group(2)
+        base = f"https://www.botcscripts.com/script/{num}" + (f"/{ver}" if ver else "")
+        headers = {"User-Agent": "Mozilla/5.0 (Clockbot script importer)"}
+        try:
+            async with aiohttp.ClientSession(headers=headers) as sess:
+                async with sess.get(base + "/download") as r:
+                    if r.status != 200:
+                        await interaction.followup.send(
+                            f"Couldn't download the script JSON (HTTP {r.status}). Double-check the link.",
+                            ephemeral=True)
+                        return
+                    raw = await r.text()
+                async with sess.get(base + "/download_pdf") as r:
+                    if r.status != 200:
+                        await interaction.followup.send(
+                            f"Couldn't download the script PDF (HTTP {r.status}).", ephemeral=True)
+                        return
+                    pdf_bytes = await r.read()
+        except Exception as e:
+            await interaction.followup.send(f"Download failed: {e}", ephemeral=True)
+            return
+
+        try:
+            parsed = json.loads(raw)
+        except Exception as e:
+            await interaction.followup.send(f"The downloaded JSON was invalid: {e}", ephemeral=True)
+            return
+        meta = {}
+        if isinstance(parsed, list):
+            meta = next((e for e in parsed if isinstance(e, dict) and e.get("id") == "_meta"), None) or {}
+        title = (meta.get("name") or f"Script {num}").strip()
+        author = (meta.get("author") or "").strip()
+
+        final_name = unique_name(title)
+        uploader_name = author or load_id_to_common().get(interaction.user.id) or interaction.user.display_name
+        sid = next_free_id()
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO scripts (id, name, json, uploader_id, uploader_name, created_at) VALUES (?,?,?,?,?,?)",
+                (sid, final_name, json.dumps(parsed), interaction.user.id, uploader_name, _today()))
+
+        try:
+            char_path, night_path = _split_script_pdf(pdf_bytes, sid)
+        except Exception as e:
+            with _conn() as c:
+                c.execute("DELETE FROM scripts WHERE id=?", (sid,))
+            await interaction.followup.send(f"Couldn't render/split the PDF: {e}", ephemeral=True)
+            return
+        with _conn() as c:
+            c.execute("UPDATE scripts SET char_path=?, night_path=? WHERE id=?", (char_path, night_path, sid))
+
+        files = [discord.File(char_path, f"{final_name}_character.png")]
+        if night_path:
+            files.append(discord.File(night_path, f"{final_name}_night_order.png"))
+        note = (f" (a script named **{title}** already existed, saved as **{final_name}**)"
+                if final_name != title else "")
+        byline = f" by **{author}**" if author else ""
+        await interaction.followup.send(
+            f"Imported **{final_name}**{byline} (ID `{sid}`) from botcscripts.{note}\n"
+            "Split the PDF into character sheet + night order — check they look right:",
+            files=files, ephemeral=True)
 
     @bot.tree.command(name="myscripts", description="List the scripts you've uploaded.")
     async def myscripts(interaction: discord.Interaction):
