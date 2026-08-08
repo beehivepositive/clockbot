@@ -1396,24 +1396,34 @@ def register(bot):
             target_num = latest_game_number(guild)
         st_id = get_game_st(guild.id, target_num) if target_num is not None else None
         can_talk = load_settings(st_id or interaction.user.id).get("tulpa", {}).get("talk", False)
-        granted = []
+        granted, seen_logs = [], []
         for c in current_game_channels(guild):
             if game_number_from_name(c.name) != target_num:
                 continue
-            if c.category and c.category.name.lower() == CAT_CHAT.lower():
-                kwargs = {"view_channel": True}
-                if can_talk:
-                    kwargs["send_messages"] = True
-                try:
+            nm = c.name.lower()
+            is_logs_ch = (nm.endswith("-logs") or nm.endswith("-log")) and "whisper" not in nm
+            in_chat = c.category and c.category.name.lower() == CAT_CHAT.lower()
+            try:
+                if is_logs_ch:
+                    # See the logs channel, but never post there.
+                    await c.set_permissions(member, view_channel=True, send_messages=False,
+                                            reason=f"/addtulpa by {interaction.user}")
+                    seen_logs.append(c.mention)
+                elif in_chat:
+                    kwargs = {"view_channel": True}
+                    if can_talk:
+                        kwargs["send_messages"] = True
                     await c.set_permissions(member, reason=f"/addtulpa by {interaction.user}", **kwargs)
                     granted.append(c.mention)
-                except Exception:
-                    pass
+            except Exception:
+                pass
         msg = [f"Gave **Tulpa** to {member.mention}."]
         if granted:
             msg.append(f"Can {'see and talk in' if can_talk else 'see'} " + ", ".join(granted) + ".")
-            if not can_talk:
-                msg.append("*(Tulpa **talk** is off in setupsettings — view only. Turn it on to let them post.)*")
+        if seen_logs:
+            msg.append("Can read (not post in) " + ", ".join(seen_logs) + ".")
+        if granted and not can_talk:
+            msg.append("*(Tulpa **talk** is off in setupsettings — chat view only. Turn it on to let them post.)*")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
     @bot.tree.command(name="assignplayers", description="Assign Townsfolk to signups in #recruiting (grants talk under Explicit Permission).")
