@@ -837,7 +837,7 @@ class ChannelToggleMenu(BaseSettingsView):
                 f"{_mark(_cget(self.settings, k, 'bots', True))} Allow bots/activities",
                 lambda s: _cget(s, k, "bots", True),
                 lambda s, v: _cset(s, k, "bots", v)))
-        self.add_item(BackButton())
+        self.add_item(BackButton(ChannelsMenu))
 
     def refresh(self):
         self._build()
@@ -871,7 +871,7 @@ class FocusedMenu(BaseSettingsView):
             lambda s: _cget(s, k, "bots", True),
             lambda s, v: _cset(s, k, "bots", v)))
         self.add_item(self._slow_select())
-        self.add_item(BackButton())
+        self.add_item(BackButton(ChannelsMenu))
 
     def _slow_select(self):
         cur = _cget(self.settings, "focused", "slowmode_secs", 1800)
