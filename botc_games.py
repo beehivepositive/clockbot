@@ -1426,6 +1426,68 @@ def register(bot):
             msg.append("*(Tulpa **talk** is off in setupsettings — chat view only. Turn it on to let them post.)*")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
+    @bot.tree.command(name="removerole",
+                      description="Remove a game role (and its per-member game-channel permissions) from a player.")
+    @app_commands.describe(role="Which role to remove.",
+                           user="Pick the player.",
+                           name="…or type a name / nickname instead.")
+    @app_commands.choices(role=[
+        app_commands.Choice(name="Storyteller", value=R_ST),
+        app_commands.Choice(name="Townsfolk", value=R_TOWNSFOLK),
+        app_commands.Choice(name="Ascended", value=R_ASCENDED),
+        app_commands.Choice(name="Tulpa", value=R_TULPA),
+    ])
+    @current_game_st_check()
+    async def removerole(interaction: discord.Interaction, role: app_commands.Choice[str],
+                         user: discord.Member = None, name: str = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        member, err = pick_member(guild, user, name)
+        if member is None:
+            await interaction.followup.send(err, ephemeral=True)
+            return
+        target_role = resolve_role(guild, role.value)
+        removed_role = False
+        if target_role is not None and target_role in member.roles:
+            try:
+                await member.remove_roles(target_role, reason=f"/removerole by {interaction.user}")
+                removed_role = True
+            except discord.Forbidden:
+                me = guild.me
+                hint = ("my role isn't high enough — drag **{my}** above **{tf}**"
+                        if me.top_role <= target_role else "I'm missing the **Manage Roles** permission")
+                await interaction.followup.send(
+                    f"I couldn't remove **{target_role.name}** (Discord said *Missing Permissions*). "
+                    f"In **{guild.name}**, {hint.format(my=me.top_role.name, tf=target_role.name)} "
+                    f"in **Server Settings → Roles**, then try again.", ephemeral=True)
+                return
+
+        # Strip the player's per-member overwrites on this game's channels (what
+        # /addtown, /addtulpa and Explicit-Permission /addst granted them).
+        target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
+        if target_num is None:
+            target_num = latest_game_number(guild)
+        cleared = []
+        for c in current_game_channels(guild):
+            if game_number_from_name(c.name) != target_num:
+                continue
+            if member in c.overwrites:
+                try:
+                    await c.set_permissions(member, overwrite=None, reason=f"/removerole by {interaction.user}")
+                    cleared.append(c.mention)
+                except Exception:
+                    pass
+
+        if removed_role:
+            msg = [f"Removed **{target_role.name}** from {member.mention}."]
+        elif target_role is None:
+            msg = [f"There's no **{role.value}** role in this server."]
+        else:
+            msg = [f"{member.mention} didn't have **{target_role.name}**."]
+        if cleared:
+            msg.append("Cleared their per-member permissions in " + ", ".join(cleared[:20]) + ".")
+        await interaction.followup.send("\n".join(msg), ephemeral=True)
+
     @bot.tree.command(name="assignplayers", description="Assign Townsfolk to signups in #recruiting (grants talk under Explicit Permission).")
     @st_check()
     async def assignplayers(interaction: discord.Interaction):
@@ -1546,6 +1608,7 @@ def register(bot):
     @addst.error
     @addtown.error
     @addtulpa.error
+    @removerole.error
     @endgame.error
     async def _err_game_st(interaction: discord.Interaction, error: app_commands.AppCommandError):
         msg = ("Only the **current game's Storyteller** can use this."
