@@ -48,6 +48,7 @@ R_ASCENDED = "Ascended"
 R_TRAVELER = "Traveler"
 R_TULPA = "Tulpa"
 R_RECLUSE = "Recluse"
+R_CLOCKMAKER = "Clockmaker"
 
 CAT_LOGS = "Game Logs"
 CAT_CHAT = "Game Chat"
@@ -272,6 +273,10 @@ def pick_member(guild, user, name):
 
 def is_storyteller(interaction):
     return any(r.name.lower() == R_ST.lower() for r in getattr(interaction.user, "roles", []))
+
+
+def has_clockmaker(member):
+    return any(r.name.lower() == R_CLOCKMAKER.lower() for r in getattr(member, "roles", []))
 
 
 def st_check():
@@ -618,11 +623,12 @@ class BaseSettingsView(discord.ui.View):
         self.settings = load_settings(owner_id)
 
     async def interaction_check(self, interaction):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                "These settings aren't yours to change.", ephemeral=True)
-            return False
-        return True
+        # The owner may edit their own settings; a Clockmaker may edit anyone's.
+        if interaction.user.id == self.owner_id or has_clockmaker(interaction.user):
+            return True
+        await interaction.response.send_message(
+            "These settings aren't yours to change.", ephemeral=True)
+        return False
 
     def persist(self):
         save_settings(self.owner_id, self.settings)
@@ -1437,9 +1443,26 @@ def register(bot):
             ephemeral=True)
 
     @bot.tree.command(name="setupsettings", description="Customize the permissions and announcements /newgame applies.")
-    async def setupsettings(interaction: discord.Interaction):
-        view = MainMenu(interaction.user.id)
-        await interaction.response.send_message(view.title(), view=view, ephemeral=True)
+    @app_commands.describe(user="(Clockmaker only) edit this player's settings instead of your own.",
+                           name="(Clockmaker only) …or by name / nickname.")
+    async def setupsettings(interaction: discord.Interaction,
+                            user: discord.Member = None, name: str = None):
+        owner_id = interaction.user.id
+        prefix = ""
+        if user is not None or name:
+            if not has_clockmaker(interaction.user):
+                await interaction.response.send_message(
+                    "Only the **Clockmaker** role can edit another user's settings.", ephemeral=True)
+                return
+            member, err = pick_member(interaction.guild, user, name)
+            if member is None:
+                await interaction.response.send_message(err, ephemeral=True)
+                return
+            owner_id = member.id
+            if owner_id != interaction.user.id:
+                prefix = f"⚙️ Editing **{member.display_name}**'s settings.\n"
+        view = MainMenu(owner_id)
+        await interaction.response.send_message(prefix + view.title(), view=view, ephemeral=True)
 
     @newgame.error
     @archivegame.error
