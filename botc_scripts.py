@@ -114,10 +114,11 @@ def init_db():
                 PRIMARY KEY (script_id, user_id)
             )
         """)
-        # Migrate older DBs: add updated_at if it's missing.
+        # Migrate older DBs: add newer columns if missing.
         cols = [r[1] for r in c.execute("PRAGMA table_info(scripts)")]
-        if "updated_at" not in cols:
-            c.execute("ALTER TABLE scripts ADD COLUMN updated_at TEXT")
+        for col, typ in (("updated_at", "TEXT"), ("source_id", "INTEGER"), ("source_version", "TEXT")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE scripts ADD COLUMN {col} {typ}")
 
 
 def get_script(name_or_id):
@@ -294,6 +295,58 @@ def _split_script_pdf(pdf_bytes, sid, dpi=150):
         doc.close()
 
 
+def _parse_script_link(link):
+    """(source_id:int, version:str|None, base_url) for a botcscripts.com script
+    link, or None. The base URL is rebuilt from the id/version so callers never
+    fetch the raw user string (keeps this locked to botcscripts.com)."""
+    m = re.search(r"botcscripts\.com/script/(\d+)(?:/([\w.]+))?", (link or "").strip(), re.I)
+    if not m:
+        return None
+    num, ver = m.group(1), m.group(2)
+    base = f"https://www.botcscripts.com/script/{num}" + (f"/{ver}" if ver else "")
+    return int(num), ver, base
+
+
+def _parse_ver(v):
+    """A version string like '5.1.0' -> (5, 1, 0) for comparison, or None."""
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(n) for n in nums) if nums else None
+
+
+def get_script_by_source(source_id):
+    """The library row imported from a given botcscripts id, or None."""
+    with _conn() as c:
+        row = c.execute("SELECT * FROM scripts WHERE source_id=?", (int(source_id),)).fetchone()
+    return dict(row) if row else None
+
+
+async def _fetch_botcscripts(base):
+    """Download from a botcscripts base URL. Returns (raw_json_text, pdf_bytes, None)
+    on success, or (None, None, error_message)."""
+    headers = {"User-Agent": "Mozilla/5.0 (Clockbot script importer)"}
+    try:
+        async with aiohttp.ClientSession(headers=headers) as sess:
+            async with sess.get(base + "/download") as r:
+                if r.status != 200:
+                    return None, None, f"Couldn't download the script JSON (HTTP {r.status}). Double-check the link."
+                raw = await r.text()
+            async with sess.get(base + "/download_pdf") as r:
+                if r.status != 200:
+                    return None, None, f"Couldn't download the script PDF (HTTP {r.status})."
+                pdf = await r.read()
+        return raw, pdf, None
+    except Exception as e:
+        return None, None, f"Download failed: {e}"
+
+
+def _script_meta(parsed):
+    """(title, author) from a parsed script JSON's _meta entry."""
+    meta = {}
+    if isinstance(parsed, list):
+        meta = next((e for e in parsed if isinstance(e, dict) and e.get("id") == "_meta"), None) or {}
+    return (meta.get("name") or "").strip(), (meta.get("author") or "").strip()
+
+
 def _extract_role_ids(script_json):
     """Pull character ids out of a clocktower script JSON (list form).
     Accepts entries that are plain strings or dicts with an 'id'; skips _meta."""
@@ -459,54 +512,44 @@ def register(bot):
     @app_commands.describe(link="A botcscripts.com script link, e.g. https://www.botcscripts.com/script/42/5.1.0")
     async def importscript(interaction: discord.Interaction, link: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        # Only botcscripts.com for now — build the download URLs from the id/version
-        # in the link (never fetch the raw user string, so this can't be pointed elsewhere).
-        m = re.search(r"botcscripts\.com/script/(\d+)(?:/([\w.]+))?", link.strip(), re.I)
-        if not m:
+        parsed_link = _parse_script_link(link)
+        if not parsed_link:
             await interaction.followup.send(
                 "Give me a **botcscripts.com** script link, like "
                 "`https://www.botcscripts.com/script/42/5.1.0`.", ephemeral=True)
             return
-        num, ver = m.group(1), m.group(2)
-        base = f"https://www.botcscripts.com/script/{num}" + (f"/{ver}" if ver else "")
-        headers = {"User-Agent": "Mozilla/5.0 (Clockbot script importer)"}
-        try:
-            async with aiohttp.ClientSession(headers=headers) as sess:
-                async with sess.get(base + "/download") as r:
-                    if r.status != 200:
-                        await interaction.followup.send(
-                            f"Couldn't download the script JSON (HTTP {r.status}). Double-check the link.",
-                            ephemeral=True)
-                        return
-                    raw = await r.text()
-                async with sess.get(base + "/download_pdf") as r:
-                    if r.status != 200:
-                        await interaction.followup.send(
-                            f"Couldn't download the script PDF (HTTP {r.status}).", ephemeral=True)
-                        return
-                    pdf_bytes = await r.read()
-        except Exception as e:
-            await interaction.followup.send(f"Download failed: {e}", ephemeral=True)
+        source_id, version, base = parsed_link
+
+        # Deny duplicates — point them at the existing entry.
+        existing = get_script_by_source(source_id)
+        if existing:
+            await interaction.followup.send(
+                f"That botcscripts script is already in the library as **{existing['name']}** "
+                f"(ID `{existing['id']}`). Grab it with `/getscript {existing['id']}`, or run "
+                f"**/importupdate** with the link to refresh it if it's out of date.", ephemeral=True)
             return
 
+        raw, pdf_bytes, err = await _fetch_botcscripts(base)
+        if err:
+            await interaction.followup.send(err, ephemeral=True)
+            return
         try:
             parsed = json.loads(raw)
         except Exception as e:
             await interaction.followup.send(f"The downloaded JSON was invalid: {e}", ephemeral=True)
             return
-        meta = {}
-        if isinstance(parsed, list):
-            meta = next((e for e in parsed if isinstance(e, dict) and e.get("id") == "_meta"), None) or {}
-        title = (meta.get("name") or f"Script {num}").strip()
-        author = (meta.get("author") or "").strip()
+        title, author = _script_meta(parsed)
+        title = title or f"Script {source_id}"
 
         final_name = unique_name(title)
         uploader_name = author or load_id_to_common().get(interaction.user.id) or interaction.user.display_name
         sid = next_free_id()
         with _conn() as c:
             c.execute(
-                "INSERT INTO scripts (id, name, json, uploader_id, uploader_name, created_at) VALUES (?,?,?,?,?,?)",
-                (sid, final_name, json.dumps(parsed), interaction.user.id, uploader_name, _today()))
+                "INSERT INTO scripts (id, name, json, uploader_id, uploader_name, created_at, source_id, source_version) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (sid, final_name, json.dumps(parsed), interaction.user.id, uploader_name, _today(),
+                 source_id, version))
 
         try:
             char_path, night_path = _split_script_pdf(pdf_bytes, sid)
@@ -524,10 +567,87 @@ def register(bot):
         note = (f" (a script named **{title}** already existed, saved as **{final_name}**)"
                 if final_name != title else "")
         byline = f" by **{author}**" if author else ""
+        vtxt = f" v{version}" if version else ""
         await interaction.followup.send(
-            f"Imported **{final_name}**{byline} (ID `{sid}`) from botcscripts.{note}\n"
+            f"Imported **{final_name}**{byline}{vtxt} (ID `{sid}`) from botcscripts.{note}\n"
             "Split the PDF into character sheet + night order — check they look right:",
             files=files, ephemeral=True)
+
+    @bot.tree.command(name="importupdate",
+                      description="Refresh a library script from its botcscripts.com link if it's out of date.")
+    @app_commands.describe(link="The botcscripts.com link of a script already in the library.")
+    async def importupdate(interaction: discord.Interaction, link: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        parsed_link = _parse_script_link(link)
+        if not parsed_link:
+            await interaction.followup.send(
+                "Give me a **botcscripts.com** script link, like "
+                "`https://www.botcscripts.com/script/42/5.1.0`.", ephemeral=True)
+            return
+        source_id, version, base = parsed_link
+        row = get_script_by_source(source_id)
+        if not row:
+            await interaction.followup.send(
+                "That botcscripts script isn't in the library yet — use **/importscript** to add it.",
+                ephemeral=True)
+            return
+
+        raw, pdf_bytes, err = await _fetch_botcscripts(base)
+        if err:
+            await interaction.followup.send(err, ephemeral=True)
+            return
+        try:
+            parsed = json.loads(raw)
+        except Exception as e:
+            await interaction.followup.send(f"The downloaded JSON was invalid: {e}", ephemeral=True)
+            return
+        new_json = json.dumps(parsed)
+
+        # Is the link actually newer/different? Prefer version compare; else content.
+        stored_ver, new_ver = _parse_ver(row.get("source_version")), _parse_ver(version)
+        if stored_ver is not None and new_ver is not None:
+            if new_ver < stored_ver:
+                await interaction.followup.send(
+                    f"The library already has a **newer** version of **{row['name']}** "
+                    f"(v{row['source_version']}) — not downgrading to v{version}.", ephemeral=True)
+                return
+            if new_ver == stored_ver:
+                await interaction.followup.send(
+                    f"**{row['name']}** is already up to date (v{row['source_version']}).", ephemeral=True)
+                return
+        elif new_json == row["json"]:
+            await interaction.followup.send(
+                f"**{row['name']}** is already up to date (the script data hasn't changed).", ephemeral=True)
+            return
+
+        sid = row["id"]
+        try:
+            char_path, night_path = _split_script_pdf(pdf_bytes, sid)
+        except Exception as e:
+            await interaction.followup.send(f"Couldn't render/split the updated PDF: {e}", ephemeral=True)
+            return
+        # Remove any stale image files left at a different path/extension.
+        for old in (row.get("char_path"), row.get("night_path")):
+            if old and old not in (char_path, night_path) and os.path.exists(old):
+                try:
+                    os.remove(old)
+                except Exception:
+                    pass
+        new_version = version or row.get("source_version")
+        with _conn() as c:
+            c.execute(
+                "UPDATE scripts SET json=?, char_path=?, night_path=?, source_version=?, updated_at=? WHERE id=?",
+                (new_json, char_path, night_path, new_version, _today(), sid))
+
+        files = [discord.File(char_path, f"{row['name']}_character.png")]
+        if night_path:
+            files.append(discord.File(night_path, f"{row['name']}_night_order.png"))
+        old_v = row.get("source_version")
+        vtxt = (f" (v{old_v} → v{version})" if old_v and version else
+                f" (now v{version})" if version else "")
+        await interaction.followup.send(
+            f"Updated **{row['name']}** (ID `{sid}`){vtxt} — refreshed the JSON, character sheet, "
+            "and night order:", files=files, ephemeral=True)
 
     @bot.tree.command(name="myscripts", description="List the scripts you've uploaded.")
     async def myscripts(interaction: discord.Interaction):
