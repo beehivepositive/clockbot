@@ -7,3 +7,10 @@ __pycache__/
 st_game_settings.json
 player_common_names.json
 whisper_state.json
+
+# Unrelated scratch projects (not part of the bot)
+gen_volcano_*.py
+volcano_*.png
+volcano_*.gif
+gmail_filters.xml
+mail_scanner/
