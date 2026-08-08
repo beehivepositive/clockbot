@@ -1361,6 +1361,61 @@ def register(bot):
             msg.append("Can talk in " + ", ".join(granted) + ".")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
+    @bot.tree.command(name="addtulpa", description="Give a user the Tulpa role and access to this game's chat.")
+    @app_commands.describe(user="Pick the player.",
+                           name="…or type a name / nickname instead.")
+    @current_game_st_check()
+    async def addtulpa(interaction: discord.Interaction,
+                       user: discord.Member = None, name: str = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        member, err = pick_member(guild, user, name)
+        if member is None:
+            await interaction.followup.send(err, ephemeral=True)
+            return
+        tul = resolve_role(guild, R_TULPA)
+        if tul is None:
+            await interaction.followup.send("No **Tulpa** role found.", ephemeral=True)
+            return
+        try:
+            await member.add_roles(tul, reason=f"/addtulpa by {interaction.user}")
+        except discord.Forbidden:
+            me = guild.me
+            hint = ("my role isn't high enough — drag **{my}** above **{tf}**"
+                    if me.top_role <= tul else "I'm missing the **Manage Roles** permission")
+            await interaction.followup.send(
+                f"I couldn't assign **{tul.name}** (Discord said *Missing Permissions*). "
+                f"In **{guild.name}**, {hint.format(my=me.top_role.name, tf=tul.name)} "
+                f"in **Server Settings → Roles**, then try again.", ephemeral=True)
+            return
+        # Per-member overwrite on this game's Game Chat channels: always grant view
+        # (so the Tulpa can follow the game even under Privacy), and grant talk only
+        # when the game Storyteller's Tulpa 'talk' setting is on.
+        target_num = game_number_from_name(getattr(interaction.channel, "name", "") or "")
+        if target_num is None:
+            target_num = latest_game_number(guild)
+        st_id = get_game_st(guild.id, target_num) if target_num is not None else None
+        can_talk = load_settings(st_id or interaction.user.id).get("tulpa", {}).get("talk", False)
+        granted = []
+        for c in current_game_channels(guild):
+            if game_number_from_name(c.name) != target_num:
+                continue
+            if c.category and c.category.name.lower() == CAT_CHAT.lower():
+                kwargs = {"view_channel": True}
+                if can_talk:
+                    kwargs["send_messages"] = True
+                try:
+                    await c.set_permissions(member, reason=f"/addtulpa by {interaction.user}", **kwargs)
+                    granted.append(c.mention)
+                except Exception:
+                    pass
+        msg = [f"Gave **Tulpa** to {member.mention}."]
+        if granted:
+            msg.append(f"Can {'see and talk in' if can_talk else 'see'} " + ", ".join(granted) + ".")
+            if not can_talk:
+                msg.append("*(Tulpa **talk** is off in setupsettings — view only. Turn it on to let them post.)*")
+        await interaction.followup.send("\n".join(msg), ephemeral=True)
+
     @bot.tree.command(name="assignplayers", description="Assign Townsfolk to signups in #recruiting (grants talk under Explicit Permission).")
     @st_check()
     async def assignplayers(interaction: discord.Interaction):
@@ -1480,6 +1535,7 @@ def register(bot):
     @ascend.error
     @addst.error
     @addtown.error
+    @addtulpa.error
     @endgame.error
     async def _err_game_st(interaction: discord.Interaction, error: app_commands.AppCommandError):
         msg = ("Only the **current game's Storyteller** can use this."
