@@ -38,11 +38,14 @@ _CSS_FIX = (
 
 
 def _target_max(url):
-    """Max pixel dimension by asset type — small for avatars/emojis, large for
-    attachments and embed images."""
-    if any(seg in url for seg in ("/avatars/", "/embed/avatars/", "/icons/", "/guilds/", "/banners/")):
-        return 96
+    """Max pixel dimension by asset type. Avatars/emojis/icons repeat once per
+    message and display tiny, so they're shrunk hard to keep the file small;
+    attachments and embed images stay large."""
+    if any(seg in url for seg in ("/icons/", "/guilds/", "/banners/", "/role-icons/")):
+        return 28
     if "/emojis/" in url:
+        return 44
+    if any(seg in url for seg in ("/avatars/", "/embed/avatars/")):
         return 48
     return 1280
 
@@ -58,8 +61,8 @@ def _encode_asset(data, url, content_type):
     try:
         img = Image.open(io.BytesIO(data))
         if getattr(img, "is_animated", False):
-            if len(data) <= 1_500_000:
-                return _b64(data, content_type)  # keep the animation
+            if len(data) <= 800_000:
+                return _b64(data, content_type)  # keep small animations whole
             img.seek(0)                          # too big — fall back to first frame
         mx = _target_max(url)
         if max(img.size) > mx:
