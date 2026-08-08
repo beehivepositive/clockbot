@@ -4,11 +4,6 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import os, io, random, aiohttp, tempfile, re, asyncio, json
 from datetime import timezone
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image, Table, TableStyle
-from reportlab.lib import colors
 from dotenv import load_dotenv
 from botc_runner import run_botc_code, get_character_info, get_game, set_game, delete_game, format_game_state, make_player, infer_char_type, infer_alignment
 import datetime, pytz
@@ -17,6 +12,7 @@ from game_state import load_whisper_state,save_whisper_state,get_game_state,set_
 import botc_games
 import botc_stchats
 import botc_scripts
+import botc_html
 import reminders
 import votelock
 import ghost
@@ -34,15 +30,10 @@ async def setup_hook():
 
 bot.setup_hook = setup_hook
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 DAY_PATTERN = re.compile(r"^#\s*Day\s+\d+", re.IGNORECASE)
 COMMON_NAMES_PATH = "/home/discord-bot/common_names.json"
 NOM_TRIGGER = re.compile(r"^(nom(?:inate)?)\s*(.*)", re.IGNORECASE)
 JUGGLE_TRIGGER = re.compile(r"^juggl?e?\b(.*)", re.IGNORECASE)
-MAX_IMG_W = 150*mm
-MAX_IMG_H = 150*mm
-AVATAR_SIZE = 10*mm
-MAX_PDF_BYTES = 25 * 1024 * 1024
 
 
 
@@ -84,62 +75,6 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
-async def download_image(session, url, suffix=".png"):
-    try:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.read()
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                tmp.write(data)
-                tmp.close()
-                return tmp.name
-    except Exception:
-        pass
-    return None
-
-def esc(t):
-    return str(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-
-def resolve_mentions(content, msg):
-    import re
-    for user in msg.mentions:
-        content = content.replace(f'<@{user.id}>', f'@{user.display_name}')
-        content = content.replace(f'<@!{user.id}>', f'@{user.display_name}')
-    for role in msg.role_mentions:
-        content = content.replace(f'<@&{role.id}>', f'@{role.name}')
-    for ch in msg.channel_mentions:
-        content = content.replace(f'<#{ch.id}>', f'#{ch.name}')
-    content = re.sub(r'<@!?(\d+)>', '@DeletedUser', content)
-    content = re.sub(r'<@&(\d+)>', '@DeletedRole', content)
-    content = re.sub(r'<#(\d+)>', '#DeletedChannel', content)
-    return content
-
-def fit_image(path, max_w, max_h):
-    from PIL import Image as PILImage
-    try:
-        with PILImage.open(path) as im:
-            w, h = im.size
-        scale = min(max_w / w, max_h / h, 1.0)
-        return Image(path, w * scale, h * scale)
-    except Exception:
-        return Image(path, max_w, max_h)
-
-def make_styles():
-    styles = getSampleStyleSheet()
-    title_s = ParagraphStyle("TT", parent=styles["Heading1"], fontSize=18,
-        textColor=colors.HexColor("#5865F2"), spaceAfter=4)
-    meta_s = ParagraphStyle("MT", parent=styles["Normal"], fontSize=9,
-        textColor=colors.grey, spaceAfter=10)
-    author_s = ParagraphStyle("AT", parent=styles["Normal"], fontSize=10,
-        textColor=colors.HexColor("#5865F2"), fontName="Helvetica-Bold", spaceAfter=0)
-    ts_s = ParagraphStyle("TST", parent=styles["Normal"], fontSize=8,
-        textColor=colors.grey, spaceAfter=2)
-    msg_s = ParagraphStyle("MST", parent=styles["Normal"], fontSize=10,
-        spaceAfter=4, leading=14)
-    return title_s, meta_s, author_s, ts_s, msg_s
-
-
-
 def load_common_names():
     if os.path.exists(COMMON_NAMES_PATH):
         with open(COMMON_NAMES_PATH) as f: return json.load(f)
@@ -158,243 +93,37 @@ def is_whisper_channel(i):
     ch=i.channel
     return ch.category and "game chat" in ch.category.name.lower() and "whisper" in ch.name.lower()
 
-def build_pdf_to_file(story, outpath):
-    doc = SimpleDocTemplate(outpath, pagesize=A4,
-        rightMargin=20*mm, leftMargin=20*mm,
-        topMargin=20*mm, bottomMargin=20*mm)
-    doc.build(story)
-    return os.path.getsize(outpath)
-
-async def archive_channel(session, dest, channel, guild, tmp_files, avatar_cache, progress_ch=None):
-    title_s, meta_s, author_s, ts_s, msg_s = make_styles()
-
-    messages = []
-    try:
-        async for msg in channel.history(limit=None, oldest_first=True):
-            messages.append(msg)
-    except discord.Forbidden:
-        if progress_ch:
-            await progress_ch.send(f"  ⚠️ No permission to read **#{channel.name}**, skipping.")
-        return
-    except Exception as e:
-        if progress_ch:
-            await progress_ch.send(f"  ❌ Error reading **#{channel.name}**: {e}")
-        return
-
-    if not messages:
-        if progress_ch:
-            await progress_ch.send(f"  ⚠️ **#{channel.name}** is empty, skipping.")
-        return
-
-    part = 1
-    story = []
-
-    def start_story():
-        s = []
-        s.append(Paragraph(f"#{esc(channel.name)}" + (f" (Part {part})" if part > 1 else ""), title_s))
-        s.append(Paragraph(f"Server: {esc(guild.name)} | Messages: {len(messages)}", meta_s))
-        s.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#5865F2")))
-        s.append(Spacer(1, 8))
-        return s
-
-    story = start_story()
-
-    for msg in messages:
-        ts = msg.created_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        author_id = msg.author.id
-        if author_id not in avatar_cache:
-            av_url = msg.author.display_avatar.with_format("png").with_size(64).url
-            av_path = await download_image(session, av_url, ".png")
-            avatar_cache[author_id] = av_path
-        av_path = avatar_cache[author_id]
-        name_block = [Paragraph(esc(msg.author.display_name), author_s),
-                      Paragraph(ts, ts_s)]
-        if av_path:
-            try:
-                av_img = Image(av_path, AVATAR_SIZE, AVATAR_SIZE)
-                ht = Table([[av_img, name_block]], colWidths=[12*mm, None])
-                ht.setStyle(TableStyle([
-                    ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-                    ("LEFTPADDING",(0,0),(-1,-1),0),
-                    ("RIGHTPADDING",(0,0),(-1,-1),4),
-                    ("TOPPADDKNG",(0,0),(-1,-1),0),
-                    ("BOTTOMPADDING",(0,0),(-1,-1),0),
-                ]))
-                story.append(ht)
-            except Exception:
-                story.append(Paragraph(esc(msg.author.display_name), author_s))
-                story.append(Paragraph(ts, ts_s))
-        else:
-            story.append(Paragraph(esc(msg.author.display_name), author_s))
-            story.append(Paragraph(ts, ts_s))
-
-        content = resolve_mentions(msg.content or "", msg)
-        if content:
-            for line in content.split("\n"):
-                if line.strip():
-                    story.append(Paragraph(esc(line), msg_s))
-                else:
-                    story.append(Spacer(1, 4))
-
-        for att in msg.attachments:
-            ext = os.path.splitext(att.filename)[1].lower()
-            if ext in IMAGE_EXTS:
-                try:
-                    ip = await download_image(session, att.url, ext)
-                    if ip:
-                        tmp_files.append(ip)
-                        img = fit_image(ip, MAX_IMG_W, MAX_IMG_H)
-                        img.hAlign = "LEFT"
-                        story.append(img)
-                        story.append(Spacer(1, 4))
-                    else:
-                        story.append(Paragraph(f"[Image failed: {esc(att.filename)}]", msg_s))
-                except Exception:
-                       story.append(Paragraph(f"[Image error: {esc(att.filename)}]", msg_s))
-            else:
-                story.append(Paragraph(f"[Attachment: {esc(att.filename)}]", msg_s))
-
-        story.append(Spacer(1, 8))
-
-    async def send_pdf(msgs, part_num=None):
-        suffix = f"-part{part_num}" if part_num else ""
-        fname = f"{channel.name}{suffix}.pdf"
-        label = f"📄 **#{channel.name}**" + (f" part {part_num}" if part_num else "")
-        s = []
-        header = f"#{esc(channel.name)}" + (f" (Part {part_num})" if part_num else "")
-        s.append(Paragraph(header, title_s))
-        s.append(Paragraph(f"Server: {esc(guild.name)} | Messages: {len(messages)}", meta_s))
-        s.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#5865F2")))
-        s.append(Spacer(1, 8))
-        for m in msgs:
-            ts2 = m.created_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            av = avatar_cache.get(m.author.id)
-            nb = [Paragraph(esc(m.author.display_name), author_s), Paragraph(ts2, ts_s)]
-            if av:
-                try:
-                    ai = Image(av, AVATAR_SIZE, AVATAR_SIZE)
-                    ht2 = Table([[ai, nb]], colWidths=[12*mm, None])
-                    ht2.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),4),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
-                    s.append(ht2)
-                except Exception:
-                    s.append(Paragraph(esc(m.author.display_name), author_s))
-                    s.append(Paragraph(ts2, ts_s))
-            else:
-                s.append(Paragraph(esc(m.author.display_name), author_s))
-                s.append(Paragraph(ts2, ts_s))
-            c2 = resolve_mentions(m.content or "", m)
-            if c2:
-                for line in c2.split("\n"):
-                    if line.strip(): s.append(Paragraph(esc(line), msg_s))
-                    else: s.append(Spacer(1, 4))
-            for att in m.attachments:
-                ext2 = os.path.splitext(att.filename)[1].lower()
-                if ext2 in IMAGE_EXTS:
-                    try:
-                        ip2 = await download_image(session, att.url, ext2)
-                        if ip2:
-                            tmp_files.append(ip2)
-                            s.append(fit_image(ip2, MAX_IMG_W, MAX_IMG_H))
-                            s.append(Spacer(1, 4))
-                        else: s.append(Paragraph(f"[Image failed: {esc(att.filename)}]", msg_s))
-                    except Exception: s.append(Paragraph(f"[Image error: {esc(att.filename)}]", msg_s))
-                else: s.append(Paragraph(f"[Attachment: {esc(att.filename)}]", msg_s))
-            s.append(Spacer(1, 8))
-        outpath = f"/tmp/{channel.name}{suffix}.pdf"
-        build_pdf_to_file(s, outpath)
-        tmp_files.append(outpath)
-        await dest.send(content=label, file=discord.File(outpath, filename=fname))
-
-    try:
-        await send_pdf(messages)
-    except discord.HTTPException as e:
-        if e.code == 40005:
-            if progress_ch: await progress_ch.send(f"  ⚠️ **#{channel.name}** too large, splitting into 2 parts...")
-            mid = len(messages) // 2
-            await send_pdf(messages[:mid], 1)
-            await send_pdf(messages[mid:], 2)
-        else:
-            if progress_ch: await progress_ch.send(f"  ❌ Failed **#{channel.name}**: {e}")
-    except Exception as e:
-        if progress_ch: await progress_ch.send(f"  ❌ Failed **#{channel.name}**: {e}")
 
 
-@bot.tree.command(name="channeltopdf", description="Export all messages in a channel to a PDF")
+@bot.tree.command(name="channeltohtml", description="Export all messages in a channel to an HTML transcript")
 @app_commands.describe(channel="The channel to archive")
 @app_commands.check(lambda i: any(r.name.lower() == "pixie" for r in i.user.roles))
-async def archive(interaction: discord.Interaction, channel: discord.TextChannel):
+async def channeltohtml(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(thinking=True)
-    tmp_files = []
+    outpath = f"/tmp/{channel.name}-archive.html"
     try:
-        title_s, meta_s, author_s, ts_s, msg_s = make_styles()
-        messages = []
-        async for msg in channel.history(limit=None, oldest_first=True):
-            messages.append(msg)
-        if not messages:
+        cnt = await botc_html.channel_to_html(channel, interaction.guild, outpath, bot=bot)
+        if not cnt:
             await interaction.followup.send("No messages found.")
             return
-        story = []
-        story.append(Paragraph(f"#{esc(channel.name)}", title_s))
-        story.append(Paragraph(f"Server: {esc(interaction.guild.name)} | Messages: {len(messages)}", meta_s))
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#5865F2")))
-        story.append(Spacer(1, 8))
-        avatar_cache = {}
-        async with aiohttp.ClientSession() as session:
-            for msg in messages:
-                ts = msg.created_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-                author_id = msg.author.id
-                if author_id not in avatar_cache:
-                    av_url = msg.author.display_avatar.with_format("png").with_size(64).url
-                    av_path = await download_image(session, av_url, ".png")
-                    avatar_cache[author_id] = av_path
-                av_path = avatar_cache[author_id]
-                name_block = [Paragraph(esc(msg.author.display_name), author_s), Paragraph(ts, ts_s)]
-                if av_path:
-                    try:
-                        av_img = Image(av_path, AVATAR_SIZE, AVATAR_SIZE)
-                        ht = Table([[av_img, name_block]], colWidths=[12*mm, None])
-                        ht.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),4),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
-                        story.append(ht)
-                    except Exception:
-                        story.append(Paragraph(esc(msg.author.display_name), author_s))
-                        story.append(Paragraph(ts, ts_s))
-                else:
-                    story.append(Paragraph(esc(msg.author.display_name), author_s))
-                    story.append(Paragraph(ts, ts_s))
-                content = resolve_mentions(msg.content or "", msg)
-                if content:
-                    for line in content.split("\n"):
-                        if line.strip(): story.append(Paragraph(esc(line), msg_s))
-                        else: story.append(Spacer(1, 4))
-                for att in msg.attachments:
-                    ext = os.path.splitext(att.filename)[1].lower()
-                    if ext in IMAGE_EXTS:
-                        try:
-                            ip = await download_image(session, att.url, ext)
-                            if ip:
-                                tmp_files.append(ip)
-                                img = fit_image(ip, MAX_IMG_W, MAX_IMG_H)
-                                img.hAlign = "LEFT"
-                                story.append(img)
-                                story.append(Spacer(1, 4))
-                            else: story.append(Paragraph(f"[Image failed]", msg_s))
-                        except Exception: story.append(Paragraph(f"[Image error]", msg_s))
-                    else: story.append(Paragraph(f"[Attachment: {esc(att.filename)}]", msg_s))
-                story.append(Spacer(1, 8))
-        outpath = f"/tmp/{channel.name}-archive.pdf"
-        build_pdf_to_file(story, outpath)
-        tmp_files.append(outpath)
-        await interaction.followup.send(content=f"📄 Archive of **#{channel.name}**", file=discord.File(outpath, filename=f"{channel.name}-archive.pdf"))
-    except discord.Forbidden: await interaction.followup.send("No permission.")
-    except Exception as e: await interaction.followup.send(f"Error: {e}")
+        await interaction.followup.send(
+            content=f"📄 Archive of **#{channel.name}** ({cnt} messages)",
+            file=discord.File(outpath, filename=f"{channel.name}-archive.html"))
+    except discord.Forbidden:
+        await interaction.followup.send("No permission to read that channel.")
+    except discord.HTTPException as e:
+        if e.code == 40005:
+            await interaction.followup.send(
+                "That transcript is over this server's Discord upload limit. Ping me to add splitting.")
+        else:
+            await interaction.followup.send(f"Error: {e}")
+    except Exception as e:
+        await interaction.followup.send(f"Error: {e}")
     finally:
-        for tmp in tmp_files:
-            try: os.unlink(tmp)
-            except: pass
-        for av in avatar_cache.values():
-            if av:
-                try: os.unlink(av)
-                except: pass
+        try:
+            os.unlink(outpath)
+        except Exception:
+            pass
 
 
 

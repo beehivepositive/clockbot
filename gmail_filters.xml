@@ -1,0 +1,83 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:apps='http://schemas.google.com/apps/2006'>
+  <title>Mail Filters</title>
+
+  <!-- Bank statements -> Bills/Banking, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='alerts@templetonsavingsbank.com'/>
+    <apps:property name='label' value='Bills/Banking'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- Robinhood -> Financial/Robinhood, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='@robinhood.com'/>
+    <apps:property name='label' value='Financial/Robinhood'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- Venmo -> Financial/Venmo, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='@venmo.com'/>
+    <apps:property name='label' value='Financial/Venmo'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- Netflix -> Bills/Subscriptions, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='@netflix.com'/>
+    <apps:property name='label' value='Bills/Subscriptions'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- MyChart -> Medical, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='donotreply-mychart'/>
+    <apps:property name='label' value='Medical'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- Doctor On Demand -> Medical, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='@doctorondemand.com'/>
+    <apps:property name='label' value='Medical'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- Google security alerts -> Accounts, skip inbox -->
+  <entry>
+    <category term='filter'/>
+    <title>Mail Filter</title>
+    <apps:property name='from' value='no-reply@accounts.google.com'/>
+    <apps:property name='hasTheWord' value='sign-in OR security alert OR recovered'/>
+    <apps:property name='label' value='Accounts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+</feed>

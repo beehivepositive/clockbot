@@ -31,7 +31,7 @@ import json
 import discord
 from discord import app_commands
 import votelock
-import botc_pdf
+import botc_html
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -511,17 +511,17 @@ async def archive_channels(guild, channels, log=None):
         key = game_number_from_name(ch.name)
         groups.setdefault(key, []).append(ch)
 
-    async def _pdf_into(ch, dest, prefix):
-        """PDF `ch` and post the file into `dest`; log on failure."""
-        outpath = f"/tmp/{ch.name}.pdf"
+    async def _html_into(ch, dest, prefix):
+        """Export `ch` to a self-contained HTML transcript and post it into `dest`."""
+        outpath = f"/tmp/{ch.name}.html"
         try:
-            cnt = await botc_pdf.channel_to_pdf(ch, guild, outpath)
+            cnt = await botc_html.channel_to_html(ch, guild, outpath)
             if cnt:
                 await dest.send(f"{prefix} **#{ch.name}** ({cnt} messages)",
-                                file=discord.File(outpath, filename=f"{ch.name}.pdf"))
+                                file=discord.File(outpath, filename=f"{ch.name}.html"))
         except Exception as e:
             if log:
-                log.append(f"PDF failed for #{ch.name}: {e}")
+                log.append(f"HTML export failed for #{ch.name}: {e}")
         finally:
             try:
                 os.unlink(outpath)
@@ -536,17 +536,17 @@ async def archive_channels(guild, channels, log=None):
                         and "whisper" not in c.name.lower()), None)
         whisper_chans = [c for c in chans if "whisper" in c.name.lower()]
 
-        # PDF pass: the -logs channel FIRST (so its PDF is pristine), then the other
-        # non-whisper channels, each PDF posted into itself. Nothing is deleted here.
-        pdf_order = ([logs_ch] if logs_ch is not None else []) + \
-                    [c for c in chans if c not in whisper_chans and c is not logs_ch]
-        for ch in pdf_order:
-            await _pdf_into(ch, ch, "📄 Archive of")
+        # Export pass: the -logs channel FIRST (so its transcript is pristine), then
+        # the other non-whisper channels, each posted into itself. Nothing deleted here.
+        export_order = ([logs_ch] if logs_ch is not None else []) + \
+                       [c for c in chans if c not in whisper_chans and c is not logs_ch]
+        for ch in export_order:
+            await _html_into(ch, ch, "📄 Archive of")
 
-        # whisper-logs: PDF into the game's -logs channel, then DELETE the channel.
+        # whisper-logs: export into the game's -logs channel, then DELETE the channel.
         for ch in whisper_chans:
             if logs_ch is not None:
-                await _pdf_into(ch, logs_ch, "📄 Archived (deleted)")
+                await _html_into(ch, logs_ch, "📄 Archived (deleted)")
             try:
                 await ch.delete(reason="archive: whisper-logs removed after PDF")
             except Exception as e:
